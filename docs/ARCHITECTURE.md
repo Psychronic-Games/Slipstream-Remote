@@ -25,7 +25,7 @@ Slipstream is a free, MIT-licensed remote desktop app: TeamViewer-style
 | `crates/slipstream-platform` | Per-OS screen capture, input injection, clipboard |
 | `apps/slipstream` | The desktop app (egui, sci-fi theme) plus a headless CLI |
 | `apps/slipstream-server` | ID directory + embedded iroh relay, one binary on one HTTP port |
-| `server/web` | The same directory API as a drop-in PHP folder (files or MariaDB) |
+| `server/station` | The **station**: a self-contained PHP web folder with the directory API, a download page serving preconfigured apps, an admin page, and a supervisor that runs the relay program and routes `/relay` to it via `.htaccess` |
 
 ## Networking
 
@@ -42,6 +42,16 @@ Slipstream is a free, MIT-licensed remote desktop app: TeamViewer-style
 * **Relay:** iroh's relay is a WebSocket at `/relay`, so it can live behind
   Apache/Nginx on the same domain as the PHP directory, or inside the server
   binary. Clients also fall back to the public n0 relays.
+
+## Stations and provisioning
+
+Each organisation runs its own station; there is no central server. A
+private station requires its access key on every directory request, and its
+relay admits only clients presenting the key (iroh passes it as
+`?token=` on the relay URL). Apps learn the station's address, key and name
+from their download: the station appends a trailer to the executable
+(`[JSON][u32 length]["SLIPCFG1"]`, see `slipstream_core::provision`) or adds
+`station.json` to the macOS bundle.
 
 ## Authentication
 

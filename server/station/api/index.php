@@ -1,9 +1,9 @@
 <?php
 /**
- * Slipstream Remote directory API: POST {"op": …} as JSON.
- * See ../slipstream.php and crates/slipstream-core/src/directory.rs.
+ * Slipstream Station directory API: POST {"op": …} as JSON.
+ * See ../lib/slipstream.php and crates/slipstream-core/src/directory.rs.
  */
-require __DIR__ . '/../slipstream.php';
+require __DIR__ . '/../lib/slipstream.php';
 
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
@@ -26,13 +26,29 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
 if (!function_exists('sodium_crypto_sign_verify_detached')) {
     fail('server misconfigured: PHP sodium extension missing', 500);
 }
+if (!slip_station_ready()) {
+    fail('this station has not been set up yet — open its /admin/ page', 503);
+}
 $req = json_decode((string)file_get_contents('php://input'), true);
 if (!is_array($req)) {
     fail('expected a JSON body');
 }
 
+$cfg = slip_config();
+$station = slip_station();
+
+// Private stations only serve apps carrying the access key.
+if ($key = slip_access_key()) {
+    $given = $req['key'] ?? '';
+    if (!is_string($given) || !slip_same_key($given, $key)) {
+        if (!slip_rate_ok('badkey', 20)) {
+            fail('too many requests, slow down', 429);
+        }
+        fail('this is a private Slipstream station — download the app from ' . slip_base_url(), 403);
+    }
+}
+
 try {
-    $cfg = slip_config();
     switch ($req['op'] ?? '') {
         case 'hello':
             reply([
@@ -40,7 +56,9 @@ try {
                 'version' => SLIP_VERSION,
                 'time' => time(),
                 'relays' => slip_relays(),
-                'motd' => $cfg['motd'],
+                'motd' => ($station['motd'] ?? '') !== '' ? $station['motd'] : null,
+                'org' => ($station['org'] ?? '') !== '' ? $station['org'] : null,
+                'public_relays' => (bool)($station['public_relays'] ?? true),
             ]);
 
         case 'lookup':
@@ -96,5 +114,5 @@ try {
     fail($e->getMessage(), 403);
 } catch (Throwable $e) {
     error_log('slipstream: ' . $e->getMessage());
-    fail('server error: ' . $e->getMessage(), 500);
+    fail('server error', 500);
 }

@@ -105,7 +105,13 @@ impl Backend for GenericBackend {
             Err(e) => {
                 // Fall back to polling screenshots.
                 tracing::warn!("video recorder unavailable ({e}), polling screenshots");
+                // Monitor handles aren't Send on every OS: look it up in the thread.
+                let index = display as usize;
                 thread::Builder::new().name("capture".into()).spawn(move || {
+                    let Some(monitor) = Monitor::all().ok().and_then(|m| m.into_iter().nth(index)) else {
+                        producer.fail("display disappeared");
+                        return;
+                    };
                     while !producer.is_closed() {
                         let t = Instant::now();
                         match monitor.capture_image() {

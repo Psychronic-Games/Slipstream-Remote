@@ -24,5 +24,8 @@ ksni = { version = "0.3.6", default-features = false, features = ["tokio"] }
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tray-icon = "0.26.1"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
 [dev-dependencies]
 slipstream-platform = { path = "../../crates/slipstream-platform" }

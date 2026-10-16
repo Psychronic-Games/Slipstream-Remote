@@ -2,3 +2,4 @@
 /slipstream-data
 *.part
 .DS_Store
+/dist

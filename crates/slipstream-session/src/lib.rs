@@ -49,6 +49,8 @@ pub enum ClientEvent {
     Password(String),
     /// Server message of the day.
     Motd(String),
+    /// Name of the organisation running the station, if any.
+    Org(Option<String>),
     HostSessionStarted { session: u64, peer: String },
     HostSessionEnded { session: u64, reason: String },
     HostChat { session: u64, text: String },
@@ -158,9 +160,9 @@ impl Client {
     pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) {
         let server_changed = {
             let mut s = self.inner.settings.lock().unwrap();
-            let before = s.server.url.clone();
+            let before = (s.server.url.clone(), s.server.key.clone());
             f(&mut s);
-            before != s.server.url
+            before != (s.server.url.clone(), s.server.key.clone())
         };
         self.inner.save_settings();
         if server_changed {
@@ -305,7 +307,10 @@ fn set_status(inner: &Inner, status: DirStatus) {
 async fn directory_task(inner: Arc<Inner>) {
     let mut backoff = Duration::from_secs(1);
     loop {
-        let server = inner.settings.lock().unwrap().server.url.clone().filter(|u| !u.trim().is_empty());
+        let (server, key) = {
+            let s = inner.settings.lock().unwrap();
+            (s.server.url.clone().filter(|u| !u.trim().is_empty()), s.server.key.clone())
+        };
         let Some(server) = server else {
             inner.dir_client.send_replace(None);
             set_status(&inner, DirStatus::NotConfigured);
@@ -316,7 +321,7 @@ async fn directory_task(inner: Arc<Inner>) {
         let changed = inner.server_changed.notified();
         tokio::pin!(changed);
         let result = tokio::select! {
-            r = run_directory(&inner, &server) => r,
+            r = run_directory(&inner, &server, key) => r,
             _ = &mut changed => Ok(()),
         };
         inner.dir_client.send_replace(None);
@@ -340,24 +345,31 @@ fn short_error(e: &anyhow::Error) -> String {
     if s.chars().count() > 120 { format!("{}…", s.chars().take(120).collect::<String>()) } else { s }
 }
 
-async fn run_directory(inner: &Inner, server: &str) -> Result<()> {
-    let mut dc = DirectoryClient::new(server)?;
+async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Result<()> {
+    let mut dc = DirectoryClient::new(server, key)?;
     let hello = dc.hello().await?;
     if let Some(m) = hello.motd.filter(|m| !m.trim().is_empty()) {
         inner.emit(ClientEvent::Motd(m));
     }
+    inner.emit(ClientEvent::Org(hello.org.clone()));
     let relays = hello.relays;
-    let new_relays = {
+    let (new_relays, drop_public) = {
         let mut s = inner.settings.lock().unwrap();
-        let fresh = s.server.relays != relays;
-        if fresh {
-            s.server.relays = relays.clone();
-        }
-        fresh
+        let fresh = s.server.relays != relays
+            || s.server.org_name != hello.org
+            || s.server.station_allows_public_relays != hello.public_relays;
+        let drop_public = s.server.public_relays_enabled() && !hello.public_relays;
+        s.server.relays = relays.clone();
+        s.server.org_name = hello.org.clone();
+        s.server.station_allows_public_relays = hello.public_relays;
+        (fresh, drop_public)
     };
     if new_relays {
         inner.save_settings();
         net::add_relays(&inner.endpoint, &relays).await;
+    }
+    if drop_public {
+        net::remove_public_relays(&inner.endpoint).await;
     }
     // Lookups work from here on, even before we register.
     inner.dir_client.send_replace(Some(dc.clone()));

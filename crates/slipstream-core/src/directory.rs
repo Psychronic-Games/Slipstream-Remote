@@ -97,6 +97,16 @@ pub struct Hello {
     pub relays: Vec<RelayUrl>,
     #[serde(default)]
     pub motd: Option<String>,
+    /// Organisation running this station.
+    #[serde(default)]
+    pub org: Option<String>,
+    /// Whether clients may fall back to public relays.
+    #[serde(default = "yes")]
+    pub public_relays: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +165,8 @@ pub struct DirectoryClient {
     api: reqwest::Url,
     /// server_time - local_time, learned from `hello`.
     clock_offset: i64,
+    /// Access key for private stations; sent with every request.
+    key: Option<String>,
 }
 
 fn now() -> i64 {
@@ -165,7 +177,7 @@ fn now() -> i64 {
 }
 
 impl DirectoryClient {
-    pub fn new(server: &str) -> Result<Self> {
+    pub fn new(server: &str, key: Option<String>) -> Result<Self> {
         crate::init_crypto();
         let base = normalize_server_url(server)?;
         let api = base.join("api/")?;
@@ -174,14 +186,17 @@ impl DirectoryClient {
             .connect_timeout(Duration::from_secs(8))
             .timeout(Duration::from_secs(15))
             .build()?;
-        Ok(Self { http, base, api, clock_offset: 0 })
+        Ok(Self { http, base, api, clock_offset: 0, key: key.filter(|k| !k.is_empty()) })
     }
 
     pub fn base_url(&self) -> &reqwest::Url {
         &self.base
     }
 
-    async fn call<T: DeserializeOwned>(&self, body: serde_json::Value) -> Result<T> {
+    async fn call<T: DeserializeOwned>(&self, mut body: serde_json::Value) -> Result<T> {
+        if let (Some(key), Some(obj)) = (&self.key, body.as_object_mut()) {
+            obj.insert("key".into(), key.clone().into());
+        }
         let resp = self
             .http
             .post(self.api.clone())
@@ -309,7 +324,7 @@ mod tests {
     #[test]
     fn signatures_verify_and_bind_key() {
         let secret = SecretKey::generate();
-        let dc = DirectoryClient::new("example.com").unwrap();
+        let dc = DirectoryClient::new("example.com", None).unwrap();
         let addr = EndpointAddr::from_parts(secret.public(), []);
         let body = dc.signed(&secret, "register", Some(addr), Some(DeviceInfo::default())).unwrap();
         let payload = body["payload"].as_str().unwrap();

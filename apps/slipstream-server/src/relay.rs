@@ -15,10 +15,27 @@ use iroh_relay::server as relay;
 
 use crate::App;
 
+/// Admits only clients presenting the station's access key (sent by iroh
+/// as `?token=` on the relay URL or an `Authorization: Bearer` header).
+#[derive(Debug)]
+struct KeyAccess(Option<String>);
+
+impl relay::AccessControl for KeyAccess {
+    async fn on_connect(&self, req: &relay::ClientRequest) -> relay::Access {
+        match &self.0 {
+            None => relay::Access::Allow,
+            Some(key) if req.auth_token().is_some_and(|t| crate::api::same_key(&t, key)) => relay::Access::Allow,
+            Some(_) => relay::Access::Deny { reason: Some("this relay requires an access key".into()) },
+        }
+    }
+}
+
 /// Starts the relay on a private loopback port.
-pub async fn spawn() -> Result<(relay::Server, SocketAddr)> {
+pub async fn spawn(access_key: Option<String>) -> Result<(relay::Server, SocketAddr)> {
     let mut cfg = relay::ServerConfig::default();
-    cfg.relay = Some(relay::RelayConfig::new(SocketAddr::from(([127, 0, 0, 1], 0))));
+    let mut relay_cfg = relay::RelayConfig::new(SocketAddr::from(([127, 0, 0, 1], 0)));
+    relay_cfg.access = Arc::new(KeyAccess(access_key));
+    cfg.relay = Some(relay_cfg);
     let server = relay::Server::spawn(cfg).await.context("starting relay")?;
     let addr = server.http_addr().context("relay has no HTTP address")?;
     Ok((server, addr))

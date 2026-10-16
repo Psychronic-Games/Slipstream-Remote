@@ -60,6 +60,19 @@ struct Cli {
     /// Message shown on clients' Bridge page.
     #[arg(long, env = "SLIPSTREAM_MOTD")]
     motd: Option<String>,
+
+    /// Make this a private station: clients must present this key to use
+    /// the directory and the relay.
+    #[arg(long, env = "SLIPSTREAM_ACCESS_KEY")]
+    access_key: Option<String>,
+
+    /// Organisation name shown in clients ("Acme IT Support").
+    #[arg(long, env = "SLIPSTREAM_ORG_NAME")]
+    org_name: Option<String>,
+
+    /// Tell clients not to fall back to the public n0 relays.
+    #[arg(long)]
+    no_public_relays: bool,
 }
 
 pub struct App {
@@ -69,6 +82,9 @@ pub struct App {
     public_url: Option<String>,
     extra_relays: Vec<String>,
     motd: Option<String>,
+    access_key: Option<String>,
+    org_name: Option<String>,
+    public_relays: bool,
     limits: api::RateLimiter,
     seen: Mutex<HashSet<String>>,
 }
@@ -102,6 +118,7 @@ async fn main() -> Result<()> {
     println!("  │ Listening on {}", cli.listen);
     println!("  │ Directory: {}", if cli.relay_only { "off" } else { "on" });
     println!("  │ Relay:     {}", if app.relay_enabled { "on" } else { "off (public relays)" });
+    println!("  │ Access:    {}", if app.access_key.is_some() { "private (access key required)" } else { "open" });
     println!("  │");
     println!("  │ In each app: CONFIG → Server address → {shown}");
     println!("  ╰─────────────────────────────────────────────────────────");
@@ -120,7 +137,7 @@ async fn build(cli: &Cli) -> Result<Arc<App>> {
     let relay_addr = if cli.no_relay {
         None
     } else {
-        let (server, addr) = relay::spawn().await?;
+        let (server, addr) = relay::spawn(cli.access_key.clone().filter(|k| !k.is_empty())).await?;
         // Keep the relay alive for the life of the process.
         Box::leak(Box::new(server));
         Some(addr)
@@ -132,6 +149,9 @@ async fn build(cli: &Cli) -> Result<Arc<App>> {
         public_url: cli.public_url.clone().map(|u| if u.ends_with('/') { u } else { format!("{u}/") }),
         extra_relays: cli.advertise_relay.clone(),
         motd: cli.motd.clone(),
+        access_key: cli.access_key.clone().filter(|k| !k.is_empty()),
+        org_name: cli.org_name.clone(),
+        public_relays: !cli.no_public_relays,
         limits: Default::default(),
         seen: Mutex::new(HashSet::new()),
     }))
@@ -198,7 +218,7 @@ mod tests {
     #[tokio::test]
     async fn directory_roundtrip() {
         let (url, _app) = start().await;
-        let mut dc = DirectoryClient::new(&url).unwrap();
+        let mut dc = DirectoryClient::new(&url, None).unwrap();
         let hello = dc.hello().await.unwrap();
         assert_eq!(hello.relays.len(), 1, "relay should be advertised");
         let secret = iroh::SecretKey::generate();

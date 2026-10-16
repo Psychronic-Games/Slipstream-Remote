@@ -22,8 +22,10 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 - **Quality presets** — Balanced, Speed, Quality, Low bandwidth; automatic
   bitrate adaptation.
 - **Runs in the tray**, starts with the system, stays reachable.
-- **Self-hostable server** — drop a PHP folder on any web host, or run one
-  small binary that does ID lookup *and* relaying. Apps just need a domain.
+- **Your own station, not a central service** — an IT firm or company runs
+  one self-contained web folder: a download page with apps preconfigured for
+  it, a private directory of its clients' devices, its own relay and an admin
+  page. Works on ordinary PHP web hosting (Virtualmin, cPanel, …).
 - A starship-console interface. 🖖
 
 ## Platforms
@@ -38,29 +40,23 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 
 ## Quick start
 
-### 1. Set up a server (once)
+### 1. Set up your station (once)
 
-Upload the [`server/web/`](server/web) folder to any web host with PHP 8 —
-e.g. `relay.example.com` — and open it in a browser to check it's green.
-Or run the `slipstream-server` binary. See [docs/SERVER.md](docs/SERVER.md).
+Run `scripts/build-station.sh`, upload `dist/slipstream-station/` to the root
+of a (sub)domain with PHP 8 and HTTPS — e.g. `support.example.com` — and open
+`/admin/` to name it and set an admin password. See
+[docs/SERVER.md](docs/SERVER.md).
 
-### 2. Install the app on each computer
+### 2. Get the app
 
-**Linux** (from source):
-
-```sh
-./scripts/install-linux.sh
-```
-
-**Windows / macOS**: download the build artifacts from CI (Actions tab), or
-`cargo build --release -p slipstream`.
+Download it from your station's page (`https://support.example.com/`) on
+every computer — it arrives already configured for your station. Any OS can
+control any other.
 
 ### 3. Connect
 
-Open Slipstream → **CONFIG** → enter your server's address (e.g.
-`relay.example.com`) → **Save**.
-The **BRIDGE** page now shows your ID and password. On the other computer,
-enter them under **Establish link** and press **Engage**.
+The **BRIDGE** page shows the computer's ID and password. On the other
+computer, enter them under **Establish link** and press **Engage**.
 
 On Wayland the first incoming session asks you to approve screen sharing;
 the choice is remembered.

@@ -1,115 +1,102 @@
-# Running a Slipstream server
+# Running your own Slipstream Station
 
-A Slipstream server does two jobs:
+Slipstream isn't a central service. Anyone — an IT firm, a company, a family
+— can run their own **station**: one self-contained web folder that gives
+them a private remote-support service:
 
-1. **Directory** — hands out 9-digit IDs and tells a viewer how to reach a
-   host. It's a small JSON API over HTTPS. It never sees passwords or screen
-   content, and every registration is signed by the device's own key.
-2. **Relay** (optional) — forwards *encrypted* traffic when two devices can't
-   connect directly. Most sessions are peer-to-peer and never touch it. Without
-   your own relay, apps use the free public relays.
+- **Download page** — clients get apps that are already configured for your
+  station (address, access key and your organisation's name are built into
+  each download). Nothing to type.
+- **Private directory** — the 9-digit IDs of *your* clients' devices, listed
+  in your admin page with their online status. Apps from other stations
+  can't use yours.
+- **Relay** — when two computers can't reach each other directly (strict
+  firewalls), traffic goes through your station instead of someone else's.
+  It's end-to-end encrypted; the station can't see screens or passwords.
+- **Admin page** — setup, health checks, devices, settings, access key.
 
-Apps only need your server's **web address** (e.g. `relay.example.com`), so
-you can move it to another machine later by repointing DNS — nothing breaks.
+Move it to another server any time: copy the folder and the data folder,
+repoint DNS, done. Apps only know your domain.
 
-Pick one:
+## Requirements
 
-| | Needs | Relay |
-|---|---|---|
-| **A. PHP folder** | any web host with PHP 8+ | public, or add the binary (A2) |
-| **B. Binary** | a Linux/Windows/macOS machine | built in |
+- A domain or subdomain with HTTPS, e.g. `support.example.com`. The station
+  must live at the **root** of it (not in a subfolder).
+- PHP 8.0+ with the `sodium` extension (standard).
+- Linux web host where PHP may start programs (`proc_open`), Apache with
+  `mod_rewrite` + `mod_proxy_http` (2.4.47+) and `.htaccess` allowed. That's
+  the default on Virtualmin, cPanel/WHM and most VPS setups.
 
----
+Without the last point everything except your own relay still works — apps
+then fall back to the free public relays. (See *Other web servers* below.)
 
-## A. PHP folder (simplest — works on shared hosting)
+## Install
 
-1. Create a site/subdomain, e.g. `relay.example.com`, with **HTTPS** (Let's
-   Encrypt). In Virtualmin: *Create Virtual Server*, then *Server
-   Configuration → SSL Certificate → Let's Encrypt → Request Certificate*.
-2. Upload the contents of [`server/web/`](../server/web) into its web root
-   (`public_html`): `index.php`, `slipstream.php`, `config.sample.php` and
-   the `api/` folder.
-3. Open `https://relay.example.com/` — the status page should say
-   **ONLINE — READY FOR CONNECTIONS** with all checks green.
-4. In each Slipstream app: **CONFIG → Server address → `relay.example.com`**.
+1. Build or download the station package: `scripts/build-station.sh` creates
+   `dist/slipstream-station/` with the PHP site, the relay program (`bin/`)
+   and the client apps (`clients/`).
+2. Upload the *contents* of that folder to your site's web root
+   (`public_html`), keeping the folder structure.
+3. Open `https://support.example.com/admin/`, enter your organisation's name
+   and an admin password. The station creates its settings, its access key,
+   its relay routing (in `.htaccess`) and starts the relay.
+4. Check the **Status** tab: every line should be green.
+5. Send your clients to `https://support.example.com/`.
 
-That's it. No database is needed: device records are small files, kept
-*outside* the web root when possible (`../slipstream-data`), otherwise in a
-`data/` folder protected by `.htaccess`. For large installs, copy
-`config.sample.php` to `config.php` and point `db` at MariaDB/MySQL.
+### Virtualmin example
 
-PHP requirements: 8.0+, with the `sodium` extension (standard since PHP 7.2).
+Create the virtual server (e.g. `relay.example.com`), request a Let's
+Encrypt certificate (*Server Configuration → SSL Certificate*), upload the
+files to `/home/<site>/public_html` as the site's user, open `/admin/`.
+No Apache or root changes are needed.
 
-### A2. Add your own relay to the PHP site (optional)
+## Where data lives
 
-Your own relay means relayed sessions don't depend on third-party servers.
-It runs as a small background service on the same machine; Apache forwards
-three URLs to it, so it shares the domain with the PHP folder.
+Device records and station settings go in `slipstream-data/` **next to**
+the web root (`/home/<site>/slipstream-data`), outside public reach. If that
+isn't writable, `./data` inside the site is used, protected by `.htaccess`.
+Copy `config.sample.php` to `config.php` to choose another folder or to use
+MariaDB/MySQL instead of files.
+
+Back up `slipstream-data/`: it holds the access key and the device IDs.
+
+## The relay
+
+The relay is the `slipstream-server` program in `bin/`. The PHP starts it as
+your site's own user on a private local port, restarts it automatically if
+it stops (e.g. after a reboot, the next app check-in revives it), and
+`.htaccess` forwards `/relay` to it. Start, stop and its log are on the
+admin page.
+
+## Access control
+
+Stations are **private** by default: every request must carry the station's
+access key, which is built into the apps from its download page. If an app
+gets into the wrong hands, make a new key on the Settings tab — everyone then
+needs to download the app again. You can also put a password on the
+download page.
+
+## Other web servers
+
+**Nginx (+ PHP-FPM):** `.htaccess` isn't read, so add the relay routing and
+the folder protections to the server block — see
+[`packaging/server/nginx-relay.conf`](../packaging/server/nginx-relay.conf),
+using the port shown on the admin page.
+
+**No PHP at all:** run the `slipstream-server` binary on its own — it serves
+the same directory API, the relay and a status page on one port:
 
 ```sh
-# on the server, as root
-install -Dm755 slipstream-server /usr/local/bin/slipstream-server
-useradd --system --home /var/lib/slipstream slipstream
-cp packaging/server/slipstream-server.service /etc/systemd/system/
-systemctl edit slipstream-server     # add the two lines below under [Service]
-#   Environment=SLIPSTREAM_LISTEN=127.0.0.1:21117
-#   Environment=SLIPSTREAM_ARGS=--relay-only
-systemctl enable --now slipstream-server
+slipstream-server --listen [::]:8080 --access-key <random-string> --org-name "Acme IT"
 ```
 
-Then add [`packaging/server/apache-relay.conf`](../packaging/server/apache-relay.conf)
-to the site's HTTPS virtual host (Virtualmin: *Web Configuration → Edit
-Directives*) and reload Apache. Nginx users: see
-[`nginx-relay.conf`](../packaging/server/nginx-relay.conf).
+and put HTTPS in front of it (e.g. Caddy: `reverse_proxy 127.0.0.1:8080`).
+Configure apps with `slipstream set-server your.host --key <random-string>`.
+`packaging/server/slipstream-server.service` keeps it running under systemd.
 
-The status page notices the relay within 10 minutes and starts advertising it
-to apps automatically.
+## Troubleshooting
 
----
-
-## B. Standalone binary
-
-One executable serves the directory, the relay and a status page on a single
-port:
-
-```sh
-cargo build --release -p slipstream-server
-./target/release/slipstream-server                    # listens on [::]:8080
-```
-
-Apps then use `http://your-server:8080`. For HTTPS, put it behind any
-reverse proxy (Caddy, Nginx, Apache) — e.g. with Caddy:
-
-```
-relay.example.com {
-    reverse_proxy 127.0.0.1:8080
-}
-```
-
-and run `slipstream-server --listen 127.0.0.1:8080`. Use the systemd unit in
-[`packaging/server/`](../packaging/server) to keep it running.
-
-| Flag / env | Meaning |
-|---|---|
-| `--listen` / `SLIPSTREAM_LISTEN` | address to listen on (default `[::]:8080`) |
-| `--data-dir` / `SLIPSTREAM_DATA` | where the device database lives |
-| `--public-url` / `SLIPSTREAM_PUBLIC_URL` | public URL to advertise for the relay (default: taken from each request) |
-| `--relay-only` | relay only (next to the PHP directory) |
-| `--no-relay` | directory only |
-| `--advertise-relay <url>` | also advertise other relays (regions) |
-| `--motd` / `SLIPSTREAM_MOTD` | message shown on apps' Bridge page |
-
-Linux builds need glibc 2.34+ (Debian 12, Ubuntu 22.04, RHEL 9 or newer).
-
----
-
-## Ports and firewalls
-
-Everything runs over normal web ports. The apps reach the directory and relay
-through HTTPS (443) or whatever port you serve them on; device-to-device
-links use UDP and need no server ports at all.
-
-## Backups
-
-Back up the data folder (`slipstream-data/`, or the database). Losing it
-means devices get new IDs the next time they connect.
+- `SLIPSTREAM_RELAY_ONLY=1 slipstream connect <ID> --password …` forces a
+  connection through the relay — the stats line then says `RELAY`.
+- Relay shows **NOT ROUTED**: Apache isn't forwarding `/relay` — check that
+  `mod_proxy_http` and `mod_rewrite` are enabled and `.htaccess` is allowed.

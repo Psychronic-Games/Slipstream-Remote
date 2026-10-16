@@ -6,6 +6,7 @@ pub mod directory;
 pub mod framing;
 pub mod net;
 pub mod proto;
+pub mod provision;
 
 pub use iroh;
 

@@ -52,6 +52,19 @@ impl RateLimiter {
     }
 }
 
+/// Constant-time key comparison.
+pub fn same_key(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Appends `?token=KEY` so iroh presents the key to our relay.
+fn with_token(url: String, key: Option<&str>) -> String {
+    match key {
+        Some(k) => format!("{url}?token={k}"),
+        None => url,
+    }
+}
+
 fn err(status: StatusCode, msg: &str) -> Response {
     (status, Json(json!({ "ok": false, "error": msg }))).into_response()
 }
@@ -85,13 +98,21 @@ pub async fn handle(
 ) -> Response {
     let Some(Json(req)) = body else { return err(StatusCode::BAD_REQUEST, "expected a JSON body") };
     let ip = client_ip(peer, &headers);
+    if let Some(key) = &app.access_key
+        && !req.get("key").and_then(Value::as_str).is_some_and(|k| same_key(k, key))
+    {
+        if !app.limits.allow(ip, "badkey", 20) {
+            return err(StatusCode::TOO_MANY_REQUESTS, "too many requests, slow down");
+        }
+        return err(StatusCode::FORBIDDEN, "this is a private Slipstream server — use the app from its download page");
+    }
     match req.get("op").and_then(Value::as_str).unwrap_or("") {
         "hello" => {
             let mut relays: Vec<String> = Vec::new();
             if app.relay_enabled
                 && let Some(url) = app.public_url.clone().or_else(|| relay_url_from_request(peer, &headers))
             {
-                relays.push(url);
+                relays.push(with_token(url, app.access_key.as_deref()));
             }
             relays.extend(app.extra_relays.iter().cloned());
             Json(json!({
@@ -100,6 +121,8 @@ pub async fn handle(
                 "time": now(),
                 "relays": relays,
                 "motd": app.motd,
+                "org": app.org_name,
+                "public_relays": app.public_relays,
             }))
             .into_response()
         }

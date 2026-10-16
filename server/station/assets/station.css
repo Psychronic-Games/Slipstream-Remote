@@ -1,0 +1,67 @@
+/* Slipstream Station — starship-console styling shared by all pages. */
+:root {
+  --bg: #020308; --panel: #080b14; --orange: #ff9900; --peach: #ffaa78; --tan: #ffd6aa;
+  --gold: #ffcc66; --lav: #cc99cc; --violet: #9977dd; --blue: #99ccff; --cyan: #50dcff;
+  --green: #66ffaa; --red: #ff5555; --dim: #6e7896;
+  --display: "Antonio", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --mono: "Share Tech Mono", ui-monospace, monospace;
+}
+@font-face { font-family: "Antonio"; src: url("Antonio-Bold.ttf") format("truetype"); font-weight: 700; }
+@font-face { font-family: "Antonio"; src: url("Antonio-Regular.ttf") format("truetype"); font-weight: 400; }
+@font-face { font-family: "Share Tech Mono"; src: url("ShareTechMono-Regular.ttf") format("truetype"); }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--tan); }
+body { font: 17px/1.55 "Barlow Semi Condensed", system-ui, sans-serif; }
+a { color: var(--cyan); }
+.frame { min-height: 100vh; display: flex; flex-direction: column; padding: 12px; gap: 14px; }
+header, footer { display: flex; gap: 8px; align-items: stretch; }
+header { height: 40px; }
+header .elbow { width: 240px; background: var(--orange); border-radius: 40px 0 0 0; }
+header .seg { background: var(--peach); flex: 1; } header .s2 { flex: 0 0 90px; background: var(--violet); }
+header h1 { margin: 0; color: var(--orange); font: 700 34px/40px var(--display); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+footer { height: 26px; align-items: center; }
+footer .elbow { width: 240px; height: 26px; background: var(--lav); border-radius: 0 0 0 26px; }
+footer .seg { flex: 1; height: 26px; background: var(--blue); border-radius: 0 13px 13px 0; }
+footer span { color: var(--dim); font: 14px var(--display); text-transform: uppercase; letter-spacing: .08em; white-space: nowrap; }
+main { flex: 1; width: 100%; max-width: 1100px; margin: 0 auto; padding: 8px 16px; }
+h2 { font: 700 21px var(--display); text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; gap: 10px; margin: 26px 0 12px; color: var(--orange); }
+h2::before { content: ""; flex: 0 0 26px; height: 26px; border-radius: 13px 0 0 13px; background: currentColor; }
+h2::after { content: ""; flex: 1; height: 12px; border-radius: 0 6px 6px 0; background: currentColor; opacity: .85; }
+h2.lav { color: var(--lav); } h2.blue { color: var(--blue); } h2.violet { color: var(--violet); } h2.gold { color: var(--gold); } h2.red { color: var(--red); }
+.panel { background: var(--panel); padding: 16px 20px; border-radius: 4px; position: relative; }
+.k { color: var(--lav); font: 15px var(--display); text-transform: uppercase; letter-spacing: .08em; }
+.mono { font-family: var(--mono); }
+.big { font: 34px var(--mono); color: var(--tan); word-break: break-all; }
+.ok { color: var(--green); } .bad { color: var(--red); } .warn { color: var(--gold); } .dim { color: var(--dim); }
+.lead { font-size: 20px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.card { background: var(--panel); border-radius: 10px; padding: 18px 20px 20px 30px; position: relative; border: 1px solid transparent; }
+.card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 10px; border-radius: 10px 0 0 10px; background: var(--blue); }
+.card.primary { border-color: var(--orange); box-shadow: 0 0 24px rgba(255,153,0,.25); }
+.card.primary::before { background: var(--orange); }
+.card h3 { margin: 0 0 4px; font: 700 26px var(--display); text-transform: uppercase; color: var(--tan); }
+.btn, button { display: inline-block; border: 0; cursor: pointer; text-decoration: none; text-transform: uppercase; letter-spacing: .05em;
+  font: 18px var(--display); color: #000; background: var(--orange); padding: 8px 28px; border-radius: 22px; margin-top: 10px; }
+.btn:hover, button:hover { filter: brightness(1.15); box-shadow: 0 0 18px rgba(255,153,0,.45); }
+.btn.lav, button.lav { background: var(--lav); } .btn.blue, button.blue { background: var(--blue); } .btn.red, button.red { background: var(--red); }
+.btn.small, button.small { font-size: 15px; padding: 4px 16px; margin-top: 0; }
+.btn[disabled], .btn.off { background: #333; color: #777; pointer-events: none; }
+input[type=text], input[type=password], input[type=number], textarea, select {
+  background: #04060c; color: var(--tan); border: 1.5px solid rgba(255,153,0,.7); border-radius: 16px;
+  padding: 8px 14px; font: 17px "Barlow Semi Condensed", system-ui, sans-serif; width: 100%; max-width: 480px; }
+label { display: block; margin: 12px 0 4px; }
+table { border-collapse: collapse; width: 100%; }
+th { text-align: left; font: 14px var(--display); text-transform: uppercase; letter-spacing: .08em; color: var(--lav); padding: 6px 10px; border-bottom: 1px solid #1a2238; }
+td { padding: 7px 10px; border-bottom: 1px solid #10162a; vertical-align: middle; }
+code, pre { font-family: var(--mono); color: var(--blue); }
+pre { background: #04060c; padding: 12px; border-left: 4px solid var(--violet); overflow: auto; }
+.steps { counter-reset: s; list-style: none; padding: 0; }
+.steps li { counter-increment: s; margin: 10px 0; padding-left: 46px; position: relative; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 16px;
+  background: var(--violet); color: #000; font: 700 20px/32px var(--display); text-align: center; }
+nav.tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+nav.tabs a { text-decoration: none; color: #000; background: var(--blue); padding: 6px 22px; border-radius: 18px; font: 17px var(--display); text-transform: uppercase; }
+nav.tabs a.on { background: var(--orange); box-shadow: 0 0 16px rgba(255,153,0,.4); }
+.flash { padding: 10px 16px; border-radius: 10px; margin: 10px 0; background: rgba(102,255,170,.1); border: 1px solid var(--green); }
+.flash.err { background: rgba(255,85,85,.1); border-color: var(--red); }
+@media (max-width: 700px) { header .elbow, footer .elbow { width: 70px; } header .s2 { display: none; } header h1 { font-size: 24px; } footer span { display: none; } }

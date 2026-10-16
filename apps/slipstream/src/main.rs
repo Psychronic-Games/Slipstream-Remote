@@ -1,5 +1,8 @@
 //! Slipstream Remote desktop app.
 
+// A GUI app on Windows: no console window when double-clicked.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod cli;
 mod gui;
 
@@ -59,7 +62,12 @@ enum Command {
         seconds: u64,
     },
     /// Set the server (a domain or URL, e.g. `relay.example.com`).
-    SetServer { address: String },
+    SetServer {
+        address: String,
+        /// Access key, for private stations.
+        #[arg(long)]
+        key: Option<String>,
+    },
     /// Set (or with no argument, remove) the permanent unattended-access password.
     SetPassword { password: Option<String> },
     /// Print this device's ID and settings location.
@@ -76,12 +84,17 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "info,iroh=warn,noq=warn,noq_proto=warn,iroh_relay=warn".into()),
         )
         .init();
+    #[cfg(windows)]
+    attach_parent_console();
     let args = Args::parse();
+    if !matches!(args.command, Some(Command::ExportIcon { .. })) {
+        apply_station_config();
+    }
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     match args.command {
         Some(Command::Host { password }) => rt.block_on(cli::host(args.test_pattern, password)),
         Some(Command::Connect { id, password, seconds }) => rt.block_on(cli::connect(&id, &password, seconds)),
-        Some(Command::SetServer { address }) => cli::set_server(&address),
+        Some(Command::SetServer { address, key }) => cli::set_server(&address, key),
         Some(Command::SetPassword { password }) => cli::set_password(password.as_deref()),
         Some(Command::Info) => rt.block_on(cli::info()),
         Some(Command::ExportIcon { path, size }) => gui::export_icon(&path, size),
@@ -95,5 +108,28 @@ fn main() -> anyhow::Result<()> {
                 minimized: args.minimized,
             })
         }
+    }
+}
+
+/// If this copy of the app came from a station's download page, adopt that
+/// station's address and access key (see `slipstream_core::provision`).
+fn apply_station_config() {
+    let Some(cfg) = slipstream_core::provision::embedded() else { return };
+    let Ok(store) = slipstream_core::config::Store::open_default() else { return };
+    let mut settings = store.load_settings();
+    if slipstream_core::provision::apply(&mut settings, &cfg) {
+        tracing::info!(server = %cfg.server, "configured from station download");
+        let _ = store.save_settings(&settings);
+    }
+}
+
+/// GUI-subsystem apps have no console; when started from a terminal (e.g.
+/// `slipstream.exe info`), reattach so CLI output is visible.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    // SAFETY: plain Win32 call; failure (no parent console) is harmless.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
     }
 }

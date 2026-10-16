@@ -27,12 +27,27 @@ pub struct Settings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ServerSettings {
-    /// Directory server address: a domain or URL, e.g. `relay.example.com`.
+    /// Station (directory server) address: a domain or URL, e.g. `relay.example.com`.
     pub url: Option<String>,
+    /// Access key for a private station.
+    pub key: Option<String>,
+    /// Organisation running the station (from its download or `hello`).
+    pub org_name: Option<String>,
+    /// Settings came from a station download (see `provision`).
+    pub provisioned: bool,
+    /// The station allows falling back to public relays.
+    pub station_allows_public_relays: bool,
     /// Relays learned from the directory server (cached for faster startup).
     pub relays: Vec<RelayUrl>,
     /// Also use the public n0 relays as a fallback.
     pub use_public_relays: bool,
+}
+
+impl ServerSettings {
+    /// Public relays are used only if both the user and the station allow it.
+    pub fn public_relays_enabled(&self) -> bool {
+        self.use_public_relays && self.station_allows_public_relays
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +116,10 @@ impl Default for ServerSettings {
     fn default() -> Self {
         Self {
             url: None,
+            key: None,
+            org_name: None,
+            provisioned: false,
+            station_allows_public_relays: true,
             relays: Vec::new(),
             use_public_relays: true,
         }

@@ -9,6 +9,7 @@ use super::{App, theme, theme::pal};
 pub struct SettingsForm {
     device_name: String,
     server: String,
+    key: String,
     public_relays: bool,
     accept: bool,
     allow_input: bool,
@@ -29,6 +30,7 @@ impl From<&Settings> for SettingsForm {
         Self {
             device_name: s.device_name.clone(),
             server: s.server.url.clone().unwrap_or_default(),
+            key: s.server.key.clone().unwrap_or_default(),
             public_relays: s.server.use_public_relays,
             accept: s.host.enabled,
             allow_input: s.host.allow_input,
@@ -95,6 +97,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         ui.add_space(6.0);
         row(ui, "Server address", |ui| {
             text_field(ui, &mut f.server, "relay.example.com", false);
+        });
+        row(ui, "Access key", |ui| {
+            text_field(ui, &mut f.key, "only for private stations", true);
         });
         row(ui, "Public fallback relays", |ui| {
             ui.checkbox(&mut f.public_relays, "Also use the free n0 relays (applies after restart)");
@@ -199,6 +204,7 @@ fn save(app: &mut App) {
     }
     let f = &app.settings_form;
     let close_to_tray = f.close_to_tray;
+    let key = Some(f.key.trim().to_string()).filter(|k| !k.is_empty());
     let (name, public, accept, input, clip, files, len, fps, sync) = (
         f.device_name.trim().to_string(),
         f.public_relays,
@@ -214,7 +220,11 @@ fn save(app: &mut App) {
         if !name.is_empty() {
             s.device_name = name;
         }
+        if s.server.url != server || s.server.key != key {
+            s.server.provisioned = false;
+        }
         s.server.url = server;
+        s.server.key = key;
         s.server.use_public_relays = public;
         s.host.enabled = accept;
         s.host.allow_input = input;

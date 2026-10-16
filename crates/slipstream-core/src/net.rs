@@ -9,7 +9,7 @@ use crate::{config::ServerSettings, proto::ALPN_REMOTE};
 
 /// Builds the relay map: the server's relays, plus n0's public relays if enabled.
 pub fn relay_map(server: &ServerSettings) -> RelayMap {
-    let map = if server.use_public_relays {
+    let map = if server.public_relays_enabled() {
         RelayMode::Default.relay_map()
     } else {
         RelayMap::empty()
@@ -25,13 +25,21 @@ pub async fn bind_client(secret: SecretKey, server: &ServerSettings, accept_sess
     let map = relay_map(server);
     let mode = if map.is_empty() { RelayMode::Disabled } else { RelayMode::Custom(map) };
     let alpns = if accept_sessions { vec![ALPN_REMOTE.to_vec()] } else { vec![] };
-    let endpoint = Endpoint::builder(presets::Minimal)
-        .secret_key(secret)
-        .alpns(alpns)
-        .relay_mode(mode)
-        .bind()
-        .await?;
+    let mut builder = Endpoint::builder(presets::Minimal).secret_key(secret).alpns(alpns).relay_mode(mode);
+    // Troubleshooting aid: force every connection through the relay.
+    if std::env::var_os("SLIPSTREAM_RELAY_ONLY").is_some() {
+        tracing::warn!("SLIPSTREAM_RELAY_ONLY set: direct connections disabled");
+        builder = builder.clear_ip_transports();
+    }
+    let endpoint = builder.bind().await?;
     Ok(endpoint)
+}
+
+/// Removes the public n0 relays (a private station forbade them).
+pub async fn remove_public_relays(endpoint: &Endpoint) {
+    for url in RelayMode::Default.relay_map().urls::<Vec<_>>() {
+        endpoint.remove_relay(&url).await;
+    }
 }
 
 /// Adds relays the directory server told us about at runtime.

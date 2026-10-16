@@ -136,6 +136,8 @@ pub struct App {
     toasts: Vec<Toast>,
     pub settings_form: settings::SettingsForm,
     pub motd: Option<String>,
+    /// Organisation running our station, shown in the frame.
+    pub org: Option<String>,
     /// Keyboard events captured for the focused remote tab this frame.
     captured_keys: Vec<remote::CapturedKey>,
     window_focused: bool,
@@ -167,6 +169,7 @@ impl App {
         });
         let settings_form = settings::SettingsForm::from(&client.settings());
         let tray = tray::Tray::new(&rt, &ctx);
+        let org = client.settings().server.org_name.clone();
         Self {
             password: client.one_time_password(),
             dir_status: client.dir_status(),
@@ -185,6 +188,7 @@ impl App {
             toasts: Vec::new(),
             settings_form,
             motd: None,
+            org,
             captured_keys: Vec::new(),
             window_focused: true,
             screenshot: None,
@@ -209,6 +213,7 @@ impl App {
                 ClientEvent::Directory(s) => self.dir_status = s,
                 ClientEvent::Password(p) => self.password = p,
                 ClientEvent::Motd(m) => self.motd = Some(m),
+                ClientEvent::Org(o) => self.org = o,
                 ClientEvent::HostSessionStarted { session, peer } => {
                     self.toast(format!("{peer} is now connected to this device"), pal::RED);
                     self.incoming.push(IncomingSession {
@@ -360,6 +365,15 @@ impl App {
         let title_w = title_galley.size().x;
         let title_pos = pos2(r - title_w, top + bar_h / 2.0 - title_galley.size().y / 2.0);
         painter.galley(title_pos, title_galley, pal::ORANGE);
+        if let Some(org) = &self.org {
+            painter.text(
+                pos2(r, top + bar_h + 6.0),
+                Align2::RIGHT_TOP,
+                org.to_uppercase(),
+                theme::display(17.0),
+                pal::LAVENDER,
+            );
+        }
 
         // Top bar segments between the elbow and the title.
         let seg_left = top_elbow.right() + gap;

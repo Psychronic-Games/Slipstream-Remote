@@ -6,11 +6,13 @@ use anyhow::{Context, Result};
 use slipstream_core::{config::Store, directory::DeviceId};
 use slipstream_session::{Client, ClientEvent, ClientOptions, DirStatus, ViewerEvent};
 
-pub fn set_server(address: &str) -> Result<()> {
+pub fn set_server(address: &str, key: Option<String>) -> Result<()> {
     let store = Store::open_default()?;
     let mut s = store.load_settings();
     slipstream_core::directory::normalize_server_url(address).context("invalid server address")?;
     s.server.url = Some(address.trim().to_string());
+    s.server.key = key.filter(|k| !k.trim().is_empty());
+    s.server.provisioned = false;
     store.save_settings(&s)?;
     println!("server set; settings in {}", store.dir().display());
     Ok(())
@@ -39,7 +41,11 @@ pub async fn info() -> Result<()> {
         None => println!("device id    : (not registered yet)"),
     }
     match s.server.url {
-        Some(d) => println!("server       : {d}"),
+        Some(d) => println!(
+            "server       : {d}{}{}",
+            if s.server.key.is_some() { " (private, key set)" } else { "" },
+            s.server.org_name.as_deref().map(|o| format!(" — {o}")).unwrap_or_default()
+        ),
         None => println!("server       : (none — run `slipstream set-server relay.example.com`)"),
     }
     Ok(())
@@ -68,6 +74,8 @@ pub async fn host(test_pattern: bool, password: Option<String>) -> Result<()> {
                     ClientEvent::HostChat { text, .. } => println!("chat: {text}"),
                     ClientEvent::FileReceived { path, .. } => println!("received file {}", path.display()),
                     ClientEvent::Motd(m) => println!("server says: {m}"),
+                    ClientEvent::Org(Some(o)) => println!("station  {o}"),
+                    ClientEvent::Org(None) => {}
                     ClientEvent::Notice(n) => println!("notice: {n}"),
                 }
             }
