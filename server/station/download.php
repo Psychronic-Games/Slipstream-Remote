@@ -32,8 +32,20 @@ if (!$b || !$b['path']) {
     exit('That download is not available.');
 }
 
-$slug = trim(preg_replace('/[^A-Za-z0-9]+/', '-', $station['org'] ?? ''), '-');
-$suffix = $slug !== '' ? "-$slug" : '';
+// "Slipstream Remote - Acme IT". Characters that are illegal in file names
+// on any OS (Windows forbids <>:"/\|?*) are dropped from the org name.
+$org = preg_replace('/[\x00-\x1F<>:"\/\\\\|?*]+/u', ' ', (string)($station['org'] ?? ''));
+$org = trim(preg_replace('/\s+/u', ' ', $org), " .");
+$base = 'Slipstream Remote' . ($org !== '' && strcasecmp($org, 'Slipstream Remote') !== 0 ? " - $org" : '');
+
+function slip_disposition(string $name): string
+{
+    // Plain ASCII name for every browser, plus the exact UTF-8 name (RFC 6266)
+    // for org names with accents etc.
+    $ascii = preg_replace('/[^\x20-\x7E]/', '_', $name);
+    return 'Content-Disposition: attachment; filename="' . $ascii . "\"; filename*=UTF-8''" . rawurlencode($name);
+}
+
 while (ob_get_level()) {
     ob_end_clean();
 }
@@ -63,7 +75,7 @@ if ($os === 'macos') {
     $zip->addFromString(($app ?? 'Slipstream.app') . '/Contents/Resources/station.json', json_encode(slip_client_config(), JSON_UNESCAPED_SLASHES));
     $zip->close();
     header('Content-Type: application/zip');
-    header('Content-Disposition: attachment; filename="Slipstream' . $suffix . '-macOS.zip"');
+    header(slip_disposition("$base (macOS).zip"));
     header('Content-Length: ' . filesize($tmp));
     readfile($tmp);
     unlink($tmp);
@@ -71,9 +83,9 @@ if ($os === 'macos') {
 }
 
 $trailer = slip_trailer();
-$name = $os === 'windows' ? "Slipstream$suffix.exe" : 'slipstream' . strtolower($suffix);
+$name = $os === 'windows' ? "$base.exe" : $base;
 header('Content-Type: application/octet-stream');
-header('Content-Disposition: attachment; filename="' . $name . '"');
+header(slip_disposition($name));
 header('Content-Length: ' . ($b['size'] + strlen($trailer)));
 readfile($b['path']);
 echo $trailer;

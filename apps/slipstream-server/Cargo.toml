@@ -20,3 +20,6 @@ hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

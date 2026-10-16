@@ -75,7 +75,7 @@ and you've shared your password.</p>
       <li>Download the app for your computer above.</li>
       <li><b>Windows:</b> open the downloaded file (if SmartScreen appears, choose <i>More info → Run anyway</i>).
         <b>Mac:</b> unzip, move <i>Slipstream</i> to Applications, then right-click → <i>Open</i>.
-        <b>Linux:</b> make it executable (<code>chmod +x slipstream-*</code>) and run it.</li>
+        <b>Linux:</b> make it executable (right-click → Properties → <i>Allow executing</i>, or <code>chmod +x "Slipstream Remote"*</code>) and run it.</li>
       <li>The app opens already connected to <?= h($org) ?>. Read the <b>ID</b> and <b>password</b> to your technician.</li>
       <li>Close the app any time to end access. A new password is made after every session.</li>
     </ol>

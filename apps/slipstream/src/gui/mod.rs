@@ -181,6 +181,7 @@ pub struct App {
     start_hidden: bool,
     /// Another launch asked us to show the window.
     show_requests: Option<mpsc::Receiver<()>>,
+    window_title: String,
     logo: Option<egui::TextureHandle>,
     pub update: Option<UpdateState>,
     update_check: Option<oneshot::Receiver<Result<Option<slipstream_session::update::UpdateInfo>, String>>>,
@@ -239,6 +240,7 @@ impl App {
             start_hidden: false,
             show_requests: None,
             logo: None,
+            window_title: String::new(),
             update: None,
             update_check: None,
             tray_hint: false,
@@ -705,6 +707,14 @@ impl App {
 
 /// Writes the app icon as PNG, or as a multi-size Windows `.ico` if the
 /// path ends in `.ico`.
+/// "Slipstream Remote - Acme IT" (matches the station's download names).
+fn window_title(org: Option<&str>) -> String {
+    match org.map(str::trim).filter(|o| !o.is_empty() && !o.eq_ignore_ascii_case("Slipstream Remote")) {
+        Some(o) => format!("Slipstream Remote - {o}"),
+        None => "Slipstream Remote".into(),
+    }
+}
+
 pub fn export_icon(path: &std::path::Path, size: u32) -> Result<()> {
     if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ico")) {
         return std::fs::write(path, ico_bytes(&[16, 24, 32, 48, 64, 128, 256])?).map_err(Into::into);
@@ -812,6 +822,11 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Runs even while the window is hidden in the tray.
         self.handle_events();
+        let title = window_title(self.org.as_deref());
+        if self.window_title != title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
         self.update_tray();
         if self.start_hidden {
             self.start_hidden = false;

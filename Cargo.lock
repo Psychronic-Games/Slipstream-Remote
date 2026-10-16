@@ -6629,6 +6629,7 @@ dependencies = [
  "hyper-util",
  "iroh",
  "iroh-relay",
+ "libc",
  "rand 0.9.5",
  "rusqlite",
  "serde",

@@ -96,8 +96,29 @@ impl App {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// When a station's PHP starts us, we inherit whatever the web server had
+/// open (FastCGI pipes, listening sockets). Holding those would pin ports
+/// and confuse the web server's process management, so close everything
+/// beyond stdin/stdout/stderr before doing anything else.
+#[cfg(target_os = "linux")]
+fn close_inherited_fds() {
+    let fds: Vec<i32> = std::fs::read_dir("/proc/self/fd")
+        .map(|rd| rd.flatten().filter_map(|e| e.file_name().to_str()?.parse().ok()).collect())
+        .unwrap_or_default();
+    for fd in fds.into_iter().filter(|&fd| fd > 2) {
+        // SAFETY: nothing in this process uses these yet (we haven't opened
+        // anything); the read_dir handle itself is already closed.
+        unsafe { libc::close(fd) };
+    }
+}
+
+fn main() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    close_inherited_fds();
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(run())
+}
+
+async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
