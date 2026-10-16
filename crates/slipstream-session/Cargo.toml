@@ -1,0 +1,19 @@
+[package]
+name = "slipstream-session"
+description = "Host and viewer session logic for Slipstream Remote"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+slipstream-core.workspace = true
+slipstream-codec.workspace = true
+slipstream-platform.workspace = true
+anyhow.workspace = true
+iroh.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+directories = "6.0.0"
+
+[dev-dependencies]
+tracing-subscriber.workspace = true

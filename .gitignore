@@ -1,0 +1,4 @@
+/target
+/slipstream-data
+*.part
+.DS_Store

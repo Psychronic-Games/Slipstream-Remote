@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/slipstream-remote/slipstream"
+authors = ["Slipstream Remote contributors"]
+
+[workspace.dependencies]
+slipstream-core = { path = "crates/slipstream-core" }
+slipstream-codec = { path = "crates/slipstream-codec" }
+slipstream-platform = { path = "crates/slipstream-platform" }
+slipstream-session = { path = "crates/slipstream-session" }
+
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1.53", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json = "1"
+iroh = "1.3"
+rand = "0.9"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2

@@ -1,0 +1,160 @@
+//! egui physical keys → W3C `KeyboardEvent.code` names (the wire format).
+
+use eframe::egui::Key;
+
+pub fn w3c_code(key: Key) -> Option<&'static str> {
+    use Key::*;
+    Some(match key {
+        ArrowDown => "ArrowDown",
+        ArrowLeft => "ArrowLeft",
+        ArrowRight => "ArrowRight",
+        ArrowUp => "ArrowUp",
+        Escape => "Escape",
+        Tab => "Tab",
+        Backspace => "Backspace",
+        Enter => "Enter",
+        Space => "Space",
+        Insert => "Insert",
+        Delete => "Delete",
+        Home => "Home",
+        End => "End",
+        PageUp => "PageUp",
+        PageDown => "PageDown",
+        Copy => "Copy",
+        Cut => "Cut",
+        Paste => "Paste",
+        // Punctuation, by physical position on a US layout. The logical-only
+        // variants fall back to the key that usually produces them.
+        Comma => "Comma",
+        Period => "Period",
+        Slash | Questionmark => "Slash",
+        Backslash | Pipe => "Backslash",
+        Semicolon | Colon => "Semicolon",
+        Quote => "Quote",
+        Backtick => "Backquote",
+        Minus => "Minus",
+        Equals | Plus => "Equal",
+        OpenBracket | OpenCurlyBracket => "BracketLeft",
+        CloseBracket | CloseCurlyBracket => "BracketRight",
+        Exclamationmark => "Digit1",
+        Num0 => "Digit0",
+        Num1 => "Digit1",
+        Num2 => "Digit2",
+        Num3 => "Digit3",
+        Num4 => "Digit4",
+        Num5 => "Digit5",
+        Num6 => "Digit6",
+        Num7 => "Digit7",
+        Num8 => "Digit8",
+        Num9 => "Digit9",
+        A => "KeyA",
+        B => "KeyB",
+        C => "KeyC",
+        D => "KeyD",
+        E => "KeyE",
+        F => "KeyF",
+        G => "KeyG",
+        H => "KeyH",
+        I => "KeyI",
+        J => "KeyJ",
+        K => "KeyK",
+        L => "KeyL",
+        M => "KeyM",
+        N => "KeyN",
+        O => "KeyO",
+        P => "KeyP",
+        Q => "KeyQ",
+        R => "KeyR",
+        S => "KeyS",
+        T => "KeyT",
+        U => "KeyU",
+        V => "KeyV",
+        W => "KeyW",
+        X => "KeyX",
+        Y => "KeyY",
+        Z => "KeyZ",
+        F1 => "F1",
+        F2 => "F2",
+        F3 => "F3",
+        F4 => "F4",
+        F5 => "F5",
+        F6 => "F6",
+        F7 => "F7",
+        F8 => "F8",
+        F9 => "F9",
+        F10 => "F10",
+        F11 => "F11",
+        F12 => "F12",
+        F13 => "F13",
+        F14 => "F14",
+        F15 => "F15",
+        F16 => "F16",
+        F17 => "F17",
+        F18 => "F18",
+        F19 => "F19",
+        F20 => "F20",
+        F21 => "F21",
+        F22 => "F22",
+        F23 => "F23",
+        F24 => "F24",
+        BrowserBack => "BrowserBack",
+        BrowserForward => "BrowserForward",
+        BrowserRefresh => "BrowserRefresh",
+        BrowserSearch => "BrowserSearch",
+        BrowserHome => "BrowserHome",
+        BrowserFavorites => "BrowserFavorites",
+        BrowserStop => "BrowserStop",
+        MediaPlayPause => "MediaPlayPause",
+        MediaTrackNext => "MediaTrackNext",
+        MediaTrackPrevious => "MediaTrackPrevious",
+        MediaStop => "MediaStop",
+        AudioVolumeMute => "AudioVolumeMute",
+        AudioVolumeDown => "AudioVolumeDown",
+        AudioVolumeUp => "AudioVolumeUp",
+        LaunchMail => "LaunchMail",
+        LaunchApp1 => "LaunchApp1",
+        LaunchApp2 => "LaunchApp2",
+        ShiftLeft => "ShiftLeft",
+        ShiftRight => "ShiftRight",
+        ControlLeft => "ControlLeft",
+        ControlRight => "ControlRight",
+        AltLeft => "AltLeft",
+        AltRight => "AltRight",
+        SuperLeft => "MetaLeft",
+        SuperRight => "MetaRight",
+        IntlBackslash => "IntlBackslash",
+        CapsLock => "CapsLock",
+        NumLock => "NumLock",
+        ScrollLock => "ScrollLock",
+        PrintScreen => "PrintScreen",
+        Pause => "Pause",
+        Menu => "ContextMenu",
+        Fn => "Fn",
+        Eject => "Eject",
+        Help => "Help",
+        Power => "Power",
+        Sleep => "Sleep",
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_mapped_code_is_known_to_the_host_table() {
+        // The host translates with the Chromium table; make sure our names exist there.
+        for k in Key::ALL {
+            if let Some(code) = w3c_code(*k) {
+                if matches!(code, "Fn" | "Copy" | "Cut" | "Paste") {
+                    continue;
+                }
+                assert!(
+                    slipstream_platform::keymap::lookup(code).is_some(),
+                    "{code} is not in the key table"
+                );
+            }
+        }
+    }
+}

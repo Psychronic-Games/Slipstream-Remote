@@ -1,0 +1,708 @@
+//! The desktop GUI.
+
+mod autostart;
+mod home;
+mod keys;
+mod remote;
+mod settings;
+pub mod theme;
+mod tray;
+mod video;
+
+use std::{
+    sync::{Arc, Mutex, mpsc},
+    time::{Duration, Instant},
+};
+
+use anyhow::Result;
+use eframe::{
+    egui::{self, Align2, Color32, Pos2, Rect, Ui, UiBuilder, pos2, vec2},
+    egui_wgpu,
+};
+use slipstream_core::{config::Store, directory::DeviceId};
+use slipstream_session::{Client, ClientEvent, ClientOptions, DirStatus, ViewerEvent, ViewerSession};
+use theme::{Corner, pal};
+use tokio::sync::{mpsc as tmpsc, oneshot};
+
+#[derive(Debug, Default)]
+pub struct GuiOptions {
+    pub test_pattern: bool,
+    /// (ID, password) to connect to at startup.
+    pub connect: Option<(String, String)>,
+    /// Save a PNG of the window after N seconds, then exit.
+    pub screenshot: Option<(std::path::PathBuf, f64)>,
+    pub page: Option<String>,
+    /// Start hidden in the tray.
+    pub minimized: bool,
+}
+
+pub fn run(opts: GuiOptions) -> Result<()> {
+    let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().enable_all().build()?);
+    let store = Store::open_default()?;
+    let (client, events) =
+        rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: true }))?;
+
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("Slipstream Remote")
+            .with_app_id("slipstream-remote")
+            .with_inner_size([1180.0, 760.0])
+            .with_min_inner_size([820.0, 560.0])
+            .with_icon(theme::icon(128))
+            .with_drag_and_drop(true),
+        renderer: eframe::Renderer::Wgpu,
+        ..Default::default()
+    };
+    let rt2 = rt.clone();
+    let client2 = client.clone();
+    eframe::run_native(
+        "Slipstream Remote",
+        options,
+        Box::new(move |cc| {
+            theme::install(&cc.egui_ctx);
+            let render_state = cc.wgpu_render_state.clone().ok_or("the wgpu renderer is required")?;
+            video::install(&render_state);
+            let mut app = App::new(cc.egui_ctx.clone(), rt2, client2, events, render_state);
+            app.page = match opts.page.as_deref() {
+                Some("links") => Page::Links,
+                Some("config") => Page::Settings,
+                Some("about") => Page::About,
+                _ => Page::Home,
+            };
+            if let Some((id, pw)) = opts.connect {
+                app.connect_id = id;
+                app.connect_pw = pw;
+                app.start_connect(&cc.egui_ctx);
+            }
+            app.screenshot = opts.screenshot;
+            app.start_hidden = opts.minimized && app.tray.is_some();
+            Ok(Box::new(app))
+        }),
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    rt.block_on(client.shutdown());
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Page {
+    Home,
+    Links,
+    Settings,
+    About,
+    Remote(u64),
+}
+
+pub struct Toast {
+    text: String,
+    color: Color32,
+    until: Instant,
+}
+
+type ConnectResult = Result<(ViewerSession, tmpsc::UnboundedReceiver<ViewerEvent>), String>;
+
+pub struct Attempt {
+    pub id: DeviceId,
+    pub password: String,
+    pub progress: Arc<Mutex<String>>,
+    pub rx: oneshot::Receiver<ConnectResult>,
+    pub task: tokio::task::JoinHandle<()>,
+}
+
+pub struct IncomingSession {
+    pub id: u64,
+    pub peer: String,
+    pub chat: Vec<(bool, String)>,
+    pub chat_input: String,
+    pub show_chat: bool,
+    pub started: Instant,
+}
+
+pub struct App {
+    pub rt: Arc<tokio::runtime::Runtime>,
+    pub client: Client,
+    render_state: egui_wgpu::RenderState,
+    events: mpsc::Receiver<ClientEvent>,
+    t0: Instant,
+    pub page: Page,
+    pub dir_status: DirStatus,
+    pub password: String,
+    pub connect_id: String,
+    pub connect_pw: String,
+    pub attempt: Option<Attempt>,
+    pub tabs: Vec<remote::RemoteTab>,
+    next_tab: u64,
+    pub incoming: Vec<IncomingSession>,
+    toasts: Vec<Toast>,
+    pub settings_form: settings::SettingsForm,
+    pub motd: Option<String>,
+    /// Keyboard events captured for the focused remote tab this frame.
+    captured_keys: Vec<remote::CapturedKey>,
+    window_focused: bool,
+    screenshot: Option<(std::path::PathBuf, f64)>,
+    pub tray: Option<tray::Tray>,
+    tray_status: String,
+    quitting: bool,
+    start_hidden: bool,
+}
+
+impl App {
+    fn new(
+        ctx: egui::Context,
+        rt: Arc<tokio::runtime::Runtime>,
+        client: Client,
+        mut events: tmpsc::UnboundedReceiver<ClientEvent>,
+        render_state: egui_wgpu::RenderState,
+    ) -> Self {
+        // Forward client events to the UI thread and wake it up.
+        let (tx, rx) = mpsc::channel();
+        let wake = ctx.clone();
+        rt.spawn(async move {
+            while let Some(ev) = events.recv().await {
+                if tx.send(ev).is_err() {
+                    break;
+                }
+                wake.request_repaint();
+            }
+        });
+        let settings_form = settings::SettingsForm::from(&client.settings());
+        let tray = tray::Tray::new(&rt, &ctx);
+        Self {
+            password: client.one_time_password(),
+            dir_status: client.dir_status(),
+            rt,
+            client,
+            render_state,
+            events: rx,
+            t0: Instant::now(),
+            page: Page::Home,
+            connect_id: String::new(),
+            connect_pw: String::new(),
+            attempt: None,
+            tabs: Vec::new(),
+            next_tab: 1,
+            incoming: Vec::new(),
+            toasts: Vec::new(),
+            settings_form,
+            motd: None,
+            captured_keys: Vec::new(),
+            window_focused: true,
+            screenshot: None,
+            tray,
+            tray_status: String::new(),
+            quitting: false,
+            start_hidden: false,
+        }
+    }
+
+    pub fn time(&self) -> f64 {
+        self.t0.elapsed().as_secs_f64()
+    }
+
+    pub fn toast(&mut self, text: impl Into<String>, color: Color32) {
+        self.toasts.push(Toast { text: text.into(), color, until: Instant::now() + Duration::from_secs(5) });
+    }
+
+    fn handle_events(&mut self) {
+        while let Ok(ev) = self.events.try_recv() {
+            match ev {
+                ClientEvent::Directory(s) => self.dir_status = s,
+                ClientEvent::Password(p) => self.password = p,
+                ClientEvent::Motd(m) => self.motd = Some(m),
+                ClientEvent::HostSessionStarted { session, peer } => {
+                    self.toast(format!("{peer} is now connected to this device"), pal::RED);
+                    self.incoming.push(IncomingSession {
+                        id: session,
+                        peer,
+                        chat: Vec::new(),
+                        chat_input: String::new(),
+                        show_chat: false,
+                        started: Instant::now(),
+                    });
+                }
+                ClientEvent::HostSessionEnded { session, reason } => {
+                    if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
+                        let peer = s.peer.clone();
+                        self.toast(format!("{peer} disconnected — {reason}"), pal::LAVENDER);
+                    }
+                    self.incoming.retain(|s| s.id != session);
+                }
+                ClientEvent::HostChat { session, text } => {
+                    if let Some(s) = self.incoming.iter_mut().find(|s| s.id == session) {
+                        s.chat.push((false, text));
+                        s.show_chat = true;
+                    }
+                }
+                ClientEvent::FileReceived { path, .. } => {
+                    self.toast(format!("Received {}", path.display()), pal::GREEN);
+                }
+                ClientEvent::Notice(n) => self.toast(n, pal::GOLD),
+            }
+        }
+    }
+
+    /// Starts connecting to `id` in the background.
+    pub fn start_connect(&mut self, ctx: &egui::Context) {
+        let id: DeviceId = match self.connect_id.parse() {
+            Ok(id) => id,
+            Err(e) => {
+                self.toast(format!("{e}"), pal::RED);
+                return;
+            }
+        };
+        if self.connect_pw.trim().is_empty() {
+            self.toast("Enter the partner's password", pal::RED);
+            return;
+        }
+        let password = self.connect_pw.clone();
+        let progress = Arc::new(Mutex::new(format!("Locating {id}…")));
+        let (tx, rx) = oneshot::channel();
+        let client = self.client.clone();
+        let p = progress.clone();
+        let wake = ctx.clone();
+        let pw = password.clone();
+        let task = self.rt.spawn(async move {
+            let w2 = wake.clone();
+            let result = client
+                .connect(id, &pw, move |msg| {
+                    *p.lock().unwrap() = msg;
+                    w2.request_repaint();
+                })
+                .await
+                .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(result);
+            wake.request_repaint();
+        });
+        self.attempt = Some(Attempt { id, password, progress, rx, task });
+    }
+
+    fn poll_attempt(&mut self, ctx: &egui::Context) {
+        let Some(attempt) = &mut self.attempt else { return };
+        let result = match attempt.rx.try_recv() {
+            Ok(r) => r,
+            Err(oneshot::error::TryRecvError::Empty) => return,
+            Err(oneshot::error::TryRecvError::Closed) => Err("connection attempt failed".into()),
+        };
+        let attempt = self.attempt.take().expect("checked");
+        match result {
+            Ok((session, events)) => {
+                let id = self.next_tab;
+                self.next_tab += 1;
+                let tab = remote::RemoteTab::new(id, session, events, attempt.password, ctx);
+                self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
+                self.tabs.push(tab);
+                self.page = Page::Remote(id);
+                self.connect_pw.clear();
+                self.settings_form.refresh_recent(&self.client.settings());
+            }
+            Err(e) => self.toast(format!("Link failed: {e}"), pal::RED),
+        }
+    }
+
+    pub fn cancel_attempt(&mut self) {
+        if let Some(a) = self.attempt.take() {
+            a.task.abort();
+        }
+    }
+
+    pub fn close_tab(&mut self, id: u64) {
+        self.tabs.retain(|t| t.id != id);
+        let alive: Vec<u64> = self.tabs.iter().map(|t| t.id).collect();
+        video::retain_streams(&self.render_state, |s| alive.contains(&s));
+        if self.page == Page::Remote(id) {
+            self.page = if self.tabs.is_empty() { Page::Home } else { Page::Links };
+        }
+    }
+
+    fn focused_tab_mut(&mut self) -> Option<&mut remote::RemoteTab> {
+        let Page::Remote(id) = self.page else { return None };
+        self.tabs.iter_mut().find(|t| t.id == id)
+    }
+
+    // ── Frame ──────────────────────────────────────────────────────────
+
+    fn draw_frame(&mut self, ui: &mut Ui) -> Rect {
+        let full = ui.max_rect();
+        let t = self.time();
+        let painter = ui.painter().clone();
+        theme::backdrop(&painter, full, t);
+
+        let m = 10.0;
+        let (l, top, r, b) = (full.left() + m, full.top() + m, full.right() - m, full.bottom() - m);
+        let arm_w = 150.0;
+        let bar_h = 26.0;
+        let gap = 6.0;
+        let elbow_w = ((r - l) * 0.34).max(arm_w + 120.0);
+        let top_elbow = Rect::from_min_max(pos2(l, top), pos2(l + elbow_w, top + 92.0));
+        let bot_elbow = Rect::from_min_max(pos2(l, b - 70.0), pos2(l + elbow_w, b));
+        theme::elbow(&painter, top_elbow, arm_w, bar_h, Corner::TopLeft, pal::ORANGE);
+        theme::elbow(&painter, bot_elbow, arm_w, bar_h, Corner::BottomLeft, pal::LAVENDER);
+
+        // Elbow labels.
+        painter.text(
+            pos2(l + arm_w - 10.0, top + 86.0),
+            Align2::RIGHT_BOTTOM,
+            theme::readout(7, t, 6),
+            theme::mono(13.0),
+            Color32::BLACK,
+        );
+        painter.text(
+            pos2(l + arm_w - 10.0, b - 60.0),
+            Align2::RIGHT_TOP,
+            format!("v{}", slipstream_core::APP_VERSION),
+            theme::mono(13.0),
+            Color32::BLACK,
+        );
+
+        // Title, right-aligned on the top bar.
+        let title = "SLIPSTREAM REMOTE";
+        let title_galley = painter.layout_no_wrap(title.into(), theme::display_bold(38.0), pal::ORANGE);
+        let title_w = title_galley.size().x;
+        let title_pos = pos2(r - title_w, top + bar_h / 2.0 - title_galley.size().y / 2.0);
+        painter.galley(title_pos, title_galley, pal::ORANGE);
+
+        // Top bar segments between the elbow and the title.
+        let seg_left = top_elbow.right() + gap;
+        let seg_right = title_pos.x - 14.0;
+        let segs = [(0.45, pal::PEACH), (0.18, pal::VIOLET), (0.37, pal::TAN)];
+        bar_segments(&painter, seg_left, seg_right, top, bar_h, gap, &segs, t, true);
+
+        // Bottom bar: segments and live status.
+        let (status_text, status_color) = self.status_line();
+        let status_galley = painter.layout_no_wrap(status_text, theme::display(18.0), status_color);
+        let sw = status_galley.size().x;
+        let bseg_left = bot_elbow.right() + gap;
+        let status_x = r - sw;
+        bar_segments(
+            &painter,
+            bseg_left,
+            status_x - 14.0,
+            b - bar_h,
+            bar_h,
+            gap,
+            &[(0.25, pal::BLUE), (0.5, pal::PERIWINKLE), (0.25, pal::GOLD)],
+            t,
+            false,
+        );
+        painter.galley(pos2(status_x, b - bar_h / 2.0 - status_galley.size().y / 2.0), status_galley, status_color);
+
+        // Sidebar navigation between the elbows.
+        let nav_top = top_elbow.bottom() + gap;
+        let nav_bottom = bot_elbow.top() - gap;
+        let items: [(&str, Page, Color32); 4] = [
+            ("Bridge", Page::Home, pal::PEACH),
+            ("Links", Page::Links, pal::BLUE),
+            ("Config", Page::Settings, pal::VIOLET),
+            ("About", Page::About, pal::GOLD),
+        ];
+        let item_h = 54.0;
+        let mut y = nav_top;
+        for (i, (label, page, color)) in items.into_iter().enumerate() {
+            if y + item_h > nav_bottom {
+                break;
+            }
+            let rect = Rect::from_min_size(pos2(l, y), vec2(arm_w, item_h));
+            let active = self.page == page || (page == Page::Links && matches!(self.page, Page::Remote(_)));
+            let mut text = label.to_string();
+            if page == Page::Links && !self.tabs.is_empty() {
+                text = format!("{label} · {}", self.tabs.len());
+            }
+            if theme::block_button(ui, rect, &text, &format!("{:02}-{}", i + 1, 40 + i * 13), color, active).clicked() {
+                self.page = if page == Page::Links && self.tabs.len() == 1 { Page::Remote(self.tabs[0].id) } else { page };
+            }
+            y += item_h + gap;
+        }
+        // Filler block with ticking readouts.
+        if nav_bottom - y > 20.0 {
+            let filler = Rect::from_min_max(pos2(l, y), pos2(l + arm_w, nav_bottom));
+            painter.rect_filled(filler, 2.0, pal::ORANGE.gamma_multiply(0.85));
+            let mut ry = filler.top() + 8.0;
+            let mut i = 0;
+            while ry + 16.0 < filler.bottom() {
+                painter.text(
+                    pos2(filler.right() - 10.0, ry),
+                    Align2::RIGHT_TOP,
+                    theme::readout(100 + i, t, 7),
+                    theme::mono(12.0),
+                    Color32::BLACK.gamma_multiply(0.7),
+                );
+                ry += 18.0;
+                i += 1;
+            }
+        }
+
+        // Content area: inside the frame.
+        Rect::from_min_max(pos2(l + arm_w + 22.0, top + bar_h + 22.0), pos2(r, b - bar_h - 16.0))
+    }
+
+    fn status_line(&self) -> (String, Color32) {
+        let incoming = if self.incoming.is_empty() {
+            String::new()
+        } else {
+            format!("  ·  {} INBOUND", self.incoming.len())
+        };
+        match &self.dir_status {
+            DirStatus::Online { id } => (format!("STATION ONLINE  ·  ID {id}{incoming}"), pal::GREEN),
+            DirStatus::Connecting => ("CONTACTING RELAY NETWORK…".into(), pal::GOLD),
+            DirStatus::NotConfigured => ("NO SERVER CONFIGURED".into(), pal::RED),
+            DirStatus::Error(_) => (format!("SERVER UNREACHABLE{incoming}"), pal::RED),
+        }
+    }
+
+    fn draw_toasts(&mut self, ctx: &egui::Context) {
+        self.toasts.retain(|t| t.until > Instant::now());
+        if self.toasts.is_empty() {
+            return;
+        }
+        let screen = ctx.content_rect();
+        let mut y = screen.bottom() - 60.0;
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("toasts")));
+        for toast in self.toasts.iter().rev().take(4) {
+            let galley = painter.layout(toast.text.clone(), theme::body(16.0), pal::TEXT, 520.0);
+            let size = galley.size() + vec2(48.0, 18.0);
+            let rect = Rect::from_min_size(pos2(screen.right() - size.x - 24.0, y - size.y), size);
+            theme::glow(&painter, rect, 8.0, toast.color, 1.0);
+            painter.rect_filled(rect, 8.0, pal::PANEL);
+            painter.rect_filled(Rect::from_min_size(rect.min, vec2(10.0, rect.height())), egui::CornerRadius { nw: 8, sw: 8, ..Default::default() }, toast.color);
+            painter.galley(rect.min + vec2(26.0, 9.0), galley, pal::TEXT);
+            y -= size.y + 10.0;
+        }
+        ctx.request_repaint_after(Duration::from_millis(500));
+    }
+
+    fn draw_attempt_overlay(&mut self, ctx: &egui::Context) {
+        let Some(a) = &self.attempt else { return };
+        let progress = a.progress.lock().unwrap().clone();
+        let id = a.id;
+        let t = self.time();
+        let mut cancel = false;
+        egui::Modal::new(egui::Id::unique("connecting")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            theme::header(ui, &format!("Establishing link · {id}"), pal::BLUE);
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(40.0, 40.0), egui::Sense::hover());
+                theme::spinner(ui.painter(), rect.center(), 14.0, pal::CYAN, t);
+                ui.label(egui::RichText::new(progress).font(theme::body(18.0)));
+            });
+            ui.add_space(12.0);
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 36.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if theme::pill(ui, "Abort", pal::RED).clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if cancel {
+            self.cancel_attempt();
+        }
+        ctx.request_repaint_after(Duration::from_millis(33));
+    }
+}
+
+impl App {
+    fn maybe_screenshot(&mut self, ctx: &egui::Context) {
+        let Some((path, delay)) = &self.screenshot else { return };
+        if self.time() < *delay {
+            ctx.request_repaint_after(Duration::from_millis(100));
+            return;
+        }
+        let path = path.clone();
+        self.screenshot = None;
+        let exit = ctx.clone();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |img| {
+            if let Err(e) = save_png(&path, &img) {
+                eprintln!("screenshot failed: {e}");
+            } else {
+                eprintln!("screenshot saved to {}", path.display());
+            }
+            exit.send_viewport_cmd(egui::ViewportCommand::Close);
+        })));
+    }
+}
+
+pub fn export_icon(path: &std::path::Path, size: u32) -> Result<()> {
+    let icon = theme::icon(size);
+    let img = egui::ColorImage::from_rgba_unmultiplied([size as usize, size as usize], &icon.rgba);
+    save_png(path, &img)
+}
+
+fn save_png(path: &std::path::Path, img: &egui::ColorImage) -> Result<()> {
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut enc = png::Encoder::new(file, img.size[0] as u32, img.size[1] as u32);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut w = enc.write_header()?;
+    let bytes: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
+    w.write_image_data(&bytes)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bar_segments(
+    painter: &egui::Painter,
+    left: f32,
+    right: f32,
+    top: f32,
+    h: f32,
+    gap: f32,
+    segs: &[(f32, Color32)],
+    t: f64,
+    pulse: bool,
+) {
+    let width = right - left - gap * (segs.len() as f32 - 1.0);
+    if width < 40.0 {
+        return;
+    }
+    let mut x = left;
+    for (i, (frac, color)) in segs.iter().enumerate() {
+        let w = width * frac;
+        let rect = Rect::from_min_size(pos2(x, top), vec2(w, h));
+        let last = i == segs.len() - 1;
+        let cr = if last { egui::CornerRadius { ne: (h / 2.0) as u8, se: (h / 2.0) as u8, ..Default::default() } } else { egui::CornerRadius::ZERO };
+        painter.rect_filled(rect, cr, *color);
+        x += w + gap;
+    }
+    if pulse {
+        // A bright packet sliding along the bar.
+        let span = right - left;
+        let px = left + ((t * 0.18).fract() as f32) * span;
+        let packet = Rect::from_center_size(Pos2::new(px, top + h / 2.0), vec2(28.0, h));
+        painter.rect_filled(packet.intersect(Rect::from_min_max(pos2(left, top), pos2(right, top + h))), 0.0, Color32::WHITE.gamma_multiply(0.25));
+    }
+}
+
+impl App {
+    fn update_tray(&mut self) {
+        let Some(tray) = &self.tray else { return };
+        let status = match (&self.dir_status, self.incoming.len()) {
+            (_, n) if n > 0 => format!("{n} remote session(s) active"),
+            (DirStatus::Online { id }, _) => format!("Online · ID {id}"),
+            (DirStatus::Connecting, _) => "Connecting…".into(),
+            (DirStatus::NotConfigured, _) => "No server configured".into(),
+            (DirStatus::Error(_), _) => "Server unreachable".into(),
+        };
+        if status != self.tray_status {
+            tray.set_status(&self.rt, status.clone());
+            self.tray_status = status;
+        }
+    }
+}
+
+impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Runs even while the window is hidden in the tray.
+        self.handle_events();
+        self.update_tray();
+        if self.start_hidden {
+            self.start_hidden = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        while let Some(cmd) = self.tray.as_ref().and_then(|t| t.poll()) {
+            match cmd {
+                tray::TrayCmd::Show => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                tray::TrayCmd::Quit => {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.quitting
+            && self.tray.is_some()
+            && self.client.settings().app.close_to_tray
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        // Keep tray/status fresh while hidden.
+        ctx.request_repaint_after(Duration::from_secs(1));
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let focused_now = raw.focused;
+        let lost_focus = self.window_focused && !focused_now;
+        self.window_focused = focused_now;
+        let Some(tab) = self.focused_tab_mut() else { return };
+        if lost_focus {
+            tab.release_keyboard();
+            return;
+        }
+        if !tab.keyboard_captured() {
+            return;
+        }
+        // Steal keyboard events so egui doesn't act on them (Tab focus
+        // cycling, shortcuts…) and forward them to the remote machine.
+        let mut keep = Vec::with_capacity(raw.events.len());
+        for ev in raw.events.drain(..) {
+            match ev {
+                egui::Event::Key { physical_key, key, pressed, repeat, .. } => {
+                    let k = physical_key.unwrap_or(key);
+                    self.captured_keys.push(remote::CapturedKey::Key { key: k, pressed, repeat });
+                }
+                egui::Event::Copy => self.captured_keys.push(remote::CapturedKey::Shortcut("KeyC", None)),
+                egui::Event::Cut => self.captured_keys.push(remote::CapturedKey::Shortcut("KeyX", None)),
+                egui::Event::Paste(text) => self.captured_keys.push(remote::CapturedKey::Shortcut("KeyV", Some(text))),
+                egui::Event::Text(_) | egui::Event::Ime(_) => {}
+                other => keep.push(other),
+            }
+        }
+        raw.events = keep;
+    }
+
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.poll_attempt(&ctx);
+        for tab in &mut self.tabs {
+            tab.poll(&ctx);
+        }
+
+        let keys = std::mem::take(&mut self.captured_keys);
+        if let Page::Remote(id) = self.page
+            && self.tabs.iter().any(|t| t.id == id)
+        {
+            let full = ui.max_rect();
+            let mut action = remote::TabAction::None;
+            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
+                tab.forward_keys(keys);
+                action = tab.ui(ui, full, self.t0.elapsed().as_secs_f64(), &self.rt);
+            }
+            match action {
+                remote::TabAction::None => {}
+                remote::TabAction::Bridge => self.page = Page::Home,
+                remote::TabAction::Close => self.close_tab(id),
+                remote::TabAction::Reconnect(peer, pw) => {
+                    self.close_tab(id);
+                    self.connect_id = peer.to_string();
+                    self.connect_pw = pw;
+                    self.start_connect(&ctx);
+                }
+            }
+        } else {
+            if matches!(self.page, Page::Remote(_)) {
+                self.page = Page::Home;
+            }
+            let content = self.draw_frame(ui);
+            let mut child = ui.new_child(UiBuilder::new().max_rect(content));
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| match self.page {
+                Page::Home => home::ui(self, ui),
+                Page::Links => home::links_ui(self, ui),
+                Page::Settings => settings::ui(self, ui),
+                Page::About => settings::about_ui(self, ui),
+                Page::Remote(_) => {}
+            });
+            // Gentle animation without burning CPU when idle in the background.
+            let fps = if self.window_focused { 30 } else { 2 };
+            ctx.request_repaint_after(Duration::from_millis(1000 / fps));
+        }
+
+        home::incoming_windows(self, &ctx);
+        self.draw_attempt_overlay(&ctx);
+        self.draw_toasts(&ctx);
+        self.maybe_screenshot(&ctx);
+    }
+}

@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang libxkbcommon-dev \
+            libwayland-dev libxcb1-dev libxrandr-dev libxdo-dev libxtst-dev libdbus-1-dev \
+            libegl1-mesa-dev libgbm-dev
+      - run: cargo build --workspace --all-targets
+      - run: cargo test --workspace
+      - name: Release build
+        run: cargo build --release -p slipstream -p slipstream-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slipstream-${{ matrix.os }}
+          path: |
+            target/release/slipstream
+            target/release/slipstream.exe
+            target/release/slipstream-server
+            target/release/slipstream-server.exe

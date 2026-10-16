@@ -1,0 +1,489 @@
+//! Slipstream sessions: the long-running [`Client`] that keeps this device
+//! reachable by ID, hosts incoming sessions, and opens outgoing ones.
+
+mod files;
+mod host;
+mod video;
+pub mod viewer;
+
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+
+use anyhow::{Context, Result, bail};
+use iroh::{Endpoint, EndpointId, Watcher};
+pub use slipstream_core;
+use slipstream_core::{
+    auth::{AuthThrottle, generate_password},
+    config::{Settings, Store},
+    directory::{DeviceId, DeviceInfo, DirectoryClient, Lookup},
+    net,
+    proto::ALPN_REMOTE,
+};
+pub use slipstream_codec::YuvFrame;
+use slipstream_platform::Backend;
+use tokio::sync::{mpsc, watch};
+use tracing::{debug, info, warn};
+pub use viewer::{FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
+
+/// Connection state to the directory server.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DirStatus {
+    NotConfigured,
+    Connecting,
+    Online { id: DeviceId },
+    Error(String),
+}
+
+/// Things the UI should know about, in order.
+#[derive(Debug, Clone)]
+pub enum ClientEvent {
+    Directory(DirStatus),
+    Password(String),
+    /// Server message of the day.
+    Motd(String),
+    HostSessionStarted { session: u64, peer: String },
+    HostSessionEnded { session: u64, reason: String },
+    HostChat { session: u64, text: String },
+    FileReceived { session: u64, path: std::path::PathBuf },
+    Notice(String),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ClientOptions {
+    /// Stream a synthetic test pattern instead of the real screen.
+    pub test_pattern: bool,
+    /// Accept incoming remote-control sessions.
+    pub accept_sessions: bool,
+}
+
+pub(crate) enum HostSessionCmd {
+    Chat(String),
+    Disconnect,
+}
+
+pub(crate) struct Inner {
+    pub endpoint: Endpoint,
+    pub store: Store,
+    pub settings: Mutex<Settings>,
+    pub opts: ClientOptions,
+    events: mpsc::UnboundedSender<ClientEvent>,
+    dir_status: watch::Sender<DirStatus>,
+    dir_client: watch::Sender<Option<DirectoryClient>>,
+    server_changed: tokio::sync::Notify,
+    pub password: Mutex<String>,
+    pub throttle: Mutex<AuthThrottle>,
+    pub backend: tokio::sync::Mutex<Option<Box<dyn Backend>>>,
+    pub host_sessions: Mutex<HashMap<u64, mpsc::UnboundedSender<HostSessionCmd>>>,
+    next_session: AtomicU64,
+}
+
+impl Inner {
+    pub fn emit(&self, e: ClientEvent) {
+        let _ = self.events.send(e);
+    }
+
+    pub fn one_time_password(&self) -> String {
+        self.password.lock().unwrap().clone()
+    }
+
+    pub fn next_session_id(&self) -> u64 {
+        self.next_session.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    pub fn save_settings(&self) {
+        let s = self.settings.lock().unwrap().clone();
+        if let Err(e) = self.store.save_settings(&s) {
+            warn!("saving settings failed: {e:#}");
+        }
+    }
+}
+
+/// The long-lived Slipstream client. Cheap to clone.
+#[derive(Clone)]
+pub struct Client {
+    inner: Arc<Inner>,
+}
+
+impl Client {
+    /// Loads settings and identity from `store`, binds the network endpoint
+    /// and starts background tasks. Must be called inside a tokio runtime.
+    pub async fn start(store: Store, opts: ClientOptions) -> Result<(Self, mpsc::UnboundedReceiver<ClientEvent>)> {
+        let settings = store.load_settings();
+        let secret = store.identity()?;
+        let endpoint = net::bind_client(secret, &settings.server, opts.accept_sessions).await?;
+        info!(endpoint = %endpoint.id(), "endpoint bound");
+        let (events, rx) = mpsc::unbounded_channel();
+        let password = generate_password(settings.host.one_time_password_len.clamp(4, 32));
+        let inner = Arc::new(Inner {
+            endpoint,
+            store,
+            settings: Mutex::new(settings),
+            opts,
+            events,
+            dir_status: watch::Sender::new(DirStatus::Connecting),
+            dir_client: watch::Sender::new(None),
+            server_changed: tokio::sync::Notify::new(),
+            password: Mutex::new(password.clone()),
+            throttle: Mutex::new(AuthThrottle::new()),
+            backend: tokio::sync::Mutex::new(None),
+            host_sessions: Mutex::new(HashMap::new()),
+            next_session: AtomicU64::new(0),
+        });
+        inner.emit(ClientEvent::Password(password));
+        tokio::spawn(directory_task(inner.clone()));
+        if inner.opts.accept_sessions {
+            tokio::spawn(accept_task(inner.clone()));
+        }
+        Ok((Self { inner }, rx))
+    }
+
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.inner.endpoint.id()
+    }
+
+    pub fn settings(&self) -> Settings {
+        self.inner.settings.lock().unwrap().clone()
+    }
+
+    /// Changes settings and saves them. Reconnects to the directory if the
+    /// server changed.
+    pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) {
+        let server_changed = {
+            let mut s = self.inner.settings.lock().unwrap();
+            let before = s.server.directory.clone();
+            f(&mut s);
+            before != s.server.directory
+        };
+        self.inner.save_settings();
+        if server_changed {
+            self.inner.server_changed.notify_waiters();
+        }
+    }
+
+    pub fn dir_status(&self) -> DirStatus {
+        self.inner.dir_status.borrow().clone()
+    }
+
+    pub fn one_time_password(&self) -> String {
+        self.inner.one_time_password()
+    }
+
+    pub fn regenerate_password(&self) -> String {
+        let len = self.settings().host.one_time_password_len.clamp(4, 32);
+        let pw = generate_password(len);
+        *self.inner.password.lock().unwrap() = pw.clone();
+        self.inner.emit(ClientEvent::Password(pw.clone()));
+        pw
+    }
+
+    pub fn host_chat(&self, session: u64, text: String) {
+        if let Some(tx) = self.inner.host_sessions.lock().unwrap().get(&session) {
+            let _ = tx.send(HostSessionCmd::Chat(text));
+        }
+    }
+
+    pub fn disconnect_host_session(&self, session: u64) {
+        if let Some(tx) = self.inner.host_sessions.lock().unwrap().get(&session) {
+            let _ = tx.send(HostSessionCmd::Disconnect);
+        }
+    }
+
+    pub fn disconnect_all_host_sessions(&self) {
+        for tx in self.inner.host_sessions.lock().unwrap().values() {
+            let _ = tx.send(HostSessionCmd::Disconnect);
+        }
+    }
+
+    async fn directory(&self) -> Result<DirectoryClient> {
+        let mut rx = self.inner.dir_client.subscribe();
+        let wait = rx.wait_for(|c| c.is_some());
+        match tokio::time::timeout(Duration::from_secs(10), wait).await {
+            Ok(Ok(c)) => Ok(c.clone().expect("checked")),
+            _ => match self.dir_status() {
+                DirStatus::NotConfigured => bail!("no server configured — set one in Settings"),
+                DirStatus::Error(e) => bail!("server unreachable: {e}"),
+                _ => bail!("server unreachable"),
+            },
+        }
+    }
+
+    /// Looks up a device by ID without connecting.
+    pub async fn lookup(&self, id: DeviceId) -> Result<Lookup> {
+        self.directory().await?.lookup(id).await
+    }
+
+    /// Opens a remote-control session. `on_progress` receives status lines
+    /// ("Locating…", "Waiting for approval…") while connecting.
+    pub async fn connect(
+        &self,
+        id: DeviceId,
+        password: &str,
+        on_progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
+        on_progress(format!("Locating {id}…"));
+        let addr = match self.lookup(id).await? {
+            Lookup::Online { addr, .. } => addr,
+            Lookup::Offline { info } => bail!("{} ({id}) is offline", info.name),
+            Lookup::NotFound => bail!("no device has the ID {id}"),
+        };
+        if addr.id == self.endpoint_id() {
+            bail!("that's this device's own ID");
+        }
+        let (name, viewer_settings) = {
+            let s = self.inner.settings.lock().unwrap();
+            (s.device_name.clone(), s.viewer.clone())
+        };
+        let (session, events) = viewer::connect(
+            &self.inner.endpoint,
+            addr,
+            id,
+            password,
+            name,
+            viewer_settings,
+            Box::new(on_progress),
+        )
+        .await?;
+        let info = session.info().clone();
+        self.update_settings(|s| s.remember_connection(id, &info.host_name, &info.os));
+        Ok((session, events))
+    }
+
+    /// This device's full network address (key + relay + IPs), for
+    /// serverless direct connections.
+    pub fn endpoint_addr(&self) -> iroh::EndpointAddr {
+        self.inner.endpoint.addr()
+    }
+
+    /// Connects straight to a known endpoint address, bypassing the
+    /// directory (LAN use, or when no server is available).
+    pub async fn connect_direct(
+        &self,
+        addr: iroh::EndpointAddr,
+        password: &str,
+        on_progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
+        let (name, viewer_settings) = {
+            let s = self.inner.settings.lock().unwrap();
+            (s.device_name.clone(), s.viewer.clone())
+        };
+        viewer::connect(&self.inner.endpoint, addr, DeviceId(0), password, name, viewer_settings, Box::new(on_progress))
+            .await
+    }
+
+    pub async fn shutdown(&self) {
+        self.disconnect_all_host_sessions();
+        self.inner.endpoint.close().await;
+    }
+}
+
+fn set_status(inner: &Inner, status: DirStatus) {
+    if *inner.dir_status.borrow() != status {
+        inner.dir_status.send_replace(status.clone());
+        inner.emit(ClientEvent::Directory(status));
+    }
+}
+
+/// Keeps a registration with the directory server alive, reconnecting with
+/// backoff, and pushes address changes.
+async fn directory_task(inner: Arc<Inner>) {
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        let server = inner.settings.lock().unwrap().server.directory.clone();
+        let Some(server) = server else {
+            inner.dir_client.send_replace(None);
+            set_status(&inner, DirStatus::NotConfigured);
+            inner.server_changed.notified().await;
+            continue;
+        };
+        set_status(&inner, DirStatus::Connecting);
+        let changed = inner.server_changed.notified();
+        tokio::pin!(changed);
+        let result = tokio::select! {
+            r = run_directory(&inner, &server) => r,
+            _ = &mut changed => Ok(()),
+        };
+        inner.dir_client.send_replace(None);
+        match result {
+            Ok(()) => backoff = Duration::from_secs(1),
+            Err(e) => {
+                debug!("directory: {e:#}");
+                set_status(&inner, DirStatus::Error(short_error(&e)));
+                tokio::select! {
+                    _ = tokio::time::sleep(backoff) => {}
+                    _ = &mut changed => {}
+                }
+                backoff = (backoff * 2).min(Duration::from_secs(30));
+            }
+        }
+    }
+}
+
+fn short_error(e: &anyhow::Error) -> String {
+    let s = format!("{e}");
+    if s.len() > 120 { format!("{}…", &s[..120]) } else { s }
+}
+
+async fn run_directory(inner: &Inner, server: &slipstream_core::directory::ServerAddress) -> Result<()> {
+    let dc = DirectoryClient::connect(&inner.endpoint, server).await?;
+    let (relays, motd) = dc.hello().await?;
+    if let Some(m) = motd {
+        inner.emit(ClientEvent::Motd(m));
+    }
+    let new_relays = {
+        let mut s = inner.settings.lock().unwrap();
+        let fresh = s.server.relays != relays;
+        if fresh {
+            s.server.relays = relays.clone();
+        }
+        fresh
+    };
+    if new_relays {
+        inner.save_settings();
+        net::add_relays(&inner.endpoint, &relays).await;
+    }
+    // Give the endpoint a moment to pick a home relay so our address is useful.
+    let _ = tokio::time::timeout(Duration::from_secs(5), inner.endpoint.online()).await;
+
+    let info = DeviceInfo {
+        name: inner.settings.lock().unwrap().device_name.clone(),
+        os: slipstream_core::os_name(),
+        app_version: slipstream_core::APP_VERSION.into(),
+    };
+    let id = dc.register(inner.endpoint.addr(), info).await.context("registering")?;
+    info!(%id, "registered with directory");
+    {
+        let mut s = inner.settings.lock().unwrap();
+        if s.host.last_device_id != Some(id) {
+            s.host.last_device_id = Some(id);
+            drop(s);
+            inner.save_settings();
+        }
+    }
+    inner.dir_client.send_replace(Some(dc.clone()));
+    set_status(inner, DirStatus::Online { id });
+
+    let mut addr_watch = inner.endpoint.watch_addr();
+    let conn = dc.connection().clone();
+    loop {
+        tokio::select! {
+            changed = addr_watch.updated() => {
+                let Ok(addr) = changed else { bail!("endpoint closed") };
+                dc.update_addr(addr).await.context("updating address")?;
+            }
+            reason = conn.closed() => {
+                bail!("server connection lost: {reason}");
+            }
+        }
+    }
+}
+
+async fn accept_task(inner: Arc<Inner>) {
+    while let Some(incoming) = inner.endpoint.accept().await {
+        let inner = inner.clone();
+        tokio::spawn(async move {
+            let conn = match incoming.await {
+                Ok(c) => c,
+                Err(e) => {
+                    debug!("incoming connection failed: {e:#}");
+                    return;
+                }
+            };
+            if conn.alpn() != ALPN_REMOTE {
+                conn.close(0u32.into(), b"unsupported protocol");
+                return;
+            }
+            let linger = conn.clone();
+            if let Err(e) = host::run_session(inner, conn).await {
+                debug!("host session ended with error: {e:#}");
+            }
+            // Let a final message (e.g. "wrong password") reach the viewer
+            // before the connection is torn down.
+            let _ = tokio::time::timeout(Duration::from_secs(3), linger.closed()).await;
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use slipstream_core::proto::InputEvent;
+
+    use super::*;
+
+    async fn client(name: &str, host: bool) -> (Client, mpsc::UnboundedReceiver<ClientEvent>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("slipstream-e2e-{}-{name}", std::process::id()));
+        let store = Store::open(&dir).unwrap();
+        let mut s = store.load_settings();
+        s.server.use_public_relays = false;
+        s.device_name = name.into();
+        s.host.set_permanent_password(Some("correct horse battery"));
+        store.save_settings(&s).unwrap();
+        let (c, ev) = Client::start(store, ClientOptions { test_pattern: host, accept_sessions: host }).await.unwrap();
+        (c, ev, dir)
+    }
+
+    /// Host and viewer in one process, connected directly: checks auth,
+    /// video, and that injected input reaches the host (the test pattern
+    /// draws a crosshair where the pointer is).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn end_to_end_video_and_input() {
+        let (host, _hev, hdir) = client("host", true).await;
+        let (viewer, _vev, vdir) = client("viewer", false).await;
+        let addr = host.endpoint_addr();
+
+        let bad = viewer.connect_direct(addr.clone(), "wrong password", |_| {}).await;
+        let err = format!("{:#}", bad.err().unwrap());
+        assert!(err.contains("wrong password"), "unexpected error: {err}");
+
+        let (session, _events) = viewer.connect_direct(addr, "correct horse battery", |_| {}).await.unwrap();
+        assert_eq!(session.info().host_name, "host");
+        let frames = session.frames();
+
+        let wait_frame = |pred: &dyn Fn(&YuvFrame) -> bool| {
+            let frames = frames.clone();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                if let (_, Some(f)) = frames.latest()
+                    && pred(&f)
+                {
+                    return true;
+                }
+                if Instant::now() > deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let got_video = tokio::task::block_in_place(|| wait_frame(&|f| f.width == 1280 && f.height == 720));
+        assert!(got_video, "no video frames arrived");
+
+        // Move the remote pointer to (0.75, 0.25); the crosshair's vertical
+        // line should then appear at x = 960 in a decoded frame.
+        session.input(InputEvent::MouseMove { x: 0.75, y: 0.25 });
+        let moved = tokio::task::block_in_place(|| {
+            wait_frame(&|f| {
+                let rgba = f.to_rgba();
+                let px = |x: usize, y: usize| {
+                    let o = (y * 1280 + x) * 4;
+                    (rgba[o] as u32 + rgba[o + 1] as u32 + rgba[o + 2] as u32) / 3
+                };
+                // White crosshair column at x≈960, far from the horizontal line.
+                px(960, 600) > 200 && px(900, 600) < 120
+            })
+        });
+        assert!(moved, "pointer movement did not reach the host");
+
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
+    }
+}

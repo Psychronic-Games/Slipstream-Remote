@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Slipstream Remote
+GenericName=Remote Desktop
+Comment=Fast, free, open-source remote desktop
+Exec=slipstream %U
+Icon=slipstream
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=remote;desktop;teamviewer;vnc;support;
+StartupWMClass=slipstream-remote

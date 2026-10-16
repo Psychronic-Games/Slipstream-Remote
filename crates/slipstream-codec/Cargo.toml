@@ -1,0 +1,11 @@
+[package]
+name = "slipstream-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+openh264 = "0.9.9"
+tracing.workspace = true
+yuv = "0.8.19"
