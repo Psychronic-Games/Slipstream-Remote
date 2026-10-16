@@ -20,7 +20,7 @@ pub struct SettingsForm {
     has_permanent: bool,
     max_fps: u32,
     sync_clipboard: bool,
-    close_to_tray: bool,
+    run_in_tray: bool,
     autostart: bool,
     error: Option<String>,
 }
@@ -41,7 +41,7 @@ impl From<&Settings> for SettingsForm {
             has_permanent: s.host.permanent_password_secret.is_some(),
             max_fps: s.viewer.max_fps,
             sync_clipboard: s.viewer.sync_clipboard,
-            close_to_tray: s.app.close_to_tray,
+            run_in_tray: s.app.run_in_tray,
             autostart: super::autostart::is_enabled(),
             error: None,
         }
@@ -132,10 +132,12 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 .color(pal::DIM),
         );
         row(ui, "Start with system", |ui| {
-            ui.checkbox(&mut f.autostart, "Launch hidden in the tray when you log in");
+            if ui.checkbox(&mut f.autostart, "Launch hidden in the tray when you log in").changed() && f.autostart {
+                f.run_in_tray = true; // autostart only makes sense if it keeps running
+            }
         });
         row(ui, "Close button", |ui| {
-            ui.checkbox(&mut f.close_to_tray, "Keep running in the tray (stay reachable)");
+            ui.checkbox(&mut f.run_in_tray, "Keep running in the tray when the window is closed (stay reachable)");
         });
         row(ui, "Screen permission", |ui| {
             if theme::pill(ui, "Reset", pal::VIOLET).clicked() {
@@ -203,7 +205,7 @@ fn save(app: &mut App) {
         return;
     }
     let f = &app.settings_form;
-    let close_to_tray = f.close_to_tray;
+    let run_in_tray = f.run_in_tray;
     let key = Some(f.key.trim().to_string()).filter(|k| !k.is_empty());
     let (name, public, accept, input, clip, files, len, fps, sync) = (
         f.device_name.trim().to_string(),
@@ -238,7 +240,7 @@ fn save(app: &mut App) {
         }
         s.viewer.max_fps = fps;
         s.viewer.sync_clipboard = sync;
-        s.app.close_to_tray = close_to_tray;
+        s.app.run_in_tray = run_in_tray;
     });
     app.toast("Configuration saved", pal::GREEN);
 }

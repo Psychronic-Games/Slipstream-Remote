@@ -16,6 +16,10 @@ pub mod test_pattern;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub mod generic;
 #[cfg(target_os = "linux")]
+mod pw;
+#[cfg(target_os = "linux")]
+mod x11;
+#[cfg(target_os = "linux")]
 pub mod wayland;
 
 use std::collections::HashSet;

@@ -1,19 +1,22 @@
-//! Cross-platform backend: `xcap` for capture (DXGI/WGC on Windows,
-//! ScreenCaptureKit on macOS, XShm on X11) and `enigo` for input.
+//! Cross-platform backend: screen capture via `xcap` (DXGI/WGC on Windows,
+//! ScreenCaptureKit on macOS) or our pure-Rust X11 capture on Linux, and
+//! `enigo` for input.
 
-use std::{
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{sync::mpsc, thread};
+#[cfg(not(target_os = "linux"))]
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use enigo::{Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
+#[cfg(not(target_os = "linux"))]
 use slipstream_codec::{PixelFormat, RawFrame};
 use slipstream_core::proto::{DisplayInfo, InputEvent, MouseButton};
+#[cfg(not(target_os = "linux"))]
 use xcap::Monitor;
 
-use crate::{Backend, FrameSlot, FrameStream, HeldInputs, keymap};
+#[cfg(not(target_os = "linux"))]
+use crate::FrameSlot;
+use crate::{Backend, FrameStream, HeldInputs, keymap};
 
 pub struct GenericBackend {
     displays: Vec<DisplayInfo>,
@@ -29,6 +32,12 @@ impl GenericBackend {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn list_displays() -> Result<Vec<DisplayInfo>> {
+    crate::x11::list_displays()
+}
+
+#[cfg(not(target_os = "linux"))]
 fn list_displays() -> Result<Vec<DisplayInfo>> {
     let monitors = Monitor::all().context("listing monitors")?;
     let mut out: Vec<DisplayInfo> = monitors
@@ -55,13 +64,20 @@ fn list_displays() -> Result<Vec<DisplayInfo>> {
 
 impl Backend for GenericBackend {
     fn name(&self) -> &'static str {
-        "xcap"
+        if cfg!(target_os = "linux") { "x11" } else { "xcap" }
     }
 
     fn displays(&self) -> Vec<DisplayInfo> {
         self.displays.clone()
     }
 
+    #[cfg(target_os = "linux")]
+    fn capture(&mut self, display: u32, max_fps: u32) -> Result<FrameStream> {
+        let d = self.displays.get(display as usize).cloned().with_context(|| format!("display {display} not found"))?;
+        crate::x11::capture(d, max_fps)
+    }
+
+    #[cfg(not(target_os = "linux"))]
     fn capture(&mut self, display: u32, max_fps: u32) -> Result<FrameStream> {
         let monitors = Monitor::all()?;
         let monitor = monitors

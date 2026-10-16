@@ -5,6 +5,7 @@ mod home;
 mod keys;
 mod remote;
 mod settings;
+mod single;
 pub mod theme;
 mod tray;
 mod video;
@@ -37,8 +38,14 @@ pub struct GuiOptions {
 }
 
 pub fn run(opts: GuiOptions) -> Result<()> {
-    let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().enable_all().build()?);
     let store = Store::open_default()?;
+    // Only one Slipstream per profile: a second launch just brings the
+    // running one to the front.
+    let Some(instance) = single::Instance::acquire(store.dir()) else {
+        tracing::info!("Slipstream is already running; showing its window");
+        return Ok(());
+    };
+    let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().enable_all().build()?);
     let (client, events) =
         rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: true }))?;
 
@@ -75,6 +82,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
                 app.start_connect(&cc.egui_ctx);
             }
             app.screenshot = opts.screenshot;
+            app.show_requests = Some(instance.listen(cc.egui_ctx.clone()));
             app.start_hidden = opts.minimized && app.tray.is_some();
             Ok(Box::new(app))
         }),
@@ -146,6 +154,10 @@ pub struct App {
     tray_status: String,
     quitting: bool,
     start_hidden: bool,
+    /// Another launch asked us to show the window.
+    show_requests: Option<mpsc::Receiver<()>>,
+    /// Showing the "keeps running in the tray" explanation.
+    tray_hint: bool,
 }
 
 impl App {
@@ -196,6 +208,8 @@ impl App {
             tray_status: String::new(),
             quitting: false,
             start_hidden: false,
+            show_requests: None,
+            tray_hint: false,
         }
     }
 
@@ -367,7 +381,7 @@ impl App {
         painter.galley(title_pos, title_galley, pal::ORANGE);
         if let Some(org) = &self.org {
             painter.text(
-                pos2(r, top + bar_h + 6.0),
+                pos2(r, top + bar_h + 14.0),
                 Align2::RIGHT_TOP,
                 org.to_uppercase(),
                 theme::display(17.0),
@@ -483,6 +497,35 @@ impl App {
             y -= size.y + 10.0;
         }
         ctx.request_repaint_after(Duration::from_millis(500));
+    }
+
+    fn draw_tray_hint(&mut self, ctx: &egui::Context) {
+        if !self.tray_hint {
+            return;
+        }
+        let (mut hide, mut quit) = (false, false);
+        egui::Modal::new(egui::Id::unique("tray-hint")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            theme::header(ui, "Keep running in the tray?", pal::LAVENDER);
+            ui.add_space(8.0);
+            ui.label("Slipstream is set to keep running in the system tray when its window is closed, so this computer stays reachable. Use the tray icon to open it again or to quit.");
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                hide = theme::pill(ui, "Hide to tray", pal::LAVENDER).clicked();
+                quit = theme::pill(ui, "Quit Slipstream", pal::RED).clicked();
+            });
+        });
+        if hide || quit {
+            self.tray_hint = false;
+            self.client.update_settings(|s| s.app.tray_hint_shown = true);
+        }
+        if hide {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        if quit {
+            self.quitting = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     fn draw_attempt_overlay(&mut self, ctx: &egui::Context) {
@@ -613,13 +656,10 @@ impl eframe::App for App {
             self.start_hidden = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
+        let mut show = self.show_requests.as_ref().is_some_and(|rx| rx.try_recv().is_ok());
         while let Some(cmd) = self.tray.as_ref().and_then(|t| t.poll()) {
             match cmd {
-                tray::TrayCmd::Show => {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                }
+                tray::TrayCmd::Show => show = true,
                 tray::TrayCmd::Quit => {
                     self.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -627,13 +667,23 @@ impl eframe::App for App {
                 }
             }
         }
+        if show {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        // Closing quits, unless the user chose to keep running in the tray.
         if ctx.input(|i| i.viewport().close_requested())
             && !self.quitting
             && self.tray.is_some()
-            && self.client.settings().app.close_to_tray
+            && self.client.settings().app.run_in_tray
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            if self.client.settings().app.tray_hint_shown {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            } else {
+                self.tray_hint = true;
+            }
         }
         // Keep tray/status fresh while hidden.
         ctx.request_repaint_after(Duration::from_secs(1));
@@ -717,6 +767,7 @@ impl eframe::App for App {
         }
 
         home::incoming_windows(self, &ctx);
+        self.draw_tray_hint(&ctx);
         self.draw_attempt_overlay(&ctx);
         self.draw_toasts(&ctx);
         self.maybe_screenshot(&ctx);

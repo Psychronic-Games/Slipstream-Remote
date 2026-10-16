@@ -16,8 +16,15 @@ keycode = "1.0.0"
 [target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
 arboard = { version = "3.7.0", default-features = false, features = ["wayland-data-control"] }
 enigo = "0.6.1"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 xcap = "0.9.8"
 
+# Linux deliberately links no optional system libraries: X11 is spoken in
+# pure Rust and PipeWire is loaded at runtime, so the app starts anywhere.
 [target.'cfg(target_os = "linux")'.dependencies]
+libspa = "0.10.1"
+libloading = "0.8"
+libc = "0.2"
+x11rb = { version = "0.13", features = ["randr", "shm", "xfixes"] }
 ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "remote_desktop", "screencast"] }
-pipewire = "0.10.1"

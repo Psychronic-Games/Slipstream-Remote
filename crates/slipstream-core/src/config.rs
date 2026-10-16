@@ -77,17 +77,14 @@ pub struct ViewerSettings {
     pub sync_clipboard: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
-    /// Closing the window keeps Slipstream running in the system tray.
-    pub close_to_tray: bool,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self { close_to_tray: true }
-    }
+    /// Closing the window keeps Slipstream running in the system tray
+    /// (for unattended access). Off by default: closing ends access.
+    pub run_in_tray: bool,
+    /// The "still running in the tray" explanation was shown.
+    pub tray_hint_shown: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -2,12 +2,7 @@
 //! both screen streams (frames arrive over PipeWire) and input injection.
 //! Works on KDE Plasma, GNOME and wlroots desktops with a portal backend.
 
-use std::{
-    os::fd::OwnedFd,
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{os::fd::OwnedFd, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail};
 use ashpd::desktop::{
@@ -15,13 +10,10 @@ use ashpd::desktop::{
     remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions},
     screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType},
 };
-use pipewire as pw;
-use pw::{properties::properties, spa};
-use slipstream_codec::{PixelFormat, RawFrame};
 use slipstream_core::proto::{DisplayInfo, InputEvent, MouseButton};
 use tokio::sync::mpsc;
 
-use crate::{Backend, FrameSlot, FrameStream, HeldInputs, keymap};
+use crate::{Backend, FrameSlot, FrameStream, HeldInputs, keymap, pw};
 
 struct PortalStream {
     node_id: u32,
@@ -46,6 +38,8 @@ impl WaylandBackend {
     /// Asks the desktop for screen + input access. Shows a permission
     /// dialog unless `restore_token` is still valid.
     pub async fn open(restore_token: Option<&str>) -> Result<Self> {
+        // Check before asking the user for permission we couldn't use.
+        pw::available()?;
         let rd = RemoteDesktop::new().await.context("RemoteDesktop portal unavailable")?;
         let sc = Screencast::new().await.context("ScreenCast portal unavailable")?;
         let session = rd.create_session(Default::default()).await.context("creating portal session")?;
@@ -124,15 +118,9 @@ impl Backend for WaylandBackend {
         let fd = self.pipewire_fd.try_clone()?;
         let node = stream.node_id;
         let slot = FrameSlot::new();
-        let producer = slot.clone();
         let min_interval = Duration::from_secs_f64(1.0 / max_fps.clamp(1, 240) as f64);
-        thread::Builder::new().name("pipewire".into()).spawn(move || {
-            if let Err(e) = run_pipewire(fd, node, producer.clone(), min_interval) {
-                tracing::error!("pipewire capture failed: {e:#}");
-                producer.fail(format!("{e:#}"));
-            }
-        })?;
-        Ok(FrameStream::new(slot))
+        let capture = pw::Capture::start(fd, node, slot.clone(), min_interval)?;
+        Ok(FrameStream::new(slot).with_cleanup(move || drop(capture)))
     }
 
     fn inject(&mut self, display: u32, event: InputEvent) -> Result<()> {
@@ -245,165 +233,4 @@ async fn apply(
         }
         InputEvent::ReleaseAll => Ok(()),
     }
-}
-
-struct CaptureState {
-    format: spa::param::video::VideoInfoRaw,
-    slot: Arc<FrameSlot>,
-    last: Instant,
-    min_interval: Duration,
-}
-
-fn run_pipewire(fd: OwnedFd, node: u32, slot: Arc<FrameSlot>, min_interval: Duration) -> Result<()> {
-    pw::init();
-    let mainloop = pw::main_loop::MainLoopRc::new(None)?;
-    let context = pw::context::ContextRc::new(&mainloop, None)?;
-    let core = context.connect_fd_rc(fd, None)?;
-    let stream = pw::stream::StreamBox::new(
-        &core,
-        "slipstream-capture",
-        properties! {
-            *pw::keys::MEDIA_TYPE => "Video",
-            *pw::keys::MEDIA_CATEGORY => "Capture",
-            *pw::keys::MEDIA_ROLE => "Screen",
-        },
-    )?;
-
-    let state = CaptureState {
-        format: Default::default(),
-        slot: slot.clone(),
-        last: Instant::now() - min_interval,
-        min_interval,
-    };
-
-    let _listener = stream
-        .add_local_listener_with_user_data(state)
-        .state_changed(|_, _, old, new| tracing::debug!("pipewire stream {old:?} -> {new:?}"))
-        .param_changed(|_, st, id, param| {
-            let Some(param) = param else { return };
-            if id != pw::spa::param::ParamType::Format.as_raw() {
-                return;
-            }
-            let Ok((media_type, media_subtype)) = pw::spa::param::format_utils::parse_format(param) else { return };
-            if media_type != pw::spa::param::format::MediaType::Video
-                || media_subtype != pw::spa::param::format::MediaSubtype::Raw
-            {
-                return;
-            }
-            if st.format.parse(param).is_ok() {
-                let size = st.format.size();
-                tracing::info!(
-                    "capture format {:?} {}x{}",
-                    st.format.format(),
-                    size.width,
-                    size.height
-                );
-            }
-        })
-        .process(|stream, st| {
-            let Some(mut buffer) = stream.dequeue_buffer() else { return };
-            // Allow 20% early: frames arrive with jitter, and a strict check
-            // would drop every other frame at the monitor's refresh rate.
-            if st.last.elapsed() < st.min_interval.mul_f32(0.8) {
-                return;
-            }
-            let datas = buffer.datas_mut();
-            let Some(d) = datas.first_mut() else { return };
-            let (size, offset, stride) = {
-                let c = d.chunk();
-                (c.size() as usize, c.offset() as usize, c.stride())
-            };
-            let fmt = st.format.format();
-            let format = match fmt {
-                spa::param::video::VideoFormat::BGRx | spa::param::video::VideoFormat::BGRA => PixelFormat::Bgra,
-                spa::param::video::VideoFormat::RGBx | spa::param::video::VideoFormat::RGBA => PixelFormat::Rgba,
-                _ => return,
-            };
-            let dims = st.format.size();
-            let (w, h) = (dims.width, dims.height);
-            let stride = if stride > 0 { stride as u32 } else { w * 4 };
-            let Some(bytes) = d.data() else { return };
-            let needed = (stride * h.saturating_sub(1) + w * 4) as usize;
-            if size == 0 || w == 0 || h == 0 || offset + needed > bytes.len() {
-                return; // cursor-only or corrupt buffer
-            }
-            st.last = Instant::now();
-            st.slot.put(RawFrame {
-                width: w,
-                height: h,
-                stride,
-                format,
-                data: bytes[offset..offset + needed].to_vec(),
-            });
-        })
-        .register()?;
-
-    let obj = pw::spa::pod::object!(
-        pw::spa::utils::SpaTypes::ObjectParamFormat,
-        pw::spa::param::ParamType::EnumFormat,
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::MediaType,
-            Id,
-            pw::spa::param::format::MediaType::Video
-        ),
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::MediaSubtype,
-            Id,
-            pw::spa::param::format::MediaSubtype::Raw
-        ),
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::VideoFormat,
-            Choice,
-            Enum,
-            Id,
-            pw::spa::param::video::VideoFormat::BGRx,
-            pw::spa::param::video::VideoFormat::BGRx,
-            pw::spa::param::video::VideoFormat::BGRA,
-            pw::spa::param::video::VideoFormat::RGBx,
-            pw::spa::param::video::VideoFormat::RGBA,
-        ),
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::VideoSize,
-            Choice,
-            Range,
-            Rectangle,
-            pw::spa::utils::Rectangle { width: 1920, height: 1080 },
-            pw::spa::utils::Rectangle { width: 1, height: 1 },
-            pw::spa::utils::Rectangle { width: 8192, height: 8192 }
-        ),
-        pw::spa::pod::property!(
-            pw::spa::param::format::FormatProperties::VideoFramerate,
-            Choice,
-            Range,
-            Fraction,
-            pw::spa::utils::Fraction { num: 60, denom: 1 },
-            pw::spa::utils::Fraction { num: 0, denom: 1 },
-            pw::spa::utils::Fraction { num: 1000, denom: 1 }
-        ),
-    );
-    let values: Vec<u8> = pw::spa::pod::serialize::PodSerializer::serialize(
-        std::io::Cursor::new(Vec::new()),
-        &pw::spa::pod::Value::Object(obj),
-    )
-    .map_err(|e| anyhow!("pod serialize: {e:?}"))?
-    .0
-    .into_inner();
-    let mut params = [spa::pod::Pod::from_bytes(&values).context("pod")?];
-    stream.connect(
-        spa::utils::Direction::Input,
-        Some(node),
-        pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS,
-        &mut params,
-    )?;
-
-    // Poll for the consumer going away.
-    let ml = mainloop.clone();
-    let timer = mainloop.loop_().add_timer(move |_| {
-        if slot.is_closed() {
-            ml.quit();
-        }
-    });
-    timer.update_timer(Some(Duration::from_millis(100)), Some(Duration::from_millis(100)));
-    mainloop.run();
-    Ok(())
 }

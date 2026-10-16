@@ -15,13 +15,24 @@ mkdir -p dist
 cp -r server/station "$OUT"
 rm -f "$OUT"/bin/README.txt "$OUT"/clients/README.txt
 
-echo "==> Relay program (Linux x86_64)"
-cargo build --release -p slipstream-server
-cp target/release/slipstream-server "$OUT/bin/slipstream-server-linux-x86_64"
-
-echo "==> Linux app"
-cargo build --release -p slipstream
-cp target/release/slipstream "$OUT/clients/slipstream-linux-x86_64"
+# Linux builds target glibc 2.31 (Debian 11 / Ubuntu 20.04 and newer) via
+# cargo-zigbuild, so they run on far more systems than the build machine.
+if command -v zig >/dev/null && cargo zigbuild --help >/dev/null 2>&1; then
+  echo "==> Linux builds (portable, glibc 2.31+)"
+  # libspa-sys asks the linker for libpipewire even though we load it at
+  # runtime; give zig's linker an empty stand-in (dropped as unused).
+  STUB="${XDG_CACHE_HOME:-$HOME/.cache}/slipstream-zig-stubs"
+  mkdir -p "$STUB"
+  [ -f "$STUB/libpipewire-0.3.so" ] || { echo "" > "$STUB/empty.c"; zig cc -target x86_64-linux-gnu.2.31 -shared -o "$STUB/libpipewire-0.3.so" "$STUB/empty.c"; }
+  RUSTFLAGS="-L native=$STUB" cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 -p slipstream -p slipstream-server
+  LINUX=target/x86_64-unknown-linux-gnu/release
+else
+  echo "==> Linux builds (native — install zig + cargo-zigbuild for portable builds)"
+  cargo build --release -p slipstream -p slipstream-server
+  LINUX=target/release
+fi
+cp "$LINUX/slipstream-server" "$OUT/bin/slipstream-server-linux-x86_64"
+cp "$LINUX/slipstream" "$OUT/clients/slipstream-linux-x86_64"
 
 if [ "${WINDOWS:-0}" = 1 ]; then
   echo "==> Windows app (cross-compiled)"

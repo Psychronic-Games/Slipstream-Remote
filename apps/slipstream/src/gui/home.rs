@@ -75,7 +75,14 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             ui.label(RichText::new(status).font(theme::display(17.0)).color(color));
         });
         if let DirStatus::Error(e) = &app.dir_status {
-            ui.label(RichText::new(e).small().color(pal::DIM));
+            ui.label(RichText::new(e).font(theme::body(16.0)).color(pal::PEACH));
+            if let Ok(store) = slipstream_core::config::Store::open_default() {
+                ui.label(
+                    RichText::new(format!("Details: {}", store.dir().join("slipstream.log").display()))
+                        .small()
+                        .color(pal::DIM),
+                );
+            }
         }
         if app.client.settings().host.permanent_password_secret.is_some() {
             ui.label(RichText::new("Unattended access enabled — your permanent password also works.").small().color(pal::DIM));

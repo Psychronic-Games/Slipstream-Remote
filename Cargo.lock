@@ -6624,11 +6624,14 @@ dependencies = [
  "ashpd",
  "enigo",
  "keycode",
- "pipewire",
+ "libc",
+ "libloading 0.8.9",
+ "libspa",
  "slipstream-codec",
  "slipstream-core",
  "tokio",
  "tracing",
+ "x11rb",
  "xcap",
 ]
 

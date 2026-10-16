@@ -7,6 +7,7 @@ mod cli;
 mod gui;
 
 use clap::{Parser, Subcommand};
+use tracing_subscriber::Layer as _;
 
 #[derive(Debug, Parser)]
 #[command(name = "slipstream", version, about = "Fast, free, open-source remote desktop")]
@@ -78,14 +79,9 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,iroh=warn,noq=warn,noq_proto=warn,iroh_relay=warn".into()),
-        )
-        .init();
     #[cfg(windows)]
     attach_parent_console();
+    init_logging();
     let args = Args::parse();
     if !matches!(args.command, Some(Command::ExportIcon { .. })) {
         apply_station_config();
@@ -131,5 +127,29 @@ fn attach_parent_console() {
     // SAFETY: plain Win32 call; failure (no parent console) is harmless.
     unsafe {
         AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+/// Logs to stderr and to `slipstream.log` in the settings folder, so
+/// problems can be diagnosed even when there's no console (Windows, or an
+/// app started from a desktop icon).
+fn init_logging() {
+    use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+    let filter = || {
+        EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "info,iroh=warn,noq=warn,noq_proto=warn,noq_udp=error,iroh_relay=warn,wgpu=warn,wgpu_hal=error,netwatch=error".into())
+    };
+    let file = slipstream_core::config::Store::open_default().ok().and_then(|store| {
+        let path = store.dir().join("slipstream.log");
+        // Keep the log small: start fresh once it passes 2 MB.
+        let append = std::fs::metadata(&path).map(|m| m.len() < 2 * 1024 * 1024).unwrap_or(false);
+        std::fs::OpenOptions::new().create(true).append(append).write(true).truncate(!append).open(path).ok()
+    });
+    let registry = tracing_subscriber::registry().with(fmt::layer().with_writer(std::io::stderr).with_filter(filter()));
+    match file {
+        Some(f) => registry
+            .with(fmt::layer().with_ansi(false).with_writer(std::sync::Mutex::new(f)).with_filter(filter()))
+            .init(),
+        None => registry.init(),
     }
 }
