@@ -5,14 +5,14 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the session protocol changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// ALPN for remote-control sessions (viewer → host).
 pub const ALPN_REMOTE: &[u8] = b"slipstream/remote/1";
 
 // Stream layout: the viewer's first bi-stream is the control stream. The
-// host's first uni-stream carries video. Every later bi-stream, from either
-// side, is a file transfer.
+// host's first uni-stream carries video. Every later bi-stream starts with a
+// [`StreamOpen`] request (file browsing and transfer).
 
 /// Messages sent by the viewer on the control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,17 +143,67 @@ pub enum ClipboardData {
     Text(String),
 }
 
-/// First message on a file-transfer bi-stream; raw file bytes follow.
-/// Either side may open one at any time after authentication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileHeader {
-    pub name: String,
-    pub size: u64,
+/// Where an uploaded file should go on the receiving side.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum UploadTarget {
+    /// The receiver's default folder (its Desktop).
+    Default,
+    /// A specific folder (absolute path on the receiver).
+    Folder(String),
+    /// Whatever folder is under the receiver's mouse pointer (e.g. an
+    /// Explorer window), falling back to the Desktop.
+    UnderCursor,
 }
 
-/// Receiver's verdict, sent back on the same bi-stream.
+/// First message on every bi-stream after the control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum FileResult {
-    Saved { name: String },
-    Rejected(String),
+pub enum StreamOpen {
+    /// Send a file. `rel_path` may contain `/`-separated subfolders, which
+    /// are created inside the target. After [`StreamReply::Ready`], `size`
+    /// raw bytes follow; the receiver answers [`StreamReply::Saved`].
+    Upload { target: UploadTarget, rel_path: String, size: u64 },
+    /// Read a file: [`StreamReply::File`] then its bytes.
+    Download { path: String },
+    /// List a folder (`None` = home): [`StreamReply::Listing`].
+    List { path: Option<String> },
+    /// Shortcut folders and drives: [`StreamReply::Places`].
+    Places,
+    /// Create a folder: [`StreamReply::Done`].
+    MakeDir { path: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum StreamReply {
+    Ready,
+    Saved { path: String },
+    Listing(DirListing),
+    Places(Vec<Place>),
+    File { size: u64 },
+    Done,
+    Error(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirListing {
+    /// Absolute, canonical path of the folder.
+    pub path: String,
+    pub parent: Option<String>,
+    /// Path separator on that machine ("/" or "\\").
+    pub sep: String,
+    pub entries: Vec<DirEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+    /// Unix seconds, 0 if unknown.
+    pub modified: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Place {
+    pub label: String,
+    pub path: String,
 }

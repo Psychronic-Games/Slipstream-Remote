@@ -9,12 +9,12 @@ use eframe::{
 };
 use slipstream_core::{
     directory::DeviceId,
-    proto::{InputEvent, MouseButton, SessionInfo, StreamSettings},
+    proto::{InputEvent, MouseButton, SessionInfo, StreamSettings, UploadTarget},
 };
 use slipstream_session::{FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 use tokio::sync::mpsc;
 
-use super::{home, keys, theme, theme::pal, video};
+use super::{files::FileManager, home, keys, theme, theme::pal, video};
 
 pub enum CapturedKey {
     Key { key: egui::Key, pressed: bool, repeat: bool },
@@ -61,7 +61,7 @@ pub struct RemoteTab {
     held_keys: HashSet<&'static str>,
     forward_repeats: bool,
     notice: Option<(String, Instant)>,
-    transfer: Option<String>,
+    pub files: FileManager,
 }
 
 impl RemoteTab {
@@ -76,6 +76,7 @@ impl RemoteTab {
         let wake = ctx.clone();
         frames.set_repaint(move || wake.request_repaint());
         let info = session.info().clone();
+        let files = FileManager::new(session.fs(), info.host_name.clone());
         // Wayland apps repeat held keys themselves; Windows/macOS need repeats sent.
         let forward_repeats = info.os != "Linux";
         let display = info.displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
@@ -104,7 +105,7 @@ impl RemoteTab {
             held_keys: HashSet::new(),
             forward_repeats,
             notice: None,
-            transfer: None,
+            files,
         }
     }
 
@@ -130,21 +131,6 @@ impl RemoteTab {
                     self.show_chat = true;
                 }
                 ViewerEvent::Notice(n) => self.notice = Some((n, Instant::now())),
-                ViewerEvent::FileProgress { name, sent, total } => {
-                    let pct = (sent * 100).checked_div(total).unwrap_or(100);
-                    self.transfer = Some(format!("TX {name} {pct}%"));
-                }
-                ViewerEvent::FileSent { name } => {
-                    self.transfer = None;
-                    self.notice = Some((format!("Sent {name}"), Instant::now()));
-                }
-                ViewerEvent::FileFailed { name, error } => {
-                    self.transfer = None;
-                    self.notice = Some((format!("{name}: {error}"), Instant::now()));
-                }
-                ViewerEvent::FileReceived { path } => {
-                    self.notice = Some((format!("Received {}", path.display()), Instant::now()));
-                }
                 ViewerEvent::Disconnected { reason } => {
                     self.closed = Some(reason);
                     self.captured = false;
@@ -235,21 +221,11 @@ impl RemoteTab {
 
         if show_toolbar {
             let bar = Rect::from_min_size(full.min, vec2(full.width(), toolbar_h));
-            action = self.toolbar(ui, bar, t, rt);
+            action = self.toolbar(ui, bar, t);
         }
 
-        // Files dropped on the window are sent to the remote side.
-        let dropped: Vec<_> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
-        for path in dropped {
-            if self.info.capabilities.file_transfer {
-                self.send(ViewerCmd::SendFile(path));
-            }
-        }
-        if ctx.input(|i| !i.raw.hovered_files.is_empty()) {
-            let p = ui.painter();
-            p.rect_filled(video_area, 0.0, Color32::BLACK.gamma_multiply(0.6));
-            p.text(video_area.center(), Align2::CENTER_CENTER, "DROP TO TRANSMIT", theme::display_bold(42.0), pal::ORANGE);
-        }
+        self.files.ui(&ctx, rt);
+        self.handle_drops(ui, &ctx, video_area, rt);
 
         if let Some(reason) = self.closed.clone() {
             action = self.closed_overlay(ui, video_area, &reason).unwrap_or(action);
@@ -269,6 +245,56 @@ impl RemoteTab {
             }
         }
         action
+    }
+
+    /// Files dragged in from the desktop: onto the file window's remote pane
+    /// → that folder; onto the remote screen → the remote folder under the
+    /// drop point (or its Desktop).
+    fn handle_drops(&mut self, ui: &mut Ui, ctx: &egui::Context, video_area: Rect, rt: &tokio::runtime::Runtime) {
+        let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        if !self.info.capabilities.file_transfer {
+            if !dropped.is_empty() {
+                self.notice = Some(("File transfer is turned off on the remote computer".into(), Instant::now()));
+            }
+            return;
+        }
+        let pos = ctx.input(|i| i.pointer.latest_pos());
+        if hovering {
+            let over_pane = pos.and_then(|p| self.files.remote_drop_target(p)).is_some();
+            if !over_pane {
+                let p = ui.painter();
+                p.rect_filled(video_area, 0.0, Color32::BLACK.gamma_multiply(0.6));
+                p.text(video_area.center(), Align2::CENTER_CENTER, "DROP TO SEND", theme::display_bold(42.0), pal::ORANGE);
+                p.text(
+                    video_area.center() + vec2(0.0, 40.0),
+                    Align2::CENTER_CENTER,
+                    "Files go to the remote folder under the pointer, or its Desktop",
+                    theme::body(17.0),
+                    pal::TAN,
+                );
+            }
+        }
+        if dropped.is_empty() {
+            return;
+        }
+        let target = match pos.and_then(|p| self.files.remote_drop_target(p)) {
+            Some(t) => t,
+            None => {
+                // Put the remote pointer where the files were dropped, so the
+                // host can find the folder under it.
+                if let (Some(p), Some(r)) = (pos, self.video_rect)
+                    && r.contains(p)
+                {
+                    let n = (((p.x - r.left()) / r.width()).clamp(0.0, 1.0), ((p.y - r.top()) / r.height()).clamp(0.0, 1.0));
+                    self.input(InputEvent::MouseMove { x: n.0, y: n.1 });
+                }
+                UploadTarget::UnderCursor
+            }
+        };
+        let n = dropped.len();
+        self.files.upload(dropped, target, rt, ctx);
+        self.notice = Some((format!("Sending {n} item{} — progress in Files", if n == 1 { "" } else { "s" }), Instant::now()));
     }
 
     fn draw_video(&mut self, ui: &mut Ui, area: Rect, t: f64) {
@@ -310,7 +336,7 @@ impl RemoteTab {
         if self.closed.is_some() {
             return;
         }
-        let hovered = resp.hovered() && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p));
+        let hovered = resp.hovered() && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l == ui.layer_id()));
         if hovered && self.captured {
             ctx.set_cursor_icon(egui::CursorIcon::None);
         }
@@ -327,11 +353,15 @@ impl RemoteTab {
         let normalize = |pos: egui::Pos2| {
             (((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0), ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0))
         };
+        // Only the part of the screen not covered by our own windows (file
+        // transfer, chat…) belongs to the remote computer.
+        let my_layer = ui.layer_id();
+        let on_video = |pos: egui::Pos2| rect.contains(pos) && ctx.layer_id_at(pos).is_none_or(|l| l == my_layer);
         let events = ctx.input(|i| i.events.clone());
         for ev in events {
             match ev {
                 egui::Event::PointerMoved(pos) => {
-                    if (rect.contains(pos) || !self.held_buttons.is_empty()) && self.captured {
+                    if (on_video(pos) || !self.held_buttons.is_empty()) && self.captured {
                         let n = normalize(pos);
                         if self.last_pointer != Some(n) {
                             self.last_pointer = Some(n);
@@ -340,7 +370,7 @@ impl RemoteTab {
                     }
                 }
                 egui::Event::PointerButton { pos, button, pressed, .. } => {
-                    let inside = rect.contains(pos);
+                    let inside = on_video(pos);
                     if pressed && !inside {
                         if self.captured && area.contains(pos) {
                             // Letterbox click: keep control, ignore.
@@ -385,7 +415,7 @@ impl RemoteTab {
         }
     }
 
-    fn toolbar(&mut self, ui: &mut Ui, bar: Rect, t: f64, rt: &tokio::runtime::Runtime) -> TabAction {
+    fn toolbar(&mut self, ui: &mut Ui, bar: Rect, t: f64) -> TabAction {
         let mut action = TabAction::None;
         let painter = ui.painter();
         painter.rect_filled(bar, 0.0, pal::BG);
@@ -452,15 +482,9 @@ impl RemoteTab {
         if theme::pill(ui, chat_label, pal::LAVENDER).clicked() {
             self.show_chat = !self.show_chat;
         }
-        if self.info.capabilities.file_transfer && theme::pill(ui, "Send file", pal::GOLD).clicked() {
-            let cmds = self.cmds.clone();
-            rt.spawn(async move {
-                if let Some(files) = rfd::AsyncFileDialog::new().set_title("Send files").pick_files().await {
-                    for f in files {
-                        let _ = cmds.send(ViewerCmd::SendFile(f.path().to_path_buf()));
-                    }
-                }
-            });
+        if self.info.capabilities.file_transfer && theme::pill(ui, "Files", pal::GOLD).on_hover_text("Browse and transfer files").clicked() {
+            self.files.open = !self.files.open;
+            self.release_keyboard();
         }
 
         let mut new_preset = None;
@@ -490,8 +514,13 @@ impl RemoteTab {
                     .font(theme::mono(15.0))
                     .color(pal::BLUE),
             );
-            if let Some(tx) = &self.transfer {
-                ui.label(RichText::new(tx).font(theme::mono(14.0)).color(pal::GOLD));
+            if let Some((n, frac)) = self.files.activity() {
+                let r = ui
+                    .add(egui::Button::new(RichText::new(format!("⇅ {n} · {:.0}%", frac * 100.0)).font(theme::mono(14.0)).color(pal::GOLD)).frame(false))
+                    .on_hover_text("Show transfers");
+                if r.clicked() {
+                    self.files.open = true;
+                }
             }
             let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
             theme::lamp(ui.painter(), r.center(), if self.closed.is_some() { pal::RED } else { pal::GREEN }, t);

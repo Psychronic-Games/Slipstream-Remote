@@ -1,7 +1,9 @@
 //! Slipstream sessions: the long-running [`Client`] that keeps this device
 //! reachable by ID, hosts incoming sessions, and opens outgoing ones.
 
-mod files;
+mod cursor_folder;
+pub mod files;
+pub mod fsops;
 mod host;
 mod video;
 pub mod viewer;
@@ -29,6 +31,7 @@ pub use slipstream_codec::YuvFrame;
 use slipstream_platform::Backend;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
+pub use files::RemoteFs;
 pub use viewer::{FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 
 /// Connection state to the directory server.
@@ -64,6 +67,8 @@ pub struct ClientOptions {
     pub test_pattern: bool,
     /// Accept incoming remote-control sessions.
     pub accept_sessions: bool,
+    /// Which clipboard to sync (the system one, or an in-memory one for tests).
+    pub clipboard: slipstream_platform::clipboard::ClipboardSource,
 }
 
 pub(crate) enum HostSessionCmd {
@@ -250,6 +255,7 @@ impl Client {
             password,
             name,
             viewer_settings,
+            self.inner.opts.clipboard.clone(),
             Box::new(on_progress),
         )
         .await?;
@@ -276,8 +282,17 @@ impl Client {
             let s = self.inner.settings.lock().unwrap();
             (s.device_name.clone(), s.viewer.clone())
         };
-        viewer::connect(&self.inner.endpoint, addr, DeviceId(0), password, name, viewer_settings, Box::new(on_progress))
-            .await
+        viewer::connect(
+            &self.inner.endpoint,
+            addr,
+            DeviceId(0),
+            password,
+            name,
+            viewer_settings,
+            self.inner.opts.clipboard.clone(),
+            Box::new(on_progress),
+        )
+        .await
     }
 
     pub async fn shutdown(&self) {
@@ -449,14 +464,25 @@ mod tests {
     use super::*;
 
     async fn client(name: &str, host: bool) -> (Client, mpsc::UnboundedReceiver<ClientEvent>, std::path::PathBuf) {
+        client_with(name, host, Default::default(), |_| {}).await
+    }
+
+    async fn client_with(
+        name: &str,
+        host: bool,
+        clipboard: slipstream_platform::clipboard::ClipboardSource,
+        tweak: impl FnOnce(&mut slipstream_core::config::Settings),
+    ) -> (Client, mpsc::UnboundedReceiver<ClientEvent>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("slipstream-e2e-{}-{name}", std::process::id()));
         let store = Store::open(&dir).unwrap();
         let mut s = store.load_settings();
         s.server.use_public_relays = false;
         s.device_name = name.into();
         s.host.set_permanent_password(Some("correct horse battery"));
+        tweak(&mut s);
         store.save_settings(&s).unwrap();
-        let (c, ev) = Client::start(store, ClientOptions { test_pattern: host, accept_sessions: host }).await.unwrap();
+        let opts = ClientOptions { test_pattern: host, accept_sessions: host, clipboard };
+        let (c, ev) = Client::start(store, opts).await.unwrap();
         (c, ev, dir)
     }
 
@@ -516,5 +542,125 @@ mod tests {
         host.shutdown().await;
         let _ = std::fs::remove_dir_all(hdir);
         let _ = std::fs::remove_dir_all(vdir);
+    }
+
+    async fn wait_for<T>(rx: &mut mpsc::UnboundedReceiver<T>, mut pred: impl FnMut(&T) -> bool) -> bool {
+        let deadline = tokio::time::sleep(Duration::from_secs(10));
+        tokio::pin!(deadline);
+        loop {
+            tokio::select! {
+                _ = &mut deadline => return false,
+                ev = rx.recv() => match ev {
+                    Some(ev) if pred(&ev) => return true,
+                    Some(_) => {}
+                    None => return false,
+                }
+            }
+        }
+    }
+
+    /// Remote file browsing, upload (incl. subfolders), download, and that
+    /// a peer can't escape the target folder.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn file_manager_end_to_end() {
+        use slipstream_core::proto::UploadTarget;
+        let (host, mut hev, _) = client("fhost", true).await;
+        let (viewer, _vev, _) = client("fviewer", false).await;
+        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let fs = session.fs();
+
+        let work = std::env::temp_dir().join(format!("slipstream-fm-{}", std::process::id()));
+        let remote_dir = work.join("remote");
+        let local_dir = work.join("local");
+        std::fs::create_dir_all(&remote_dir).unwrap();
+        std::fs::create_dir_all(&local_dir).unwrap();
+        let payload: Vec<u8> = (0..1_000_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(local_dir.join("big.bin"), &payload).unwrap();
+
+        assert!(!fs.places().await.unwrap().is_empty());
+
+        // Upload a file into a nested folder of the remote dir.
+        let mut sent = 0u64;
+        let target = UploadTarget::Folder(remote_dir.display().to_string());
+        let saved = fs.upload(&local_dir.join("big.bin"), target.clone(), "Photos/2026/big.bin".into(), |n| sent += n).await.unwrap();
+        assert_eq!(sent, payload.len() as u64);
+        assert_eq!(std::fs::read(remote_dir.join("Photos/2026/big.bin")).unwrap(), payload);
+        assert!(saved.ends_with("big.bin"));
+        assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::FileReceived { .. })).await, "host notified");
+
+        // Same name again: kept, not overwritten.
+        fs.upload(&local_dir.join("big.bin"), target.clone(), "Photos/2026/big.bin".into(), |_| {}).await.unwrap();
+        assert!(remote_dir.join("Photos/2026/big (1).bin").exists());
+
+        // Path traversal is refused.
+        assert!(fs.upload(&local_dir.join("big.bin"), target.clone(), "../escape.bin".into(), |_| {}).await.is_err());
+        assert!(!work.join("escape.bin").exists());
+
+        // Browse it back and download the whole folder.
+        let listing = fs.list(Some(remote_dir.display().to_string())).await.unwrap();
+        assert_eq!(listing.entries[0].name, "Photos");
+        let photos = format!("{}{}Photos", listing.path, listing.sep);
+        let files = fs.walk(photos, true, "Photos".into(), 0).await.unwrap();
+        assert_eq!(files.len(), 2);
+        for (remote, rel, _) in files {
+            let dest = local_dir.join("down").join(&rel);
+            fs.download(remote, &dest, |_| {}).await.unwrap();
+        }
+        assert_eq!(std::fs::read(local_dir.join("down/Photos/2026/big.bin")).unwrap(), payload);
+
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        std::fs::remove_dir_all(work).ok();
+    }
+
+    /// With file transfer disabled on the host, nothing gets through.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn file_transfer_can_be_disabled() {
+        let (host, _hev, _) = client_with("nfhost", true, Default::default(), |s| s.host.allow_file_transfer = false).await;
+        let (viewer, _vev, _) = client("nfviewer", false).await;
+        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        assert!(!session.info().capabilities.file_transfer);
+        let err = session.fs().list(None).await.unwrap_err();
+        assert!(format!("{err:#}").contains("not allowed"), "{err:#}");
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+    }
+
+    /// Chat and clipboard text flow both ways.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn chat_and_clipboard_both_ways() {
+        use slipstream_platform::clipboard::ClipboardSource;
+        let host_clip = Arc::new(Mutex::new(Some("host start".to_string())));
+        let viewer_clip = Arc::new(Mutex::new(Some("viewer start".to_string())));
+        let (host, mut hev, _) = client_with("chost", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
+        let (viewer, _vev, _) = client_with("cviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
+        let (session, mut events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+
+        session.send(ViewerCmd::Chat("hello host".into()));
+        assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::HostChat { text, .. } if text == "hello host")).await);
+        host.host_chat(1, "hello viewer".into());
+        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Chat(t) if t == "hello viewer")).await);
+
+        let poll = |clip: &Arc<Mutex<Option<String>>>, want: &str| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if clip.lock().unwrap().as_deref() == Some(want) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            false
+        };
+        // Copy on the viewer → appears on the host, and vice versa.
+        *viewer_clip.lock().unwrap() = Some("copied on viewer".into());
+        assert!(tokio::task::block_in_place(|| poll(&host_clip, "copied on viewer")), "viewer → host clipboard");
+        *host_clip.lock().unwrap() = Some("copied on host".into());
+        assert!(tokio::task::block_in_place(|| poll(&viewer_clip, "copied on host")), "host → viewer clipboard");
+
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
     }
 }

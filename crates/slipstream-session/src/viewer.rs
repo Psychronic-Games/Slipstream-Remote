@@ -1,7 +1,6 @@
 //! Viewer side of a session.
 
 use std::{
-    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -23,11 +22,11 @@ use slipstream_core::{
         VideoFrame, ViewerMsg,
     },
 };
-use slipstream_platform::clipboard::Clipboard;
+use slipstream_platform::clipboard::{Clipboard, ClipboardSource};
 use tokio::sync::mpsc;
 use tracing::debug;
 
-use crate::files;
+use crate::files::RemoteFs;
 
 /// Commands from the UI.
 #[derive(Debug)]
@@ -38,7 +37,6 @@ pub enum ViewerCmd {
     Chat(String),
     /// Push text to the remote clipboard now (e.g. right before a paste).
     Clipboard(String),
-    SendFile(PathBuf),
     Disconnect,
 }
 
@@ -49,10 +47,6 @@ pub enum ViewerEvent {
     Displays(Vec<DisplayInfo>),
     Chat(String),
     Notice(String),
-    FileProgress { name: String, sent: u64, total: u64 },
-    FileSent { name: String },
-    FileFailed { name: String, error: String },
-    FileReceived { path: PathBuf },
     Stats(ViewerStats),
     Disconnected { reason: String },
 }
@@ -101,6 +95,7 @@ impl FrameShared {
 /// A live remote-control session. Dropping it disconnects.
 pub struct ViewerSession {
     cmds: mpsc::UnboundedSender<ViewerCmd>,
+    fs: RemoteFs,
     frames: Arc<FrameShared>,
     info: SessionInfo,
     peer: DeviceId,
@@ -127,6 +122,11 @@ impl ViewerSession {
         self.send(ViewerCmd::Input(ev));
     }
 
+    /// The remote computer's files (browse, upload, download).
+    pub fn fs(&self) -> RemoteFs {
+        self.fs.clone()
+    }
+
     pub fn command_sender(&self) -> mpsc::UnboundedSender<ViewerCmd> {
         self.cmds.clone()
     }
@@ -138,6 +138,7 @@ impl Drop for ViewerSession {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn connect(
     endpoint: &Endpoint,
     addr: EndpointAddr,
@@ -145,6 +146,7 @@ pub(crate) async fn connect(
     password: &str,
     viewer_name: String,
     settings: ViewerSettings,
+    clipboard: ClipboardSource,
     on_progress: Box<dyn Fn(String) + Send + Sync>,
 ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
     on_progress("Opening encrypted channel…".into());
@@ -187,6 +189,8 @@ pub(crate) async fn connect(
         max_fps: settings.max_fps.clamp(1, 144),
         ..Default::default()
     };
+    let clipboard = (settings.sync_clipboard && info.capabilities.clipboard).then_some(clipboard);
+    let fs = RemoteFs::new(conn.clone());
     tokio::spawn(run(
         conn,
         send,
@@ -196,9 +200,9 @@ pub(crate) async fn connect(
         frames.clone(),
         display,
         stream_settings,
-        settings.sync_clipboard && info.capabilities.clipboard,
+        clipboard,
     ));
-    Ok((ViewerSession { cmds: cmd_tx, frames, info, peer }, ev_rx))
+    Ok((ViewerSession { cmds: cmd_tx, fs, frames, info, peer }, ev_rx))
 }
 
 fn auth_error(reason: String, retry_after: u32) -> String {
@@ -215,7 +219,7 @@ async fn run(
     frames: Arc<FrameShared>,
     display: u32,
     stream_settings: StreamSettings,
-    sync_clipboard: bool,
+    sync_clipboard: Option<ClipboardSource>,
 ) {
     let reason = match session(&conn, &mut send, &mut recv, &mut cmds, &events, frames, display, stream_settings, sync_clipboard).await {
         Ok(r) => r,
@@ -243,7 +247,7 @@ async fn session(
     frames: Arc<FrameShared>,
     display: u32,
     settings: StreamSettings,
-    sync_clipboard: bool,
+    sync_clipboard: Option<ClipboardSource>,
 ) -> Result<String> {
     write_msg(send, &ViewerMsg::StartStream { display, settings }).await?;
 
@@ -274,22 +278,8 @@ async fn session(
     });
     let _video_guard = Abort(video_task);
 
-    // Files pushed by the host.
-    let files_conn = conn.clone();
-    let files_events = events.clone();
-    let _files_guard = Abort(tokio::spawn(async move {
-        while let Ok((s, r)) = files_conn.accept_bi().await {
-            let ev = files_events.clone();
-            tokio::spawn(async move {
-                if let Ok(path) = files::receive_file(s, r, true).await {
-                    let _ = ev.send(ViewerEvent::FileReceived { path });
-                }
-            });
-        }
-    }));
-
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();
-    let clipboard = if sync_clipboard { Clipboard::start(clip_tx) } else { None };
+    let clipboard = sync_clipboard.and_then(|source| Clipboard::start(clip_tx, &source));
 
     let mut stats_tick = tokio::time::interval(Duration::from_secs(1));
     let mut last_stats = (Instant::now(), 0u64, 0u64);
@@ -330,27 +320,6 @@ async fn session(
                 Some(ViewerCmd::Chat(t)) => write_msg(send, &ViewerMsg::Chat(t)).await?,
                 Some(ViewerCmd::Clipboard(t)) => {
                     write_msg(send, &ViewerMsg::Clipboard(ClipboardData::Text(t))).await?;
-                }
-                Some(ViewerCmd::SendFile(path)) => {
-                    let conn = conn.clone();
-                    let ev = events.clone();
-                    tokio::spawn(async move {
-                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
-                        let progress_ev = ev.clone();
-                        let pname = name.clone();
-                        let mut last = Instant::now();
-                        let progress = move |sent: u64, total: u64| {
-                            if last.elapsed() > Duration::from_millis(200) || sent == total {
-                                last = Instant::now();
-                                let _ = progress_ev.send(ViewerEvent::FileProgress { name: pname.clone(), sent, total });
-                            }
-                        };
-                        let progress = std::sync::Mutex::new(progress);
-                        match files::send_file(&conn, &path, |s, t| (progress.lock().unwrap())(s, t)).await {
-                            Ok(saved) => { let _ = ev.send(ViewerEvent::FileSent { name: saved }); }
-                            Err(e) => { let _ = ev.send(ViewerEvent::FileFailed { name, error: format!("{e:#}") }); }
-                        }
-                    });
                 }
                 Some(ViewerCmd::Disconnect) | None => return Ok("disconnected".into()),
             },

@@ -58,7 +58,7 @@ pub async fn host(test_pattern: bool, password: Option<String>) -> Result<()> {
         s.host.set_permanent_password(Some(pw));
         store.save_settings(&s)?;
     }
-    let (client, mut events) = Client::start(store, ClientOptions { test_pattern, accept_sessions: true }).await?;
+    let (client, mut events) = Client::start(store, ClientOptions { test_pattern, accept_sessions: true, ..Default::default() }).await?;
     println!("hosting; endpoint {}", client.endpoint_id());
     loop {
         tokio::select! {
@@ -99,13 +99,53 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-pub async fn connect(id: &str, password: &str, seconds: u64) -> Result<()> {
+/// One-shot file operations for `slipstream connect`.
+pub struct FileOps {
+    pub ls: Option<String>,
+    pub put: Option<std::path::PathBuf>,
+    pub to: Option<String>,
+    pub get: Option<String>,
+}
+
+async fn file_ops(fs: &slipstream_session::RemoteFs, ops: FileOps) -> Result<()> {
+    use slipstream_core::proto::UploadTarget;
+    if let Some(path) = ops.ls {
+        let l = fs.list(Some(path).filter(|p| !p.is_empty())).await?;
+        println!("{}  (parent: {:?}, separator {:?})", l.path, l.parent, l.sep);
+        for e in &l.entries {
+            println!("  {} {:>12}  {}", if e.is_dir { "DIR " } else { "FILE" }, e.size, e.name);
+        }
+        let places = fs.places().await?;
+        println!("places: {}", places.iter().map(|p| format!("{}={}", p.label, p.path)).collect::<Vec<_>>().join(", "));
+    }
+    if let Some(local) = ops.put {
+        let name = local.file_name().context("not a file")?.to_string_lossy().into_owned();
+        let target = ops.to.map(UploadTarget::Folder).unwrap_or(UploadTarget::Default);
+        let saved = fs.upload(&local, target, name, |_| {}).await?;
+        println!("uploaded to {saved}");
+    }
+    if let Some(remote) = ops.get {
+        let name = remote.rsplit(['/', '\\']).next().unwrap_or("download").to_string();
+        let dest = std::env::current_dir()?.join(name);
+        let saved = fs.download(remote, &dest, |_| {}).await?;
+        println!("downloaded to {}", saved.display());
+    }
+    Ok(())
+}
+
+pub async fn connect(id: &str, password: &str, seconds: u64, ops: FileOps) -> Result<()> {
     let id: DeviceId = id.parse()?;
     let store = Store::open_default()?;
     let (client, _events) = Client::start(store, ClientOptions::default()).await?;
     let (session, mut events) = client.connect(id, password, |p| println!("… {p}")).await?;
     let info = session.info().clone();
     println!("connected to {} ({}), {} display(s)", info.host_name, info.os, info.displays.len());
+    if ops.ls.is_some() || ops.put.is_some() || ops.get.is_some() {
+        let r = file_ops(&session.fs(), ops).await;
+        drop(session);
+        client.shutdown().await;
+        return r;
+    }
     let deadline = tokio::time::sleep(Duration::from_secs(seconds));
     tokio::pin!(deadline);
     let mut total_frames = 0.0;

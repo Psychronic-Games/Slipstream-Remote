@@ -36,6 +36,10 @@ struct Args {
     #[arg(long, hide = true, default_value_t = 3.0)]
     screenshot_delay: f64,
 
+    /// Open the file transfer window once connected (testing).
+    #[arg(long, hide = true)]
+    open_files: bool,
+
     /// Open on this page: bridge, links, config, about (testing).
     #[arg(long, hide = true)]
     page: Option<String>,
@@ -61,6 +65,18 @@ enum Command {
         /// How long to stay connected.
         #[arg(long, default_value_t = 10)]
         seconds: u64,
+        /// List a remote folder ("" = home) and exit.
+        #[arg(long)]
+        ls: Option<String>,
+        /// Upload a local file to the remote Desktop (or --to FOLDER) and exit.
+        #[arg(long)]
+        put: Option<std::path::PathBuf>,
+        /// Remote folder for --put.
+        #[arg(long)]
+        to: Option<String>,
+        /// Download a remote file into the current folder and exit.
+        #[arg(long)]
+        get: Option<String>,
     },
     /// Set the server (a domain or URL, e.g. `relay.example.com`).
     SetServer {
@@ -89,7 +105,9 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     match args.command {
         Some(Command::Host { password }) => rt.block_on(cli::host(args.test_pattern, password)),
-        Some(Command::Connect { id, password, seconds }) => rt.block_on(cli::connect(&id, &password, seconds)),
+        Some(Command::Connect { id, password, seconds, ls, put, to, get }) => {
+            rt.block_on(cli::connect(&id, &password, seconds, cli::FileOps { ls, put, to, get }))
+        }
         Some(Command::SetServer { address, key }) => cli::set_server(&address, key),
         Some(Command::SetPassword { password }) => cli::set_password(password.as_deref()),
         Some(Command::Info) => rt.block_on(cli::info()),
@@ -102,6 +120,7 @@ fn main() -> anyhow::Result<()> {
                 screenshot: args.screenshot.map(|p| (p, args.screenshot_delay)),
                 page: args.page,
                 minimized: args.minimized,
+                open_files: args.open_files,
             })
         }
     }

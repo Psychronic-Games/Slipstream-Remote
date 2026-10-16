@@ -219,35 +219,39 @@ fn fillet(painter: &egui::Painter, at: Pos2, r: f32, dx: f32, dy: f32, color: Co
 }
 
 /// A flat block button (sidebar style): label bottom-right, black text.
+/// The active one is lit, outlined and points into the page; the rest are
+/// slightly dimmed so the selection is unmistakable.
 pub fn block_button(ui: &mut Ui, rect: Rect, label: &str, code: &str, color: Color32, active: bool) -> Response {
     let resp = ui.interact(rect, ui.scope_id().with(label), Sense::click());
     let painter = ui.painter();
-    let mut fill = color;
-    if resp.hovered() {
-        fill = lighten(color, 0.25);
-        glow(painter, rect, 2.0, color, 0.8);
+    let mut fill = if active { lighten(color, 0.15) } else { mix(color, Color32::BLACK, 0.28) };
+    if resp.hovered() && !active {
+        fill = color;
+        glow(painter, rect, 2.0, color, 0.6);
     }
     if active {
-        fill = lighten(color, 0.4);
-        glow(painter, rect, 2.0, color, 1.2);
+        glow(painter, rect, 2.0, color, 1.4);
     }
     if resp.is_pointer_button_down_on() {
         fill = Color32::WHITE;
     }
     painter.rect_filled(rect, 2.0, fill);
+    if active {
+        painter.rect_stroke(rect.shrink(1.0), 2.0, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
+        // Pointer into the content area.
+        let tip = pos2(rect.right() + 14.0, rect.center().y);
+        let arrow = vec![pos2(rect.right() + 2.0, rect.center().y - 10.0), tip, pos2(rect.right() + 2.0, rect.center().y + 10.0)];
+        painter.add(Shape::convex_polygon(arrow, lighten(color, 0.15), Stroke::NONE));
+    }
     painter.text(
         rect.right_bottom() + vec2(-8.0, -4.0),
         Align2::RIGHT_BOTTOM,
         label.to_uppercase(),
-        display(17.0),
+        if active { display_bold(17.0) } else { display(17.0) },
         Color32::BLACK,
     );
     if !code.is_empty() {
         painter.text(rect.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, code, mono(11.0), Color32::BLACK.gamma_multiply(0.6));
-    }
-    if active {
-        // Active indicator notch.
-        painter.rect_filled(Rect::from_min_size(rect.right_top() - vec2(6.0, 0.0), vec2(6.0, rect.height())), 0.0, Color32::BLACK);
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

@@ -180,24 +180,15 @@ async fn session_loop(
     });
     let _writer_guard = AbortOnDrop(writer);
 
-    // Incoming file transfers.
-    let files_conn = conn.clone();
+    // File browsing and transfer requests from the viewer.
     let files_inner = inner.clone();
-    let allow_files = caps.file_transfer;
-    let _files_guard = AbortOnDrop(tokio::spawn(async move {
-        while let Ok((s, r)) = files_conn.accept_bi().await {
-            let inner = files_inner.clone();
-            tokio::spawn(async move {
-                match files::receive_file(s, r, allow_files).await {
-                    Ok(path) => inner.emit(ClientEvent::FileReceived { session: id, path }),
-                    Err(e) => debug!("file receive failed: {e:#}"),
-                }
-            });
-        }
-    }));
+    let policy = files::FilePolicy { browse: caps.file_transfer, receive: caps.file_transfer };
+    let on_saved: Arc<dyn Fn(std::path::PathBuf) + Send + Sync> =
+        Arc::new(move |path| files_inner.emit(ClientEvent::FileReceived { session: id, path }));
+    let _files_guard = AbortOnDrop(tokio::spawn(files::serve(conn.clone(), policy, on_saved)));
 
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();
-    let clipboard = if caps.clipboard { Clipboard::start(clip_tx) } else { None };
+    let clipboard = if caps.clipboard { Clipboard::start(clip_tx, &inner.opts.clipboard) } else { None };
 
     let flow = Flow::new();
     let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();

@@ -1,116 +1,274 @@
-//! File transfer over dedicated bi-streams (either direction).
+//! File browsing and transfer over dedicated bi-streams.
+//!
+//! The host serves its filesystem to an authenticated viewer (when file
+//! transfer is allowed): listings, downloads, uploads into any folder. The
+//! viewer uses [`RemoteFs`]. See `StreamOpen` in the protocol.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result, bail};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use slipstream_core::{
     framing::{expect_msg, write_msg},
-    proto::{FileHeader, FileResult},
+    proto::{DirListing, Place, StreamOpen, StreamReply, UploadTarget},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// Where received files land: `~/Downloads/Slipstream`.
-pub fn download_dir() -> PathBuf {
-    directories::UserDirs::new()
-        .and_then(|d| d.download_dir().map(Path::to_path_buf))
-        .or_else(|| directories::UserDirs::new().map(|d| d.home_dir().to_path_buf()))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("Slipstream")
+use crate::fsops;
+
+const CHUNK: usize = 256 * 1024;
+
+/// What a peer may do on our side.
+#[derive(Debug, Clone, Copy)]
+pub struct FilePolicy {
+    /// List folders and download files.
+    pub browse: bool,
+    /// Receive uploads.
+    pub receive: bool,
 }
 
-/// Sends a file; returns the name the receiver saved it under.
-pub async fn send_file(conn: &Connection, path: &Path, progress: impl Fn(u64, u64)) -> Result<String> {
-    let mut file = tokio::fs::File::open(path).await.with_context(|| format!("opening {}", path.display()))?;
-    let size = file.metadata().await?.len();
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
-    let (mut send, mut recv) = conn.open_bi().await?;
-    write_msg(&mut send, &FileHeader { name, size }).await?;
-    let mut buf = vec![0u8; 256 * 1024];
-    let mut sent = 0u64;
-    loop {
-        let n = file.read(&mut buf).await?;
-        if n == 0 {
-            break;
+/// Serves file requests arriving on `conn` until it closes. `on_saved` is
+/// told about each received file.
+pub async fn serve(conn: Connection, policy: FilePolicy, on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>) {
+    while let Ok((send, recv)) = conn.accept_bi().await {
+        let on_saved = on_saved.clone();
+        tokio::spawn(async move {
+            if let Err(e) = handle(send, recv, policy, on_saved).await {
+                tracing::debug!("file request failed: {e:#}");
+            }
+        });
+    }
+}
+
+async fn reply(send: &mut SendStream, r: &StreamReply) -> Result<()> {
+    write_msg(send, r).await
+}
+
+async fn handle(mut send: SendStream, mut recv: RecvStream, policy: FilePolicy, on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>) -> Result<()> {
+    let req: StreamOpen = expect_msg(&mut recv).await?;
+    let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
+    match req {
+        StreamOpen::Places => {
+            let r = if policy.browse { StreamReply::Places(fsops::places()) } else { denied("Browsing files") };
+            reply(&mut send, &r).await?;
         }
-        send.write_all(&buf[..n]).await?;
-        sent += n as u64;
-        progress(sent, size);
+        StreamOpen::List { path } => {
+            let r = if !policy.browse {
+                denied("Browsing files")
+            } else {
+                match tokio::task::spawn_blocking(move || fsops::list(path.as_deref())).await? {
+                    Ok(l) => StreamReply::Listing(l),
+                    Err(e) => StreamReply::Error(format!("{e:#}")),
+                }
+            };
+            reply(&mut send, &r).await?;
+        }
+        StreamOpen::MakeDir { path } => {
+            let r = if !policy.browse {
+                denied("Changing files")
+            } else {
+                match tokio::fs::create_dir_all(&path).await {
+                    Ok(()) => StreamReply::Done,
+                    Err(e) => StreamReply::Error(format!("cannot create {path}: {e}")),
+                }
+            };
+            reply(&mut send, &r).await?;
+        }
+        StreamOpen::Download { path } => {
+            if !policy.browse {
+                reply(&mut send, &denied("Downloading files")).await?;
+                return Ok(());
+            }
+            let mut file = match tokio::fs::File::open(&path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    reply(&mut send, &StreamReply::Error(format!("cannot open {path}: {e}"))).await?;
+                    return Ok(());
+                }
+            };
+            let size = file.metadata().await?.len();
+            reply(&mut send, &StreamReply::File { size }).await?;
+            let mut buf = vec![0u8; CHUNK];
+            loop {
+                let n = file.read(&mut buf).await?;
+                if n == 0 {
+                    break;
+                }
+                send.write_all(&buf[..n]).await?;
+            }
+            send.finish()?;
+        }
+        StreamOpen::Upload { target, rel_path, size } => {
+            if !policy.receive {
+                reply(&mut send, &denied("Receiving files")).await?;
+                return Ok(());
+            }
+            let rel = match fsops::safe_relative(&rel_path) {
+                Ok(r) => r,
+                Err(e) => {
+                    reply(&mut send, &StreamReply::Error(format!("{e:#}"))).await?;
+                    return Ok(());
+                }
+            };
+            let base = match &target {
+                UploadTarget::Default => fsops::default_upload_dir(),
+                UploadTarget::Folder(f) => PathBuf::from(f),
+                UploadTarget::UnderCursor => crate::cursor_folder::folder_under_cursor().unwrap_or_else(fsops::default_upload_dir),
+            };
+            if !base.is_dir() {
+                reply(&mut send, &StreamReply::Error(format!("folder {} does not exist", base.display()))).await?;
+                return Ok(());
+            }
+            let dest = fsops::unique_path(&base.join(&rel));
+            if let Some(parent) = dest.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            reply(&mut send, &StreamReply::Ready).await?;
+            let partial = dest.with_file_name(format!(
+                ".{}.slipstream-part",
+                dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+            ));
+            let mut file = tokio::fs::File::create(&partial).await?;
+            let mut remaining = size;
+            let mut buf = vec![0u8; CHUNK];
+            while remaining > 0 {
+                let want = buf.len().min(remaining as usize);
+                let Some(n) = recv.read(&mut buf[..want]).await? else { break };
+                file.write_all(&buf[..n]).await?;
+                remaining -= n as u64;
+            }
+            file.flush().await?;
+            drop(file);
+            if remaining != 0 {
+                let _ = tokio::fs::remove_file(&partial).await;
+                bail!("upload of {rel_path} was interrupted");
+            }
+            tokio::fs::rename(&partial, &dest).await?;
+            reply(&mut send, &StreamReply::Saved { path: fsops::display(&dest) }).await?;
+            send.finish().ok();
+            on_saved(dest);
+        }
     }
-    send.finish()?;
-    match expect_msg::<FileResult>(&mut recv).await? {
-        FileResult::Saved { name } => Ok(name),
-        FileResult::Rejected(why) => bail!("rejected: {why}"),
-    }
+    Ok(())
 }
 
-/// Strips anything path-like so a peer can't write outside the target dir.
-fn sanitize(name: &str) -> String {
-    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
-    let clean: String = base
-        .chars()
-        .filter(|c| !c.is_control() && !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|'))
-        .collect();
-    let clean = clean.trim().trim_start_matches('.').to_string();
-    if clean.is_empty() { "received-file".into() } else { clean.chars().take(200).collect() }
+/// The remote computer's files, as seen from the viewer.
+#[derive(Debug, Clone)]
+pub struct RemoteFs {
+    conn: Connection,
 }
 
-fn unique_path(dir: &Path, name: &str) -> PathBuf {
-    let candidate = dir.join(name);
-    if !candidate.exists() {
-        return candidate;
+impl RemoteFs {
+    pub(crate) fn new(conn: Connection) -> Self {
+        Self { conn }
     }
-    let (stem, ext) = match name.rsplit_once('.') {
-        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
-        _ => (name.to_string(), String::new()),
-    };
-    (1..).map(|i| dir.join(format!("{stem} ({i}){ext}"))).find(|p| !p.exists()).expect("unbounded")
-}
 
-/// Receives one file from an accepted bi-stream into [`download_dir`].
-pub async fn receive_file(mut send: SendStream, mut recv: RecvStream, allowed: bool) -> Result<PathBuf> {
-    let header: FileHeader = expect_msg(&mut recv).await?;
-    if !allowed {
-        write_msg(&mut send, &FileResult::Rejected("file transfer is disabled".into())).await?;
+    async fn ask(&self, req: StreamOpen) -> Result<(SendStream, RecvStream, StreamReply)> {
+        let (mut send, mut recv) = self.conn.open_bi().await.context("connection closed")?;
+        write_msg(&mut send, &req).await?;
+        let reply: StreamReply = expect_msg(&mut recv).await?;
+        if let StreamReply::Error(e) = reply {
+            bail!("{e}");
+        }
+        Ok((send, recv, reply))
+    }
+
+    pub async fn places(&self) -> Result<Vec<Place>> {
+        match self.ask(StreamOpen::Places).await?.2 {
+            StreamReply::Places(p) => Ok(p),
+            other => bail!("unexpected reply {other:?}"),
+        }
+    }
+
+    pub async fn list(&self, path: Option<String>) -> Result<DirListing> {
+        match self.ask(StreamOpen::List { path }).await?.2 {
+            StreamReply::Listing(l) => Ok(l),
+            other => bail!("unexpected reply {other:?}"),
+        }
+    }
+
+    pub async fn make_dir(&self, path: String) -> Result<()> {
+        self.ask(StreamOpen::MakeDir { path }).await.map(|_| ())
+    }
+
+    /// Uploads one local file. Returns where it was saved remotely.
+    pub async fn upload(&self, local: &Path, target: UploadTarget, rel_path: String, mut progress: impl FnMut(u64)) -> Result<String> {
+        let mut file = tokio::fs::File::open(local).await.with_context(|| format!("opening {}", local.display()))?;
+        let size = file.metadata().await?.len();
+        let (mut send, mut recv, reply) = self.ask(StreamOpen::Upload { target, rel_path, size }).await?;
+        if !matches!(reply, StreamReply::Ready) {
+            bail!("unexpected reply {reply:?}");
+        }
+        let mut buf = vec![0u8; CHUNK];
+        loop {
+            let n = file.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            send.write_all(&buf[..n]).await?;
+            progress(n as u64);
+        }
         send.finish()?;
-        bail!("file transfer disabled");
+        match expect_msg::<StreamReply>(&mut recv).await? {
+            StreamReply::Saved { path } => Ok(path),
+            StreamReply::Error(e) => bail!("{e}"),
+            other => bail!("unexpected reply {other:?}"),
+        }
     }
-    let dir = download_dir();
-    tokio::fs::create_dir_all(&dir).await?;
-    let path = unique_path(&dir, &sanitize(&header.name));
-    let partial = path.with_extension("part");
-    let mut file = tokio::fs::File::create(&partial).await?;
-    let mut remaining = header.size;
-    let mut buf = vec![0u8; 256 * 1024];
-    while remaining > 0 {
-        let want = buf.len().min(remaining as usize);
-        let Some(n) = recv.read(&mut buf[..want]).await? else { break };
-        file.write_all(&buf[..n]).await?;
-        remaining -= n as u64;
-    }
-    file.flush().await?;
-    drop(file);
-    if remaining != 0 {
-        let _ = tokio::fs::remove_file(&partial).await;
-        bail!("transfer of {} interrupted", header.name);
-    }
-    tokio::fs::rename(&partial, &path).await?;
-    let saved = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-    write_msg(&mut send, &FileResult::Saved { name: saved }).await?;
-    send.finish()?;
-    Ok(path)
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    /// Downloads one remote file to `dest` (a full local path; parents are
+    /// created). Returns the local path actually used (made unique).
+    pub async fn download(&self, remote: String, dest: &Path, mut progress: impl FnMut(u64)) -> Result<PathBuf> {
+        let (_send, mut recv, reply) = self.ask(StreamOpen::Download { path: remote.clone() }).await?;
+        let StreamReply::File { size } = reply else { bail!("unexpected reply {reply:?}") };
+        if let Some(parent) = dest.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let dest = fsops::unique_path(dest);
+        let partial = dest.with_extension("slipstream-part");
+        let mut file = tokio::fs::File::create(&partial).await?;
+        let mut remaining = size;
+        let mut buf = vec![0u8; CHUNK];
+        while remaining > 0 {
+            let want = buf.len().min(remaining as usize);
+            let Some(n) = recv.read(&mut buf[..want]).await? else { break };
+            file.write_all(&buf[..n]).await?;
+            remaining -= n as u64;
+            progress(n as u64);
+        }
+        file.flush().await?;
+        drop(file);
+        if remaining != 0 {
+            let _ = tokio::fs::remove_file(&partial).await;
+            bail!("download of {remote} was interrupted");
+        }
+        tokio::fs::rename(&partial, &dest).await?;
+        Ok(dest)
+    }
 
-    #[test]
-    fn sanitize_blocks_traversal() {
-        assert_eq!(sanitize("../../etc/passwd"), "passwd");
-        assert_eq!(sanitize("C:\\Windows\\evil.exe"), "evil.exe");
-        assert_eq!(sanitize(".bashrc"), "bashrc");
-        assert_eq!(sanitize(""), "received-file");
-        assert_eq!(sanitize("report final.pdf"), "report final.pdf");
+    /// All files under a remote path, with paths relative to its parent
+    /// (`Folder/sub/file`) and sizes. A file yields itself.
+    pub async fn walk(&self, path: String, is_dir: bool, name: String, size: u64) -> Result<Vec<(String, String, u64)>> {
+        if !is_dir {
+            return Ok(vec![(path, name, size)]);
+        }
+        let mut out = Vec::new();
+        let mut stack = vec![(path, name)];
+        while let Some((dir, rel)) = stack.pop() {
+            let listing = self.list(Some(dir)).await?;
+            for e in listing.entries {
+                let child = format!("{}{}{}", listing.path.trim_end_matches(['/', '\\']), listing.sep, e.name);
+                let child_rel = format!("{rel}/{}", e.name);
+                if e.is_dir {
+                    stack.push((child, child_rel));
+                } else {
+                    out.push((child, child_rel, e.size));
+                }
+            }
+        }
+        Ok(out)
     }
 }

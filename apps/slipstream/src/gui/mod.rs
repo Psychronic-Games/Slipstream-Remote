@@ -1,6 +1,7 @@
 //! The desktop GUI.
 
 mod autostart;
+mod files;
 #[cfg(target_os = "linux")]
 mod desktop;
 mod home;
@@ -37,6 +38,8 @@ pub struct GuiOptions {
     pub page: Option<String>,
     /// Start hidden in the tray.
     pub minimized: bool,
+    /// Open the file transfer window when a session starts (testing).
+    pub open_files: bool,
 }
 
 pub fn run(opts: GuiOptions) -> Result<()> {
@@ -53,7 +56,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     }
     let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().enable_all().build()?);
     let (client, events) =
-        rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: true }))?;
+        rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: true, ..Default::default() }))?;
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -90,6 +93,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             app.screenshot = opts.screenshot;
             app.show_requests = Some(instance.listen(cc.egui_ctx.clone()));
             app.start_hidden = opts.minimized && app.tray.is_some();
+            app.open_files = opts.open_files;
             Ok(Box::new(app))
         }),
     )
@@ -165,6 +169,7 @@ pub struct App {
     logo: Option<egui::TextureHandle>,
     /// Showing the "keeps running in the tray" explanation.
     tray_hint: bool,
+    open_files: bool,
 }
 
 impl App {
@@ -218,6 +223,7 @@ impl App {
             show_requests: None,
             logo: None,
             tray_hint: false,
+            open_files: false,
         }
     }
 
@@ -315,7 +321,8 @@ impl App {
             Ok((session, events)) => {
                 let id = self.next_tab;
                 self.next_tab += 1;
-                let tab = remote::RemoteTab::new(id, session, events, attempt.password, ctx);
+                let mut tab = remote::RemoteTab::new(id, session, events, attempt.password, ctx);
+                tab.files.open = self.open_files;
                 self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
                 self.tabs.push(tab);
                 self.page = Page::Remote(id);
