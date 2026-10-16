@@ -77,6 +77,7 @@ pub async fn host(test_pattern: bool, password: Option<String>) -> Result<()> {
                     ClientEvent::Org(Some(o)) => println!("station  {o}"),
                     ClientEvent::Org(None) => {}
                     ClientEvent::Notice(n) => println!("notice: {n}"),
+                    ClientEvent::UpdateAvailable(u) => println!("update available: {} (run `slipstream update`)", u.label()),
                 }
             }
         }
@@ -170,6 +171,29 @@ pub async fn connect(id: &str, password: &str, seconds: u64, ops: FileOps) -> Re
     println!("received ~{total_frames:.0} frames");
     drop(session);
     tokio::time::sleep(Duration::from_millis(200)).await;
+    client.shutdown().await;
+    Ok(())
+}
+
+/// Checks the station for a newer build and installs it.
+pub async fn update() -> Result<()> {
+    let store = Store::open_default()?;
+    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    println!("this is Slipstream {}", slipstream_core::version_string());
+    match client.check_update().await? {
+        None => println!("up to date"),
+        Some(info) => {
+            println!("installing {}…", info.label());
+            let exe = client
+                .install_update(&info, |done, total| {
+                    if total > 0 && done == total {
+                        println!("downloaded {} bytes", total);
+                    }
+                })
+                .await?;
+            println!("updated {} — restart Slipstream to use it", exe.display());
+        }
+    }
     client.shutdown().await;
     Ok(())
 }

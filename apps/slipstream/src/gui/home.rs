@@ -15,6 +15,10 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         incoming_banner(app, ui, t);
         ui.add_space(10.0);
     }
+    if app.update.is_some() {
+        update_banner(app, ui);
+        ui.add_space(10.0);
+    }
 
     if ui.available_width() > 820.0 {
         ui.columns(2, |cols| {
@@ -178,6 +182,49 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
             }
         });
     });
+}
+
+fn update_banner(app: &mut App, ui: &mut Ui) {
+    let ctx = ui.ctx().clone();
+    let Some(u) = &app.update else { return };
+    let (label, installing, error) = (u.info.label(), u.installing, u.error.clone());
+    let (done, total) = *u.progress.lock().unwrap();
+    let mut install = false;
+    let mut dismiss = false;
+    egui::Frame::new()
+        .fill(pal::GREEN.gamma_multiply(0.08))
+        .stroke(egui::Stroke::new(1.5, pal::GREEN.gamma_multiply(0.8)))
+        .corner_radius(egui::CornerRadius::same(14))
+        .inner_margin(egui::Margin::symmetric(16, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("◆ UPDATE AVAILABLE").font(theme::display_bold(18.0)).color(pal::GREEN));
+                ui.label(
+                    RichText::new(format!("Slipstream {label} — you have {}", slipstream_core::version_string()))
+                        .font(theme::body(16.0)),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if installing {
+                        let frac = if total == 0 { 0.0 } else { done as f32 / total as f32 };
+                        ui.add(egui::ProgressBar::new(frac).desired_width(200.0).fill(pal::GREEN).text("downloading…"));
+                    } else {
+                        install = theme::pill(ui, "Install & restart", pal::GREEN).clicked();
+                        dismiss = ui.small_button("Later").clicked();
+                    }
+                });
+            });
+            if let Some(e) = error {
+                ui.label(RichText::new(e).color(pal::RED));
+            }
+            ui.label(RichText::new("Your settings, ID and passwords are kept.").small().color(pal::DIM));
+        });
+    if install {
+        app.start_update(&ctx);
+    }
+    if dismiss {
+        app.update = None;
+    }
 }
 
 fn incoming_banner(app: &mut App, ui: &mut Ui, t: f64) {

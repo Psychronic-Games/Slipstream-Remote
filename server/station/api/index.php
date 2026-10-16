@@ -61,6 +61,21 @@ try {
                 'public_relays' => (bool)($station['public_relays'] ?? true),
             ]);
 
+        case 'update_check':
+            $m = slip_client_manifest();
+            $f = $m['platforms'][(string)($req['platform'] ?? '')] ?? null;
+            if (!$m || !$f || !is_file(SLIP_ROOT . '/clients/' . basename((string)$f['file']))) {
+                reply(['ok' => true, 'update' => null]);
+            }
+            reply(['ok' => true, 'update' => [
+                'version' => (string)$m['version'],
+                'build' => (int)$m['build'],
+                'commit' => (string)($m['commit'] ?? ''),
+                'size' => (int)$f['size'],
+                'sha256' => (string)$f['sha256'],
+                'os' => (string)$f['os'],
+            ]]);
+
         case 'lookup':
             if (!slip_rate_ok('lookup', (int)$cfg['lookups_per_minute'])) {
                 fail('too many lookups, slow down', 429);

@@ -233,7 +233,11 @@ slip_page_start('Station admin', '../');
   </div>
 
   <h2 class="gold">Client downloads</h2>
-  <div class="panel"><table>
+  <div class="panel">
+    <?php $man = slip_client_manifest(); ?>
+    <p><?= $man ? 'Serving version <b>' . h($man['version']) . '</b> (build ' . (int)$man['build'] . ' · ' . h($man['commit'] ?? '') . '). Apps update to this automatically.'
+        : '<span class="warn">No manifest.json — apps can\'t auto-update. Upload builds made with scripts/build-station.sh.</span>' ?></p>
+    <table>
     <?php foreach ($builds as $os => $b): ?>
       <tr><td><?= h($b['label']) ?></td><td class="mono"><?= h($b['file']) ?></td>
         <td class="<?= $b['path'] ? 'ok' : 'warn' ?>"><?= $b['path'] ? round($b['size'] / 1048576) . ' MB, ' . date('Y-m-d', filemtime($b['path'])) : 'missing — upload to clients/' ?></td></tr>

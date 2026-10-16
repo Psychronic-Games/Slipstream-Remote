@@ -178,7 +178,6 @@ fn now() -> i64 {
 
 impl DirectoryClient {
     pub fn new(server: &str, key: Option<String>) -> Result<Self> {
-        crate::init_crypto();
         let base = normalize_server_url(server)?;
         let api = base.join("api/")?;
         let http = reqwest::Client::builder()
@@ -276,6 +275,27 @@ impl DirectoryClient {
         Ok(())
     }
 
+    /// Asks the station which app build it offers for `platform`
+    /// (e.g. "windows-x86_64"). `None` if it has none (or can't say).
+    pub async fn update_check(&self, platform: &str) -> Result<Option<serde_json::Value>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(default)]
+            update: Option<serde_json::Value>,
+        }
+        match self.call::<R>(serde_json::json!({ "op": "update_check", "platform": platform })).await {
+            Ok(r) => Ok(r.update),
+            // Stations without update support (e.g. the standalone binary).
+            Err(e) if format!("{e}").contains("unknown op") => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Access key this client sends (for authenticated downloads).
+    pub fn key(&self) -> Option<&str> {
+        self.key.as_deref()
+    }
+
     pub async fn lookup(&self, id: DeviceId) -> Result<Lookup> {
         let r: LookupResp = self.call(serde_json::json!({ "op": "lookup", "id": id.0 })).await?;
         Ok(match (r.status.as_str(), r.addr, r.info) {
@@ -286,10 +306,21 @@ impl DirectoryClient {
     }
 }
 
+/// An HTTPS client with Slipstream's certificate checks (built-in roots,
+/// clock-corrected), without a request timeout — for large downloads.
+pub fn http_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .tls_backend_preconfigured(tls_config()?)
+        .user_agent(concat!("slipstream/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(Duration::from_secs(10))
+        .build()?)
+}
+
 /// TLS with a built-in copy of Mozilla's trusted roots (rather than the
 /// operating system's store) checked against our corrected clock, so
 /// certificate checks behave the same on every machine, wrong clock or not.
 fn tls_config() -> Result<rustls::ClientConfig> {
+    crate::init_crypto();
     let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
     let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()?

@@ -26,6 +26,36 @@ pub fn os_name() -> String {
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Monotonic build number (git commit count) — newer builds are bigger.
+pub const BUILD_NUMBER: u64 = {
+    match u64::from_str_radix(env!("SLIPSTREAM_BUILD_NUMBER"), 10) {
+        Ok(n) => n,
+        Err(_) => 0,
+    }
+};
+
+/// Short git commit of this build.
+pub const COMMIT: &str = env!("SLIPSTREAM_COMMIT");
+
+/// "0.1.0 (build 7 · 8d6428c)"
+pub const VERSION_STRING: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (build ",
+    env!("SLIPSTREAM_BUILD_NUMBER"),
+    " · ",
+    env!("SLIPSTREAM_COMMIT"),
+    ")"
+);
+
+pub fn version_string() -> String {
+    VERSION_STRING.to_string()
+}
+
+/// Identifies which client build fits this machine, e.g. "linux-x86_64".
+pub fn platform() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
 /// Selects the TLS crypto backend (ring) for HTTPS. Call once at startup;
 /// later calls are no-ops.
 pub fn init_crypto() {

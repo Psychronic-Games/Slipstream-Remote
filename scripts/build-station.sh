@@ -45,6 +45,25 @@ fi
 # Slipstream.app) into clients/.
 [ -f dist/slipstream-macos.zip ] && cp dist/slipstream-macos.zip "$OUT/clients/"
 
+# Update manifest: apps compare (version, build) with their own and verify
+# the download against these checksums.
+VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
+{
+  printf '{\n  "version": "%s",\n  "build": %s,\n  "commit": "%s",\n  "built": %s,\n  "platforms": {' "$VERSION" "$BUILD" "$COMMIT" "$(date +%s)"
+  sep=""
+  for spec in "linux-x86_64:linux:slipstream-linux-x86_64" "windows-x86_64:windows:slipstream-windows-x86_64.exe" "macos-aarch64:macos:slipstream-macos.zip"; do
+    IFS=: read -r platform os file <<< "$spec"
+    f="$OUT/clients/$file"
+    [ -f "$f" ] || continue
+    printf '%s\n    "%s": {"os": "%s", "file": "%s", "size": %s, "sha256": "%s"}' "$sep" "$platform" "$os" "$file" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
+    sep=","
+  done
+  printf '\n  }\n}\n'
+} > "$OUT/clients/manifest.json"
+echo "==> Manifest: version $VERSION build $BUILD ($COMMIT)"
+
 chmod 755 "$OUT"/bin/* 2>/dev/null || true
 echo "==> Station assembled in $OUT:"
 ls -la "$OUT/bin" "$OUT/clients" | grep -v "^total"

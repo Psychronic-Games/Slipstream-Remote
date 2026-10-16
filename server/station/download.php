@@ -11,7 +11,12 @@ if (!slip_station_ready()) {
     http_response_code(503);
     exit('Station not set up yet.');
 }
-if (!empty($station['download_password_hash'])) {
+// Apps updating themselves present the station's access key instead of
+// the download page password.
+$key = slip_access_key();
+$appKey = (string)($_SERVER['HTTP_X_SLIPSTREAM_KEY'] ?? '');
+$isApp = $key !== null && $appKey !== '' && hash_equals($key, $appKey);
+if (!empty($station['download_password_hash']) && !$isApp) {
     slip_session_start('slipstream_dl');
     if (empty($_SESSION['dl_ok'])) {
         header('Location: ./');

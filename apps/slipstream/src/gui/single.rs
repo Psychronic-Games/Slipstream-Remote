@@ -31,6 +31,16 @@ impl Instance {
     /// show itself). If the port is taken by something else, carries on.
     pub fn acquire(profile: &Path) -> Option<Self> {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port_for(profile)));
+        // Relaunched after an update: the old copy is still exiting, so wait
+        // for it to release the instance port instead of handing off to it.
+        if std::env::var_os("SLIPSTREAM_RESTARTED").is_some() {
+            for _ in 0..150 {
+                if let Ok(listener) = TcpListener::bind(addr) {
+                    return Some(Self { listener });
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
         match TcpListener::bind(addr) {
             Ok(listener) => Some(Self { listener }),
             Err(_) => {

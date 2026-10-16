@@ -694,6 +694,13 @@ function slip_client_builds(): array
     return $map;
 }
 
+/** The update manifest written by scripts/build-station.sh, if any. */
+function slip_client_manifest(): ?array
+{
+    $m = json_decode((string)@file_get_contents(realpath(SLIP_ROOT) . '/clients/manifest.json'), true);
+    return is_array($m) && isset($m['version'], $m['build'], $m['platforms']) ? $m : null;
+}
+
 /** Station config embedded into downloaded clients. */
 function slip_client_config(): array
 {

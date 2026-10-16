@@ -249,7 +249,13 @@ pub fn about_ui(app: &mut App, ui: &mut Ui) {
     let logo = app.logo_texture(ui.ctx());
     theme::panel(ui, "Slipstream Remote", pal::GOLD, |ui| {
         ui.add(egui::Image::new((logo, vec2(120.0, 120.0))));
-        ui.label(RichText::new(format!("VERSION {}", slipstream_core::APP_VERSION)).font(theme::display(20.0)).color(pal::TAN));
+        ui.label(RichText::new(format!("VERSION {}", slipstream_core::version_string())).font(theme::display(20.0)).color(pal::TAN));
+        ui.horizontal(|ui| {
+            if theme::pill(ui, "Check for updates", pal::GREEN).clicked() {
+                app.check_update_now(ui.ctx());
+            }
+            ui.label(RichText::new("Updates come from your station.").small().color(pal::DIM));
+        });
         ui.add_space(6.0);
         ui.label("Fast, free and open-source remote desktop. No accounts, no subscriptions.");
         ui.label("Every session is end-to-end encrypted; servers only ever see ciphertext.");

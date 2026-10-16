@@ -127,6 +127,21 @@ pub struct Attempt {
     pub task: tokio::task::JoinHandle<()>,
 }
 
+/// An available app update and its installation progress.
+pub struct UpdateState {
+    pub info: slipstream_session::update::UpdateInfo,
+    pub progress: Arc<Mutex<(u64, u64)>>,
+    pub installing: bool,
+    pub error: Option<String>,
+    rx: Option<oneshot::Receiver<Result<std::path::PathBuf, String>>>,
+}
+
+impl UpdateState {
+    fn new(info: slipstream_session::update::UpdateInfo) -> Self {
+        Self { info, progress: Arc::new(Mutex::new((0, 0))), installing: false, error: None, rx: None }
+    }
+}
+
 pub struct IncomingSession {
     pub id: u64,
     pub peer: String,
@@ -167,6 +182,8 @@ pub struct App {
     /// Another launch asked us to show the window.
     show_requests: Option<mpsc::Receiver<()>>,
     logo: Option<egui::TextureHandle>,
+    pub update: Option<UpdateState>,
+    update_check: Option<oneshot::Receiver<Result<Option<slipstream_session::update::UpdateInfo>, String>>>,
     /// Showing the "keeps running in the tray" explanation.
     tray_hint: bool,
     open_files: bool,
@@ -222,6 +239,8 @@ impl App {
             start_hidden: false,
             show_requests: None,
             logo: None,
+            update: None,
+            update_check: None,
             tray_hint: false,
             open_files: false,
         }
@@ -270,6 +289,11 @@ impl App {
                     self.toast(format!("Received {}", path.display()), pal::GREEN);
                 }
                 ClientEvent::Notice(n) => self.toast(n, pal::GOLD),
+                ClientEvent::UpdateAvailable(info) => {
+                    if self.update.as_ref().is_none_or(|u| u.info != info) {
+                        self.update = Some(UpdateState::new(info));
+                    }
+                }
             }
         }
     }
@@ -330,6 +354,74 @@ impl App {
                 self.settings_form.refresh_recent(&self.client.settings());
             }
             Err(e) => self.toast(format!("Link failed: {e}"), pal::RED),
+        }
+    }
+
+    /// Downloads and installs the pending update in the background.
+    pub fn start_update(&mut self, ctx: &egui::Context) {
+        let Some(u) = &mut self.update else { return };
+        if u.installing {
+            return;
+        }
+        u.installing = true;
+        u.error = None;
+        let (tx, rx) = oneshot::channel();
+        u.rx = Some(rx);
+        let (client, info, progress, wake) = (self.client.clone(), u.info.clone(), u.progress.clone(), ctx.clone());
+        self.rt.spawn(async move {
+            let w = wake.clone();
+            let r = client
+                .install_update(&info, move |done, total| {
+                    *progress.lock().unwrap() = (done, total);
+                    w.request_repaint_after(Duration::from_millis(100));
+                })
+                .await
+                .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(r);
+            wake.request_repaint();
+        });
+    }
+
+    /// Asks the station for an update right now (About page).
+    pub fn check_update_now(&mut self, ctx: &egui::Context) {
+        let (client, wake) = (self.client.clone(), ctx.clone());
+        let (tx, rx) = oneshot::channel();
+        self.update_check = Some(rx);
+        self.rt.spawn(async move {
+            let _ = tx.send(client.check_update().await.map_err(|e| format!("{e:#}")));
+            wake.request_repaint();
+        });
+    }
+
+    fn poll_update(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &mut self.update_check
+            && let Ok(r) = rx.try_recv()
+        {
+            self.update_check = None;
+            match r {
+                Ok(Some(info)) => self.update = Some(UpdateState::new(info)),
+                Ok(None) => self.toast("Slipstream is up to date", pal::GREEN),
+                Err(e) => self.toast(format!("Update check failed: {e}"), pal::RED),
+            }
+        }
+        let Some(u) = &mut self.update else { return };
+        let Some(rx) = &mut u.rx else { return };
+        let Ok(result) = rx.try_recv() else { return };
+        u.rx = None;
+        u.installing = false;
+        match result {
+            Ok(exe) => {
+                // Relaunch the new version; it waits for us to exit first.
+                let started = std::process::Command::new(&exe).env("SLIPSTREAM_RESTARTED", "1").spawn();
+                match started {
+                    Ok(_) => {
+                        self.quitting = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    Err(e) => u.error = Some(format!("Updated — please restart Slipstream ({e})")),
+                }
+            }
+            Err(e) => u.error = Some(e),
         }
     }
 
@@ -792,6 +884,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll_attempt(&ctx);
+        self.poll_update(&ctx);
         for tab in &mut self.tabs {
             tab.poll(&ctx);
         }

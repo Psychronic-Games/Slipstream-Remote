@@ -5,6 +5,7 @@ mod cursor_folder;
 pub mod files;
 pub mod fsops;
 mod host;
+pub mod update;
 mod video;
 pub mod viewer;
 
@@ -59,6 +60,8 @@ pub enum ClientEvent {
     HostChat { session: u64, text: String },
     FileReceived { session: u64, path: std::path::PathBuf },
     Notice(String),
+    /// The station offers a newer version of the app.
+    UpdateAvailable(update::UpdateInfo),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -146,6 +149,7 @@ impl Client {
         });
         inner.emit(ClientEvent::Password(password));
         tokio::spawn(directory_task(inner.clone()));
+        tokio::spawn(update_task(Client { inner: inner.clone() }));
         if inner.opts.accept_sessions {
             tokio::spawn(accept_task(inner.clone()));
         }
@@ -295,6 +299,23 @@ impl Client {
         .await
     }
 
+    /// Asks our station for a newer app build. `Ok(None)` = up to date.
+    pub async fn check_update(&self) -> Result<Option<update::UpdateInfo>> {
+        let dc = self.directory().await?;
+        let Some(v) = dc.update_check(&slipstream_core::platform()).await? else { return Ok(None) };
+        let info: update::UpdateInfo = serde_json::from_value(v).context("unreadable update info")?;
+        Ok(info.is_newer().then_some(info))
+    }
+
+    /// Downloads, verifies and installs an update. Returns the app path to
+    /// relaunch; the caller restarts.
+    pub async fn install_update(&self, info: &update::UpdateInfo, progress: impl FnMut(u64, u64)) -> Result<std::path::PathBuf> {
+        let dc = self.directory().await?;
+        let staged = update::download(dc.base_url(), dc.key(), info, progress).await?;
+        let staged2 = staged.clone();
+        tokio::task::spawn_blocking(move || update::install(&staged2)).await?
+    }
+
     pub async fn shutdown(&self) {
         self.disconnect_all_host_sessions();
         // Show as offline right away instead of after the heartbeat window.
@@ -426,6 +447,25 @@ async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Resu
             }
             set_status(inner, DirStatus::Online { id });
         }
+    }
+}
+
+/// Checks the station for app updates shortly after start, then every 6 h.
+async fn update_task(client: Client) {
+    update::cleanup();
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    let mut announced: Option<update::UpdateInfo> = None;
+    loop {
+        match client.check_update().await {
+            Ok(Some(info)) if announced.as_ref() != Some(&info) => {
+                info!(version = %info.label(), "update available");
+                client.inner.emit(ClientEvent::UpdateAvailable(info.clone()));
+                announced = Some(info);
+            }
+            Ok(_) => {}
+            Err(e) => debug!("update check: {e:#}"),
+        }
+        tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
     }
 }
 

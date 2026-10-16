@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::Layer as _;
 
 #[derive(Debug, Parser)]
-#[command(name = "slipstream", version, about = "Fast, free, open-source remote desktop")]
+#[command(name = "slipstream", version = slipstream_core::VERSION_STRING, about = "Fast, free, open-source remote desktop")]
 struct Args {
     /// Share an animated test pattern instead of the real screen (demo/testing).
     #[arg(long, global = true)]
@@ -89,6 +89,8 @@ enum Command {
     SetPassword { password: Option<String> },
     /// Print this device's ID and settings location.
     Info,
+    /// Update to the newest build your station offers.
+    Update,
     /// Write the app icon as a PNG (used by packaging scripts).
     #[command(hide = true)]
     ExportIcon { path: std::path::PathBuf, #[arg(long, default_value_t = 256)] size: u32 },
@@ -111,6 +113,7 @@ fn main() -> anyhow::Result<()> {
         Some(Command::SetServer { address, key }) => cli::set_server(&address, key),
         Some(Command::SetPassword { password }) => cli::set_password(password.as_deref()),
         Some(Command::Info) => rt.block_on(cli::info()),
+        Some(Command::Update) => rt.block_on(cli::update()),
         Some(Command::ExportIcon { path, size }) => gui::export_icon(&path, size),
         None => {
             drop(rt);
