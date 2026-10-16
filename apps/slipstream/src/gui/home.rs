@@ -37,7 +37,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
 
         let (status, color) = match &app.dir_status {
             DirStatus::Online { .. } => ("ONLINE · READY FOR LINK", pal::GREEN),
-            DirStatus::Connecting => ("CONTACTING SERVER…", pal::GOLD),
+            DirStatus::Connecting | DirStatus::Ready => ("CONTACTING SERVER…", pal::GOLD),
             DirStatus::NotConfigured => ("NO SERVER — SEE CONFIG", pal::RED),
             DirStatus::Error(_) => ("SERVER UNREACHABLE", pal::RED),
         };

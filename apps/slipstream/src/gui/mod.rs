@@ -444,6 +444,7 @@ impl App {
         match &self.dir_status {
             DirStatus::Online { id } => (format!("STATION ONLINE  ·  ID {id}{incoming}"), pal::GREEN),
             DirStatus::Connecting => ("CONTACTING RELAY NETWORK…".into(), pal::GOLD),
+            DirStatus::Ready => ("SERVER LINK READY".into(), pal::GREEN),
             DirStatus::NotConfigured => ("NO SERVER CONFIGURED".into(), pal::RED),
             DirStatus::Error(_) => (format!("SERVER UNREACHABLE{incoming}"), pal::RED),
         }
@@ -578,6 +579,7 @@ impl App {
             (_, n) if n > 0 => format!("{n} remote session(s) active"),
             (DirStatus::Online { id }, _) => format!("Online · ID {id}"),
             (DirStatus::Connecting, _) => "Connecting…".into(),
+            (DirStatus::Ready, _) => "Server reachable".into(),
             (DirStatus::NotConfigured, _) => "No server configured".into(),
             (DirStatus::Error(_), _) => "Server unreachable".into(),
         };

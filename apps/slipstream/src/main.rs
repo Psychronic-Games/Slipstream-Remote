@@ -58,7 +58,7 @@ enum Command {
         #[arg(long, default_value_t = 10)]
         seconds: u64,
     },
-    /// Set the directory server (`<key>@<host>:<port>`).
+    /// Set the server (a domain or URL, e.g. `relay.example.com`).
     SetServer { address: String },
     /// Set (or with no argument, remove) the permanent unattended-access password.
     SetPassword { password: Option<String> },

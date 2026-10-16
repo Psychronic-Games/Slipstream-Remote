@@ -6,10 +6,10 @@ Slipstream is a free, MIT-licensed remote desktop app: TeamViewer-style
 ## Components
 
 ```
-┌──────────────┐        directory (QUIC)       ┌────────────────────┐
-│ Host  (PC A) │ ─── register / presence ────▶ │  slipstream-server │
+┌──────────────┐     directory (HTTPS/JSON)    ┌────────────────────┐
+│ Host  (PC A) │ ─── signed heartbeats ──────▶ │  server            │
 └──────┬───────┘                               │  • ID directory    │
-       │  ▲                                    │  • iroh relay      │
+       │  ▲                                    │  • relay (optional)│
        │  │ end-to-end encrypted QUIC          └─────────▲──────────┘
        │  │ (direct via hole punching,                   │ lookup ID
        │  │  relay fallback)                             │
@@ -24,7 +24,8 @@ Slipstream is a free, MIT-licensed remote desktop app: TeamViewer-style
 | `crates/slipstream-codec` | Video encoder/decoder abstraction (OpenH264 today; hardware encoders later) |
 | `crates/slipstream-platform` | Per-OS screen capture, input injection, clipboard |
 | `apps/slipstream` | The desktop app (egui, sci-fi theme) plus a headless CLI |
-| `apps/slipstream-server` | ID directory + embedded iroh relay, one binary |
+| `apps/slipstream-server` | ID directory + embedded iroh relay, one binary on one HTTP port |
+| `server/web` | The same directory API as a drop-in PHP folder (files or MariaDB) |
 
 ## Networking
 
@@ -32,11 +33,15 @@ Slipstream is a free, MIT-licensed remote desktop app: TeamViewer-style
   and relay fallback. Every device has an Ed25519 keypair; its public key is
   its *EndpointId*. All traffic is TLS 1.3 encrypted end to end; relays only
   forward ciphertext.
-* **Directory:** hosts keep a QUIC connection open to `slipstream-server`
-  (ALPN `slipstream/dir/1`). The server assigns each EndpointId a stable
-  9-digit ID, tracks presence, and answers `lookup(id) → EndpointAddr`.
-* **Relay:** the server embeds `iroh-relay`, so a self-hoster runs a single
-  binary. Clients may also fall back to the public n0 relays.
+* **Directory:** JSON over HTTPS (`POST {server}/api/`), implemented both in
+  PHP and in the server binary. Hosts send a heartbeat every 30 s, signed with
+  their Ed25519 endpoint key; the server assigns each key a stable 9-digit ID
+  and answers `lookup(id) → EndpointAddr` while the host is fresh (75 s).
+  Clients configure only a domain, so servers can move without breaking them;
+  the directory also tells clients which relays to use.
+* **Relay:** iroh's relay is a WebSocket at `/relay`, so it can live behind
+  Apache/Nginx on the same domain as the PHP directory, or inside the server
+  binary. Clients also fall back to the public n0 relays.
 
 ## Authentication
 
@@ -50,6 +55,7 @@ password never leaves the machine:
 3. Viewer → Host: HMAC key confirmations for each B.
 4. Host → Viewer: `AuthOk` + host confirmation (mutual authentication).
 
+Registrations are signed, so nobody else can claim or move a device's ID.
 A malicious directory that substitutes its own key ends up with mismatched
 identities in the SPAKE2 transcript, so the keys never agree. Offline
 dictionary attacks are impossible (PAKE); online guessing is rate limited by

@@ -22,7 +22,8 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 - **Quality presets** — Balanced, Speed, Quality, Low bandwidth; automatic
   bitrate adaptation.
 - **Runs in the tray**, starts with the system, stays reachable.
-- **Self-hostable server** — one small binary does ID lookup *and* relaying.
+- **Self-hostable server** — drop a PHP folder on any web host, or run one
+  small binary that does ID lookup *and* relaying. Apps just need a domain.
 - A starship-console interface. 🖖
 
 ## Platforms
@@ -37,16 +38,11 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 
 ## Quick start
 
-### 1. Run a server (once)
+### 1. Set up a server (once)
 
-Any machine with a public IP works — a $5 VPS, a home server with port
-forwarding, a Raspberry Pi. See [docs/SERVER.md](docs/SERVER.md).
-
-```sh
-slipstream-server --public-host your.server.example
-```
-
-It prints an address like `64f1…3ea0@your.server.example:21116`.
+Upload the [`server/web/`](server/web) folder to any web host with PHP 8 —
+e.g. `relay.example.com` — and open it in a browser to check it's green.
+Or run the `slipstream-server` binary. See [docs/SERVER.md](docs/SERVER.md).
 
 ### 2. Install the app on each computer
 
@@ -61,7 +57,8 @@ It prints an address like `64f1…3ea0@your.server.example:21116`.
 
 ### 3. Connect
 
-Open Slipstream → **CONFIG** → paste the server address → **Save**.
+Open Slipstream → **CONFIG** → enter your server's address (e.g.
+`relay.example.com`) → **Save**.
 The **BRIDGE** page now shows your ID and password. On the other computer,
 enter them under **Establish link** and press **Engage**.
 
@@ -76,7 +73,8 @@ slipstream --connect 482913077 --password …  # connect straight away
 slipstream --minimized                      # start in the tray
 slipstream host [--password …]              # headless host (servers, kiosks)
 slipstream connect <ID> --password …        # headless test connection with stats
-slipstream set-server <address>             # configure without the GUI
+slipstream set-server relay.example.com     # configure without the GUI
+slipstream set-password <password>          # unattended-access password
 slipstream info                             # show ID, key and settings path
 ```
 
@@ -109,7 +107,6 @@ protocol, the latency control loop and the platform backends.
 - Android app (viewer first, then host)
 - Address book with saved credentials (OS keychain)
 - Windows service / pre-login access
-- Connecting over UDP-blocked networks via the relay (directory over HTTPS)
 
 ## License
 

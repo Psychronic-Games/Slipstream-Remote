@@ -9,7 +9,8 @@ use slipstream_session::{Client, ClientEvent, ClientOptions, DirStatus, ViewerEv
 pub fn set_server(address: &str) -> Result<()> {
     let store = Store::open_default()?;
     let mut s = store.load_settings();
-    s.server.directory = Some(address.parse().context("invalid server address")?);
+    slipstream_core::directory::normalize_server_url(address).context("invalid server address")?;
+    s.server.url = Some(address.trim().to_string());
     store.save_settings(&s)?;
     println!("server set; settings in {}", store.dir().display());
     Ok(())
@@ -37,9 +38,9 @@ pub async fn info() -> Result<()> {
         Some(id) => println!("device id    : {id}"),
         None => println!("device id    : (not registered yet)"),
     }
-    match s.server.directory {
+    match s.server.url {
         Some(d) => println!("server       : {d}"),
-        None => println!("server       : (none — run `slipstream set-server <address>`)"),
+        None => println!("server       : (none — run `slipstream set-server relay.example.com`)"),
     }
     Ok(())
 }
@@ -55,7 +56,7 @@ pub async fn host(test_pattern: bool, password: Option<String>) -> Result<()> {
     println!("hosting; endpoint {}", client.endpoint_id());
     loop {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => break,
+            _ = shutdown_signal() => break,
             ev = events.recv() => {
                 let Some(ev) = ev else { break };
                 match ev {
@@ -74,6 +75,20 @@ pub async fn host(test_pattern: bool, password: Option<String>) -> Result<()> {
     }
     client.shutdown().await;
     Ok(())
+}
+
+/// Ctrl+C, or SIGTERM (systemd stop) on Unix.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("signal handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 pub async fn connect(id: &str, password: &str, seconds: u64) -> Result<()> {

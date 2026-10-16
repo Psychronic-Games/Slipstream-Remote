@@ -23,3 +23,9 @@ pub fn os_name() -> String {
 }
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Selects the TLS crypto backend (ring) for HTTPS. Call once at startup;
+/// later calls are no-ops.
+pub fn init_crypto() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}

@@ -1,78 +1,83 @@
-//! slipstream-server: the ID directory and relay for Slipstream Remote.
+//! slipstream-server: the ID directory and relay for Slipstream Remote, as
+//! one self-contained binary on one HTTP port.
 //!
-//! One binary, two services:
-//! * a directory on UDP (QUIC) that hands out 9-digit IDs and tracks which
-//!   hosts are online;
-//! * an iroh relay (HTTP/HTTPS) that forwards encrypted traffic when two
-//!   devices can't reach each other directly.
+//! * `POST /api/` — directory (same protocol as the PHP drop-in server)
+//! * `/relay`, `/ping`, `/generate_204` — iroh relay for when two devices
+//!   can't connect directly
+//! * `GET /` — status page
+//!
+//! Run it directly, or behind Apache/Nginx/Caddy for HTTPS.
 
+mod api;
 mod db;
-mod directory;
+mod relay;
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashSet,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
+use axum::{
+    Router,
+    extract::State,
+    response::Html,
+    routing::{any, get, post},
+};
 use clap::Parser;
-use iroh::{Endpoint, RelayMode, RelayUrl, SecretKey, endpoint::presets};
-use iroh_relay::server as relay;
-use slipstream_core::directory::{ALPN_DIRECTORY, DEFAULT_DIRECTORY_PORT};
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Slipstream Remote ID directory and relay server")]
 struct Cli {
-    /// Where to keep the server key and database.
+    /// Where to keep the device database.
     #[arg(long, default_value = "./slipstream-data", env = "SLIPSTREAM_DATA")]
     data_dir: PathBuf,
 
-    /// UDP port for the directory.
-    #[arg(long, default_value_t = DEFAULT_DIRECTORY_PORT)]
-    port: u16,
+    /// Address to listen on. Use 127.0.0.1:21117 behind a reverse proxy.
+    #[arg(long, default_value = "[::]:8080", env = "SLIPSTREAM_LISTEN")]
+    listen: SocketAddr,
 
-    /// Hostname or IP that clients use to reach this server.
-    #[arg(long, env = "SLIPSTREAM_PUBLIC_HOST")]
-    public_host: Option<String>,
+    /// Public URL of this server (e.g. https://relay.example.com/). Used to
+    /// advertise the relay; by default it's taken from each request's Host.
+    #[arg(long, env = "SLIPSTREAM_PUBLIC_URL")]
+    public_url: Option<String>,
 
-    /// Disable the embedded relay (clients then rely on public relays).
+    /// Directory only — don't run a relay (clients use public relays).
     #[arg(long)]
     no_relay: bool,
 
-    /// Plain-HTTP relay listen address (also serves the captive-portal probe).
-    #[arg(long, default_value = "[::]:21117")]
-    relay_http: SocketAddr,
+    /// Relay only — don't serve the directory API (e.g. next to the PHP directory).
+    #[arg(long, conflicts_with = "no_relay")]
+    relay_only: bool,
 
-    /// Get a TLS certificate from Let's Encrypt for this domain and serve the
-    /// relay over HTTPS. Requires ports 80 and 443 to be reachable.
+    /// Extra relay URLs to advertise to clients (other regions).
     #[arg(long)]
-    acme_domain: Option<String>,
+    advertise_relay: Vec<String>,
 
-    /// Contact e-mail for Let's Encrypt.
-    #[arg(long)]
-    acme_email: Option<String>,
-
-    /// Use the Let's Encrypt staging environment (for testing).
-    #[arg(long)]
-    acme_staging: bool,
-
-    /// PEM certificate chain for HTTPS (instead of Let's Encrypt).
-    #[arg(long, requires = "tls_key")]
-    tls_cert: Option<PathBuf>,
-
-    /// PEM private key for HTTPS.
-    #[arg(long, requires = "tls_cert")]
-    tls_key: Option<PathBuf>,
-
-    /// HTTPS relay listen address, used when TLS is configured.
-    #[arg(long, default_value = "[::]:443")]
-    relay_https: SocketAddr,
-
-    /// Extra relay URLs to advertise to clients (e.g. other regions).
-    #[arg(long)]
-    advertise_relay: Vec<RelayUrl>,
-
-    /// Message shown to clients when they connect.
-    #[arg(long)]
+    /// Message shown on clients' Bridge page.
+    #[arg(long, env = "SLIPSTREAM_MOTD")]
     motd: Option<String>,
+}
+
+pub struct App {
+    db: db::Db,
+    relay_enabled: bool,
+    relay_addr: Option<SocketAddr>,
+    public_url: Option<String>,
+    extra_relays: Vec<String>,
+    motd: Option<String>,
+    limits: api::RateLimiter,
+    seen: Mutex<HashSet<String>>,
+}
+
+impl App {
+    /// True the first time an endpoint registers in this process (for logs).
+    fn seen_once(&self, endpoint: &str) -> bool {
+        self.seen.lock().unwrap().insert(endpoint.to_string())
+    }
 }
 
 #[tokio::main]
@@ -83,141 +88,168 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|_| "info,iroh=warn,iroh_relay=warn,noq=warn".into()),
         )
         .init();
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .ok();
-
+    slipstream_core::init_crypto();
     let cli = Cli::parse();
-    std::fs::create_dir_all(&cli.data_dir).context("creating data dir")?;
-    let secret = load_or_create_key(&cli.data_dir.join("server.key"))?;
-    let public_host = cli.public_host.clone().unwrap_or_else(|| {
-        warn!("--public-host not set; using 'localhost' (only local clients will work)");
-        "localhost".into()
-    });
+    let app = build(&cli).await?;
+    let router = router(app.clone(), cli.relay_only);
 
-    // Relay.
-    let mut relays = cli.advertise_relay.clone();
-    let _relay = if cli.no_relay {
-        None
-    } else {
-        let (server, url) = spawn_relay(&cli, &public_host).await?;
-        info!("relay listening, advertised as {url}");
-        relays.insert(0, url);
-        Some(server)
-    };
-
-    // Directory.
-    let db = db::Db::open(&cli.data_dir.join("directory.sqlite3"))?;
-    info!("{} devices known", db.device_count()?);
-    let dir = Arc::new(directory::Directory::new(db, relays, cli.motd.clone()));
-    let endpoint = Endpoint::builder(presets::Minimal)
-        .secret_key(secret)
-        .alpns(vec![ALPN_DIRECTORY.to_vec()])
-        .relay_mode(RelayMode::Disabled)
-        .clear_ip_transports()
-        .bind_addr(SocketAddr::from(([0, 0, 0, 0], cli.port)))?
-        .bind_addr(SocketAddr::from(([0u16; 8], cli.port)))?
-        .bind()
-        .await
-        .context("binding directory port")?;
-
-    let host_part = if public_host.contains(':') { format!("[{public_host}]") } else { public_host.clone() };
-    let address = format!("{}@{}:{}", endpoint.id(), host_part, cli.port);
+    let listener = tokio::net::TcpListener::bind(cli.listen).await.with_context(|| format!("binding {}", cli.listen))?;
+    let (total, online) = app.db.counts()?;
+    info!("{total} devices known, {online} online");
+    let shown = cli.public_url.clone().unwrap_or_else(|| format!("http://{}/", cli.listen));
     println!();
-    println!("  ╭─ SLIPSTREAM SERVER ONLINE ─────────────────────────────");
-    println!("  │ Paste this into each client's Settings → Server:");
+    println!("  ╭─ SLIPSTREAM SERVER ONLINE ──────────────────────────────");
+    println!("  │ Listening on {}", cli.listen);
+    println!("  │ Directory: {}", if cli.relay_only { "off" } else { "on" });
+    println!("  │ Relay:     {}", if app.relay_enabled { "on" } else { "off (public relays)" });
     println!("  │");
-    println!("  │   {address}");
-    println!("  │");
-    println!("  ╰────────────────────────────────────────────────────────");
+    println!("  │ In each app: CONFIG → Server address → {shown}");
+    println!("  ╰─────────────────────────────────────────────────────────");
     println!();
-    std::fs::write(cli.data_dir.join("server-address.txt"), format!("{address}\n")).ok();
-
-    let stats = dir.clone();
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
-        loop {
-            tick.tick().await;
-            info!("{} hosts online", stats.online_count());
-        }
-    });
-
-    loop {
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => break,
-            incoming = endpoint.accept() => {
-                let Some(incoming) = incoming else { break };
-                let dir = dir.clone();
-                tokio::spawn(async move {
-                    match incoming.await {
-                        Ok(conn) => dir.handle_connection(conn).await,
-                        Err(e) => tracing::debug!("incoming connection failed: {e:#}"),
-                    }
-                });
-            }
-        }
-    }
-    info!("shutting down");
-    endpoint.close().await;
+    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
     Ok(())
 }
 
-async fn spawn_relay(cli: &Cli, public_host: &str) -> Result<(relay::Server, RelayUrl)> {
-    let mut relay_cfg = relay::RelayConfig::new(cli.relay_http);
-    let host_part = if public_host.contains(':') { format!("[{public_host}]") } else { public_host.to_string() };
-    let https_port = cli.relay_https.port();
-    let https_suffix = if https_port == 443 { String::new() } else { format!(":{https_port}") };
-
-    let url = if let Some(domain) = &cli.acme_domain {
-        let Some(email) = &cli.acme_email else { bail!("--acme-domain needs --acme-email") };
-        let acme = relay::AcmeConfig::letsencrypt(!cli.acme_staging)
-            .domains(vec![domain.clone()])
-            .contact(vec![format!("mailto:{email}")])
-            .cache_path(cli.data_dir.join("acme"));
-        relay_cfg.tls = Some(relay::TlsConfig::new(
-            cli.relay_https,
-            relay::CertConfig::LetsEncrypt { acme_config: acme, server_config_builder: rustls_builder() },
-        ));
-        format!("https://{domain}{https_suffix}")
-    } else if let (Some(cert), Some(key)) = (&cli.tls_cert, &cli.tls_key) {
-        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-        let certs = CertificateDer::pem_file_iter(cert)
-            .context("reading --tls-cert")?
-            .collect::<Result<Vec<_>, _>>()
-            .context("parsing --tls-cert")?;
-        let key = PrivateKeyDer::from_pem_file(key).context("reading --tls-key")?;
-        let server_config = rustls_builder().with_single_cert(certs, key)?;
-        relay_cfg.tls = Some(relay::TlsConfig::new(cli.relay_https, relay::CertConfig::Manual { server_config }));
-        format!("https://{host_part}{https_suffix}")
+async fn build(cli: &Cli) -> Result<Arc<App>> {
+    std::fs::create_dir_all(&cli.data_dir).context("creating data dir")?;
+    let db = db::Db::open(&cli.data_dir.join("directory.sqlite3"))?;
+    let relay_addr = if cli.no_relay {
+        None
     } else {
-        format!("http://{host_part}:{}", cli.relay_http.port())
+        let (server, addr) = relay::spawn().await?;
+        // Keep the relay alive for the life of the process.
+        Box::leak(Box::new(server));
+        Some(addr)
     };
-
-    let mut cfg = relay::ServerConfig::default();
-    cfg.relay = Some(relay_cfg);
-    let server = relay::Server::spawn(cfg).await.context("starting relay")?;
-    Ok((server, url.parse()?))
+    Ok(Arc::new(App {
+        db,
+        relay_enabled: relay_addr.is_some(),
+        relay_addr,
+        public_url: cli.public_url.clone().map(|u| if u.ends_with('/') { u } else { format!("{u}/") }),
+        extra_relays: cli.advertise_relay.clone(),
+        motd: cli.motd.clone(),
+        limits: Default::default(),
+        seen: Mutex::new(HashSet::new()),
+    }))
 }
 
-fn rustls_builder() -> rustls::ConfigBuilder<rustls::ServerConfig, rustls::server::WantsServerCert> {
-    rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .expect("ring supports default protocols")
-        .with_no_client_auth()
+fn router(app: Arc<App>, relay_only: bool) -> Router {
+    let mut r = Router::new()
+        .route("/relay", any(relay::proxy))
+        .route("/ping", any(relay::proxy))
+        .route("/generate_204", any(relay::proxy))
+        .route("/", get(status));
+    if !relay_only {
+        r = r.route("/api/", post(api::handle)).route("/api", post(api::handle));
+    }
+    r.with_state(app)
 }
 
-fn load_or_create_key(path: &std::path::Path) -> Result<SecretKey> {
-    if let Ok(bytes) = std::fs::read(path)
-        && let Ok(bytes) = <[u8; 32]>::try_from(bytes.as_slice())
-    {
-        return Ok(SecretKey::from_bytes(&bytes));
+async fn status(State(app): State<Arc<App>>) -> Html<String> {
+    let (total, online) = app.db.counts().unwrap_or_default();
+    Html(format!(
+        r#"<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Slipstream server</title>
+<style>body{{background:#020308;color:#ffd6aa;font:18px/1.5 system-ui,sans-serif;margin:0;padding:24px}}
+.bar{{background:#ff9900;border-radius:28px 0 0 0;height:28px;margin-bottom:24px}}
+h1{{color:#ff9900;letter-spacing:.06em;text-transform:uppercase;margin:0 0 12px}}
+.k{{color:#cc99cc;text-transform:uppercase;font-size:14px;letter-spacing:.08em}}
+.ok{{color:#66ffaa}}</style>
+<div class="bar"></div><h1>Slipstream Remote server</h1>
+<p class="ok">● ONLINE · v{}</p>
+<p><span class="k">Devices known</span><br>{total}</p>
+<p><span class="k">Online now</span><br>{online}</p>
+<p><span class="k">Relay</span><br>{}</p>
+<p>Enter this site's address in the Slipstream app under CONFIG → Server address.</p>"#,
+        slipstream_core::APP_VERSION,
+        if app.relay_enabled { "built-in relay active" } else { "public relays" }
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use iroh::{Endpoint, RelayMap, RelayMode, endpoint::presets};
+    use slipstream_core::directory::{DeviceInfo, DirectoryClient, Lookup};
+
+    use super::*;
+
+    async fn start() -> (String, Arc<App>) {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("slipstream-server-test-{}-{n}", std::process::id()));
+        let cli = Cli::parse_from(["slipstream-server", "--data-dir", dir.to_str().unwrap()]);
+        let app = build(&cli).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let r = router(app.clone(), false);
+        tokio::spawn(async move {
+            axum::serve(listener, r.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
+        });
+        (url, app)
     }
-    let key = SecretKey::generate();
-    std::fs::write(path, key.to_bytes())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+
+    /// Directory over HTTP: hello, signed register, lookup, unregister.
+    #[tokio::test]
+    async fn directory_roundtrip() {
+        let (url, _app) = start().await;
+        let mut dc = DirectoryClient::new(&url).unwrap();
+        let hello = dc.hello().await.unwrap();
+        assert_eq!(hello.relays.len(), 1, "relay should be advertised");
+        let secret = iroh::SecretKey::generate();
+        let addr = iroh::EndpointAddr::from_parts(secret.public(), []);
+        let info = DeviceInfo { name: "test-host".into(), os: "Linux".into(), app_version: "0".into() };
+        let id = dc.register(&secret, addr.clone(), info.clone()).await.unwrap();
+        assert_eq!(dc.register(&secret, addr, info).await.unwrap(), id, "IDs are stable");
+        match dc.lookup(id).await.unwrap() {
+            Lookup::Online { addr, info } => {
+                assert_eq!(addr.id, secret.public());
+                assert_eq!(info.name, "test-host");
+            }
+            other => panic!("expected online, got {other:?}"),
+        }
+        dc.unregister(&secret).await.unwrap();
+        assert!(matches!(dc.lookup(id).await.unwrap(), Lookup::Offline { .. }));
+        assert!(matches!(dc.lookup(slipstream_core::directory::DeviceId(123456789)).await.unwrap(), Lookup::NotFound));
     }
-    Ok(key)
+
+    /// Two endpoints that can only talk through our proxied relay.
+    #[tokio::test]
+    async fn relay_through_proxy() {
+        let (url, _app) = start().await;
+        let relay_url: iroh::RelayUrl = url.parse().unwrap();
+        let ep = |alpn: bool| {
+            let map = RelayMap::from_iter([relay_url.clone()]);
+            let b = Endpoint::builder(presets::Minimal)
+                .relay_mode(RelayMode::Custom(map))
+                .clear_ip_transports(); // relay only: no direct path possible
+            let b = if alpn { b.alpns(vec![b"test".to_vec()]) } else { b };
+            b.bind()
+        };
+        let a = ep(true).await.unwrap();
+        let b = ep(false).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(10), a.online()).await.expect("a reached the relay");
+        let addr = iroh::EndpointAddr::from_parts(a.id(), [iroh::TransportAddr::Relay(relay_url)]);
+        let accept = tokio::spawn(async move {
+            let conn = a.accept().await.unwrap().await.unwrap();
+            let (mut s, mut r) = conn.accept_bi().await.unwrap();
+            let msg = r.read_to_end(100).await.unwrap();
+            s.write_all(&msg).await.unwrap();
+            s.finish().unwrap();
+            conn.closed().await;
+        });
+        let conn = tokio::time::timeout(Duration::from_secs(10), b.connect(addr, b"test")).await.unwrap().unwrap();
+        let (mut s, mut r) = conn.open_bi().await.unwrap();
+        s.write_all(b"hello via relay").await.unwrap();
+        s.finish().unwrap();
+        let echo = r.read_to_end(100).await.unwrap();
+        assert_eq!(echo, b"hello via relay");
+        conn.close(0u32.into(), b"done");
+        let _ = tokio::time::timeout(Duration::from_secs(2), accept).await;
+    }
 }

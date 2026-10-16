@@ -14,13 +14,12 @@ T="${TMPDIR:-/tmp}/slipstream-trial"
 mkdir -p "$T"
 PASS="trial-password-123"
 
-"$BIN/slipstream-server" --data-dir "$T/server" --public-host 127.0.0.1 \
-  --port 21216 --relay-http '[::]:21217' >"$T/server.log" 2>&1 &
+"$BIN/slipstream-server" --data-dir "$T/server" --listen 127.0.0.1:21217 >"$T/server.log" 2>&1 &
 SERVER=$!
 HOST=""
 trap 'kill $SERVER $HOST 2>/dev/null || true' EXIT
-until [ -s "$T/server/server-address.txt" ]; do sleep 0.2; done
-ADDR=$(cat "$T/server/server-address.txt")
+ADDR=http://127.0.0.1:21217
+until curl -sf "$ADDR/" >/dev/null; do sleep 0.2; done
 
 for who in host viewer; do SLIPSTREAM_HOME="$T/$who" "$BIN/slipstream" set-server "$ADDR" >/dev/null; done
 SLIPSTREAM_HOME="$T/host" "$BIN/slipstream" set-password "$PASS" >/dev/null

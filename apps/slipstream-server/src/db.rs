@@ -1,35 +1,42 @@
-//! Persistent ID assignments (SQLite).
+//! Device registry (SQLite).
 
 use std::{path::Path, sync::Mutex};
 
 use anyhow::Result;
-use iroh::EndpointId;
 use rand::Rng;
 use rusqlite::{Connection, OptionalExtension, params};
-use slipstream_core::directory::{DeviceId, DeviceInfo};
+use slipstream_core::directory::{DeviceId, DeviceInfo, ONLINE_WINDOW_SECS};
 
 pub struct Db {
     conn: Mutex<Connection>,
 }
 
-fn now() -> i64 {
+pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or_default()
 }
 
+pub enum Found {
+    Online { addr_json: String, info: DeviceInfo },
+    Offline { info: DeviceInfo },
+    Unknown,
+}
+
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              CREATE TABLE IF NOT EXISTS devices (
-                 endpoint_id BLOB PRIMARY KEY,
+                 endpoint    TEXT PRIMARY KEY,
                  device_id   INTEGER NOT NULL UNIQUE,
                  name        TEXT NOT NULL DEFAULT '',
                  os          TEXT NOT NULL DEFAULT '',
                  app_version TEXT NOT NULL DEFAULT '',
+                 addr        TEXT,
                  created     INTEGER NOT NULL,
                  last_seen   INTEGER NOT NULL
              );",
@@ -37,17 +44,16 @@ impl Db {
         Ok(Self { conn: Mutex::new(conn) })
     }
 
-    /// Returns this endpoint's ID, assigning a fresh random one on first sight.
-    pub fn register(&self, endpoint: &EndpointId, info: &DeviceInfo) -> Result<DeviceId> {
+    /// Records a heartbeat; returns the device's ID (assigning one if new).
+    pub fn register(&self, endpoint: &str, info: &DeviceInfo, addr_json: &str) -> Result<DeviceId> {
         let conn = self.conn.lock().unwrap();
-        let key = endpoint.as_bytes().as_slice();
         let existing: Option<u32> = conn
-            .query_row("SELECT device_id FROM devices WHERE endpoint_id = ?1", [key], |r| r.get(0))
+            .query_row("SELECT device_id FROM devices WHERE endpoint = ?1", [endpoint], |r| r.get(0))
             .optional()?;
         if let Some(id) = existing {
             conn.execute(
-                "UPDATE devices SET name = ?2, os = ?3, app_version = ?4, last_seen = ?5 WHERE endpoint_id = ?1",
-                params![key, info.name, info.os, info.app_version, now()],
+                "UPDATE devices SET name = ?2, os = ?3, app_version = ?4, addr = ?5, last_seen = ?6 WHERE endpoint = ?1",
+                params![endpoint, info.name, info.os, info.app_version, addr_json, now()],
             )?;
             return Ok(DeviceId(id));
         }
@@ -55,9 +61,9 @@ impl Db {
         loop {
             let id = rng.random_range(DeviceId::MIN..=DeviceId::MAX);
             let inserted = conn.execute(
-                "INSERT OR IGNORE INTO devices (endpoint_id, device_id, name, os, app_version, created, last_seen)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-                params![key, id, info.name, info.os, info.app_version, now()],
+                "INSERT OR IGNORE INTO devices (endpoint, device_id, name, os, app_version, addr, created, last_seen)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                params![endpoint, id, info.name, info.os, info.app_version, addr_json, now()],
             )?;
             if inserted == 1 {
                 return Ok(DeviceId(id));
@@ -65,24 +71,39 @@ impl Db {
         }
     }
 
-    pub fn lookup(&self, id: DeviceId) -> Result<Option<(EndpointId, DeviceInfo)>> {
+    pub fn unregister(&self, endpoint: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let row: Option<(Vec<u8>, String, String, String)> = conn
-            .query_row(
-                "SELECT endpoint_id, name, os, app_version FROM devices WHERE device_id = ?1",
-                [id.0],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .optional()?;
-        let Some((key, name, os, app_version)) = row else { return Ok(None) };
-        let Ok(key) = <[u8; 32]>::try_from(key.as_slice()) else { return Ok(None) };
-        let endpoint = EndpointId::from_bytes(&key)?;
-        Ok(Some((endpoint, DeviceInfo { name, os, app_version })))
+        conn.execute("UPDATE devices SET last_seen = 0 WHERE endpoint = ?1", [endpoint])?;
+        Ok(())
     }
 
-    pub fn device_count(&self) -> Result<i64> {
+    pub fn lookup(&self, id: DeviceId) -> Result<Found> {
         let conn = self.conn.lock().unwrap();
-        Ok(conn.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0))?)
+        let row: Option<(String, String, String, Option<String>, i64)> = conn
+            .query_row(
+                "SELECT name, os, app_version, addr, last_seen FROM devices WHERE device_id = ?1",
+                [id.0],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()?;
+        let Some((name, os, app_version, addr, last_seen)) = row else { return Ok(Found::Unknown) };
+        let info = DeviceInfo { name, os, app_version };
+        Ok(match addr {
+            Some(addr_json) if now() - last_seen <= ONLINE_WINDOW_SECS as i64 => Found::Online { addr_json, info },
+            _ => Found::Offline { info },
+        })
+    }
+
+    /// (known devices, online now)
+    pub fn counts(&self) -> Result<(i64, i64)> {
+        let conn = self.conn.lock().unwrap();
+        let total = conn.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0))?;
+        let online = conn.query_row(
+            "SELECT COUNT(*) FROM devices WHERE last_seen >= ?1",
+            [now() - ONLINE_WINDOW_SECS as i64],
+            |r| r.get(0),
+        )?;
+        Ok((total, online))
     }
 }
 
@@ -91,16 +112,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ids_are_stable_and_unique() {
+    fn ids_are_stable_and_presence_works() {
         let db = Db::open(Path::new(":memory:")).unwrap();
-        let a = iroh::SecretKey::generate().public();
-        let b = iroh::SecretKey::generate().public();
         let info = DeviceInfo { name: "a".into(), ..Default::default() };
-        let id_a = db.register(&a, &info).unwrap();
-        assert_eq!(db.register(&a, &info).unwrap(), id_a);
-        let id_b = db.register(&b, &info).unwrap();
+        let id_a = db.register("aa", &info, "{}").unwrap();
+        assert_eq!(db.register("aa", &info, "{}").unwrap(), id_a);
+        let id_b = db.register("bb", &info, "{}").unwrap();
         assert_ne!(id_a, id_b);
-        assert_eq!(db.lookup(id_a).unwrap().unwrap().0, a);
-        assert!(db.lookup(DeviceId(99)).unwrap().is_none());
+        assert!(matches!(db.lookup(id_a).unwrap(), Found::Online { .. }));
+        db.unregister("aa").unwrap();
+        assert!(matches!(db.lookup(id_a).unwrap(), Found::Offline { .. }));
+        assert!(matches!(db.lookup(DeviceId(99)).unwrap(), Found::Unknown));
+        assert_eq!(db.counts().unwrap(), (2, 1));
     }
 }

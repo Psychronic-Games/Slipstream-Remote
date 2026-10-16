@@ -1,7 +1,7 @@
 //! Config and About pages.
 
 use eframe::egui::{self, RichText, Ui, vec2};
-use slipstream_core::{config::Settings, directory::ServerAddress};
+use slipstream_core::{config::Settings, directory::normalize_server_url};
 
 use super::{App, theme, theme::pal};
 
@@ -28,7 +28,7 @@ impl From<&Settings> for SettingsForm {
     fn from(s: &Settings) -> Self {
         Self {
             device_name: s.device_name.clone(),
-            server: s.server.directory.as_ref().map(|d| d.to_string()).unwrap_or_default(),
+            server: s.server.url.clone().unwrap_or_default(),
             public_relays: s.server.use_public_relays,
             accept: s.host.enabled,
             allow_input: s.host.allow_input,
@@ -88,13 +88,13 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         ui.label(
             RichText::new(
                 "The server hands out IDs and relays traffic when a direct link is impossible. \
-                 Run `slipstream-server` on any machine with a public IP and paste the address it prints.",
+                 Enter its web address — e.g. relay.example.com. See docs/SERVER.md to run your own.",
             )
             .color(pal::DIM),
         );
         ui.add_space(6.0);
         row(ui, "Server address", |ui| {
-            text_field(ui, &mut f.server, "<key>@host:21116", false);
+            text_field(ui, &mut f.server, "relay.example.com", false);
         });
         row(ui, "Public fallback relays", |ui| {
             ui.checkbox(&mut f.public_relays, "Also use the free n0 relays (applies after restart)");
@@ -170,11 +170,11 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
 
 fn save(app: &mut App) {
     let f = &mut app.settings_form;
-    let server: Option<ServerAddress> = if f.server.trim().is_empty() {
+    let server: Option<String> = if f.server.trim().is_empty() {
         None
     } else {
-        match f.server.trim().parse() {
-            Ok(s) => Some(s),
+        match normalize_server_url(&f.server) {
+            Ok(_) => Some(f.server.trim().to_string()),
             Err(e) => {
                 f.error = Some(format!("Server address: {e}"));
                 return;
@@ -214,7 +214,7 @@ fn save(app: &mut App) {
         if !name.is_empty() {
             s.device_name = name;
         }
-        s.server.directory = server;
+        s.server.url = server;
         s.server.use_public_relays = public;
         s.host.enabled = accept;
         s.host.allow_input = input;

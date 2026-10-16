@@ -1,29 +1,33 @@
-# systemd unit for the Slipstream ID/relay server.
+# systemd unit for the Slipstream server binary.
+#
+# Standalone (directory + relay on port 8080):
 #   sudo useradd --system --home /var/lib/slipstream slipstream
 #   sudo install -Dm755 slipstream-server /usr/local/bin/slipstream-server
 #   sudo cp slipstream-server.service /etc/systemd/system/
-#   sudo systemctl edit slipstream-server   # set SLIPSTREAM_PUBLIC_HOST
 #   sudo systemctl enable --now slipstream-server
-#   journalctl -u slipstream-server         # shows the address to paste into clients
+#
+# Relay next to the PHP directory (behind Apache/Nginx on the same domain):
+#   sudo systemctl edit slipstream-server   and set
+#     Environment=SLIPSTREAM_LISTEN=127.0.0.1:21117
+#     Environment=SLIPSTREAM_ARGS=--relay-only
 [Unit]
-Description=Slipstream Remote ID directory and relay
+Description=Slipstream Remote directory and relay
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=slipstream
 Environment=SLIPSTREAM_DATA=/var/lib/slipstream
-Environment=SLIPSTREAM_PUBLIC_HOST=your.server.example
-ExecStart=/usr/local/bin/slipstream-server
+Environment=SLIPSTREAM_LISTEN=[::]:8080
+Environment=SLIPSTREAM_ARGS=
+ExecStart=/usr/local/bin/slipstream-server $SLIPSTREAM_ARGS
 StateDirectory=slipstream
 Restart=on-failure
 RestartSec=3
-# Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

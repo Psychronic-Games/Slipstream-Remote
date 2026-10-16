@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use iroh::{Endpoint, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, endpoint::presets};
 
-use crate::{config::ServerSettings, directory::ALPN_DIRECTORY, proto::ALPN_REMOTE};
+use crate::{config::ServerSettings, proto::ALPN_REMOTE};
 
 /// Builds the relay map: the server's relays, plus n0's public relays if enabled.
 pub fn relay_map(server: &ServerSettings) -> RelayMap {
@@ -40,6 +40,3 @@ pub async fn add_relays(endpoint: &Endpoint, relays: &[RelayUrl]) {
         endpoint.insert_relay(url.clone(), Arc::new(RelayConfig::from(url.clone()))).await;
     }
 }
-
-/// ALPN the directory server accepts; re-exported for the server binary.
-pub const DIRECTORY_ALPN: &[u8] = ALPN_DIRECTORY;

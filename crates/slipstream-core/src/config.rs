@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use iroh::{RelayUrl, SecretKey};
 use serde::{Deserialize, Serialize};
 
-use crate::directory::{DeviceId, ServerAddress};
+use crate::directory::DeviceId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -27,8 +27,8 @@ pub struct Settings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ServerSettings {
-    /// Directory server, `<key>@<host>:<port>`.
-    pub directory: Option<ServerAddress>,
+    /// Directory server address: a domain or URL, e.g. `relay.example.com`.
+    pub url: Option<String>,
     /// Relays learned from the directory server (cached for faster startup).
     pub relays: Vec<RelayUrl>,
     /// Also use the public n0 relays as a fallback.
@@ -100,7 +100,7 @@ impl Default for Settings {
 impl Default for ServerSettings {
     fn default() -> Self {
         Self {
-            directory: None,
+            url: None,
             relays: Vec::new(),
             use_public_relays: true,
         }
@@ -173,9 +173,7 @@ fn default_device_name() -> String {
         .unwrap_or_else(|| "My Computer".to_string())
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
+use crate::directory::hex;
 
 fn unhex(s: &str) -> Option<[u8; 32]> {
     let mut out = [0u8; 32];

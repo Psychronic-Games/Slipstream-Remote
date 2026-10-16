@@ -37,6 +37,8 @@ pub enum DirStatus {
     NotConfigured,
     Connecting,
     Online { id: DeviceId },
+    /// Server reachable (view-only client; not registered).
+    Ready,
     Error(String),
 }
 
@@ -156,9 +158,9 @@ impl Client {
     pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) {
         let server_changed = {
             let mut s = self.inner.settings.lock().unwrap();
-            let before = s.server.directory.clone();
+            let before = s.server.url.clone();
             f(&mut s);
-            before != s.server.directory
+            before != s.server.url
         };
         self.inner.save_settings();
         if server_changed {
@@ -278,6 +280,14 @@ impl Client {
 
     pub async fn shutdown(&self) {
         self.disconnect_all_host_sessions();
+        // Show as offline right away instead of after the heartbeat window.
+        let dc = self.inner.dir_client.borrow().clone();
+        if let Some(dc) = dc
+            && self.inner.opts.accept_sessions
+        {
+            let secret = self.inner.endpoint.secret_key().clone();
+            let _ = tokio::time::timeout(Duration::from_secs(2), dc.unregister(&secret)).await;
+        }
         self.inner.endpoint.close().await;
     }
 }
@@ -289,12 +299,13 @@ fn set_status(inner: &Inner, status: DirStatus) {
     }
 }
 
-/// Keeps a registration with the directory server alive, reconnecting with
-/// backoff, and pushes address changes.
+/// Keeps this device registered with the directory server (signed
+/// heartbeats), reconnecting with backoff and re-registering whenever our
+/// network address changes.
 async fn directory_task(inner: Arc<Inner>) {
     let mut backoff = Duration::from_secs(1);
     loop {
-        let server = inner.settings.lock().unwrap().server.directory.clone();
+        let server = inner.settings.lock().unwrap().server.url.clone().filter(|u| !u.trim().is_empty());
         let Some(server) = server else {
             inner.dir_client.send_replace(None);
             set_status(&inner, DirStatus::NotConfigured);
@@ -326,15 +337,16 @@ async fn directory_task(inner: Arc<Inner>) {
 
 fn short_error(e: &anyhow::Error) -> String {
     let s = format!("{e}");
-    if s.len() > 120 { format!("{}…", &s[..120]) } else { s }
+    if s.chars().count() > 120 { format!("{}…", s.chars().take(120).collect::<String>()) } else { s }
 }
 
-async fn run_directory(inner: &Inner, server: &slipstream_core::directory::ServerAddress) -> Result<()> {
-    let dc = DirectoryClient::connect(&inner.endpoint, server).await?;
-    let (relays, motd) = dc.hello().await?;
-    if let Some(m) = motd {
+async fn run_directory(inner: &Inner, server: &str) -> Result<()> {
+    let mut dc = DirectoryClient::new(server)?;
+    let hello = dc.hello().await?;
+    if let Some(m) = hello.motd.filter(|m| !m.trim().is_empty()) {
         inner.emit(ClientEvent::Motd(m));
     }
+    let relays = hello.relays;
     let new_relays = {
         let mut s = inner.settings.lock().unwrap();
         let fresh = s.server.relays != relays;
@@ -347,38 +359,45 @@ async fn run_directory(inner: &Inner, server: &slipstream_core::directory::Serve
         inner.save_settings();
         net::add_relays(&inner.endpoint, &relays).await;
     }
+    // Lookups work from here on, even before we register.
+    inner.dir_client.send_replace(Some(dc.clone()));
+    if !inner.opts.accept_sessions {
+        set_status(inner, DirStatus::Ready);
+        std::future::pending::<()>().await;
+    }
+
     // Give the endpoint a moment to pick a home relay so our address is useful.
     let _ = tokio::time::timeout(Duration::from_secs(5), inner.endpoint.online()).await;
-
-    let info = DeviceInfo {
-        name: inner.settings.lock().unwrap().device_name.clone(),
-        os: slipstream_core::os_name(),
-        app_version: slipstream_core::APP_VERSION.into(),
-    };
-    let id = dc.register(inner.endpoint.addr(), info).await.context("registering")?;
-    info!(%id, "registered with directory");
-    {
-        let mut s = inner.settings.lock().unwrap();
-        if s.host.last_device_id != Some(id) {
-            s.host.last_device_id = Some(id);
-            drop(s);
-            inner.save_settings();
-        }
-    }
-    inner.dir_client.send_replace(Some(dc.clone()));
-    set_status(inner, DirStatus::Online { id });
-
+    let secret = inner.endpoint.secret_key().clone();
     let mut addr_watch = inner.endpoint.watch_addr();
-    let conn = dc.connection().clone();
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(slipstream_core::directory::HEARTBEAT_SECS));
     loop {
         tokio::select! {
+            _ = heartbeat.tick() => {}
             changed = addr_watch.updated() => {
-                let Ok(addr) = changed else { bail!("endpoint closed") };
-                dc.update_addr(addr).await.context("updating address")?;
+                if changed.is_err() {
+                    bail!("endpoint closed");
+                }
             }
-            reason = conn.closed() => {
-                bail!("server connection lost: {reason}");
+        }
+        let info = DeviceInfo {
+            name: inner.settings.lock().unwrap().device_name.clone(),
+            os: slipstream_core::os_name(),
+            app_version: slipstream_core::APP_VERSION.into(),
+        };
+        let id = dc.register(&secret, inner.endpoint.addr(), info).await.context("registering")?;
+        if *inner.dir_status.borrow() != (DirStatus::Online { id }) {
+            info!(%id, "registered with directory");
+            let changed = {
+                let mut s = inner.settings.lock().unwrap();
+                let changed = s.host.last_device_id != Some(id);
+                s.host.last_device_id = Some(id);
+                changed
+            };
+            if changed {
+                inner.save_settings();
             }
+            set_status(inner, DirStatus::Online { id });
         }
     }
 }
