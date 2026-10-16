@@ -11,9 +11,9 @@ BIN="${XDG_BIN_HOME:-$HOME/.local/bin}"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 install -Dm755 target/release/slipstream "$BIN/slipstream"
 install -Dm755 target/release/slipstream-server "$BIN/slipstream-server"
-install -Dm644 packaging/linux/slipstream.png "$DATA/icons/hicolor/256x256/apps/slipstream.png"
-install -Dm644 packaging/linux/slipstream.desktop "$DATA/applications/slipstream.desktop"
-sed -i "s|^Exec=slipstream|Exec=$BIN/slipstream|" "$DATA/applications/slipstream.desktop"
+install -Dm644 packaging/linux/slipstream.png "$DATA/icons/hicolor/256x256/apps/slipstream-remote.png"
+install -Dm644 packaging/linux/slipstream-remote.desktop "$DATA/applications/slipstream-remote.desktop"
+sed -i "s|^Exec=slipstream|Exec=$BIN/slipstream|" "$DATA/applications/slipstream-remote.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database "$DATA/applications" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q "$DATA/icons/hicolor" || true
 

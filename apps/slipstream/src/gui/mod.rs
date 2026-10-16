@@ -1,6 +1,8 @@
 //! The desktop GUI.
 
 mod autostart;
+#[cfg(target_os = "linux")]
+mod desktop;
 mod home;
 mod keys;
 mod remote;
@@ -45,6 +47,10 @@ pub fn run(opts: GuiOptions) -> Result<()> {
         tracing::info!("Slipstream is already running; showing its window");
         return Ok(());
     };
+    #[cfg(target_os = "linux")]
+    if let Err(e) = desktop::integrate() {
+        tracing::debug!("desktop integration skipped: {e:#}");
+    }
     let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().enable_all().build()?);
     let (client, events) =
         rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: true }))?;
@@ -52,7 +58,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Slipstream Remote")
-            .with_app_id("slipstream-remote")
+            .with_app_id("slipstream-remote") // must match the .desktop file name (Wayland icons)
             .with_inner_size([1180.0, 760.0])
             .with_min_inner_size([820.0, 560.0])
             .with_icon(theme::icon(128))
@@ -156,6 +162,7 @@ pub struct App {
     start_hidden: bool,
     /// Another launch asked us to show the window.
     show_requests: Option<mpsc::Receiver<()>>,
+    logo: Option<egui::TextureHandle>,
     /// Showing the "keeps running in the tray" explanation.
     tray_hint: bool,
 }
@@ -209,6 +216,7 @@ impl App {
             quitting: false,
             start_hidden: false,
             show_requests: None,
+            logo: None,
             tray_hint: false,
         }
     }
@@ -379,6 +387,12 @@ impl App {
         let title_w = title_galley.size().x;
         let title_pos = pos2(r - title_w, top + bar_h / 2.0 - title_galley.size().y / 2.0);
         painter.galley(title_pos, title_galley, pal::ORANGE);
+        // The mark, just left of the title.
+        let logo_size = 40.0;
+        let logo_rect = Rect::from_min_size(pos2(title_pos.x - logo_size - 8.0, top - 2.0), vec2(logo_size, logo_size));
+        let tex = self.logo_texture(ui.ctx());
+        painter.image(tex, logo_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        let title_pos = pos2(logo_rect.left(), title_pos.y);
         if let Some(org) = &self.org {
             painter.text(
                 pos2(r, top + bar_h + 14.0),
@@ -459,8 +473,20 @@ impl App {
             }
         }
 
-        // Content area: inside the frame.
-        Rect::from_min_max(pos2(l + arm_w + 22.0, top + bar_h + 22.0), pos2(r, b - bar_h - 16.0))
+        // Content area: inside the frame (below the organisation name, if shown).
+        let content_top = top + bar_h + if self.org.is_some() { 44.0 } else { 22.0 };
+        Rect::from_min_max(pos2(l + arm_w + 22.0, content_top), pos2(r, b - bar_h - 16.0))
+    }
+
+    /// The Slipstream mark as a texture (rendered once).
+    pub fn logo_texture(&mut self, ctx: &egui::Context) -> egui::TextureId {
+        self.logo
+            .get_or_insert_with(|| {
+                let img = theme::render_logo(128, false);
+                let color = egui::ColorImage::from_rgba_unmultiplied([128, 128], &img.rgba);
+                ctx.load_texture("slipstream-logo", color, egui::TextureOptions::LINEAR)
+            })
+            .id()
     }
 
     fn status_line(&self) -> (String, Color32) {
@@ -474,7 +500,7 @@ impl App {
             DirStatus::Connecting => ("CONTACTING RELAY NETWORK…".into(), pal::GOLD),
             DirStatus::Ready => ("SERVER LINK READY".into(), pal::GREEN),
             DirStatus::NotConfigured => ("NO SERVER CONFIGURED".into(), pal::RED),
-            DirStatus::Error(_) => (format!("SERVER UNREACHABLE{incoming}"), pal::RED),
+            DirStatus::Error(_) => (format!("SERVER CONNECTION FAILED{incoming}"), pal::RED),
         }
     }
 
@@ -578,10 +604,46 @@ impl App {
     }
 }
 
+/// Writes the app icon as PNG, or as a multi-size Windows `.ico` if the
+/// path ends in `.ico`.
 pub fn export_icon(path: &std::path::Path, size: u32) -> Result<()> {
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ico")) {
+        return std::fs::write(path, ico_bytes(&[16, 24, 32, 48, 64, 128, 256])?).map_err(Into::into);
+    }
     let icon = theme::icon(size);
     let img = egui::ColorImage::from_rgba_unmultiplied([size as usize, size as usize], &icon.rgba);
     save_png(path, &img)
+}
+
+/// An .ico with PNG-compressed images (supported since Windows Vista).
+fn ico_bytes(sizes: &[u32]) -> Result<Vec<u8>> {
+    let pngs: Vec<Vec<u8>> = sizes
+        .iter()
+        .map(|&s| {
+            let icon = theme::icon(s);
+            let mut buf = Vec::new();
+            let mut enc = png::Encoder::new(&mut buf, s, s);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            enc.write_header()?.write_image_data(&icon.rgba)?;
+            Ok(buf)
+        })
+        .collect::<Result<_>>()?;
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0, 0, 1, 0]);
+    out.extend_from_slice(&(sizes.len() as u16).to_le_bytes());
+    let mut offset = 6 + 16 * sizes.len() as u32;
+    for (&s, png) in sizes.iter().zip(&pngs) {
+        let dim = if s >= 256 { 0 } else { s as u8 };
+        out.extend_from_slice(&[dim, dim, 0, 0, 1, 0, 32, 0]);
+        out.extend_from_slice(&(png.len() as u32).to_le_bytes());
+        out.extend_from_slice(&offset.to_le_bytes());
+        offset += png.len() as u32;
+    }
+    for png in pngs {
+        out.extend_from_slice(&png);
+    }
+    Ok(out)
 }
 
 fn save_png(path: &std::path::Path, img: &egui::ColorImage) -> Result<()> {
@@ -638,7 +700,7 @@ impl App {
             (DirStatus::Connecting, _) => "Connecting…".into(),
             (DirStatus::Ready, _) => "Server reachable".into(),
             (DirStatus::NotConfigured, _) => "No server configured".into(),
-            (DirStatus::Error(_), _) => "Server unreachable".into(),
+            (DirStatus::Error(_), _) => "Server connection failed".into(),
         };
         if status != self.tray_status {
             tray.set_status(&self.rt, status.clone());

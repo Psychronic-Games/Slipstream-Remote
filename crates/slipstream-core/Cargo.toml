@@ -9,6 +9,7 @@ anyhow.workspace = true
 blake3 = "1.8.7"
 bytes = "1.12.1"
 directories = "6.0.0"
+httpdate = "1"
 iroh.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
 rand.workspace = true
@@ -22,3 +23,4 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml = "1.1.8"
 tracing.workspace = true
+webpki-roots = "1"

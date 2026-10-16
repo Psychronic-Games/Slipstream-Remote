@@ -718,7 +718,9 @@ function slip_page_start(string $title, string $root = ''): void
     $org = slip_station()['org'] ?? '';
     echo '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
     echo '<title>' . h($title) . '</title><link rel="stylesheet" href="' . h($root) . 'assets/station.css">';
-    echo '<body><div class="frame"><header><div class="elbow"></div><div class="seg s1"></div><div class="seg s2"></div><h1>' . h($org !== '' ? $org : 'Slipstream Remote') . '</h1></header>';
+    echo '<link rel="icon" type="image/svg+xml" href="' . h($root) . 'assets/logo.svg">';
+    echo '<body><div class="frame"><header><div class="elbow"></div><div class="seg s1"></div><div class="seg s2"></div>'
+        . '<img class="logo" src="' . h($root) . 'assets/logo.svg" alt=""><h1>' . h($org !== '' ? $org : 'Slipstream Remote') . '</h1></header>';
     echo '<main>';
 }
 

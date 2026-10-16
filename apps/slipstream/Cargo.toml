@@ -29,3 +29,6 @@ windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 [dev-dependencies]
 slipstream-platform = { path = "../../crates/slipstream-platform" }
+
+[build-dependencies]
+embed-resource = "3"

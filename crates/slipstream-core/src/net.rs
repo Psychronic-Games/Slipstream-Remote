@@ -25,7 +25,15 @@ pub async fn bind_client(secret: SecretKey, server: &ServerSettings, accept_sess
     let map = relay_map(server);
     let mode = if map.is_empty() { RelayMode::Disabled } else { RelayMode::Custom(map) };
     let alpns = if accept_sessions { vec![ALPN_REMOTE.to_vec()] } else { vec![] };
-    let mut builder = Endpoint::builder(presets::Minimal).secret_key(secret).alpns(alpns).relay_mode(mode);
+    // Relay TLS uses our clock-corrected verifier too (see `clock`).
+    let ca = iroh::tls::CaTlsConfig::custom_server_cert_verifier(Arc::new(|provider| {
+        crate::clock::verifier(provider).map_err(std::io::Error::other)
+    }));
+    let mut builder = Endpoint::builder(presets::Minimal)
+        .secret_key(secret)
+        .alpns(alpns)
+        .relay_mode(mode)
+        .ca_tls_config(ca);
     // Troubleshooting aid: force every connection through the relay.
     if std::env::var_os("SLIPSTREAM_RELAY_ONLY").is_some() {
         tracing::warn!("SLIPSTREAM_RELAY_ONLY set: direct connections disabled");

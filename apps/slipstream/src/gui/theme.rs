@@ -408,44 +408,78 @@ pub fn spinner(painter: &egui::Painter, center: Pos2, radius: f32, color: Color3
     painter.add(PathShape::line(pts, Stroke::new(3.0, color)));
 }
 
-/// App icon: an elbow and data bars on black, generated at startup
-/// (4×4 supersampled for smooth edges).
-pub fn icon(size: u32) -> egui::IconData {
-    fn shade(fx: f32, fy: f32) -> Option<Color32> {
-        // Rounded-square badge.
-        let corner = 0.18;
+/// The Slipstream mark, in 0..1 units: a faceted arrowhead (two convex
+/// halves) split by a diagonal slash. Mirrors `assets/logo.svg`.
+const LOGO_LEFT: [(f32, f32); 4] = [(0.50, 0.03), (0.50, 0.66), (0.34, 0.83), (0.12, 0.95)];
+const LOGO_RIGHT: [(f32, f32); 4] = [(0.50, 0.03), (0.88, 0.95), (0.66, 0.83), (0.50, 0.66)];
+/// Slash centre line and half-width.
+const LOGO_SLASH: ((f32, f32), (f32, f32), f32) = ((0.10, 0.80), (0.90, 0.38), 0.035);
+
+fn inside_convex(poly: &[(f32, f32)], x: f32, y: f32) -> bool {
+    let mut sign = 0.0f32;
+    for i in 0..poly.len() {
+        let (ax, ay) = poly[i];
+        let (bx, by) = poly[(i + 1) % poly.len()];
+        let c = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+        if c != 0.0 {
+            if sign != 0.0 && c.signum() != sign {
+                return false;
+            }
+            sign = c.signum();
+        }
+    }
+    true
+}
+
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t.clamp(0.0, 1.0)) as u8;
+    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
+
+/// Colour of the mark at (x, y) in 0..1 units, if any.
+pub fn logo_shade(x: f32, y: f32) -> Option<Color32> {
+    let ((x0, y0), (x1, y1), half) = LOGO_SLASH;
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let dist = ((x - x0) * dy - (y - y0) * dx).abs() / (dx * dx + dy * dy).sqrt();
+    if dist < half {
+        return None;
+    }
+    if inside_convex(&LOGO_LEFT, x, y) {
+        Some(mix(Color32::from_rgb(0xff, 0xc6, 0x40), Color32::from_rgb(0xff, 0x8c, 0x00), y))
+    } else if inside_convex(&LOGO_RIGHT, x, y) {
+        Some(mix(Color32::from_rgb(0xf2, 0x7a, 0x00), Color32::from_rgb(0xb9, 0x45, 0x00), y))
+    } else {
+        None
+    }
+}
+
+/// Renders the mark (4×4 supersampled). With `badge`, it sits on a dark
+/// rounded square with a soft glow — the app icon; without, it's on
+/// transparency for in-app use.
+pub fn render_logo(size: u32, badge: bool) -> egui::IconData {
+    let shade = |fx: f32, fy: f32| -> Option<Color32> {
+        if !badge {
+            return logo_shade(fx, fy);
+        }
+        let corner = 0.2;
         let cx = fx.clamp(corner, 1.0 - corner);
         let cy = fy.clamp(corner, 1.0 - corner);
         if ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() > corner {
             return None;
         }
-        let dist = |x: f32, y: f32, px: f32, py: f32| ((x - px).powi(2) + (y - py).powi(2)).sqrt();
-        // Elbow: vertical arm x∈[.14,.40], horizontal arm y∈[.14,.34],
-        // outer radius .26 at (.40,.40), inner fillet radius .10 at (.50,.44).
-        let in_corner = (0.14..0.40).contains(&fx) && (0.14..0.40).contains(&fy) && dist(fx, fy, 0.40, 0.40) <= 0.26;
-        let in_v = (0.14..0.40).contains(&fx) && (0.40..0.86).contains(&fy);
-        let in_h = (0.40..0.86).contains(&fx) && (0.14..0.34).contains(&fy);
-        let in_fillet = (0.40..0.50).contains(&fx) && (0.34..0.44).contains(&fy) && dist(fx, fy, 0.50, 0.44) > 0.10;
-        if in_corner || in_v || in_h || in_fillet {
-            return Some(pal::ORANGE);
+        // Mark scaled into the badge, over a dark field with an orange glow.
+        let (mx, my) = ((fx - 0.14) / 0.72, (fy - 0.13) / 0.74);
+        if let Some(c) = logo_shade(mx, my) {
+            return Some(c);
         }
-        let bar = |x0: f32, y0: f32, y1: f32| (x0..0.86).contains(&fx) && (y0..y1).contains(&fy);
-        if bar(0.50, 0.50, 0.58) {
-            return Some(pal::LAVENDER);
-        }
-        if bar(0.58, 0.64, 0.72) {
-            return Some(pal::BLUE);
-        }
-        if bar(0.66, 0.78, 0.84) {
-            return Some(pal::CYAN);
-        }
-        Some(Color32::from_rgb(2, 3, 8))
-    }
+        let glow = (1.0 - ((fx - 0.5).powi(2) + (fy - 0.55).powi(2)).sqrt() / 0.55).clamp(0.0, 1.0);
+        Some(mix(Color32::from_rgb(4, 6, 14), Color32::from_rgb(70, 30, 6), glow * glow))
+    };
     let mut rgba = vec![0u8; (size * size * 4) as usize];
     let ss = 4;
     for y in 0..size {
         for x in 0..size {
-            let (mut r, mut g, mut b, mut a) = (0u32, 0u32, 0u32, 0u32);
+            let (mut r, mut g, mut b, mut n) = (0u32, 0u32, 0u32, 0u32);
             for sy in 0..ss {
                 for sx in 0..ss {
                     let fx = (x as f32 + (sx as f32 + 0.5) / ss as f32) / size as f32;
@@ -454,16 +488,22 @@ pub fn icon(size: u32) -> egui::IconData {
                         r += c.r() as u32;
                         g += c.g() as u32;
                         b += c.b() as u32;
-                        a += 255;
+                        n += 1;
                     }
                 }
             }
-            let n = (ss * ss) as u32;
-            let o = ((y * size + x) * 4) as usize;
-            // Straight (unpremultiplied) colour of covered samples, coverage as alpha.
-            let covered = (a / 255).max(1);
-            rgba[o..o + 4].copy_from_slice(&[(r / covered) as u8, (g / covered) as u8, (b / covered) as u8, (a / n) as u8]);
+            // Average colour of covered samples; coverage becomes alpha.
+            if let (Some(r), Some(g), Some(b)) = (r.checked_div(n), g.checked_div(n), b.checked_div(n)) {
+                let o = ((y * size + x) * 4) as usize;
+                let total = (ss * ss) as u32;
+                rgba[o..o + 4].copy_from_slice(&[r as u8, g as u8, b as u8, (n * 255 / total) as u8]);
+            }
         }
     }
     egui::IconData { rgba, width: size, height: size }
+}
+
+/// The app icon (window, tray, desktop entry, Windows .exe).
+pub fn icon(size: u32) -> egui::IconData {
+    render_logo(size, true)
 }

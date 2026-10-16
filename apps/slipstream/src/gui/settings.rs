@@ -246,7 +246,9 @@ fn save(app: &mut App) {
 }
 
 pub fn about_ui(app: &mut App, ui: &mut Ui) {
+    let logo = app.logo_texture(ui.ctx());
     theme::panel(ui, "Slipstream Remote", pal::GOLD, |ui| {
+        ui.add(egui::Image::new((logo, vec2(120.0, 120.0))));
         ui.label(RichText::new(format!("VERSION {}", slipstream_core::APP_VERSION)).font(theme::display(20.0)).color(pal::TAN));
         ui.add_space(6.0);
         ui.label("Fast, free and open-source remote desktop. No accounts, no subscriptions.");

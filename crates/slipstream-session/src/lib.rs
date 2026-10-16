@@ -211,7 +211,7 @@ impl Client {
             Ok(Ok(c)) => Ok(c.clone().expect("checked")),
             _ => match self.dir_status() {
                 DirStatus::NotConfigured => bail!("no server configured — set one in Settings"),
-                DirStatus::Error(e) => bail!("server unreachable: {e}"),
+                DirStatus::Error(e) => bail!("{e}"),
                 _ => bail!("server unreachable"),
             },
         }

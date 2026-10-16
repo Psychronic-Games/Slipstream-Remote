@@ -39,7 +39,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             DirStatus::Online { .. } => ("ONLINE · READY FOR LINK", pal::GREEN),
             DirStatus::Connecting | DirStatus::Ready => ("CONTACTING SERVER…", pal::GOLD),
             DirStatus::NotConfigured => ("NO SERVER — SEE CONFIG", pal::RED),
-            DirStatus::Error(_) => ("SERVER UNREACHABLE", pal::RED),
+            DirStatus::Error(_) => ("SERVER CONNECTION FAILED", pal::RED),
         };
         let id_text = match &app.dir_status {
             DirStatus::Online { id } => id.to_string(),
@@ -77,11 +77,10 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         if let DirStatus::Error(e) = &app.dir_status {
             ui.label(RichText::new(e).font(theme::body(16.0)).color(pal::PEACH));
             if let Ok(store) = slipstream_core::config::Store::open_default() {
-                ui.label(
-                    RichText::new(format!("Details: {}", store.dir().join("slipstream.log").display()))
-                        .small()
-                        .color(pal::DIM),
-                );
+                let log = store.dir().join("slipstream.log").display().to_string();
+                ui.label(RichText::new("Log file:").small().color(pal::DIM));
+                ui.add(egui::Label::new(RichText::new(&log).small().monospace().color(pal::DIM)).truncate())
+                    .on_hover_text(&log);
             }
         }
         if app.client.settings().host.permanent_password_secret.is_some() {

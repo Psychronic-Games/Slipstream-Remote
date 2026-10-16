@@ -18,6 +18,7 @@ header, footer { display: flex; gap: 8px; align-items: stretch; }
 header { height: 40px; }
 header .elbow { width: 240px; background: var(--orange); border-radius: 40px 0 0 0; }
 header .seg { background: var(--peach); flex: 1; } header .s2 { flex: 0 0 90px; background: var(--violet); }
+header .logo { height: 44px; width: 44px; margin-top: -3px; filter: drop-shadow(0 0 8px rgba(255,140,0,.45)); }
 header h1 { margin: 0; color: var(--orange); font: 700 34px/40px var(--display); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
 footer { height: 26px; align-items: center; }
 footer .elbow { width: 240px; height: 26px; background: var(--lav); border-radius: 0 0 0 26px; }
@@ -64,4 +65,5 @@ nav.tabs a { text-decoration: none; color: #000; background: var(--blue); paddin
 nav.tabs a.on { background: var(--orange); box-shadow: 0 0 16px rgba(255,153,0,.4); }
 .flash { padding: 10px 16px; border-radius: 10px; margin: 10px 0; background: rgba(102,255,170,.1); border: 1px solid var(--green); }
 .flash.err { background: rgba(255,85,85,.1); border-color: var(--red); }
-@media (max-width: 700px) { header .elbow, footer .elbow { width: 70px; } header .s2 { display: none; } header h1 { font-size: 24px; } footer span { display: none; } }
+@media (max-width: 700px) { header .elbow, footer .elbow { width: 70px; } header .s2 { display: none; } header .logo { height: 44px; width: 44px; margin-top: -3px; filter: drop-shadow(0 0 8px rgba(255,140,0,.45)); }
+header h1 { font-size: 24px; } footer span { display: none; } }

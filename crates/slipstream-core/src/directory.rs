@@ -182,6 +182,7 @@ impl DirectoryClient {
         let base = normalize_server_url(server)?;
         let api = base.join("api/")?;
         let http = reqwest::Client::builder()
+            .tls_backend_preconfigured(tls_config()?)
             .user_agent(concat!("slipstream/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(8))
             .timeout(Duration::from_secs(15))
@@ -197,13 +198,29 @@ impl DirectoryClient {
         if let (Some(key), Some(obj)) = (&self.key, body.as_object_mut()) {
             obj.insert("key".into(), key.clone().into());
         }
-        let resp = self
-            .http
-            .post(self.api.clone())
-            .json(&body)
-            .send()
-            .await
+        let mut result = self.http.post(self.api.clone()).json(&body).send().await;
+        if let Err(e) = &result
+            && crate::clock::is_time_error(&root_cause(e))
+        {
+            // Our clock is too far off for certificates: learn the real time
+            // from the server and verify again.
+            match crate::clock::sync_from(&self.base).await {
+                Ok(()) => result = self.http.post(self.api.clone()).json(&body).send().await,
+                Err(e) => tracing::debug!("time sync failed: {e:#}"),
+            }
+        }
+        let resp = result
             .map_err(|e| anyhow!("cannot reach {}: {}", self.base.host_str().unwrap_or("server"), root_cause(&e)))?;
+        // Every verified response tells us the real time.
+        if let Some(t) = resp
+            .headers()
+            .get(reqwest::header::DATE)
+            .and_then(|d| d.to_str().ok())
+            .and_then(|d| httpdate::parse_http_date(d).ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        {
+            crate::clock::learn_server_time(t.as_secs() as i64);
+        }
         let status = resp.status();
         let text = resp.text().await?;
         let env: Envelope = serde_json::from_str(&text).map_err(|_| {
@@ -225,6 +242,7 @@ impl DirectoryClient {
             bail!("server speaks directory v{}, this app v{DIRECTORY_VERSION} — please update", h.version);
         }
         self.clock_offset = h.time - now();
+        crate::clock::learn_server_time(h.time);
         Ok(h)
     }
 
@@ -268,12 +286,50 @@ impl DirectoryClient {
     }
 }
 
+/// TLS with a built-in copy of Mozilla's trusted roots (rather than the
+/// operating system's store) checked against our corrected clock, so
+/// certificate checks behave the same on every machine, wrong clock or not.
+fn tls_config() -> Result<rustls::ClientConfig> {
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()?
+        .dangerous()
+        .with_custom_certificate_verifier(crate::clock::verifier(provider)?)
+        .with_no_client_auth();
+    tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(tls)
+}
+
 fn root_cause(e: &(dyn std::error::Error + 'static)) -> String {
     let mut cur = e;
     while let Some(next) = cur.source() {
         cur = next;
     }
-    cur.to_string()
+    let msg = cur.to_string();
+    if crate::clock::is_time_error(&msg) {
+        // Almost always a wrong clock on this computer, not a bad server.
+        return format!("{msg} — check this computer's date and time (it says {})", local_date());
+    }
+    msg
+}
+
+/// Today's date per the system clock, e.g. "2026-09-14".
+fn local_date() -> String {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0) as i64;
+    // Civil-from-days (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 /// Verifies a signed payload (used by the Rust server; the PHP server does
@@ -310,6 +366,35 @@ mod tests {
         assert_eq!(id.to_string(), "482 913 077");
         assert!("12345".parse::<DeviceId>().is_err());
         assert!("482-913-077".parse::<DeviceId>().is_ok());
+    }
+
+    /// A PC whose clock is a month behind (or a year ahead) still talks to a
+    /// real HTTPS server. Needs network:
+    /// `cargo test -p slipstream-core wrong_clock -- --ignored`
+    #[tokio::test]
+    #[ignore]
+    async fn wrong_clock_still_works() {
+        for (label, off) in [("a month behind", 32 * 86_400), ("a year ahead", -365 * 86_400)] {
+            // Our clock = system + offset, so a negative system error is a positive offset.
+            crate::clock::set_offset_for_test(-off);
+            let mut dc = DirectoryClient::new("relay.slipstreamremote.com", None).unwrap();
+            let r = dc.hello().await;
+            println!("clock {label}: {:?}", r.as_ref().map(|_| "ok").map_err(|e| format!("{e:#}")));
+            // The station is private, so a reached server answers with an error
+            // about the key — anything but a certificate problem means TLS worked.
+            match r {
+                Ok(_) => {}
+                Err(e) => assert!(!crate::clock::is_time_error(&format!("{e:#}")), "{e:#}"),
+            }
+            assert!(crate::clock::offset().abs() < 120, "clock corrected (offset {})", crate::clock::offset());
+        }
+    }
+
+    #[test]
+    fn local_date_formats() {
+        let d = local_date();
+        assert_eq!(d.len(), 10);
+        assert!(d.starts_with("20"));
     }
 
     #[test]

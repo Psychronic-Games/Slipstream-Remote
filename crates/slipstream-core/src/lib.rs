@@ -1,6 +1,7 @@
 //! Slipstream core: protocol, authentication, networking and session logic.
 
 pub mod auth;
+pub mod clock;
 pub mod config;
 pub mod directory;
 pub mod framing;
