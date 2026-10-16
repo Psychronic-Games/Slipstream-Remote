@@ -18,10 +18,14 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
   loop keeps latency low instead of letting frames queue up.
 - **Full control** — mouse, wheel, keyboard (physical keys, works across
   layouts), Ctrl+Alt+Del and other special keys, multi-monitor switching.
-- **Clipboard sync, file transfer (drag & drop), chat.**
+- **Clipboard sync, chat, and a two-pane file manager** — browse both
+  computers, send and receive files and folders, or drag files from your
+  desktop straight onto the remote screen.
 - **Quality presets** — Balanced, Speed, Quality, Low bandwidth; automatic
   bitrate adaptation.
 - **Runs in the tray**, starts with the system, stays reachable.
+- **Updates itself** from your station — upload a new build, every app
+  offers *Install & restart* and keeps its settings.
 - **Your own station, not a central service** — an IT firm or company runs
   one self-contained web folder: a download page with apps preconfigured for
   it, a private directory of its clients' devices, its own relay and an admin

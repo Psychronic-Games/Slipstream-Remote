@@ -50,6 +50,26 @@ Encrypt certificate (*Server Configuration → SSL Certificate*), upload the
 files to `/home/<site>/public_html` as the site's user, open `/admin/`.
 No Apache or root changes are needed.
 
+## Updating
+
+Build a new package (`scripts/build-station.sh`) and upload the files
+again, replacing `bin/`, `clients/` and the PHP files — your settings and
+device list live in the data folder and are untouched.
+
+`clients/manifest.json` (written by the build script) records the version,
+build number and checksums. Apps check your station a minute after they
+start and every 6 hours; when a newer build is there they offer
+**Install & restart**. The update is downloaded from your station
+(preconfigured, like the download page), verified against the manifest,
+swapped in, and the app restarts — keeping its settings, ID and passwords.
+Headless machines can run `slipstream update`.
+
+Apps installed in a protected folder (e.g. by a system package) can't
+replace themselves and point users to the download page instead.
+
+To restart the relay with a new `bin/` program, use **Restart relay** on
+the admin page (otherwise it switches on its next restart).
+
 ## Where data lives
 
 Device records and station settings go in `slipstream-data/` **next to**

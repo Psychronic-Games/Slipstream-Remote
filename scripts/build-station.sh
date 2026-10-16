@@ -4,8 +4,7 @@
 # (clients/). Upload the folder's contents to the root of a (sub)domain,
 # open /admin/ and follow the setup.
 #
-#   scripts/build-station.sh            # build what this machine can build
-#   WINDOWS=1 scripts/build-station.sh  # also cross-compile the Windows app (needs cargo-xwin)
+#   scripts/build-station.sh   # builds Linux, plus Windows if cargo-xwin is installed
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -34,12 +33,14 @@ fi
 cp "$LINUX/slipstream-server" "$OUT/bin/slipstream-server-linux-x86_64"
 cp "$LINUX/slipstream" "$OUT/clients/slipstream-linux-x86_64"
 
-if [ "${WINDOWS:-0}" = 1 ]; then
+# Every build listed in the manifest must come from this run (same build
+# number), or apps would loop updating to a stale binary.
+if cargo xwin --help >/dev/null 2>&1; then
   echo "==> Windows app (cross-compiled)"
   cargo xwin build --release --target x86_64-pc-windows-msvc -p slipstream
-fi
-if [ -f target/x86_64-pc-windows-msvc/release/slipstream.exe ]; then
   cp target/x86_64-pc-windows-msvc/release/slipstream.exe "$OUT/clients/slipstream-windows-x86_64.exe"
+else
+  echo "==> Skipping Windows app (install cargo-xwin to build it)"
 fi
 # macOS builds come from CI or a Mac: drop slipstream-macos.zip (containing
 # Slipstream.app) into clients/.
