@@ -37,7 +37,7 @@ pub const BUILD_NUMBER: u64 = {
 /// Short git commit of this build.
 pub const COMMIT: &str = env!("SLIPSTREAM_COMMIT");
 
-/// "0.1.0 (build 7 · 8d6428c)"
+/// "0.5.0 (build 13 · 1a2b3c4)"
 pub const VERSION_STRING: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (build ",

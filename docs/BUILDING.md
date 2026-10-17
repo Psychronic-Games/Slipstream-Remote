@@ -63,7 +63,9 @@ The path must not contain spaces.
 
 ### Version and build numbers
 
-- `version` in the workspace `Cargo.toml` is the human version (0.1.0).
+- `version` in the workspace `Cargo.toml` is the human version (0.5.0).
+  To change it, also update `packaging/windows/slipstream.rc` (the .exe's
+  version info) and add a section to `CHANGELOG.md`.
 - The **build number** is the git commit count (`git rev-list --count HEAD`),
   baked into every binary along with the commit hash. Apps update when the
   station's `(version, build)` is higher than their own.
