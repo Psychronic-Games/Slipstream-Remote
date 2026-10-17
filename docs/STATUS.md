@@ -19,7 +19,7 @@ back up.*
 | Signed update installs; tampered, unsigned and foreign manifests and a swapped binary are refused | ✅ against a local station |
 | Windows build under Wine: host at 1440p/60 fps, GUI | ✅ |
 | Compact window (no usable GPU, e.g. Windows Server 2016): ID/password/status, being controlled | ✅ under Wine (forced); on real Server 2016 by the user |
-| Full window through the software renderer (Mesa llvmpipe) | ⚠️ under Wine: the full app and a 60 fps session draw on llvmpipe; download, checksum pins and tamper refusal tested against the local station. Real Server 2016 pending (Wine's Direct3D loads its own OpenGL first, so the delay-loading can only be proven on Windows) |
+| Full window through the built-in software renderer (Mesa llvmpipe) | ⚠️ under Wine: the full app and a 60 fps session draw on llvmpipe; unpacking, the failed-start fallback and the retry button work. Real Server 2016 pending (Wine's Direct3D loads its own OpenGL first, so loading Mesa's copy can only be proven on Windows) |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
 | Port forwarding | ✅ end-to-end test (echo through the tunnel, unreachable target, refused when not allowed) |

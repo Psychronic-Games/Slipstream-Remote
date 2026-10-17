@@ -53,9 +53,8 @@ in `target/` can be rebuilt. Dependencies are built without debug info
 |---|---|---|
 | `clients/slipstream-linux-x86_64` | `cargo zigbuild` for glibc 2.31 | Runs on Debian 11 / Ubuntu 20.04 and newer. Falls back to a native build (newer glibc only) without zig. |
 | `bin/slipstream-server-linux-x86_64` | same | The relay the station runs. |
-| `clients/slipstream-windows-x86_64.exe` | `cargo xwin` (MSVC target, cross-compiled from Linux) | Skipped when cargo-xwin isn't installed. |
+| `clients/slipstream-windows-x86_64.exe` | `cargo xwin` (MSVC target, cross-compiled from Linux) | Skipped when cargo-xwin isn't installed. Carries Mesa's CPU OpenGL driver for machines whose graphics can't run the full window: [mesa-dist-win](https://github.com/pal1000/mesa-dist-win), pinned in `packaging/windows/softgl.txt`, downloaded once into `~/.cache/slipstream-mesa` (needs `7z`) and handed to `build.rs` as `SLIPSTREAM_SOFTGL_DIR`. Without it the app builds without the renderer, with a warning. |
 | `clients/slipstream-macos.zip` | `scripts/build-macos.sh` on a Mac | Universal (Apple Silicon + Intel), ad-hoc signed. Taken from `dist/slipstream-macos.zip` if it's from the same build. |
-| `clients/softgl/*.dll.gz` | Mesa for Windows ([mesa-dist-win](https://github.com/pal1000/mesa-dist-win)), pinned in `packaging/windows/softgl.txt` | The CPU OpenGL driver for Windows machines whose graphics can't run the full window. The archive is downloaded once into `~/.cache/slipstream-mesa` and checked against the pins; needs `7z`. Skipped with a warning otherwise. |
 | `clients/manifest.json` | `tools/slipstream-release` | Version, build number, commit, and size, SHA-256 and release signature of each app, for self-update. |
 
 One-time tool setup:

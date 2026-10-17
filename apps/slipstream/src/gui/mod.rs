@@ -11,6 +11,8 @@ mod lite;
 mod remote;
 #[cfg(windows)]
 mod scheme;
+#[cfg(windows)]
+mod softgl;
 mod settings;
 mod single;
 pub mod theme;
@@ -80,18 +82,13 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     let (client, events) =
         rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: !via_service, ..Default::default() }))?;
 
-    // Without a graphics adapter wgpu can use (Windows Server 2016's
-    // Direct3D 12 can't run the shaders it needs, for one), show the compact
-    // native window instead: the computer can still be controlled.
-    // The software OpenGL driver, if this machine fetched it, is put first
-    // in line before anything loads OpenGL.
+    // Graphics wgpu can't use (Windows Server 2016's Direct3D 12 can't run
+    // the shaders it needs, for one) get the built-in software renderer,
+    // and if even that can't draw, the compact native window: the computer
+    // can still be controlled.
     #[cfg(windows)]
-    if slipstream_session::softgl::installed() {
-        use_software_gl();
-    }
-    #[cfg(windows)]
-    if std::env::var_os("SLIPSTREAM_LITE").is_some() || !graphics_available(&rt) {
-        tracing::warn!("no usable graphics adapter: using the compact window");
+    if std::env::var_os("SLIPSTREAM_LITE").is_some() || !pick_renderer(&rt) {
+        tracing::warn!("no usable graphics: using the compact window");
         return lite::run(rt, client, events, instance, opts.screenshot);
     }
 
@@ -894,13 +891,68 @@ impl App {
     }
 }
 
-/// Makes `opengl32.dll` load from the software driver's folder (searched
-/// after the app's own folder, before System32), with Mesa's CPU renderer.
+/// Decides how the full window draws; false = use the compact window.
+/// Direct3D 12 or Vulkan if wgpu can use them, else the system's OpenGL
+/// (checked in a separate process, so its opengl32.dll never loads into
+/// this one), else the built-in software renderer.
+#[cfg(windows)]
+fn pick_renderer(rt: &tokio::runtime::Runtime) -> bool {
+    use eframe::egui_wgpu::wgpu::Backends;
+    // SLIPSTREAM_SOFTWARE_RENDERER=1 goes straight to it (troubleshooting).
+    let forced = std::env::var_os("SLIPSTREAM_SOFTWARE_RENDERER").is_some();
+    if !forced && count_adapters(rt, Backends::DX12 | Backends::VULKAN) > 0 {
+        return true;
+    }
+    if !forced && system_gl_works() {
+        tracing::info!("using the system's OpenGL");
+        return true;
+    }
+    if let Err(e) = softgl::prepare() {
+        tracing::warn!("no software renderer: {e:#}");
+        return false;
+    }
+    use_software_gl();
+    if count_adapters(rt, Backends::GL) > 0 {
+        return true;
+    }
+    softgl::retry(); // couldn't even start: not a crash, try again next time
+    false
+}
+
+/// Runs `slipstream` again with SLIPSTREAM_PROBE_GL set ([`probe_gl`]) and
+/// waits up to 10 s for its verdict.
+#[cfg(windows)]
+fn system_gl_works() -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let Ok(mut child) = std::process::Command::new(exe).env("SLIPSTREAM_PROBE_GL", "1").spawn() else { return false };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                return false;
+            }
+        }
+    }
+}
+
+/// The probe process: exit code 0 when the system's OpenGL is enough for
+/// wgpu (a real driver; the GDI one that ships with Windows isn't).
+#[cfg(windows)]
+pub fn probe_gl() -> i32 {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread().build() else { return 1 };
+    if count_adapters(&rt, eframe::egui_wgpu::wgpu::Backends::GL) > 0 { 0 } else { 1 }
+}
+
+/// Makes Mesa's `opengl32.dll` (unpacked by `softgl::prepare`) the one this
+/// process uses, with its CPU renderer.
 #[cfg(windows)]
 fn use_software_gl() {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::LibraryLoader::{LoadLibraryW, SetDllDirectoryW};
-    let dir = slipstream_session::softgl::dir();
+    let dir = softgl::dir();
     let wide = |p: &std::path::Path| p.as_os_str().encode_wide().chain([0]).collect::<Vec<u16>>();
     // SAFETY: NUL-terminated paths. Setting the variable is sound: nothing
     // else reads the environment while the app starts up.
@@ -912,20 +964,20 @@ fn use_software_gl() {
         // by-name loads get (opengl32 is delay-loaded, see build.rs).
         !LoadLibraryW(wide(&dir.join("opengl32.dll")).as_ptr()).is_null()
     };
-    tracing::info!(dir = %dir.display(), loaded, "using the software OpenGL driver");
+    tracing::info!(dir = %dir.display(), loaded, "using the built-in software renderer");
 }
 
-/// Whether wgpu finds any adapter at all on this machine.
+/// How many adapters wgpu finds on these backends.
 #[cfg(windows)]
-fn graphics_available(rt: &tokio::runtime::Runtime) -> bool {
+fn count_adapters(rt: &tokio::runtime::Runtime, backends: eframe::egui_wgpu::wgpu::Backends) -> usize {
     use eframe::egui_wgpu::{WgpuSetupCreateNew, wgpu};
     let instance = wgpu::Instance::new(WgpuSetupCreateNew::without_display_handle().instance_descriptor);
-    let adapters = rt.block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    let adapters = rt.block_on(instance.enumerate_adapters(backends));
     for a in &adapters {
         let info = a.get_info();
         tracing::info!(name = %info.name, backend = ?info.backend, kind = ?info.device_type, "graphics adapter found");
     }
-    !adapters.is_empty()
+    adapters.len()
 }
 
 /// "Slipstream Remote - Acme IT" (matches the station's download names).
@@ -1170,6 +1222,8 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        #[cfg(windows)]
+        softgl::started();
         let ctx = ui.ctx().clone();
         self.poll_attempt(&ctx);
         self.poll_update(&ctx);

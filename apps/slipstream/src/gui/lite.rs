@@ -56,8 +56,6 @@ struct View {
     update: Option<UpdateInfo>,
     /// The update (or the software renderer) is installed: relaunch from here.
     relaunch: Option<PathBuf>,
-    /// Downloading the software renderer.
-    fetching: bool,
 }
 
 const ID_TITLE: i32 = 101;
@@ -147,10 +145,10 @@ pub fn run(
         title: "SLIPSTREAM REMOTE".into(),
         id: client.settings().host.last_device_id.map(|i| i.to_string()).unwrap_or_else(|| "--- --- ---".into()),
         status: "Contacting the station…".into(),
-        note: if slipstream_session::softgl::installed() {
-            "Not even the software renderer can draw here, so this is the compact window. The computer can still be controlled as usual.".into()
+        note: if super::softgl::failed_before() {
+            "The full window didn't start on this computer last time, so this is the compact one. The computer can still be controlled as usual.".into()
         } else {
-            "This computer's graphics can't run the full window. It can still be controlled as usual; Full window fetches a software renderer (22 MB).".into()
+            "This computer's graphics can't run the full window. It can still be controlled as usual.".into()
         },
         ..Default::default()
     }));
@@ -271,11 +269,12 @@ pub fn run(
         }
     }
     HWND_BITS.store(0, Ordering::Relaxed);
-    let relaunch = view.lock().unwrap().relaunch.take();
-    rt.block_on(client.shutdown());
-    if let Some(exe) = relaunch {
+    // The new copy waits for this one to let go of the instance port, so
+    // start it first: a slow shutdown then can't stop the restart.
+    if let Some(exe) = view.lock().unwrap().relaunch.take() {
         std::process::Command::new(exe).env("SLIPSTREAM_RESTARTED", "1").spawn()?;
     }
+    rt.block_on(client.shutdown());
     Ok(())
 }
 
@@ -353,12 +352,13 @@ fn set_text(ui: &mut Ui, id: i32, text: &str) {
 }
 
 fn refresh(ui: &mut Ui, hwnd: HWND) {
-    let (title, id, pw, status, online, note, update, fetching) = {
+    let (title, id, pw, status, online, note, update) = {
         let v = ui.view.lock().unwrap();
-        (v.title.clone(), v.id.clone(), v.password.clone(), v.status.clone(), v.online, v.note.clone(), v.update.is_some(), v.fetching)
+        (v.title.clone(), v.id.clone(), v.password.clone(), v.status.clone(), v.online, v.note.clone(), v.update.is_some())
     };
-    // The update's slot, unless there's an update to install.
-    let full = !update && !fetching && !slipstream_session::softgl::installed();
+    // In the update's slot (an update comes first): after the software
+    // renderer failed to start, a way to give it another go.
+    let full = !update && super::softgl::failed_before();
     set_text(ui, ID_TITLE, &title);
     set_text(ui, ID_ID_LABEL, "YOUR ID");
     set_text(ui, ID_ID, &id);
@@ -369,7 +369,7 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     set_text(ui, BTN_NEW, "New password");
     set_text(ui, BTN_COPY, "Copy");
     set_text(ui, BTN_UPDATE, "Install update");
-    set_text(ui, BTN_FULL, "Full window");
+    set_text(ui, BTN_FULL, "Try full window");
     set_text(ui, BTN_QUIT, "Quit");
     // SAFETY: live controls of our window.
     unsafe {
@@ -614,7 +614,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         copy(hwnd, &format!("ID: {}\r\nPassword: {}", v.id, v.password));
                     }
                     BTN_UPDATE => install_update(ui),
-                    BTN_FULL => fetch_full_window(ui),
+                    BTN_FULL => retry_full_window(ui),
                     BTN_QUIT => unsafe {
                         DestroyWindow(hwnd);
                     },
@@ -666,40 +666,14 @@ fn link(ui: &Ui, url: &str) {
     });
 }
 
-/// Fetches the software renderer, then relaunches into the full window.
-fn fetch_full_window(ui: &Ui) {
-    let (client, view) = (ui.client.clone(), ui.view.clone());
-    {
-        let mut v = view.lock().unwrap();
-        if v.fetching {
-            return;
-        }
-        v.fetching = true;
-        v.note = "Downloading the software renderer…".into();
+/// Clears the software renderer's failed start and relaunches, so the app
+/// tries the full window again.
+fn retry_full_window(ui: &Ui) {
+    super::softgl::retry();
+    if let Ok(exe) = std::env::current_exe() {
+        ui.view.lock().unwrap().relaunch = Some(exe);
     }
     wake(WM_REFRESH);
-    ui.rt.spawn(async move {
-        let (shown, mut last) = (view.clone(), u64::MAX);
-        let result = client
-            .install_software_renderer(move |done, total| {
-                let pct = (done * 100).checked_div(total).unwrap_or(0);
-                if pct != last {
-                    last = pct;
-                    shown.lock().unwrap().note = format!("Downloading the software renderer… {pct}%");
-                    wake(WM_REFRESH);
-                }
-            })
-            .await;
-        {
-            let mut v = view.lock().unwrap();
-            v.fetching = false;
-            match result.and_then(|()| Ok(std::env::current_exe()?)) {
-                Ok(exe) => v.relaunch = Some(exe),
-                Err(e) => v.note = format!("Couldn't get the full window: {e:#}"),
-            }
-        }
-        wake(WM_REFRESH);
-    });
 }
 
 /// Downloads and installs the offered update, then relaunches.

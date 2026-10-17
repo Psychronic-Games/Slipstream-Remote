@@ -58,6 +58,19 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/setup-nasm@v1
+      - name: Software renderer (Mesa, pinned in packaging/windows/softgl.txt)
+        shell: bash
+        run: |
+          read -r url sha < <(awk '$1 == "archive" { print $2, $3 }' packaging/windows/softgl.txt)
+          curl -fsSL -o mesa.7z "$url"
+          echo "$sha  mesa.7z" | sha256sum -c
+          mkdir softgl
+          awk '$1 == "file" { print $2, $3 }' packaging/windows/softgl.txt | while read -r name fsha; do
+            7z e -y -osoftgl-raw mesa.7z "x64/$name" >/dev/null
+            echo "$fsha  softgl-raw/$name" | sha256sum -c
+            gzip -9n -c "softgl-raw/$name" > "softgl/$name.gz"
+          done
+          echo "SLIPSTREAM_SOFTGL_DIR=$(cygpath -w "$PWD/softgl")" >> "$GITHUB_ENV"
       - name: Build
         shell: bash
         run: |

@@ -7,13 +7,18 @@ Build numbers are the git commit count. The app shows them as
 
 ### From testing build 19
 - **The full window on Windows Server 2016** and other machines whose
-  graphics can't run it: *Full window* in the compact window (or
-  `slipstream software-renderer`) fetches Mesa's CPU OpenGL driver
-  (llvmpipe, 22 MB) from the station, and the app then opens the full
-  window with it. The station's build script packages the two Mesa DLLs;
-  apps accept only the exact files whose checksums they carry
-  (`packaging/windows/softgl.txt`). OpenGL is now delay-loaded so that copy
-  is used rather than System32's.
+  graphics can't run it, with nothing to download or press: the Windows
+  app carries Mesa's CPU OpenGL driver (llvmpipe; 23 MB more in the .exe)
+  and uses it by itself when there's no Direct3D 12, Vulkan or OpenGL it
+  can use. The system's OpenGL is tested in a separate process, so older
+  graphics cards still draw in hardware. If the software renderer crashes
+  or hangs, the next start uses the compact window, with a *Full window*
+  button to try again. `SLIPSTREAM_SOFTWARE_RENDERER=1` forces it. The DLLs
+  are pinned by checksum (`packaging/windows/softgl.txt`), and OpenGL is
+  delay-loaded so Mesa's copy is used rather than System32's.
+- Restarting after an update from the compact window no longer depends on
+  the old copy finishing its shutdown, which could leave a windowless
+  process behind; shutdown itself now gives up after 3 s.
 - **Full screen**: the toolbar's menus no longer vanish as you move into
   them; Ctrl+Alt+Enter leaves (or enters) full screen and is never sent
   to the remote computer; leaving the session for the Bridge or another

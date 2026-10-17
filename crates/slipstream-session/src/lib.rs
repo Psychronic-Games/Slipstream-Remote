@@ -5,7 +5,6 @@ mod cursor_folder;
 pub mod files;
 pub mod fsops;
 mod host;
-pub mod softgl;
 pub mod tunnel;
 pub mod update;
 mod video;
@@ -332,13 +331,6 @@ impl Client {
         tokio::task::spawn_blocking(move || update::install(&staged2)).await?
     }
 
-    /// Fetches the software OpenGL driver for machines whose graphics
-    /// can't run the full window (Windows; see `softgl`).
-    pub async fn install_software_renderer(&self, progress: impl FnMut(u64, u64)) -> Result<()> {
-        let dc = self.directory().await?;
-        softgl::install(dc.base_url(), dc.key(), progress).await
-    }
-
     pub async fn shutdown(&self) {
         self.disconnect_all_host_sessions();
         // Show as offline right away instead of after the heartbeat window.
@@ -349,7 +341,9 @@ impl Client {
             let secret = self.inner.endpoint.secret_key().clone();
             let _ = tokio::time::timeout(Duration::from_secs(2), dc.unregister(&secret)).await;
         }
-        self.inner.endpoint.close().await;
+        // Closing waits for peers to acknowledge; one that doesn't mustn't
+        // keep the app from exiting (or an update from restarting it).
+        let _ = tokio::time::timeout(Duration::from_secs(3), self.inner.endpoint.close()).await;
     }
 }
 
