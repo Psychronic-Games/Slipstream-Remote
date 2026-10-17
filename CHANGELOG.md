@@ -16,6 +16,12 @@ Build numbers are the git commit count. The app shows them as
   button to try again. `SLIPSTREAM_SOFTWARE_RENDERER=1` forces it. The DLLs
   are pinned by checksum (`packaging/windows/softgl.txt`), and OpenGL is
   delay-loaded so Mesa's copy is used rather than System32's.
+- Closing Slipstream on Windows ends the process. Before, it could stay in
+  Task Manager without a window: the compact window's Quit button, a
+  relaunch after an update, or closing during a session left its message
+  loop running (the "destroyed" message arrived while its handler was
+  busy), and exiting could hang in a DLL's cleanup or while the async
+  runtime waited for blocking work.
 - Restarting after an update from the compact window no longer depends on
   the old copy finishing its shutdown, which could leave a windowless
   process behind; shutdown itself now gives up after 3 s.

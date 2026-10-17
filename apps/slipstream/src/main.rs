@@ -214,7 +214,23 @@ fn main() -> anyhow::Result<()> {
             if let Err(e) = &result {
                 fatal(&format!("Slipstream Remote couldn't start:\n\n{e:#}"));
             }
-            result
+            // The window is gone and the client has shut down (signed off
+            // with the station; settings and logs are written as they
+            // change). End right here: tearing down the async runtime waits
+            // on blocking tasks still running (capture, file I/O), and on
+            // Windows a DLL's exit-time cleanup can hang ExitProcess too
+            // (seen after a session), either way leaving a windowless
+            // process behind.
+            let code = if result.is_ok() { 0 } else { 1 };
+            #[cfg(windows)]
+            // SAFETY: ends this process; nothing runs after it.
+            unsafe {
+                windows_sys::Win32::System::Threading::TerminateProcess(
+                    windows_sys::Win32::System::Threading::GetCurrentProcess(),
+                    code as u32,
+                );
+            }
+            std::process::exit(code);
         }
     }
 }

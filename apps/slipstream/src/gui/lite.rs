@@ -592,6 +592,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             return 1;
         }
     }
+    // Ending the message loop can't wait for `UI`: the window is usually
+    // destroyed from inside one of our own handlers (Quit, a relaunch, the
+    // screenshot timer), which still holds it, so the nested WM_DESTROY
+    // would get the default handling and the app would never exit.
+    if msg == WM_DESTROY {
+        unsafe { PostQuitMessage(0) };
+        return 0;
+    }
     if msg == WM_PAINT {
         unsafe { paint_frame(hwnd) };
         return 0;
@@ -672,10 +680,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     eprintln!("screenshot failed: {e:#}");
                 }
                 unsafe { DestroyWindow(hwnd) };
-                Some(0)
-            }
-            WM_DESTROY => {
-                unsafe { PostQuitMessage(0) };
                 Some(0)
             }
             _ => None,
