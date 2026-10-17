@@ -122,7 +122,6 @@ protocol, the latency control loop and the platform backends.
 ## Roadmap
 
 - Hardware video encoding (NVENC, VA-API, VideoToolbox, Media Foundation)
-- Audio streaming
 - Android app (viewer first, then host)
 - Address book with saved credentials (OS keychain)
 - Windows service / pre-login access

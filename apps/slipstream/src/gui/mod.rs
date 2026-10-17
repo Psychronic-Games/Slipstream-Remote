@@ -85,6 +85,11 @@ pub fn run(opts: GuiOptions) -> Result<()> {
         // (this saves a refresh interval, ~17 ms at 60 Hz).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             surface: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY,
+            wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(eframe::egui_wgpu::WgpuSetupCreateNew {
+                native_adapter_selector: Some(Arc::new(video::pick_adapter)),
+                // eframe fills in the display handle.
+                ..eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle()
+            }),
             ..Default::default()
         },
         ..Default::default()
@@ -402,7 +407,8 @@ impl App {
             Ok((session, events)) => {
                 let id = self.next_tab;
                 self.next_tab += 1;
-                let mut tab = remote::RemoteTab::new(id, session, events, attempt.password, ctx);
+                let play_audio = self.client.settings().viewer.play_audio;
+                let mut tab = remote::RemoteTab::new(id, session, events, attempt.password, ctx, play_audio);
                 tab.files.open = self.open_files;
                 self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
                 self.tabs.push(tab);

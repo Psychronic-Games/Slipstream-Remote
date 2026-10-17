@@ -193,6 +193,7 @@ apps/slipstream/           desktop app (egui) + CLI
 apps/slipstream-server/    standalone directory + relay server
 crates/slipstream-core/    protocol, auth, directory client, config, clock
 crates/slipstream-codec/   H.264 encode/decode
+crates/slipstream-audio/   sound: vendored libopus, capture, playback
 crates/slipstream-platform/ screen capture, input, clipboard per OS
 crates/slipstream-session/ host/viewer sessions, files, updates
 tools/slipstream-release/  release key and signed update manifest (build-station.sh uses it)

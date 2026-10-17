@@ -140,6 +140,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
         input: settings.host.allow_input,
         clipboard: settings.host.allow_clipboard,
         file_transfer: settings.host.allow_file_transfer,
+        audio: settings.host.allow_audio && (inner.opts.test_pattern || slipstream_audio::capture_supported()),
         chat: true,
         cursor_in_video,
     };
@@ -182,6 +183,28 @@ fn set_restore_token(inner: &Inner, token: String) {
     if changed {
         inner.save_settings();
     }
+}
+
+/// Captures this computer's sound and sends it to the viewer: Opus, one
+/// datagram per 20 ms (see `proto::AUDIO_DATAGRAM`).
+/// With the test pattern it sends a test tone instead (no feedback loop when
+/// host and viewer share a machine).
+fn send_audio(conn: Connection, test_tone: bool) -> Result<slipstream_audio::Capture> {
+    let mut encoder = slipstream_audio::opus::Encoder::new(96_000)?;
+    let mut seq = 0u16;
+    let start = if test_tone { slipstream_audio::Capture::test_tone } else { slipstream_audio::Capture::start };
+    start(Box::new(move |frame: &[i16]| match encoder.encode(frame) {
+        Ok(packet) => {
+            let mut d = Vec::with_capacity(packet.len() + 3);
+            d.push(slipstream_core::proto::AUDIO_DATAGRAM);
+            d.extend_from_slice(&seq.to_le_bytes());
+            d.extend_from_slice(packet);
+            seq = seq.wrapping_add(1);
+            // A full send queue drops the frame, which is the right thing for audio.
+            let _ = conn.send_datagram(d.into());
+        }
+        Err(e) => debug!("audio encode: {e:#}"),
+    }))
 }
 
 /// Starts capturing `display`. The outer error means the backend is gone
@@ -236,6 +259,8 @@ async fn session_loop(
     let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();
     let mut pipeline: Option<Pipeline> = None;
     let mut display = displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
+    // The host's sound, while the viewer wants it (capture stops on drop).
+    let mut _audio: Option<slipstream_audio::Capture> = None;
 
     loop {
         tokio::select! {
@@ -302,6 +327,18 @@ async fn session_loop(
                         inner.emit(ClientEvent::HostChat { session: id, text });
                     }
                     ViewerMsg::Bye => return Ok("they ended the session".into()),
+                    ViewerMsg::SetAudio(on) => {
+                        _audio = None;
+                        if on && caps.audio {
+                            match send_audio(conn.clone(), inner.opts.test_pattern) {
+                                Ok(a) => _audio = Some(a),
+                                Err(e) => {
+                                    warn!("sound capture: {e:#}");
+                                    write_msg(&mut send, &HostMsg::Notice(format!("This computer's sound can't be shared: {e:#}"))).await?;
+                                }
+                            }
+                        }
+                    }
                     ViewerMsg::Hello { .. } | ViewerMsg::AuthResponse { .. } => bail!("protocol violation"),
                 }
             }

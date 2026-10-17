@@ -62,6 +62,8 @@ pub struct RemoteTab {
     forward_repeats: bool,
     notice: Option<(String, Instant)>,
     pub files: FileManager,
+    /// Playing the remote computer's sound.
+    audio: bool,
 }
 
 impl RemoteTab {
@@ -71,6 +73,7 @@ impl RemoteTab {
         events: mpsc::UnboundedReceiver<ViewerEvent>,
         password: String,
         ctx: &egui::Context,
+        play_audio: bool,
     ) -> Self {
         let frames = session.frames();
         let wake = ctx.clone();
@@ -80,6 +83,7 @@ impl RemoteTab {
         // Wayland apps repeat held keys themselves; Windows/macOS need repeats sent.
         let forward_repeats = info.os != "Linux";
         let display = info.displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
+        let audio = play_audio && info.capabilities.audio;
         Self {
             id,
             cmds: session.command_sender(),
@@ -105,6 +109,7 @@ impl RemoteTab {
             held_keys: HashSet::new(),
             forward_repeats,
             notice: None,
+            audio,
             files,
         }
     }
@@ -430,27 +435,74 @@ impl RemoteTab {
             [pos2(bar.left(), bar.bottom() - 1.0), pos2(bar.right(), bar.bottom() - 1.0)],
             egui::Stroke::new(1.0, pal::ORANGE.gamma_multiply(0.4)),
         );
-
-        let mut child = ui.new_child(
-            UiBuilder::new().max_rect(bar.shrink2(vec2(8.0, 6.0)).with_min_x(bar.left() + 50.0)).layout(Layout::left_to_right(Align::Center)),
-        );
-        let ui = &mut child;
-        ui.spacing_mut().item_spacing.x = 6.0;
         let ctx = ui.ctx().clone();
+        let inner = bar.shrink2(vec2(8.0, 6.0)).with_min_x(bar.left() + 50.0);
+        // Narrower windows get a tighter bar rather than overlapping buttons.
+        let w = bar.width();
+        let compact_stats = w < 1460.0;
+        let tight = w < 1320.0;
+        let show_host_name = w >= 1240.0;
+        let screens_as_menu = w < 1100.0;
+        let icon_only_back = w < 920.0;
 
-        if theme::pill(ui, "◀ Bridge", pal::PEACH).clicked() {
+        // Right side first, so the buttons know how much room is left.
+        let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
+        right.spacing_mut().item_spacing.x = 6.0;
+        if theme::pill(&mut right, "End link", pal::RED).clicked() {
+            self.send(ViewerCmd::Disconnect);
+            action = TabAction::Close;
+        }
+        self.stats_readout(&mut right, compact_stats, t);
+        let right_left = right.min_rect().left();
+
+        let left_rect = inner.with_max_x(right_left - 12.0);
+        let mut child = ui.new_child(UiBuilder::new().max_rect(left_rect).layout(Layout::left_to_right(Align::Center)));
+        child.set_clip_rect(left_rect.expand2(vec2(0.0, 8.0)));
+        let ui = &mut child;
+        ui.spacing_mut().item_spacing.x = if tight { 5.0 } else { 6.0 };
+        if tight {
+            ui.spacing_mut().button_padding.x = 8.0;
+        }
+
+        let back_tip = format!("Back to the Bridge (the link with {} keeps running)", self.info.host_name);
+        if theme::back_pill(ui, if icon_only_back { "" } else { "Bridge" }, pal::PEACH).on_hover_text(back_tip).clicked() {
             self.release_keyboard();
             action = TabAction::Bridge;
         }
-        ui.label(RichText::new(self.info.host_name.to_uppercase()).font(theme::display_bold(20.0)).color(pal::TAN));
+        if show_host_name {
+            ui.label(RichText::new(self.info.host_name.to_uppercase()).font(theme::display_bold(20.0)).color(pal::TAN));
+        }
 
         if self.info.displays.len() > 1 {
-            for d in self.info.displays.clone() {
-                let color = if d.index == self.display { pal::GOLD } else { pal::VIOLET };
-                if theme::pill(ui, &format!("{}", d.index + 1), color).on_hover_text(&d.name).clicked() && d.index != self.display {
-                    self.display = d.index;
-                    self.send(ViewerCmd::SelectDisplay(d.index));
+            let tip = |d: &slipstream_core::proto::DisplayInfo| {
+                format!("Screen {}: {} · {}×{}{}", d.index + 1, d.name, d.width, d.height, if d.primary { " (main)" } else { "" })
+            };
+            let mut pick = None;
+            if screens_as_menu {
+                ui.menu_button(RichText::new(format!("SCREEN {} ▾", self.display + 1)).font(theme::display(17.0)).color(pal::VIOLET), |ui| {
+                    for d in &self.info.displays {
+                        if ui.selectable_label(d.index == self.display, tip(d)).clicked() {
+                            pick = Some(d.index);
+                            ui.close();
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("The remote computer's screens: pick one to view");
+            } else {
+                ui.add_space(4.0);
+                ui.label(RichText::new("SCREEN").font(theme::display(15.0)).color(pal::LAVENDER))
+                    .on_hover_text("The remote computer's screens: pick one to view");
+                for d in &self.info.displays {
+                    let color = if d.index == self.display { pal::GOLD } else { pal::VIOLET };
+                    if theme::pill(ui, &format!("{}", d.index + 1), color).on_hover_text(tip(d)).clicked() {
+                        pick = Some(d.index);
+                    }
                 }
+            }
+            if let Some(i) = pick.filter(|&i| i != self.display) {
+                self.display = i;
+                self.send(ViewerCmd::SelectDisplay(i));
             }
         }
 
@@ -488,50 +540,75 @@ impl RemoteTab {
             self.release_keyboard();
         }
 
+        // Sound: gold while playing.
+        let can_hear = self.info.capabilities.audio;
+        let (label, color, tip) = match (can_hear, self.audio) {
+            (false, _) => ("Sound", pal::DIM, "That computer doesn't share its sound (not supported there yet, or switched off in its Config)"),
+            (true, true) => ("Sound", pal::GOLD, "Playing the remote computer's sound. Click to mute"),
+            (true, false) => ("Muted", pal::LAVENDER.gamma_multiply(0.6), "Click to hear the remote computer's sound"),
+        };
+        let sound = ui.add_enabled_ui(can_hear, |ui| theme::pill(ui, label, color)).inner.on_hover_text(tip).on_disabled_hover_text(tip);
+        if sound.clicked() {
+            self.audio = !self.audio;
+            self.send(ViewerCmd::Audio(self.audio));
+        }
+
         let mut new_preset = None;
-        ui.menu_button(RichText::new(format!("{} ▾", PRESETS[self.preset].0.to_uppercase())).font(theme::display(17.0)).color(pal::BLUE), |ui| {
+        // Only the arrow when there's no room for the preset's name.
+        let preset_label = if ui.available_width() < 120.0 { "▾".to_string() } else { format!("{} ▾", PRESETS[self.preset].0.to_uppercase()) };
+        ui.menu_button(RichText::new(preset_label).font(theme::display(17.0)).color(pal::BLUE), |ui| {
             for (i, (name, _)) in PRESETS.iter().enumerate() {
                 if ui.selectable_label(i == self.preset, *name).clicked() {
                     new_preset = Some(i);
                     ui.close();
                 }
             }
-        });
+        })
+        .response
+        .on_hover_text("Picture quality");
         if let Some(i) = new_preset {
             self.preset = i;
             self.send(ViewerCmd::Settings(PRESETS[i].1));
         }
-
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if theme::pill(ui, "End link", pal::RED).clicked() {
-                self.send(ViewerCmd::Disconnect);
-                action = TabAction::Close;
-            }
-            let s = &self.stats;
-            let (fps, mbps, rtt) = (
-                theme::glide(ui, "fps", s.fps),
-                theme::glide(ui, "mbps", s.kbps / 1000.0),
-                theme::glide(ui, "rtt", s.rtt_ms),
-            );
-            let path = if s.relayed { ("RELAY", pal::GOLD) } else { ("DIRECT", pal::GREEN) };
-            ui.label(RichText::new(path.0).font(theme::display(16.0)).color(path.1));
-            ui.label(
-                RichText::new(format!("{fps:>3.0} FPS · {mbps:>4.1} MBPS · {rtt:>3.0} MS"))
-                    .font(theme::mono(15.0))
-                    .color(pal::BLUE),
-            );
-            if let Some((n, frac)) = self.files.activity() {
-                let r = ui
-                    .add(egui::Button::new(RichText::new(format!("⇅ {n} · {:.0}%", frac * 100.0)).font(theme::mono(14.0)).color(pal::GOLD)).frame(false))
-                    .on_hover_text("Show transfers");
-                if r.clicked() {
-                    self.files.open = true;
-                }
-            }
-            let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-            theme::lamp(ui.painter(), r.center(), if self.closed.is_some() { pal::RED } else { pal::GREEN }, t);
-        });
         action
+    }
+
+    /// Frame rate, bandwidth, round trip and path, right to left; the full
+    /// details are in the tooltip when `compact`.
+    fn stats_readout(&mut self, ui: &mut Ui, compact: bool, t: f64) {
+        let s = &self.stats;
+        let (fps, mbps, rtt) = (
+            theme::glide(ui, "fps", s.fps),
+            theme::glide(ui, "mbps", s.kbps / 1000.0),
+            theme::glide(ui, "rtt", s.rtt_ms),
+        );
+        let path = if s.relayed { ("RELAY", pal::GOLD) } else { ("DIRECT", pal::GREEN) };
+        let details = format!(
+            "{fps:.0} frames a second · {mbps:.1} Mbit/s · {rtt:.0} ms round trip · {}",
+            if s.relayed { "through the station's relay" } else { "direct connection" }
+        );
+        if !compact {
+            ui.label(RichText::new(path.0).font(theme::display(16.0)).color(path.1));
+        }
+        let text = if compact {
+            format!("{fps:>3.0} FPS · {rtt:>3.0} MS")
+        } else {
+            format!("{fps:>3.0} FPS · {mbps:>4.1} MBPS · {rtt:>3.0} MS")
+        };
+        ui.label(RichText::new(text).font(theme::mono(15.0)).color(pal::BLUE)).on_hover_text(&details);
+        if let Some((n, frac)) = self.files.activity() {
+            let r = ui
+                .add(egui::Button::new(RichText::new(format!("⇅ {n} · {:.0}%", frac * 100.0)).font(theme::mono(14.0)).color(pal::GOLD)).frame(false))
+                .on_hover_text("Show transfers");
+            if r.clicked() {
+                self.files.open = true;
+            }
+        }
+        // The lamp shows the path when the label is left out.
+        let lamp = if self.closed.is_some() { pal::RED } else if compact { path.1 } else { pal::GREEN };
+        let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+        theme::lamp(ui.painter(), r.center(), lamp, t);
+        resp.on_hover_text(details);
     }
 
     fn closed_overlay(&mut self, ui: &mut Ui, area: Rect, reason: &str) -> Option<TabAction> {

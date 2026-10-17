@@ -62,6 +62,8 @@ pub struct HostSettings {
     pub allow_input: bool,
     pub allow_clipboard: bool,
     pub allow_file_transfer: bool,
+    /// Let viewers hear this computer's sound.
+    pub allow_audio: bool,
     /// Last numeric ID the server gave us (display only; the server is authoritative).
     pub last_device_id: Option<DeviceId>,
     /// Wayland portal token so screen-sharing permission survives restarts.
@@ -75,6 +77,9 @@ pub struct ViewerSettings {
     /// 0 = automatic.
     pub bitrate_kbps: u32,
     pub sync_clipboard: bool,
+    /// Play the remote computer's sound when a link starts (it can be
+    /// switched per session).
+    pub play_audio: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -132,6 +137,7 @@ impl Default for HostSettings {
             allow_input: true,
             allow_clipboard: true,
             allow_file_transfer: true,
+            allow_audio: true,
             last_device_id: None,
             portal_restore_token: None,
         }
@@ -144,6 +150,7 @@ impl Default for ViewerSettings {
             max_fps: 60,
             bitrate_kbps: 0,
             sync_clipboard: true,
+            play_audio: false,
         }
     }
 }

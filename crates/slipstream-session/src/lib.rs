@@ -33,7 +33,7 @@ use slipstream_platform::Backend;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 pub use files::RemoteFs;
-pub use viewer::{FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
+pub use viewer::{AudioOut, FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 
 /// Connection state to the directory server.
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +72,8 @@ pub struct ClientOptions {
     pub accept_sessions: bool,
     /// Which clipboard to sync (the system one, or an in-memory one for tests).
     pub clipboard: slipstream_platform::clipboard::ClipboardSource,
+    /// Where viewing sessions play sound (the speakers, or memory for tests).
+    pub audio_out: viewer::AudioOut,
 }
 
 pub(crate) enum HostSessionCmd {
@@ -262,6 +264,7 @@ impl Client {
             name,
             viewer_settings,
             self.inner.opts.clipboard.clone(),
+            self.inner.opts.audio_out.clone(),
             Box::new(on_progress),
         )
         .await?;
@@ -296,6 +299,7 @@ impl Client {
             name,
             viewer_settings,
             self.inner.opts.clipboard.clone(),
+            self.inner.opts.audio_out.clone(),
             Box::new(on_progress),
         )
         .await
@@ -541,6 +545,17 @@ mod tests {
         clipboard: slipstream_platform::clipboard::ClipboardSource,
         tweak: impl FnOnce(&mut slipstream_core::config::Settings),
     ) -> (Client, mpsc::UnboundedReceiver<ClientEvent>, std::path::PathBuf) {
+        // Tests never play through the speakers.
+        client_full(name, host, clipboard, AudioOut::Memory(Default::default()), tweak).await
+    }
+
+    async fn client_full(
+        name: &str,
+        host: bool,
+        clipboard: slipstream_platform::clipboard::ClipboardSource,
+        audio_out: AudioOut,
+        tweak: impl FnOnce(&mut slipstream_core::config::Settings),
+    ) -> (Client, mpsc::UnboundedReceiver<ClientEvent>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("slipstream-e2e-{}-{name}", std::process::id()));
         let store = Store::open(&dir).unwrap();
         let mut s = store.load_settings();
@@ -549,7 +564,7 @@ mod tests {
         s.host.set_permanent_password(Some("correct horse battery"));
         tweak(&mut s);
         store.save_settings(&s).unwrap();
-        let opts = ClientOptions { test_pattern: host, accept_sessions: host, clipboard };
+        let opts = ClientOptions { test_pattern: host, accept_sessions: host, clipboard, audio_out };
         let (c, ev) = Client::start(store, opts).await.unwrap();
         (c, ev, dir)
     }
@@ -644,6 +659,46 @@ mod tests {
         }
         session.send(ViewerCmd::Chat("still here".into()));
         assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::HostChat { text, .. } if text == "still here")).await);
+
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+    }
+
+    /// The host's sound reaches the viewer (the test pattern host sends a
+    /// 440 Hz tone), starts with the link when asked to, and stops on request.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audio_end_to_end() {
+        let heard = Arc::new(Mutex::new(Vec::<i16>::new()));
+        let (host, _hev, _) = client("ahost", true).await;
+        let (viewer, _vev, _) =
+            client_full("aviewer", false, Default::default(), AudioOut::Memory(heard.clone()), |s| s.viewer.play_audio = true).await;
+        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        assert!(session.info().capabilities.audio);
+
+        let wait = |want: usize| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while heard.lock().unwrap().len() < want && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            heard.lock().unwrap().len()
+        };
+        // About half a second of audio arrives…
+        let got = tokio::task::block_in_place(|| wait(48_000));
+        assert!(got >= 48_000, "only {got} samples arrived");
+        // …and it's the tone: count zero crossings of the left channel.
+        let samples = heard.lock().unwrap().clone();
+        let left: Vec<i16> = samples.iter().step_by(2).skip(4800).take(24_000).copied().collect();
+        let crossings = left.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count();
+        let hz = crossings as f64 / 2.0 / (left.len() as f64 / 48_000.0);
+        assert!((400.0..480.0).contains(&hz), "heard {hz:.0} Hz, not 440");
+
+        // Switching it off stops the flow.
+        session.send(ViewerCmd::Audio(false));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let before = heard.lock().unwrap().len();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(heard.lock().unwrap().len(), before, "audio kept coming after switching it off");
 
         drop(session);
         viewer.shutdown().await;

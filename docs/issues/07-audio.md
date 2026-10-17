@@ -5,22 +5,22 @@ labels: [feature]
 
 ## Background
 
-There's no sound. Support work often needs it ("I hear an error beep"),
-and so does any media use.
+Sound works from Windows and Linux hosts (`crates/slipstream-audio`):
+Opus in QUIC datagrams, a jitter buffer on the viewer, a *Sound* toggle and
+a Config default. What's left:
 
 ## Tasks
 
-- [ ] Capture system output:
-  - Windows: WASAPI loopback.
-  - Linux: PipeWire monitor stream, via the existing dlopen loader, with
-    PulseAudio as a fallback.
-  - macOS: ScreenCaptureKit audio.
-- [ ] Encode with Opus (20 ms frames) and send it on its own
-      uni-directional stream or as QUIC datagrams.
-- [ ] Viewer playback with a small jitter buffer, plus a mute toggle in the
-      toolbar.
-- [ ] Host setting *Allow sound* and a new capability. This bumps
-      `PROTOCOL_VERSION`.
+- [x] Capture: Windows (WASAPI loopback via cpal), Linux (PulseAudio via
+      dlopen, which covers PipeWire desktops).
+- [x] Opus 20 ms frames as datagrams; jitter buffer; toolbar toggle; host
+      permission; protocol v4.
+- [ ] macOS capture: ScreenCaptureKit audio (`SCStreamConfiguration.
+      capturesAudio`), needs the Screen Recording permission it already has.
+- [ ] Listen on real machines: Linux → Windows and back; check latency
+      (should feel in sync with the picture) and that a lost packet is
+      inaudible.
+- [ ] A volume slider, if people want one.
 
 ## Pointers
 

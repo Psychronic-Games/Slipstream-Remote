@@ -130,7 +130,8 @@ fn main() -> anyhow::Result<()> {
         Some(Command::ExportIcon { path, size }) => gui::export_icon(&path, size),
         None => {
             drop(rt);
-            gui::run(gui::GuiOptions {
+            report_crashes();
+            let result = gui::run(gui::GuiOptions {
                 test_pattern: args.test_pattern,
                 connect: args.connect.zip(args.password),
                 screenshot: args.screenshot.map(|p| (p, args.screenshot_delay)),
@@ -139,8 +140,43 @@ fn main() -> anyhow::Result<()> {
                 open_files: args.open_files,
                 window_size: args.window_size,
                 link: args.link,
-            })
+            });
+            if let Err(e) = &result {
+                fatal(&format!("Slipstream Remote couldn't start:\n\n{e:#}"));
+            }
+            result
         }
+    }
+}
+
+/// Logs panics (the log file is all there is without a console) and shows
+/// one on the main thread, which ends the app.
+fn report_crashes() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current().name().unwrap_or("?").to_string();
+        tracing::error!(%thread, "panic: {info}");
+        if thread == "main" {
+            fatal(&format!("Slipstream Remote stopped unexpectedly:\n\n{info}"));
+        }
+        default(info);
+    }));
+}
+
+/// A fatal GUI error: logged, and on Windows (where the app has no console,
+/// so it would otherwise just vanish) shown in a message box.
+fn fatal(text: &str) {
+    tracing::error!("{text}");
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+        let log = slipstream_core::config::Store::open_default()
+            .map(|s| format!("\n\nDetails are in {}", s.dir().join("slipstream.log").display()))
+            .unwrap_or_default();
+        let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        let (body, title) = (wide(&format!("{text}{log}")), wide("Slipstream Remote"));
+        // SAFETY: valid NUL-terminated UTF-16 strings; no owner window.
+        unsafe { MessageBoxW(std::ptr::null_mut(), body.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR) };
     }
 }
 

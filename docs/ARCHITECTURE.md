@@ -22,6 +22,7 @@ Slipstream is a free, MIT-licensed remote desktop app: TeamViewer-style
 |---|---|
 | `crates/slipstream-core` | Wire protocol, framing, password auth (SPAKE2), directory client, config, provisioning, clock correction, iroh endpoint setup |
 | `crates/slipstream-codec` | Video encoder/decoder abstraction (OpenH264 today; hardware encoders later) |
+| `crates/slipstream-audio` | Remote sound: vendored libopus (built with `cc`), capture (WASAPI loopback, PulseAudio monitor) and playback with a jitter buffer |
 | `crates/slipstream-platform` | Per-OS screen capture, input injection, clipboard |
 | `crates/slipstream-session` | The long-lived `Client`: directory heartbeat, accepting and opening sessions, host & viewer session logic, file transfer, self-update |
 | `apps/slipstream` | The desktop app (egui, sci-fi theme) plus a headless CLI |
@@ -99,12 +100,19 @@ the throttle locked until the attempt is counted, so opening many
 connections at once gains no extra guesses. A viewer that doesn't answer
 the challenge within 10 s is dropped.
 
-## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 3)
+## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 4)
 
 * **Control stream** (bi-directional, length-prefixed `postcard`): auth,
   session info (displays and capabilities), input events, frame acks,
   clipboard, chat, display/quality selection.
 * **Video stream** (host → viewer, uni-directional): encoded H.264 frames.
+* **Sound** (host → viewer, QUIC datagrams, after `SetAudio(true)`):
+  `[0xA1][u16 sequence][Opus packet]`, 20 ms of 48 kHz stereo each at
+  96 kbit/s. A lost datagram is concealed by Opus rather than resent; the
+  viewer keeps ~60 ms buffered and drops audio beyond 200 ms, so delay
+  can't build up. Capture is WASAPI loopback on Windows and the PulseAudio
+  monitor on Linux (dlopen, no link dependency); playback is WASAPI /
+  CoreAudio (cpal) or PulseAudio (`crates/slipstream-audio`).
 * **File streams:** every later bi-stream starts with a `StreamOpen` request
   (`List`, `Places`, `Download`, `Upload`, `MakeDir`) and gets a
   `StreamReply`. An upload names a target: the default folder, a folder

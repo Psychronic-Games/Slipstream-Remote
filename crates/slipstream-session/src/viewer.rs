@@ -37,7 +37,18 @@ pub enum ViewerCmd {
     Chat(String),
     /// Push text to the remote clipboard now (e.g. right before a paste).
     Clipboard(String),
+    /// Play the remote computer's sound, or stop.
+    Audio(bool),
     Disconnect,
+}
+
+/// Where the viewer plays the remote computer's sound.
+#[derive(Debug, Clone, Default)]
+pub enum AudioOut {
+    #[default]
+    Speakers,
+    /// Collect the decoded samples (tests).
+    Memory(Arc<Mutex<Vec<i16>>>),
 }
 
 /// Session events for the UI.
@@ -147,6 +158,7 @@ pub(crate) async fn connect(
     viewer_name: String,
     settings: ViewerSettings,
     clipboard: ClipboardSource,
+    audio_out: AudioOut,
     on_progress: Box<dyn Fn(String) + Send + Sync>,
 ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
     on_progress("Opening encrypted channel…".into());
@@ -191,6 +203,7 @@ pub(crate) async fn connect(
         ..Default::default()
     };
     let clipboard = (settings.sync_clipboard && info.capabilities.clipboard).then_some(clipboard);
+    let audio = settings.play_audio && info.capabilities.audio;
     let fs = RemoteFs::new(conn.clone());
     tokio::spawn(run(
         conn,
@@ -202,8 +215,68 @@ pub(crate) async fn connect(
         display,
         stream_settings,
         clipboard,
+        audio,
+        audio_out,
     ));
     Ok((ViewerSession { cmds: cmd_tx, fs, frames, info, peer }, ev_rx))
+}
+
+/// Opens the speakers and asks the host for its sound. A speaker problem is
+/// reported as a notice, not an error: the session carries on silently.
+async fn start_audio(
+    conn: &Connection,
+    send: &mut iroh::endpoint::SendStream,
+    events: &mpsc::UnboundedSender<ViewerEvent>,
+    out: &AudioOut,
+) -> Result<Option<Abort<()>>> {
+    let player = match out {
+        AudioOut::Speakers => slipstream_audio::Player::start(),
+        AudioOut::Memory(m) => Ok(slipstream_audio::Player::memory(m.clone())),
+    };
+    match player {
+        Ok(player) => {
+            let task = Abort(tokio::spawn(receive_audio(conn.clone(), player)));
+            write_msg(send, &ViewerMsg::SetAudio(true)).await?;
+            Ok(Some(task))
+        }
+        Err(e) => {
+            let _ = events.send(ViewerEvent::Notice(format!("Can't play sound here: {e:#}")));
+            Ok(None)
+        }
+    }
+}
+
+/// Decodes the host's audio datagrams into `player`. Up to three lost
+/// packets in a row are concealed; late or repeated ones are dropped.
+async fn receive_audio(conn: Connection, player: slipstream_audio::Player) {
+    use slipstream_audio::opus::{Decoder, FRAME_SAMPLES};
+    let Ok(mut decoder) = Decoder::new() else { return };
+    let mut pcm = [0i16; FRAME_SAMPLES];
+    let mut expect: Option<u16> = None;
+    while let Ok(d) = conn.read_datagram().await {
+        if d.len() < 3 || d[0] != slipstream_core::proto::AUDIO_DATAGRAM {
+            continue;
+        }
+        let seq = u16::from_le_bytes([d[1], d[2]]);
+        if let Some(next) = expect {
+            match seq.wrapping_sub(next) {
+                0 => {}
+                gap @ 1..=3 => {
+                    for _ in 0..gap {
+                        if decoder.decode(None, &mut pcm).is_ok() {
+                            player.push(&pcm);
+                        }
+                    }
+                }
+                0x8000.. => continue, // late or repeated
+                _ => {}               // a long gap: just carry on
+            }
+        }
+        expect = Some(seq.wrapping_add(1));
+        if decoder.decode(Some(&d[3..]), &mut pcm).is_ok() {
+            player.push(&pcm);
+        }
+    }
 }
 
 fn auth_error(reason: String, retry_after: u32) -> String {
@@ -221,9 +294,13 @@ async fn run(
     display: u32,
     stream_settings: StreamSettings,
     sync_clipboard: Option<ClipboardSource>,
+    audio: bool,
+    audio_out: AudioOut,
 ) {
     let mut recv = MsgReader::<HostMsg>::spawn(recv);
-    let reason = match session(&conn, &mut send, &mut recv, &mut cmds, &events, frames, display, stream_settings, sync_clipboard).await {
+    let reason = match session(&conn, &mut send, &mut recv, &mut cmds, &events, frames, display, stream_settings, sync_clipboard, audio, audio_out)
+        .await
+    {
         Ok(r) => r,
         Err(e) => format!("{e:#}"),
     };
@@ -250,8 +327,16 @@ async fn session(
     display: u32,
     settings: StreamSettings,
     sync_clipboard: Option<ClipboardSource>,
+    play_audio: bool,
+    audio_out: AudioOut,
 ) -> Result<String> {
     write_msg(send, &ViewerMsg::StartStream { display, settings }).await?;
+
+    // Sound: datagrams → decoder → player, while wanted.
+    let mut _audio: Option<Abort<()>> = None;
+    if play_audio {
+        _audio = start_audio(conn, send, events, &audio_out).await?;
+    }
 
     // Video: network → decoder thread.
     let (frame_tx, frame_rx) = std::sync::mpsc::channel::<VideoFrame>();
@@ -327,6 +412,14 @@ async fn session(
                 Some(ViewerCmd::Chat(t)) => write_msg(send, &ViewerMsg::Chat(t)).await?,
                 Some(ViewerCmd::Clipboard(t)) => {
                     write_msg(send, &ViewerMsg::Clipboard(ClipboardData::Text(t))).await?;
+                }
+                Some(ViewerCmd::Audio(on)) => {
+                    _audio = None;
+                    if on {
+                        _audio = start_audio(conn, send, events, &audio_out).await?;
+                    } else {
+                        write_msg(send, &ViewerMsg::SetAudio(false)).await?;
+                    }
                 }
                 Some(ViewerCmd::Disconnect) | None => return Ok("disconnected".into()),
             },

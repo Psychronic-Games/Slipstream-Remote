@@ -1,0 +1,21 @@
+[package]
+name = "slipstream-audio"
+description = "Remote audio for Slipstream Remote: Opus codec, capture and playback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# PulseAudio is loaded at runtime (dlopen), so the portable binary needs no
+# audio libraries to start.
+libc = "0.2"
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+cpal = "0.18"
+
+[build-dependencies]
+cc = "1"

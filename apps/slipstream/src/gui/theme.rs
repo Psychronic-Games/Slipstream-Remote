@@ -266,9 +266,36 @@ pub fn pill(ui: &mut Ui, label: &str, color: Color32) -> Response {
 }
 
 pub fn pill_sized(ui: &mut Ui, label: &str, color: Color32, min: Vec2) -> Response {
+    pill_with(ui, label, color, min, None)
+}
+
+/// A pill with the logo delta in front, pointing back (the way to the
+/// Bridge).
+pub fn back_pill(ui: &mut Ui, label: &str, color: Color32) -> Response {
+    pill_with(ui, label, color, vec2(0.0, 32.0), Some(back_delta))
+}
+
+/// Draws the logo pointing left into `rect`, in `ink`, with the slash cut
+/// out in `bg`.
+fn back_delta(painter: &egui::Painter, rect: Rect, ink: Color32, bg: Color32) {
+    // Logo space (pointing up) → pointing left: (x, y) ↦ (y, 1 − x).
+    let at = |(x, y): (f32, f32)| pos2(rect.left() + y * rect.width(), rect.top() + (1.0 - x) * rect.height());
+    for half in [&LOGO_LEFT, &LOGO_RIGHT] {
+        painter.add(egui::Shape::convex_polygon(half.iter().copied().map(at).collect(), ink, Stroke::NONE));
+    }
+    let ((x0, y0), (x1, y1), half_width) = LOGO_SLASH;
+    painter.line_segment([at((x0, y0)), at((x1, y1))], Stroke::new(half_width * 2.0 * rect.width(), bg));
+}
+
+type PillIcon = fn(&egui::Painter, Rect, Color32, Color32);
+
+fn pill_with(ui: &mut Ui, label: &str, color: Color32, min: Vec2, icon: Option<PillIcon>) -> Response {
     let text = label.to_uppercase();
     let galley = ui.painter().layout_no_wrap(text, display(17.0), Color32::BLACK);
-    let size = vec2((galley.size().x + 40.0).max(min.x), min.y.max(28.0));
+    let icon_w = if icon.is_some() { 22.0 } else { 0.0 };
+    // Padding follows the style's button padding (14 → 20 px a side).
+    let pad = 12.0 + 2.0 * ui.spacing().button_padding.x;
+    let size = vec2((galley.size().x + pad + icon_w).max(min.x), min.y.max(28.0));
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
@@ -286,16 +313,22 @@ pub fn pill_sized(ui: &mut Ui, label: &str, color: Color32, min: Vec2) -> Respon
         // Black seams near both ends, like segmented console buttons —
         // only when the label clears them.
         let cap = rect.height() * 0.55;
-        if rect.width() - 2.0 * cap > galley.size().x + 12.0 {
-            for x in [rect.left() + cap, rect.right() - cap] {
+        if rect.width() - 2.0 * cap > galley.size().x + icon_w + 12.0 {
+            // With an icon in front, only the far seam (the icon takes the near one's place).
+            let seams = if icon.is_some() { &[rect.right() - cap][..] } else { &[rect.left() + cap, rect.right() - cap][..] };
+            for &x in seams {
                 painter.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, Color32::BLACK));
             }
         }
-        painter.galley(
-            pos2(rect.center().x - galley.size().x / 2.0, rect.center().y - galley.size().y / 2.0),
-            galley,
-            Color32::BLACK,
-        );
+        let text_x = rect.center().x + icon_w / 2.0 - galley.size().x / 2.0;
+        if let Some(draw) = icon {
+            let s = rect.height() * 0.62;
+            // Beside the label, or centred when there's none.
+            let cx = if galley.size().x > 0.0 { text_x - 4.0 - s / 2.0 } else { rect.center().x };
+            let r = Rect::from_center_size(pos2(cx, rect.center().y), vec2(s, s));
+            draw(painter, r, Color32::BLACK, fill);
+        }
+        painter.galley(pos2(text_x, rect.center().y - galley.size().y / 2.0), galley, Color32::BLACK);
     }
     if ui.is_enabled() { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp }
 }

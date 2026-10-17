@@ -58,6 +58,40 @@ struct StreamTextures {
 }
 
 /// Registers the pipeline. Call once at startup with eframe's render state.
+/// Picks the graphics adapter: a real GPU if there is one, else a software
+/// renderer. (wgpu's default skips software adapters, which left servers
+/// with basic onboard graphics, such as Windows Server, unable to start;
+/// WARP, Windows' software renderer, is plenty for this UI.)
+pub fn pick_adapter(adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'_>>) -> Result<wgpu::Adapter, String> {
+    use wgpu::{Backend, DeviceType};
+    let rank = |a: &&wgpu::Adapter| {
+        let info = a.get_info();
+        let kind = match info.device_type {
+            DeviceType::DiscreteGpu => 0,
+            DeviceType::IntegratedGpu => 1,
+            DeviceType::VirtualGpu => 2,
+            DeviceType::Other => 3,
+            DeviceType::Cpu => 4,
+        };
+        (kind, info.backend == Backend::Gl)
+    };
+    let usable = adapters.iter().filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)));
+    match usable.min_by_key(rank) {
+        Some(a) => {
+            let info = a.get_info();
+            tracing::info!(name = %info.name, backend = ?info.backend, kind = ?info.device_type, "graphics adapter");
+            Ok(a.clone())
+        }
+        None => {
+            let found: Vec<String> = adapters.iter().map(|a| format!("{} ({:?})", a.get_info().name, a.get_info().backend)).collect();
+            Err(format!(
+                "no graphics adapter can draw the window (found: {}). Update the graphics driver, or use `slipstream host` on this machine instead.",
+                if found.is_empty() { "none".to_string() } else { found.join(", ") }
+            ))
+        }
+    }
+}
+
 pub fn install(render_state: &egui_wgpu::RenderState) {
     let device = &render_state.device;
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {

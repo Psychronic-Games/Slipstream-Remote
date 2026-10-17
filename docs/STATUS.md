@@ -48,7 +48,9 @@ covering video and input, files, chat and clipboard.
   to 1080p, about 56 at 1440p and 37 at 4K. Static and typing content is far
   cheaper. Hardware encoding is issue 06.
 - **Windows capture** makes several full-frame copies inside xcap (issue 15).
-- **No audio.**
+- **Sound**: Windows and Linux hosts share it; Mac hosts can't yet
+  (ScreenCaptureKit audio). Not yet heard on real speakers between two
+  machines: end-to-end test with a test tone; real devices open on Linux.
 - **x86_64 only**: no ARM Linux or Windows-on-ARM builds yet.
 - **Wayland unattended access**: depends on the portal's restore token
   surviving. A reboot may bring the permission prompt back on some desktops.
@@ -73,7 +75,7 @@ in [issues/](issues/README.md).
 5. **Hardware encoding**: NVENC, VA-API, Media Foundation, VideoToolbox.
 6. **Code signing**: apply to SignPath once the repo is public (issue 05);
    Apple notarisation when the Developer Program is joined.
-7. **Audio streaming.**
+7. **Sound from Mac hosts** (ScreenCaptureKit audio).
 8. **Address book** with saved devices and credentials (OS keychain).
 9. **Android**: viewer first, then host (MediaProjection +
    AccessibilityService). The egui UI already targets Android.

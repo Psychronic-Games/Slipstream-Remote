@@ -42,15 +42,19 @@ impl Backend for TestPattern {
     }
 
     fn displays(&self) -> Vec<DisplayInfo> {
-        vec![DisplayInfo {
-            index: 0,
-            name: "Test Pattern".into(),
-            width: self.width,
-            height: self.height,
-            x: 0,
-            y: 0,
-            primary: true,
-        }]
+        // SLIPSTREAM_TEST_SCREENS=N pretends to have N screens side by side.
+        let n = std::env::var("SLIPSTREAM_TEST_SCREENS").ok().and_then(|v| v.parse().ok()).unwrap_or(1u32).clamp(1, 8);
+        (0..n)
+            .map(|i| DisplayInfo {
+                index: i,
+                name: format!("Test Pattern {}", i + 1),
+                width: self.width,
+                height: self.height,
+                x: (i * self.width) as i32,
+                y: 0,
+                primary: i == 0,
+            })
+            .collect()
     }
 
     fn capture(&mut self, _display: u32, max_fps: u32) -> Result<FrameStream> {

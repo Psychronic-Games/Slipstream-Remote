@@ -15,11 +15,13 @@ pub struct SettingsForm {
     allow_input: bool,
     allow_clipboard: bool,
     allow_files: bool,
+    allow_audio: bool,
     password_len: usize,
     new_permanent: String,
     has_permanent: bool,
     max_fps: u32,
     sync_clipboard: bool,
+    play_audio: bool,
     run_in_tray: bool,
     autostart: bool,
     error: Option<String>,
@@ -36,11 +38,13 @@ impl From<&Settings> for SettingsForm {
             allow_input: s.host.allow_input,
             allow_clipboard: s.host.allow_clipboard,
             allow_files: s.host.allow_file_transfer,
+            allow_audio: s.host.allow_audio,
             password_len: s.host.one_time_password_len,
             new_permanent: String::new(),
             has_permanent: s.host.permanent_password_secret.is_some(),
             max_fps: s.viewer.max_fps,
             sync_clipboard: s.viewer.sync_clipboard,
+            play_audio: s.viewer.play_audio,
             run_in_tray: s.app.run_in_tray,
             autostart: super::autostart::is_enabled(),
             error: None,
@@ -127,6 +131,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             ui.checkbox(&mut f.allow_input, "Control");
             ui.checkbox(&mut f.allow_clipboard, "Clipboard");
             ui.checkbox(&mut f.allow_files, "Files");
+            ui.checkbox(&mut f.allow_audio, "Sound");
         });
         row(ui, "One-time password length", |ui| {
             ui.add(egui::Slider::new(&mut f.password_len, 4..=12));
@@ -180,6 +185,10 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         });
         row(ui, "Clipboard sync", |ui| {
             ui.checkbox(&mut f.sync_clipboard, "Share clipboard text with remote devices");
+        });
+        row(ui, "Remote sound", |ui| {
+            ui.checkbox(&mut f.play_audio, "Play the other computer's sound when a link starts")
+                .on_hover_text("You can still switch it on or off during a link with the SOUND button");
         });
     });
     ui.add_space(16.0);
@@ -240,6 +249,7 @@ fn save(app: &mut App) {
         f.max_fps,
         f.sync_clipboard,
     );
+    let (allow_audio, play_audio) = (f.allow_audio, f.play_audio);
     app.client.update_settings(|s| {
         if !name.is_empty() {
             s.device_name = name;
@@ -254,6 +264,7 @@ fn save(app: &mut App) {
         s.host.allow_input = input;
         s.host.allow_clipboard = clip;
         s.host.allow_file_transfer = files;
+        s.host.allow_audio = allow_audio;
         s.host.one_time_password_len = len;
         if !new_permanent.is_empty() {
             s.host.set_permanent_password(Some(&new_permanent));
@@ -262,6 +273,7 @@ fn save(app: &mut App) {
         }
         s.viewer.max_fps = fps;
         s.viewer.sync_clipboard = sync;
+        s.viewer.play_audio = play_audio;
         s.app.run_in_tray = run_in_tray;
     });
     app.toast("Configuration saved", pal::GREEN);

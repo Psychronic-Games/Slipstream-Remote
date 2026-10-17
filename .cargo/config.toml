@@ -1,0 +1,7 @@
+# Link the C runtime into the Windows app, so it doesn't need the Visual C++
+# redistributable (VCRUNTIME140.dll), which clean Windows Server installs lack.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -5,6 +5,31 @@ Build numbers are the git commit count. The app shows them as
 
 ## Unreleased
 
+### Sound
+- The remote computer's sound can be played on the viewer: a **Sound**
+  toggle in the session bar, and a default in *Config → Viewing* (off
+  unless you switch it on). The host can refuse it under *Permissions*.
+- Opus at 96 kbit/s in 20 ms QUIC datagrams (a lost packet is concealed,
+  never waited for), with a 60 ms jitter buffer. libopus is vendored and
+  built with `cc`, like OpenH264.
+- Hosts: Windows (WASAPI loopback) and Linux (PulseAudio, also on PipeWire
+  desktops; loaded at runtime, so the binary still needs no audio
+  libraries). Mac hosts can't share sound yet; Macs can play it.
+- `PROTOCOL_VERSION` 4: both computers need this version.
+
+### Session bar
+- The screen buttons are labelled *SCREEN*, with each screen's name and
+  size in the tooltip.
+- The Bridge button shows the Slipstream delta pointing back, not "◀".
+- The bar adapts to the window width instead of overlapping: compact stats
+  first, then tighter buttons, then a screen menu.
+
+### Windows
+- Windows Server 2016 (and other machines without a usable GPU): the app
+  now falls back to Windows' software renderer instead of exiting without
+  a word, and any start-up failure shows a message box.
+- The C runtime is linked in: no Visual C++ redistributable needed.
+
 ### Security
 - Updates are signed. The station build script signs every app in the
   manifest with a release key that stays on the build machine, and apps

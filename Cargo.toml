@@ -14,6 +14,7 @@ slipstream-core = { path = "crates/slipstream-core" }
 slipstream-codec = { path = "crates/slipstream-codec" }
 slipstream-platform = { path = "crates/slipstream-platform" }
 slipstream-session = { path = "crates/slipstream-session" }
+slipstream-audio = { path = "crates/slipstream-audio" }
 
 anyhow = "1"
 thiserror = "2"

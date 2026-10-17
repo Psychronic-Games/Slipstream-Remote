@@ -5,7 +5,11 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the session protocol changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
+
+/// Audio travels as QUIC datagrams (a lost one is concealed, never waited
+/// for): `[AUDIO_DATAGRAM][u16 LE sequence][Opus packet]`, 20 ms each.
+pub const AUDIO_DATAGRAM: u8 = 0xA1;
 
 /// QUIC send priorities (higher goes first). Input, acks and control beat
 /// video, and video beats file transfers, so a big copy can't freeze the
@@ -43,6 +47,8 @@ pub enum ViewerMsg {
     Clipboard(ClipboardData),
     Chat(String),
     Bye,
+    /// Start or stop sending the host's sound.
+    SetAudio(bool),
 }
 
 /// Messages sent by the host on the control stream.
@@ -79,6 +85,8 @@ pub struct Capabilities {
     pub chat: bool,
     /// The video shows the host's mouse pointer, so the viewer can hide its own.
     pub cursor_in_video: bool,
+    /// The host can share its sound (and allows it).
+    pub audio: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
