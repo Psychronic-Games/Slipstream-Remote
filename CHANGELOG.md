@@ -5,6 +5,20 @@ Build numbers are the git commit count. The app shows them as
 
 ## Unreleased
 
+### System information
+- *Tools ▾ → System information…* shows the remote computer's name, make
+  and model, motherboard, BIOS, operating system and build, processor
+  (model, cores, speed, use), memory and page file, graphics cards (with
+  their memory and driver), drives and free space, temperatures and
+  network adapters. It updates every 3 s while open; *Copy all* puts it
+  on the clipboard as text, e.g. for a ticket. Windows usually shows
+  temperatures only to administrators and the Slipstream service.
+- Collected by the host with `sysinfo` (MIT) plus the registry on Windows,
+  `/sys` (and `lspci`, `nvidia-smi` when installed) on Linux, and
+  `system_profiler` on macOS. A new `StreamOpen::SystemInfo` request,
+  appended to the enum, so no protocol bump: older hosts just don't
+  answer it.
+
 ### From testing build 19
 - **The full window on Windows Server 2016** and other machines whose
   graphics can't run it, with nothing to download or press: the Windows

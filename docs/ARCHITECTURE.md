@@ -143,8 +143,14 @@ the challenge within 10 s is dropped.
   shows the mouse pointer (`cursor_in_video`). The viewer hides its own
   pointer only in that case.
 
+* **System information:** `StreamOpen::SystemInfo` → `StreamReply::SystemInfo`,
+  titled sections of (label, value) rows already worded on the host
+  (`crates/slipstream-platform/src/machine.rs`), so new facts need no
+  protocol change.
+
 `postcard` has no optional fields, so any change to a message bumps
-`PROTOCOL_VERSION`. Mismatched peers refuse each other with a "please
+`PROTOCOL_VERSION`. The exception is a new variant appended to
+`StreamOpen`/`StreamReply`: older peers fail only that one stream. Mismatched peers refuse each other with a "please
 update" message.
 
 ### Latency control

@@ -778,6 +778,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(vdir);
     }
 
+    /// The viewer can ask what the remote computer is.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn system_info_end_to_end() {
+        let (host, _hev, _) = client("sihost", true).await;
+        let (viewer, _vev, _) = client("siviewer", false).await;
+        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let info = session.system_info().await.unwrap();
+        let processor = info.iter().find(|s| s.title == "Processor").expect("a Processor section");
+        assert!(processor.rows.iter().any(|(k, v)| k == "Cores" && !v.is_empty()), "{processor:?}");
+        assert!(info.iter().any(|s| s.title == "Memory"));
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+    }
+
     /// Port forwarding carries a TCP connection both ways, and is refused
     /// unless the host allows it.
     #[tokio::test(flavor = "multi_thread")]

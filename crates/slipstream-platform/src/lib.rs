@@ -10,6 +10,7 @@
 
 pub mod clipboard;
 pub mod keymap;
+pub mod machine;
 mod slot;
 pub mod test_pattern;
 

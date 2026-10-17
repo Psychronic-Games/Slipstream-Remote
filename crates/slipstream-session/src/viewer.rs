@@ -125,6 +125,23 @@ impl ViewerSession {
         crate::tunnel::open(self.conn.clone(), local_port, host, port).await
     }
 
+    /// The remote computer's hardware and system, for the System
+    /// information window.
+    pub fn system_info(&self) -> impl Future<Output = Result<Vec<slipstream_core::proto::InfoSection>>> + Send + 'static {
+        let fs = self.fs.clone();
+        async move {
+            // Hosts from before this request drop the stream unanswered.
+            let reply = fs
+                .ask(slipstream_core::proto::StreamOpen::SystemInfo)
+                .await
+                .map_err(|e| anyhow::anyhow!("no answer ({e:#}): that computer may need a newer Slipstream"))?;
+            match reply.2 {
+                slipstream_core::proto::StreamReply::SystemInfo(s) => Ok(s),
+                other => bail!("unexpected reply {other:?}"),
+            }
+        }
+    }
+
     pub fn info(&self) -> &SessionInfo {
         &self.info
     }

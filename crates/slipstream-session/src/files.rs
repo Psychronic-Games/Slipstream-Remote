@@ -97,6 +97,11 @@ async fn handle(
                 Err(_) => reply(&mut send, &StreamReply::Error(format!("{target} didn't answer"))).await?,
             }
         }
+        // What the computer is: anyone allowed in may see it.
+        StreamOpen::SystemInfo => {
+            let info = tokio::task::spawn_blocking(slipstream_platform::machine::collect).await?;
+            reply(&mut send, &StreamReply::SystemInfo(info)).await?;
+        }
         StreamOpen::Places => {
             let r = if policy.browse { StreamReply::Places(fsops::places()) } else { denied("Browsing files") };
             reply(&mut send, &r).await?;

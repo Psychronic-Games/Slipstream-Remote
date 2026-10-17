@@ -35,6 +35,9 @@ pub enum CapturedKey {
     ToggleFullscreen,
 }
 
+/// The System information window's answer: None while it's being fetched.
+type SysInfo = Option<Result<Vec<slipstream_core::proto::InfoSection>, String>>;
+
 /// Files on their way to the remote clipboard for a paste.
 #[derive(Default)]
 struct Pasting {
@@ -95,6 +98,18 @@ pub struct RemoteTab {
     tunnel_form: (String, String, String),
     tunnel_error: Option<String>,
     pasting: Option<Arc<Mutex<Pasting>>>,
+    /// The System information window: open, and its latest answer (None
+    /// while it's being fetched).
+    show_sysinfo: bool,
+    /// Fetch it on the next frame (asked for from the toolbar).
+    sysinfo_fetch: bool,
+    /// Changes with every fetch, so a fresh answer starts scrolled to the top.
+    sysinfo_serial: u64,
+    /// A fetch is under way, and when the figures last came in (they're
+    /// refreshed every few seconds while the window is open).
+    sysinfo_busy: Arc<std::sync::atomic::AtomicBool>,
+    sysinfo_at: Option<Instant>,
+    sysinfo: Arc<Mutex<SysInfo>>,
 }
 
 impl RemoteTab {
@@ -148,6 +163,13 @@ impl RemoteTab {
             tunnel_form: (String::new(), "localhost".into(), String::new()),
             tunnel_error: None,
             pasting: None,
+            // SLIPSTREAM_TEST_SYSINFO=1 opens it straight away (screenshots).
+            show_sysinfo: std::env::var_os("SLIPSTREAM_TEST_SYSINFO").is_some(),
+            sysinfo_fetch: std::env::var_os("SLIPSTREAM_TEST_SYSINFO").is_some(),
+            sysinfo_serial: 0,
+            sysinfo_busy: Arc::default(),
+            sysinfo_at: None,
+            sysinfo: Arc::default(),
             files,
         }
     }
@@ -361,6 +383,7 @@ impl RemoteTab {
 
         self.files.ui(&ctx, rt);
         self.tunnels_window(&ctx, rt);
+        self.sysinfo_window(&ctx, rt);
         self.handle_drops(ui, &ctx, video_area, rt);
 
         if let Some(reason) = self.closed.clone() {
@@ -708,6 +731,15 @@ impl RemoteTab {
                 self.show_tunnels = true;
                 ui.close();
             }
+            if ui
+                .button("System information…")
+                .on_hover_text("Its processor, memory, graphics, drives, temperatures, network and Windows/macOS/Linux version")
+                .clicked()
+            {
+                self.show_sysinfo = true;
+                self.sysinfo_fetch = true;
+                ui.close();
+            }
         });
 
         let mut new_preset = None;
@@ -731,6 +763,111 @@ impl RemoteTab {
     }
 
     /// The port forwarding window: open tunnels and a form to add one.
+    /// `fresh`: opening the window (a spinner and the top of the list).
+    /// Otherwise the figures on show are replaced in place when the new
+    /// ones arrive, and kept if the refresh fails.
+    fn fetch_sysinfo(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime, fresh: bool) {
+        use std::sync::atomic::Ordering;
+        self.sysinfo_fetch = false;
+        self.sysinfo_at = Some(Instant::now());
+        if self.sysinfo_busy.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if fresh {
+            // Unique across runs too: egui keeps scroll positions between them.
+            self.sysinfo_serial = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+            *self.sysinfo.lock().unwrap() = None;
+        }
+        let (slot, busy, wake, job) = (self.sysinfo.clone(), self.sysinfo_busy.clone(), ctx.clone(), self.session.system_info());
+        rt.spawn(async move {
+            let r = job.await.map_err(|e| format!("{e:#}"));
+            {
+                let mut slot = slot.lock().unwrap();
+                if r.is_ok() || !matches!(*slot, Some(Ok(_))) {
+                    *slot = Some(r);
+                }
+            }
+            busy.store(false, Ordering::Release);
+            wake.request_repaint();
+        });
+    }
+
+    fn sysinfo_window(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime) {
+        if !self.show_sysinfo {
+            return;
+        }
+        if self.sysinfo_fetch {
+            self.fetch_sysinfo(ctx, rt, true);
+        } else if self.sysinfo_at.is_some_and(|t| t.elapsed() >= std::time::Duration::from_secs(3))
+            && matches!(*self.sysinfo.lock().unwrap(), Some(Ok(_)))
+        {
+            self.fetch_sysinfo(ctx, rt, false);
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        let mut open = true;
+        let mut refresh = false;
+        let state = self.sysinfo.lock().unwrap().clone();
+        egui::Window::new(RichText::new(format!("SYSTEM · {}", self.info.host_name.to_uppercase())).font(theme::display(18.0)).color(pal::GOLD))
+            .id(egui::Id::unique(("sysinfo", self.id)))
+            .open(&mut open)
+            .collapsible(false)
+            .default_pos(ctx.content_rect().min + vec2(24.0, 60.0))
+            .default_width(680.0)
+            .default_height((ctx.content_rect().height() - 90.0).clamp(300.0, 720.0))
+            .show(ctx, |ui| {
+                match &state {
+                    None => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(RichText::new("Asking the remote computer…").color(pal::DIM));
+                        });
+                    }
+                    Some(Err(e)) => {
+                        ui.label(RichText::new(e).color(pal::RED));
+                    }
+                    Some(Ok(sections)) => {
+                        ui.horizontal(|ui| {
+                            if theme::pill(ui, "Refresh", pal::BLUE).clicked() {
+                                refresh = true;
+                            }
+                            if theme::pill(ui, "Copy all", pal::LAVENDER).on_hover_text("As text, e.g. for a ticket").clicked() {
+                                ui.ctx().copy_text(sysinfo_text(&self.info.host_name, sections));
+                                self.notice = Some(("System information copied".into(), Instant::now()));
+                            }
+                            ui.label(RichText::new("Live: use, memory and temperatures update every 3 s").small().color(pal::DIM));
+                        });
+                        ui.add_space(6.0);
+                        // A new scroll area per answer, so it starts at the top
+                        // (egui remembers scroll positions by id, across runs too).
+                        egui::ScrollArea::vertical().id_salt(("sysinfo", self.id, self.sysinfo_serial)).auto_shrink([false, false]).show(
+                            ui,
+                            |ui| {
+                                // One grid for every section: the label column fits the
+                                // longest label anywhere, and nothing is cut short.
+                                egui::Grid::new(("sysinfo-grid", self.id)).num_columns(2).spacing([16.0, 5.0]).show(ui, |ui| {
+                                    for s in sections {
+                                        ui.label(RichText::new(s.title.to_uppercase()).font(theme::display(16.0)).color(pal::LAVENDER));
+                                        ui.end_row();
+                                        for (k, v) in &s.rows {
+                                            ui.add(egui::Label::new(RichText::new(k).color(pal::DIM)).extend());
+                                            ui.add(egui::Label::new(RichText::new(v).color(pal::TEXT)).wrap());
+                                            ui.end_row();
+                                        }
+                                    }
+                                });
+                            },
+                        );
+                    }
+                }
+            });
+        if refresh {
+            self.fetch_sysinfo(ctx, rt, false);
+        }
+        if !open {
+            self.show_sysinfo = false;
+        }
+    }
+
     fn tunnels_window(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime) {
         if !self.show_tunnels {
             return;
@@ -889,4 +1026,16 @@ fn map_button(b: PointerButton) -> Option<MouseButton> {
         PointerButton::Extra1 => MouseButton::Back,
         PointerButton::Extra2 => MouseButton::Forward,
     })
+}
+
+/// The System information window as plain text.
+fn sysinfo_text(host: &str, sections: &[slipstream_core::proto::InfoSection]) -> String {
+    let mut out = format!("{host}\n");
+    for s in sections {
+        out.push_str(&format!("\n{}\n", s.title));
+        for (k, v) in &s.rows {
+            out.push_str(&format!("  {k}: {v}\n"));
+        }
+    }
+    out
 }

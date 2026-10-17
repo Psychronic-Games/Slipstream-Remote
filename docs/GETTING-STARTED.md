@@ -231,7 +231,7 @@ The toolbar along the top:
 | **Chat** | Text chat with the person at the remote computer. On their side it opens in its own window. |
 | **Files** | The two-pane file manager: your computer on the left, theirs on the right. Select files or folders and send them either way, or make folders. |
 | **Sound** | Play the remote computer's sound here, or stop. The default is under *Config → Remote sound*. |
-| **Tools ▾** | **Privacy mode** blacks out the remote computer's own screen while you work (Windows 10 2004 and later). **Port forwarding…** opens tunnels, see below. |
+| **Tools ▾** | **Privacy mode** blacks out the remote computer's own screen while you work (Windows 10 2004 and later). **Port forwarding…** opens tunnels, see below. **System information…** shows its hardware, OS, drives, temperatures and network, updating live, with *Copy all* for tickets. |
 | **Balanced ▾** | Quality preset: *Balanced*, *Speed* (lowest delay), *Quality* (sharpest picture) and *Low bandwidth* (slow connections). |
 | Stats | Frames per second, bandwidth, round-trip time, and **DIRECT** or **RELAY** (whether traffic goes peer-to-peer or through your station). |
 | **End link** | Disconnect. |

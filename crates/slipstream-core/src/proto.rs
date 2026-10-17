@@ -218,6 +218,9 @@ pub enum StreamOpen {
     /// Put the files uploaded to `UploadTarget::Clipboard { batch }` on the
     /// receiver's clipboard, ready to paste: [`StreamReply::Done`].
     ClipboardFiles { batch: u64 },
+    /// The host's hardware and system: [`StreamReply::SystemInfo`]. (New
+    /// variants go last: older hosts then just fail that one stream.)
+    SystemInfo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,6 +232,16 @@ pub enum StreamReply {
     File { size: u64 },
     Done,
     Error(String),
+    SystemInfo(Vec<InfoSection>),
+}
+
+/// One group of facts about a computer ("Processor", "Storage"…), already
+/// worded for display, so new facts need no protocol change.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InfoSection {
+    pub title: String,
+    /// (label, value) rows.
+    pub rows: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
