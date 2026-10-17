@@ -43,6 +43,9 @@ covering video and input, files, chat and clipboard.
 
 ## Next steps (suggested order)
 
+Each step is written up as an issue with tasks and pointers into the code
+in [issues/](issues/README.md).
+
 1. **Confirm 0.5.0 on real machines**: Windows pointer while controlling the
    laptop, the separate chat window on Windows, smooth animations, and the
    Linux app on the Debian server.

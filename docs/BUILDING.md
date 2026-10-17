@@ -139,6 +139,6 @@ crates/slipstream-platform/ screen capture, input, clipboard per OS
 crates/slipstream-session/ host/viewer sessions, files, updates
 server/station/            the PHP station (download page, API, admin)
 packaging/                 desktop entry, icons, Windows resources, server configs
-scripts/                   build-station.sh, try-local.sh, install-linux.sh
-docs/                      these documents
+scripts/                   build-station.sh, try-local.sh, install-linux.sh, file-issues.sh
+docs/                      these documents; docs/issues/ holds the open issues
 ```
