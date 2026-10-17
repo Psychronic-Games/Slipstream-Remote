@@ -17,6 +17,16 @@ use xcap::Monitor;
 #[cfg(not(target_os = "linux"))]
 use crate::FrameSlot;
 use crate::{Backend, FrameStream, HeldInputs, keymap};
+#[cfg(target_os = "windows")]
+use crate::win_cursor::{current as pointer_now, draw as draw_pointer};
+
+// macOS capture already shows the pointer.
+#[cfg(target_os = "macos")]
+fn pointer_now() -> Option<()> {
+    None
+}
+#[cfg(target_os = "macos")]
+fn draw_pointer(_: &mut [u8], _: u32, _: u32, _: u32, _: (i32, i32), _: ()) {}
 
 pub struct GenericBackend {
     displays: Vec<DisplayInfo>,
@@ -67,6 +77,11 @@ impl Backend for GenericBackend {
         if cfg!(target_os = "linux") { "x11" } else { "xcap" }
     }
 
+    fn cursor_in_video(&self) -> bool {
+        // Composited by us on X11 and Windows; macOS is unverified.
+        cfg!(any(target_os = "linux", target_os = "windows"))
+    }
+
     fn displays(&self) -> Vec<DisplayInfo> {
         self.displays.clone()
     }
@@ -79,6 +94,8 @@ impl Backend for GenericBackend {
 
     #[cfg(not(target_os = "linux"))]
     fn capture(&mut self, display: u32, max_fps: u32) -> Result<FrameStream> {
+        let d = self.displays.get(display as usize).cloned().with_context(|| format!("display {display} not found"))?;
+        let origin = (d.x, d.y);
         let monitors = Monitor::all()?;
         let monitor = monitors
             .into_iter()
@@ -92,21 +109,20 @@ impl Backend for GenericBackend {
             Ok((recorder, frames)) => {
                 recorder.start().map_err(|e| anyhow!("starting capture: {e}"))?;
                 thread::Builder::new().name("capture".into()).spawn(move || {
+                    // The recorder only delivers frames when the picture
+                    // changes, and they carry no pointer. Keep the latest
+                    // clean frame so that pointer moves on a still screen
+                    // (and changes that arrive while throttled) still go out.
+                    let poll = (min_interval / 2).max(Duration::from_millis(4));
                     let mut last = Instant::now() - min_interval;
+                    let mut clean = None;
+                    let mut dirty = false;
+                    let mut shown = None;
                     while !producer.is_closed() {
-                        match frames.recv_timeout(Duration::from_millis(200)) {
+                        match frames.recv_timeout(poll) {
                             Ok(f) => {
-                                if last.elapsed() < min_interval.mul_f32(0.8) {
-                                    continue;
-                                }
-                                last = Instant::now();
-                                producer.put(RawFrame {
-                                    width: f.width,
-                                    height: f.height,
-                                    stride: f.width * 4,
-                                    format: PixelFormat::Rgba,
-                                    data: f.raw,
-                                });
+                                clean = Some(frames.try_iter().last().unwrap_or(f));
+                                dirty = true;
                             }
                             Err(mpsc::RecvTimeoutError::Timeout) => {}
                             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -114,6 +130,25 @@ impl Backend for GenericBackend {
                                 break;
                             }
                         }
+                        let Some(f) = &clean else { continue };
+                        let pointer = pointer_now();
+                        if !(dirty || pointer != shown) || last.elapsed() < min_interval.mul_f32(0.8) {
+                            continue;
+                        }
+                        last = Instant::now();
+                        dirty = false;
+                        shown = pointer;
+                        let mut data = f.raw.clone();
+                        if let Some(p) = pointer {
+                            draw_pointer(&mut data, f.width, f.height, f.width * 4, origin, p);
+                        }
+                        producer.put(RawFrame {
+                            width: f.width,
+                            height: f.height,
+                            stride: f.width * 4,
+                            format: PixelFormat::Rgba,
+                            data,
+                        });
                     }
                     let _ = recorder.stop();
                 })?;
@@ -133,12 +168,16 @@ impl Backend for GenericBackend {
                         match monitor.capture_image() {
                             Ok(img) => {
                                 let (w, h) = img.dimensions();
+                                let mut data = img.into_raw();
+                                if let Some(p) = pointer_now() {
+                                    draw_pointer(&mut data, w, h, w * 4, origin, p);
+                                }
                                 producer.put(RawFrame {
                                     width: w,
                                     height: h,
                                     stride: w * 4,
                                     format: PixelFormat::Rgba,
-                                    data: img.into_raw(),
+                                    data,
                                 });
                             }
                             Err(e) => {

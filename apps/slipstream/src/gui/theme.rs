@@ -401,6 +401,12 @@ pub fn input_frame() -> egui::Frame {
 }
 
 /// Draws an arc stroke (used for small radar/spinner flourishes).
+/// Eases a displayed number towards `value` so readouts roll smoothly
+/// instead of jumping.
+pub fn glide(ui: &egui::Ui, name: &'static str, value: f32) -> f32 {
+    ui.ctx().animate_value_with_time(ui.scope_id().with(name), value, 0.35)
+}
+
 pub fn spinner(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32, t: f64) {
     let start = (t * 4.0) as f32;
     let pts: Vec<Pos2> = (0..=24)

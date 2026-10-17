@@ -82,7 +82,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
 
     // Open (or reuse) the screen session. On Wayland the first time this
     // shows the desktop's "allow screen sharing" dialog on this machine.
-    let displays = {
+    let (displays, cursor_in_video) = {
         let mut backend = inner.backend.lock().await;
         if backend.is_none() {
             write_msg(&mut send, &HostMsg::Notice("Waiting for the remote side to allow screen sharing…".into()))
@@ -106,7 +106,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
                 }
             }
         }
-        backend.as_ref().map(|b| b.displays()).unwrap_or_default()
+        backend.as_ref().map(|b| (b.displays(), b.cursor_in_video())).unwrap_or_default()
     };
 
     let capabilities = Capabilities {
@@ -114,6 +114,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
         clipboard: settings.host.allow_clipboard,
         file_transfer: settings.host.allow_file_transfer,
         chat: true,
+        cursor_in_video,
     };
     let session = SessionInfo {
         host_name: settings.device_name.clone(),

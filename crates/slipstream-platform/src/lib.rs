@@ -21,6 +21,8 @@ mod pw;
 mod x11;
 #[cfg(target_os = "linux")]
 pub mod wayland;
+#[cfg(target_os = "windows")]
+mod win_cursor;
 
 use std::collections::HashSet;
 
@@ -47,6 +49,11 @@ pub trait Backend: Send {
     /// Token that lets the next session skip the permission prompt (Wayland).
     fn restore_token(&self) -> Option<String> {
         None
+    }
+
+    /// Whether captured frames show the mouse pointer.
+    fn cursor_in_video(&self) -> bool {
+        false
     }
 }
 

@@ -130,6 +130,10 @@ impl Backend for WaylandBackend {
             .map_err(|_| anyhow!("portal session closed"))
     }
 
+    fn cursor_in_video(&self) -> bool {
+        true // CursorMode::Embedded
+    }
+
     fn restore_token(&self) -> Option<String> {
         self.restore_token.clone()
     }

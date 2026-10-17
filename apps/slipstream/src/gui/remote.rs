@@ -337,7 +337,8 @@ impl RemoteTab {
             return;
         }
         let hovered = resp.hovered() && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l == ui.layer_id()));
-        if hovered && self.captured {
+        // Hide our pointer only when the host's video shows its own.
+        if hovered && self.captured && self.info.capabilities.cursor_in_video {
             ctx.set_cursor_icon(egui::CursorIcon::None);
         }
         if hovered && !self.captured {
@@ -507,10 +508,15 @@ impl RemoteTab {
                 action = TabAction::Close;
             }
             let s = &self.stats;
+            let (fps, mbps, rtt) = (
+                theme::glide(ui, "fps", s.fps),
+                theme::glide(ui, "mbps", s.kbps / 1000.0),
+                theme::glide(ui, "rtt", s.rtt_ms),
+            );
             let path = if s.relayed { ("RELAY", pal::GOLD) } else { ("DIRECT", pal::GREEN) };
             ui.label(RichText::new(path.0).font(theme::display(16.0)).color(path.1));
             ui.label(
-                RichText::new(format!("{:>3.0} FPS · {:>4.1} MBPS · {:>3.0} MS", s.fps, s.kbps / 1000.0, s.rtt_ms))
+                RichText::new(format!("{fps:>3.0} FPS · {mbps:>4.1} MBPS · {rtt:>3.0} MS"))
                     .font(theme::mono(15.0))
                     .color(pal::BLUE),
             );

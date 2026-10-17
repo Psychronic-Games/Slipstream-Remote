@@ -179,6 +179,8 @@ pub struct App {
     tray_status: String,
     quitting: bool,
     start_hidden: bool,
+    /// The window is hidden in the tray.
+    hidden: bool,
     /// Another launch asked us to show the window.
     show_requests: Option<mpsc::Receiver<()>>,
     window_title: String,
@@ -238,6 +240,7 @@ impl App {
             tray_status: String::new(),
             quitting: false,
             start_hidden: false,
+            hidden: false,
             show_requests: None,
             logo: None,
             window_title: String::new(),
@@ -246,6 +249,11 @@ impl App {
             tray_hint: false,
             open_files: false,
         }
+    }
+
+    fn set_visible(&mut self, ctx: &egui::Context, visible: bool) {
+        self.hidden = !visible;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(visible));
     }
 
     pub fn time(&self) -> f64 {
@@ -647,7 +655,7 @@ impl App {
             self.client.update_settings(|s| s.app.tray_hint_shown = true);
         }
         if hide {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.set_visible(ctx, false);
         }
         if quit {
             self.quitting = true;
@@ -830,7 +838,7 @@ impl eframe::App for App {
         self.update_tray();
         if self.start_hidden {
             self.start_hidden = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.set_visible(ctx, false);
         }
         let mut show = self.show_requests.as_ref().is_some_and(|rx| rx.try_recv().is_ok());
         while let Some(cmd) = self.tray.as_ref().and_then(|t| t.poll()) {
@@ -838,13 +846,13 @@ impl eframe::App for App {
                 tray::TrayCmd::Show => show = true,
                 tray::TrayCmd::Quit => {
                     self.quitting = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    self.set_visible(ctx, true);
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
         }
         if show {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            self.set_visible(ctx, true);
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
@@ -856,7 +864,7 @@ impl eframe::App for App {
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if self.client.settings().app.tray_hint_shown {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                self.set_visible(ctx, false);
             } else {
                 self.tray_hint = true;
             }
@@ -938,9 +946,17 @@ impl eframe::App for App {
                 Page::About => settings::about_ui(self, ui),
                 Page::Remote(_) => {}
             });
-            // Gentle animation without burning CPU when idle in the background.
-            let fps = if self.window_focused { 30 } else { 2 };
-            ctx.request_repaint_after(Duration::from_millis(1000 / fps));
+        }
+
+        // Animate at the display's refresh rate whenever the window can be
+        // seen (vsync paces it; compositors pause windows that are covered).
+        // Hidden or minimized, a slow tick keeps the state fresh.
+        if self.hidden || ctx.input(|i| i.viewport().minimized == Some(true)) {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        } else if self.window_focused {
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(16));
         }
 
         home::incoming_windows(self, &ctx);

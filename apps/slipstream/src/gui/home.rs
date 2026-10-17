@@ -242,7 +242,10 @@ fn incoming_banner(app: &mut App, ui: &mut Ui, t: f64) {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("◆ INBOUND LINK").font(theme::display_bold(18.0)).color(pal::RED));
                 ui.label(
-                    RichText::new(format!("{} is controlling this station ({}s)", s.peer, s.started.elapsed().as_secs()))
+                    RichText::new({
+                        let secs = s.started.elapsed().as_secs();
+                        format!("{} is controlling this station · {:02}:{:02}", s.peer, secs / 60, secs % 60)
+                    })
                         .font(theme::body(17.0)),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

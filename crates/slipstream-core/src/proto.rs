@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the session protocol changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// ALPN for remote-control sessions (viewer → host).
 pub const ALPN_REMOTE: &[u8] = b"slipstream/remote/1";
@@ -71,6 +71,8 @@ pub struct Capabilities {
     pub clipboard: bool,
     pub file_transfer: bool,
     pub chat: bool,
+    /// The video shows the host's mouse pointer, so the viewer can hide its own.
+    pub cursor_in_video: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
