@@ -715,9 +715,9 @@ mod tests {
         use slipstream_platform::clipboard::{Clip, ClipboardSource};
         let host_clip = Arc::new(Mutex::new(None::<Clip>));
         let viewer_clip = Arc::new(Mutex::new(None::<Clip>));
-        let (host, _hev, hdir) = client_with("fhost", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
+        let (host, _hev, hdir) = client_with("cfhost", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
         let (viewer, _vev, vdir) =
-            client_with("fviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
+            client_with("cfviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
         let (session, mut events) =
             viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
 

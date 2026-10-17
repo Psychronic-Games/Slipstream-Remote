@@ -36,6 +36,14 @@ Some tests touch real hardware or the network and are `#[ignore]`d by
 default (for example the real clipboard round-trip). Run them with
 `cargo test -- --ignored`.
 
+### Disk space
+
+Cargo's build cache, `target/`, grows with every build because it keeps old
+copies of compiled crates. `scripts/clean.sh` clears the development and
+test builds; `scripts/clean.sh --all` clears release builds too. Everything
+in `target/` can be rebuilt. Dependencies are built without debug info
+(`Cargo.toml`), which keeps a full test build to about 6 GB.
+
 ## Release builds (the station package)
 
 `scripts/build-station.sh` builds everything a station serves and assembles

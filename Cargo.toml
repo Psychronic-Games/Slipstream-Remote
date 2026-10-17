@@ -34,3 +34,6 @@ strip = true
 
 [profile.dev.package."*"]
 opt-level = 2
+# No debug info for dependencies: it was most of target/'s size, and
+# backtraces through our own crates keep theirs.
+debug = false
