@@ -36,20 +36,27 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 
 | | Share screen (host) | Control others (viewer) | Status |
 |---|---|---|---|
-| Linux — Wayland (KDE, GNOME, wlroots) | desktop portal + PipeWire | ✅ | in testing |
-| Linux — X11 | xcap + XTest | ✅ | in testing |
-| Windows 10/11 | DXGI/WGC + SendInput | ✅ | builds in CI; needs testing |
-| macOS 12+ | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | builds in CI; needs testing |
+| Linux — Wayland (KDE, GNOME, wlroots) | desktop portal + PipeWire | ✅ | tested (KDE) |
+| Linux — X11 | MIT-SHM + XTest | ✅ | in testing |
+| Windows 10/11 | DXGI + SendInput | ✅ | tested |
+| macOS 12+ | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | builds in CI; not packaged or tested yet |
 | Android | planned | planned | |
+
+The Linux app is a single file that runs on any 64-bit distribution from
+2020 on (glibc 2.31+), with no extra packages.
 
 ## Quick start
 
+**New here? Read [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)**: a
+step-by-step guide from an empty web server to your first session, including
+client installs, unattended access and troubleshooting.
+
 ### 1. Set up your station (once)
 
-Run `scripts/build-station.sh`, upload `dist/slipstream-station/` to the root
-of a (sub)domain with PHP 8 and HTTPS — e.g. `support.example.com` — and open
-`/admin/` to name it and set an admin password. See
-[docs/SERVER.md](docs/SERVER.md).
+Run `scripts/build-station.sh`, upload the contents of
+`dist/slipstream-station/` to the root of a (sub)domain with PHP 8 and HTTPS
+(e.g. `support.example.com`), and open `/admin/` to name it and set an admin
+password. See [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md#1-set-up-your-station).
 
 ### 2. Get the app
 
@@ -73,9 +80,10 @@ slipstream --connect 482913077 --password …  # connect straight away
 slipstream --minimized                      # start in the tray
 slipstream host [--password …]              # headless host (servers, kiosks)
 slipstream connect <ID> --password …        # headless test connection with stats
-slipstream set-server relay.example.com     # configure without the GUI
+slipstream set-server support.example.com --key …  # configure without the GUI
 slipstream set-password <password>          # unattended-access password
-slipstream info                             # show ID, key and settings path
+slipstream info                             # show ID, station and settings path
+slipstream update                           # install the newest build from your station
 ```
 
 `SLIPSTREAM_HOME=/some/dir` keeps settings and identity elsewhere (handy for
@@ -83,17 +91,23 @@ running two instances on one machine).
 
 ## Building
 
-Requires Rust (stable) and, on Linux, PipeWire and X11/Wayland dev headers:
-
 ```sh
-# Arch / CachyOS
-sudo pacman -S pipewire libxkbcommon clang
-# Debian / Ubuntu
-sudo apt install libpipewire-0.3-dev libspa-0.2-dev clang libxkbcommon-dev libxdo-dev libxtst-dev libdbus-1-dev
-
 cargo build --release
 cargo test --workspace
+scripts/build-station.sh     # portable Linux + Windows builds, ready to upload
 ```
+
+Build dependencies, cross-compiling and the release checklist are in
+[docs/BUILDING.md](docs/BUILDING.md).
+
+## Documentation
+
+| | |
+|---|---|
+| [Getting started](docs/GETTING-STARTED.md) | Station setup, installing clients, connecting, unattended access, troubleshooting |
+| [Running a station](docs/SERVER.md) | Station reference: requirements, data, relay, access control, Nginx, standalone server |
+| [Building and releasing](docs/BUILDING.md) | Toolchain, release builds, publishing updates |
+| [Architecture](docs/ARCHITECTURE.md) | Networking, authentication, protocol, platform backends |
 
 ## How it works
 

@@ -18,6 +18,9 @@ them a private remote-support service:
 Move it to another server any time: copy the folder and the data folder,
 repoint DNS, done. Apps only know your domain.
 
+New to Slipstream? [GETTING-STARTED.md](GETTING-STARTED.md) walks through
+the whole setup step by step. This page is the reference.
+
 ## Requirements
 
 - A domain or subdomain with HTTPS, e.g. `support.example.com`. The station
@@ -53,12 +56,14 @@ No Apache or root changes are needed.
 ## Updating
 
 Build a new package (`scripts/build-station.sh`) and upload the files
-again, replacing `bin/`, `clients/` and the PHP files — your settings and
-device list live in the data folder and are untouched.
+again, replacing `bin/`, `clients/` and the PHP files. Upload the apps
+before `clients/manifest.json`, so no app is offered a file that isn't there
+yet. Your settings and device list live in the data folder and are
+untouched. The full release checklist is in [BUILDING.md](BUILDING.md).
 
 `clients/manifest.json` (written by the build script) records the version,
-build number and checksums. Apps check your station a minute after they
-start and every 6 hours; when a newer build is there they offer
+build number and checksums. Apps check your station about 20 seconds after
+they start and every 6 hours; when a newer build is there they offer
 **Install & restart**. The update is downloaded from your station
 (preconfigured, like the download page), verified against the manifest,
 swapped in, and the app restarts — keeping its settings, ID and passwords.
