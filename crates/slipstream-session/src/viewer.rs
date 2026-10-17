@@ -16,7 +16,7 @@ use slipstream_core::{
     auth::ViewerAuth,
     config::ViewerSettings,
     directory::DeviceId,
-    framing::{expect_msg, read_msg, write_msg},
+    framing::{MsgReader, expect_msg, read_msg, write_msg},
     proto::{
         ALPN_REMOTE, ClipboardData, DisplayInfo, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo, StreamSettings,
         VideoFrame, ViewerMsg,
@@ -156,6 +156,7 @@ pub(crate) async fn connect(
         .context("timed out reaching the device")?
         .context("could not reach the device")?;
     let (mut send, mut recv) = conn.open_bi().await?;
+    send.set_priority(slipstream_core::proto::PRIORITY_CONTROL).ok();
     write_msg(&mut send, &ViewerMsg::Hello { version: PROTOCOL_VERSION, viewer_name }).await?;
 
     on_progress("Authenticating…".into());
@@ -213,7 +214,7 @@ fn auth_error(reason: String, retry_after: u32) -> String {
 async fn run(
     conn: Connection,
     mut send: iroh::endpoint::SendStream,
-    mut recv: iroh::endpoint::RecvStream,
+    recv: iroh::endpoint::RecvStream,
     mut cmds: mpsc::UnboundedReceiver<ViewerCmd>,
     events: mpsc::UnboundedSender<ViewerEvent>,
     frames: Arc<FrameShared>,
@@ -221,12 +222,13 @@ async fn run(
     stream_settings: StreamSettings,
     sync_clipboard: Option<ClipboardSource>,
 ) {
+    let mut recv = MsgReader::<HostMsg>::spawn(recv);
     let reason = match session(&conn, &mut send, &mut recv, &mut cmds, &events, frames, display, stream_settings, sync_clipboard).await {
         Ok(r) => r,
         Err(e) => format!("{e:#}"),
     };
     let _ = write_msg(&mut send, &ViewerMsg::Bye).await;
-    let _ = send.finish();
+    crate::flush(&mut send).await;
     conn.close(0u32.into(), b"bye");
     let _ = events.send(ViewerEvent::Disconnected { reason });
 }
@@ -241,7 +243,7 @@ enum DecoderOut {
 async fn session(
     conn: &Connection,
     send: &mut iroh::endpoint::SendStream,
-    recv: &mut iroh::endpoint::RecvStream,
+    recv: &mut MsgReader<HostMsg>,
     cmds: &mut mpsc::UnboundedReceiver<ViewerCmd>,
     events: &mpsc::UnboundedSender<ViewerEvent>,
     frames: Arc<FrameShared>,
@@ -286,8 +288,13 @@ async fn session(
 
     loop {
         tokio::select! {
-            msg = read_msg::<HostMsg>(recv) => {
-                let Some(msg) = msg? else { return Ok("host closed the session".into()) };
+            msg = recv.next() => {
+                let msg = match msg {
+                    Ok(m) => m,
+                    // The read fails first when the connection closes.
+                    Err(e) => return conn.close_reason().map(|r| crate::closed_reason(&r, "the host")).ok_or(e),
+                };
+                let Some(msg) = msg else { return Ok("the host ended the session".into()) };
                 match msg {
                     HostMsg::StreamStarted { display, width, height } => {
                         let _ = events.send(ViewerEvent::StreamStarted { display, width, height });
@@ -346,7 +353,7 @@ async fn session(
                 }));
                 last_stats = (Instant::now(), b1, f1);
             }
-            reason = conn.closed() => return Ok(format!("connection lost: {reason}")),
+            reason = conn.closed() => return Ok(crate::closed_reason(&reason, "the host")),
         }
     }
 }

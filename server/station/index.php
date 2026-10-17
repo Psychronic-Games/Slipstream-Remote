@@ -34,6 +34,9 @@ if ($needPassword && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $guess = stripos($ua, 'Windows') !== false ? 'windows' : (stripos($ua, 'Mac OS') !== false ? 'macos' : (stripos($ua, 'Linux') !== false && stripos($ua, 'Android') === false ? 'linux' : null));
 $fmt = fn($b) => round($b / 1048576) . ' MB';
+// Today's setup code. Download links carry it too: browsers record the
+// download URL on the file, and the app reads it from there.
+$code = slip_link_code();
 
 slip_page_start($org . ' · Remote Support');
 ?>
@@ -61,7 +64,7 @@ and you've shared your password.</p>
         <h3><?= h($b['label']) ?></h3>
         <div class="dim"><?= h($b['note']) ?><?= $b['path'] ? ' · ' . $fmt($b['size']) : '' ?></div>
         <?php if ($b['path']): ?>
-          <a class="btn <?= $os === $guess ? '' : 'blue' ?>" href="download.php?os=<?= h($os) ?>">Download</a>
+          <a class="btn <?= $os === $guess ? '' : 'blue' ?>" href="download.php?os=<?= h($os) ?>&amp;c=<?= h($code) ?>">Download</a>
         <?php else: ?>
           <span class="btn off">Not available</span>
         <?php endif ?>
@@ -74,9 +77,15 @@ and you've shared your password.</p>
     <ol class="steps">
       <li>Download the app for your computer above.</li>
       <li><b>Windows:</b> open the downloaded file (if SmartScreen appears, choose <i>More info → Run anyway</i>).
-        <b>Mac:</b> unzip, move <i>Slipstream</i> to Applications, then right-click → <i>Open</i>.
+        <b>Mac:</b> open the zip and move <i>Slipstream</i> to Applications, then open it. If macOS says it can't
+        check the app, go to <i>System Settings → Privacy &amp; Security</i> and choose <i>Open Anyway</i>; allow
+        <i>Screen Recording</i> and <i>Accessibility</i> when asked.
         <b>Linux:</b> make it executable (right-click → Properties → <i>Allow executing</i>, or <code>chmod +x "Slipstream Remote"*</code>) and run it.</li>
-      <li>The app opens already connected to <?= h($org) ?>. Read the <b>ID</b> and <b>password</b> to your technician.</li>
+      <li>The app connects to <?= h($org) ?> by itself. If it asks for your station instead, press
+        <a class="btn small" href="<?= h(slip_link_url()) ?>">Connect this app</a>
+        or enter <b class="mono"><?= h(slip_server_address()) ?></b> and the setup code
+        <b class="mono"><?= h(slip_code_display($code)) ?></b>.</li>
+      <li>Read the <b>ID</b> and <b>password</b> in the app to your technician.</li>
       <li>Close the app any time to end access. A new password is made after every session.</li>
     </ol>
   </div>

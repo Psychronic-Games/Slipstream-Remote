@@ -61,9 +61,21 @@ Each organisation runs its own station; there is no central server. A
 private station requires its access key on every directory request, and its
 relay admits only clients presenting the key (iroh passes it as
 `?token=` on the relay URL). Apps learn the station's address, key and name
-from their download: the station appends a trailer to the executable
-(`[JSON][u32 length]["SLIPCFG1"]`, see `slipstream_core::provision`) or adds
-`station.json` to the macOS bundle.
+from their download (`slipstream_core::provision`):
+
+* **Unsigned builds** carry them: the station appends a trailer to the
+  executable (`[JSON][u32 length]["SLIPCFG1"]`).
+* **Signed builds and the Mac app** must stay byte-for-byte as released (a
+  changed file breaks the signature and is "uncommon" to every browser), so
+  they get a **link** instead: the station address plus a setup code. Codes
+  are an HMAC of the access key and the day, valid 30 days, so the station
+  stores nothing and renewing the key cancels them. The API's `link` op
+  trades a code for the config. A link arrives as the download URL
+  (`download.php?…&c=CODE`), which browsers record on the file (Windows
+  `Zone.Identifier`, Linux `user.xdg.origin.url`, macOS
+  `kMDItemWhereFroms`); as a `slipstream://link?s=…&c=…` URL from the
+  download page's button (registered per user on Windows and Linux; a
+  second launch hands it to the running app); or typed in.
 
 ## Authentication
 
@@ -81,7 +93,11 @@ Registrations are signed, so nobody else can claim or move a device's ID.
 A malicious directory that substitutes its own key ends up with mismatched
 identities in the SPAKE2 transcript, so the keys never agree. Offline
 dictionary attacks are impossible (PAKE); online guessing is rate limited by
-the host.
+the host. After three wrong passwords each attempt waits longer (2 s
+doubling, up to 5 min). The host checks one password at a time and keeps
+the throttle locked until the attempt is counted, so opening many
+connections at once gains no extra guesses. A viewer that doesn't answer
+the challenge within 10 s is dropped.
 
 ## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 3)
 
@@ -105,10 +121,26 @@ update" message.
 ### Latency control
 
 The viewer acks every decoded frame. The host only encodes a new frame when
-fewer than *N* (default 2) frames are unacknowledged. Frames are skipped
-*before* encoding, never after, so the H.264 reference chain is never broken
-and stale frames never pile up in buffers — the picture is always as fresh
-as the network allows.
+fewer than *N* (default 2) frames are unacknowledged. *N* grows with the
+link's base round-trip time (the minimum seen, not the smoothed one, which
+includes queueing). Frames are skipped *before* encoding, never after, so
+the H.264 reference chain is never broken and stale frames never pile up in
+buffers — the picture is always as fresh as the network allows.
+
+* **Bitrate** adapts AIMD-style when frame round trips stretch. Changes are
+  applied to the running encoder, without a keyframe.
+* **Frame skipping** by the encoder's rate control is off while the link
+  keeps up, so motion stays at full frame rate (quality dips instead). It
+  switches on once the adaptive bitrate has backed off, or when the viewer
+  chose a fixed bitrate, because big frames on a congested link mean lag.
+  A frame it skips is re-sent when the screen goes still.
+* **Priorities:** control messages (input, acks) go before video, and video
+  before file transfers, so a big copy can't freeze the picture.
+* **Big screens:** OpenH264 takes at most 4K by area, so larger screens
+  (5120×1440, 5K) are scaled down to fit before encoding.
+* **Buffers:** captured frames are copied into recycled buffers (the frame
+  slot keeps a small pool), so 4K capture doesn't allocate 33 MB a frame.
+* **Display:** the viewer presents with a one-frame swap chain queue.
 
 ## Platform backends
 
@@ -137,10 +169,16 @@ only the pointer moved.
 ## Stations, updates and the app
 
 * **Self-update:** the station's `clients/manifest.json` lists version, build
-  number (git commit count) and SHA-256 per platform. Apps ask with
-  `update_check` 20 s after start and every 6 h. They download through
-  `download.php` (which appends the station trailer), verify the hash of the
-  app without the trailer, and swap themselves in: rename over on Unix,
+  number (git commit count) and, per platform, size, SHA-256 and an Ed25519
+  release signature over platform, version, build, size and hash
+  (`slipstream_core::release`). The signing key stays on the build machine;
+  its public key is compiled into the apps (`SLIPSTREAM_UPDATE_KEYS`), so a
+  compromised station can't push its own build. Apps ask with
+  `update_check` 20 s after start and every 6 h, and only offer a newer
+  build whose signature checks out. They download through `download.php`
+  (which appends the station trailer; the trailer only holds station
+  settings, not code), verify the hash of the app without the trailer, and
+  swap themselves in: rename over on Unix,
   move the running `.exe` aside on Windows. Then they restart with
   `SLIPSTREAM_RESTARTED=1`, so the single-instance guard waits for the old
   copy to exit.

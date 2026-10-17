@@ -10,9 +10,9 @@ track them.
 |---|---|---|
 | 01 | [Verify 0.5.0 on real machines](01-verify-0.5.0-on-real-machines.md) | testing, **high** |
 | 02 | [Publish to GitHub and get CI green](02-github-and-ci.md) | infra, **high** |
-| 03 | [macOS: package Slipstream.app and test it](03-macos-app.md) | macOS, **high** |
+| 03 | [macOS: build Slipstream.app on a Mac and test it](03-macos-app.md) | macOS, **high** |
 | 04 | [Windows service for UAC, elevated apps and the login screen](04-windows-service.md) | Windows, feature |
-| 05 | [Code signing (Authenticode, notarisation)](05-code-signing.md) | Windows, macOS, infra |
+| 05 | [Code signing, and downloads browsers trust](05-code-signing.md) | Windows, macOS, infra, **high** |
 | 06 | [Hardware video encoding](06-hardware-encoding.md) | performance, feature |
 | 07 | [Stream the host's audio](07-audio.md) | feature |
 | 08 | [Address book with saved devices](08-address-book.md) | feature |
@@ -22,6 +22,7 @@ track them.
 | 12 | [Resume interrupted file transfers](12-resumable-transfers.md) | feature |
 | 13 | [ARM builds](13-arm-builds.md) | infra |
 | 14 | [Windows .exe version from Cargo.toml](14-version-in-one-place.md) | infra, good first issue |
+| 15 | [Windows: capture straight from DXGI](15-windows-capture-dxgi.md) | Windows, performance |
 
 **Start with 01.** It's a checklist for testing the 0.5.0 fixes on the
 laptop and the Debian server. 02 and 03 follow.

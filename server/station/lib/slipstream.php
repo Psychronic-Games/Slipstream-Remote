@@ -686,12 +686,63 @@ function slip_client_builds(): array
         'macos' => ['file' => 'slipstream-macos.zip', 'label' => 'macOS', 'note' => 'macOS 12 or newer'],
         'linux' => ['file' => 'slipstream-linux-x86_64', 'label' => 'Linux', 'note' => '64-bit, X11 or Wayland'],
     ];
+    $manifest = slip_client_manifest()['platforms'] ?? [];
     foreach ($map as $os => &$b) {
         $path = "$dir/{$b['file']}";
         $b['path'] = is_file($path) ? $path : null;
         $b['size'] = $b['path'] ? filesize($path) : 0;
+        // Signed apps are served untouched (see download.php).
+        $b['signed'] = false;
+        foreach ($manifest as $entry) {
+            if (($entry['file'] ?? '') === $b['file'] && !empty($entry['signed'])) {
+                $b['signed'] = true;
+            }
+        }
     }
     return $map;
+}
+
+/*
+ * Setup codes link an app to this station without changing the app (signed
+ * apps must stay byte-for-byte as released). A code is derived from the
+ * access key and the day, so there is nothing to store, every code lasts
+ * SLIP_CODE_DAYS, and renewing the key cancels them all. See
+ * crates/slipstream-core/src/provision.rs.
+ */
+const SLIP_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const SLIP_CODE_DAYS = 30;
+
+function slip_link_code(int $daysAgo = 0): string
+{
+    $day = intdiv(time(), 86400) - $daysAgo;
+    $h = hash_hmac('sha256', "slipstream link $day", (string)(slip_station()['access_key'] ?? ''), true);
+    $code = '';
+    for ($i = 0; $i < 8; $i++) {
+        $code .= SLIP_CODE_ALPHABET[ord($h[$i]) % strlen(SLIP_CODE_ALPHABET)];
+    }
+    return $code;
+}
+
+function slip_link_ok(string $code): bool
+{
+    $code = strtoupper((string)preg_replace('/[^A-Za-z0-9]/', '', $code));
+    $ok = false;
+    for ($d = 0; $d <= SLIP_CODE_DAYS; $d++) {
+        $ok = hash_equals(slip_link_code($d), $code) || $ok;
+    }
+    return $ok && strlen($code) === 8;
+}
+
+/** "K7MQ2XPA" → "K7MQ-2XPA" */
+function slip_code_display(string $code): string
+{
+    return substr($code, 0, 4) . '-' . substr($code, 4);
+}
+
+/** The download page's one-click link for the app. */
+function slip_link_url(): string
+{
+    return 'slipstream://link?s=' . rawurlencode(slip_base_url()) . '&c=' . slip_link_code();
 }
 
 /** The update manifest written by scripts/build-station.sh, if any. */

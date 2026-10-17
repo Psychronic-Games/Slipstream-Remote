@@ -4,9 +4,11 @@
 //! The [`Encoder`]/[`Decoder`] types are the seam where hardware codecs
 //! (VA-API, NVENC, VideoToolbox, Media Foundation) plug in later.
 
+use std::time::Instant;
+
 use anyhow::{Context, Result, bail};
 use openh264::{
-    OpenH264API,
+    OpenH264API, Timestamp,
     decoder::{Decoder as OhDecoder, DecoderConfig},
     encoder::{
         BitRate, Complexity, EncoderConfig, FrameRate, FrameType, RateControlMode, SpsPpsStrategy, UsageType,
@@ -75,6 +77,22 @@ pub fn auto_bitrate_kbps(width: u32, height: u32, fps: f32) -> u32 {
     ((pixels_per_sec * 0.07 / 1000.0) as u32).clamp(1_500, 25_000)
 }
 
+/// OpenH264 refuses pictures larger than 4K by area (3840x2160 and
+/// 2160x3840 both work; 4096x2160 and 5120x1440 don't).
+const MAX_PIXELS: f64 = 3840.0 * 2160.0;
+const MAX_SIDE: f64 = 3840.0;
+
+/// The size a `w`×`h` frame is encoded at: its own, or scaled down to fit
+/// the encoder (ultrawide and 5K screens). Always even, for 4:2:0.
+pub fn encode_size(w: u32, h: u32) -> (u32, u32) {
+    let (fw, fh) = (w as f64, h as f64);
+    let s = (MAX_PIXELS / (fw * fh)).sqrt().min(MAX_SIDE / fw.max(fh)).min(1.0);
+    if s >= 1.0 {
+        return (w & !1, h & !1);
+    }
+    ((fw * s) as u32 & !1, (fh * s) as u32 & !1)
+}
+
 /// Planar I420 buffer that OpenH264 can read directly.
 struct I420 {
     width: usize,
@@ -114,33 +132,100 @@ pub struct Encoder {
     inner: Option<openh264::encoder::Encoder>,
     planes: I420,
     dirty: bool,
+    /// Frames are timestamped from here, so rate control sees the real
+    /// spacing of frames (capture delivers them unevenly).
+    epoch: Instant,
+    /// Whether rate control may drop frames to hold the bitrate (see
+    /// [`Encoder::set_frame_skip`]).
+    skip: bool,
+    /// For frames too big to encode as they are (reused buffers).
+    resizer: fast_image_resize::Resizer,
+    scaled: Vec<u8>,
+    packed: Vec<u8>,
 }
 
 impl Encoder {
     pub fn new(settings: EncoderSettings) -> Self {
-        Self { settings, inner: None, planes: I420::new(2, 2), dirty: true }
+        Self {
+            settings,
+            inner: None,
+            planes: I420::new(2, 2),
+            dirty: true,
+            epoch: Instant::now(),
+            skip: false,
+            resizer: fast_image_resize::Resizer::new(),
+            scaled: Vec::new(),
+            packed: Vec::new(),
+        }
     }
 
+    /// Applies new settings. A bitrate change takes effect in place; other
+    /// changes rebuild the encoder (and so start with a keyframe).
     pub fn set_settings(&mut self, settings: EncoderSettings) {
-        if settings != self.settings {
-            self.settings = settings;
-            self.dirty = true;
+        if settings == self.settings {
+            return;
         }
+        let rate_only = settings.max_fps == self.settings.max_fps;
+        self.settings = settings;
+        if rate_only && !self.dirty && self.set_bitrate() {
+            return;
+        }
+        self.dirty = true;
+    }
+
+    /// Lets rate control drop frames to hold the bitrate (on), or keep every
+    /// frame and lower quality instead (off). Off suits a fast link: motion
+    /// stays smooth, and the viewer's frame acks still pace us. On suits a
+    /// congested or deliberately limited one, where big frames mean lag.
+    pub fn set_frame_skip(&mut self, on: bool) {
+        if on == self.skip {
+            return;
+        }
+        self.skip = on;
+        if let Some(enc) = self.inner.as_mut() {
+            let mut v = on;
+            // SAFETY: a valid encoder handle; RC_FRAME_SKIP takes a bool*.
+            unsafe { enc.raw_api().set_option(openh264_sys2::ENCODER_OPTION_RC_FRAME_SKIP, (&raw mut v).cast()) };
+        }
+    }
+
+    fn kbps(&self, width: usize, height: usize) -> u32 {
+        match self.settings.bitrate_kbps {
+            0 => auto_bitrate_kbps(width as u32, height as u32, self.settings.max_fps.clamp(1.0, 240.0)),
+            n => n,
+        }
+    }
+
+    /// Changes the running encoder's bitrate. False if there is none or
+    /// OpenH264 refused.
+    fn set_bitrate(&mut self) -> bool {
+        let kbps = self.kbps(self.planes.width, self.planes.height);
+        let Some(enc) = self.inner.as_mut() else { return false };
+        let mut info = openh264_sys2::SBitrateInfo {
+            iLayer: openh264_sys2::SPATIAL_LAYER_ALL,
+            iBitrate: (kbps as i32).saturating_mul(1000),
+        };
+        // SAFETY: a valid encoder handle and a live SBitrateInfo, which is
+        // what ENCODER_OPTION_BITRATE expects.
+        let rc = unsafe {
+            enc.raw_api().set_option(openh264_sys2::ENCODER_OPTION_BITRATE, (&raw mut info).cast())
+        };
+        if rc == 0 {
+            tracing::debug!(kbps, "bitrate changed");
+        }
+        rc == 0
     }
 
     fn rebuild(&mut self, width: usize, height: usize) -> Result<()> {
         let fps = self.settings.max_fps.clamp(1.0, 240.0);
-        let kbps = match self.settings.bitrate_kbps {
-            0 => auto_bitrate_kbps(width as u32, height as u32, fps),
-            n => n,
-        };
+        let kbps = self.kbps(width, height);
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 4) as u16;
         let config = EncoderConfig::new()
             .usage_type(UsageType::ScreenContentRealTime)
             .rate_control_mode(RateControlMode::Bitrate)
             .bitrate(BitRate::from_bps(kbps * 1000))
             .max_frame_rate(FrameRate::from_hz(fps))
-            .skip_frames(true)
+            .skip_frames(self.skip)
             .complexity(Complexity::Low)
             .adaptive_quantization(false)
             .background_detection(false)
@@ -159,11 +244,40 @@ impl Encoder {
         Ok(())
     }
 
+    /// Scales `frame` down to `w`×`h` into a reused buffer.
+    fn scale(&mut self, frame: &RawFrame, w: u32, h: u32) -> Result<RawFrame> {
+        use fast_image_resize as fr;
+        let row = frame.width as usize * 4;
+        // The resizer wants tightly packed rows.
+        let src: &[u8] = if frame.stride as usize == row {
+            &frame.data
+        } else {
+            self.packed.clear();
+            for y in 0..frame.height as usize {
+                let o = y * frame.stride as usize;
+                self.packed.extend_from_slice(&frame.data[o..o + row]);
+            }
+            &self.packed
+        };
+        let src = fr::images::ImageRef::new(frame.width, frame.height, src, fr::PixelType::U8x4)?;
+        let mut buf = std::mem::take(&mut self.scaled);
+        buf.resize(w as usize * h as usize * 4, 0);
+        let mut dst = fr::images::Image::from_slice_u8(w, h, &mut buf, fr::PixelType::U8x4)?;
+        // Not use_alpha: BGRx's padding byte is no alpha, often 0.
+        let opts = fr::ResizeOptions::new()
+            .use_alpha(false)
+            .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Bilinear));
+        self.resizer.resize(&src, &mut dst, &opts)?;
+        Ok(RawFrame { width: w, height: h, stride: w * 4, format: frame.format, data: buf })
+    }
+
     /// Encodes a frame. Returns `None` if the encoder chose to skip it.
     pub fn encode(&mut self, frame: &RawFrame, force_keyframe: bool) -> Result<Option<EncodedFrame>> {
         frame.validate()?;
-        // H.264 4:2:0 needs even dimensions; drop a trailing odd row/column.
-        let (w, h) = ((frame.width & !1) as usize, (frame.height & !1) as usize);
+        // H.264 4:2:0 needs even dimensions (a trailing odd row/column is
+        // dropped), and OpenH264 a picture no bigger than 4K.
+        let (ew, eh) = encode_size(frame.width, frame.height);
+        let (w, h) = (ew as usize, eh as usize);
         if w < 2 || h < 2 {
             bail!("frame too small");
         }
@@ -171,7 +285,35 @@ impl Encoder {
         if self.dirty || resized || self.inner.is_none() {
             self.rebuild(w, h)?;
         }
+        if (ew, eh) != (frame.width & !1, frame.height & !1) {
+            let scaled = self.scale(frame, ew, eh)?;
+            let r = self.convert(&scaled, w, h);
+            self.scaled = scaled.data;
+            r?;
+        } else {
+            self.convert(frame, w, h)?;
+        }
 
+        let enc = self.inner.as_mut().expect("encoder built");
+        if force_keyframe {
+            enc.force_intra_frame();
+        }
+        let ts = Timestamp::from_millis(self.epoch.elapsed().as_millis() as u64);
+        let bs = enc.encode_at(&self.planes, ts).context("H.264 encode")?;
+        let keyframe = match bs.frame_type() {
+            FrameType::Skip | FrameType::Invalid => return Ok(None),
+            FrameType::IDR | FrameType::I => true,
+            _ => false,
+        };
+        let data = bs.to_vec();
+        if data.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(EncodedFrame { data, keyframe, width: w as u32, height: h as u32 }))
+    }
+
+    /// Converts `frame` (at least `w`×`h`) to I420 in our planes.
+    fn convert(&mut self, frame: &RawFrame, w: usize, h: usize) -> Result<()> {
         let mut image = YuvPlanarImageMut::<u8>::alloc(w as u32, h as u32, YuvChromaSubsampling::Yuv420);
         // Write straight into our planes by swapping buffers in and out.
         image.y_plane = yuv::BufferStoreMut::Owned(std::mem::take(&mut self.planes.y));
@@ -199,23 +341,7 @@ impl Encoder {
         self.planes.y = take(image.y_plane);
         self.planes.u = take(image.u_plane);
         self.planes.v = take(image.v_plane);
-        res.map_err(|e| anyhow::anyhow!("colour conversion: {e:?}"))?;
-
-        let enc = self.inner.as_mut().expect("encoder built");
-        if force_keyframe {
-            enc.force_intra_frame();
-        }
-        let bs = enc.encode(&self.planes).context("H.264 encode")?;
-        let keyframe = match bs.frame_type() {
-            FrameType::Skip | FrameType::Invalid => return Ok(None),
-            FrameType::IDR | FrameType::I => true,
-            _ => false,
-        };
-        let data = bs.to_vec();
-        if data.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(EncodedFrame { data, keyframe, width: w as u32, height: h as u32 }))
+        res.map_err(|e| anyhow::anyhow!("colour conversion: {e:?}"))
     }
 }
 
@@ -334,6 +460,51 @@ mod tests {
         RawFrame { width: w, height: h, stride, format: PixelFormat::Bgra, data }
     }
 
+    /// Adaptive bitrate must not cost a keyframe (a burst of 10x the bytes
+    /// exactly when the link is congested).
+    #[test]
+    fn bitrate_changes_in_place() {
+        let mut enc = Encoder::new(EncoderSettings { bitrate_kbps: 8000, max_fps: 30.0 });
+        let mut frames = (0..10).map(|t| test_frame(640, 480, t * 3));
+        assert!(enc.encode(&frames.next().unwrap(), true).unwrap().unwrap().keyframe);
+        for f in frames.by_ref().take(3) {
+            enc.encode(&f, false).unwrap();
+        }
+        enc.set_settings(EncoderSettings { bitrate_kbps: 4000, max_fps: 30.0 });
+        assert!(!enc.dirty, "bitrate change rebuilt the encoder");
+        for f in frames {
+            if let Some(e) = enc.encode(&f, false).unwrap() {
+                assert!(!e.keyframe, "bitrate change produced a keyframe");
+            }
+        }
+        // A frame-rate change still rebuilds.
+        enc.set_settings(EncoderSettings { bitrate_kbps: 4000, max_fps: 60.0 });
+        assert!(enc.dirty);
+    }
+
+    #[test]
+    fn oversized_screens_are_scaled_to_fit() {
+        assert_eq!(encode_size(1920, 1080), (1920, 1080));
+        assert_eq!(encode_size(1921, 1081), (1920, 1080));
+        assert_eq!(encode_size(3840, 2160), (3840, 2160));
+        for (w, h) in [(4096, 2160), (5120, 1440), (5120, 2880), (7680, 2160), (3440, 2880), (2160, 5120)] {
+            let (ew, eh) = encode_size(w, h);
+            assert!(ew as u64 * eh as u64 <= 3840 * 2160 && ew.max(eh) <= 3840, "{w}x{h} -> {ew}x{eh}");
+            assert!(((ew as f64 / eh as f64) - (w as f64 / h as f64)).abs() < 0.01, "aspect kept");
+        }
+        // And the encoder takes them (with padded rows, as PipeWire sends).
+        let mut enc = Encoder::new(EncoderSettings::default());
+        let mut dec = Decoder::new().unwrap();
+        let mut src = test_frame(5120, 1440, 0);
+        src.data.iter_mut().skip(3).step_by(4).for_each(|x| *x = 0); // BGRx with X = 0
+        let e = enc.encode(&src, true).unwrap().expect("encoded");
+        assert_eq!((e.width, e.height), encode_size(5120, 1440));
+        let d = dec.decode(&e.data).unwrap().expect("decoded");
+        // The red checkerboard survives (padding byte isn't treated as alpha).
+        let rgba = d.to_rgba();
+        assert!(rgba.chunks(4).any(|p| p[0] > 180), "picture went dark");
+    }
+
     #[test]
     fn roundtrip_preserves_image() {
         let mut enc = Encoder::new(EncoderSettings { bitrate_kbps: 8000, max_fps: 30.0 });
@@ -366,4 +537,5 @@ mod tests {
         assert!(err / samples < 25, "mean red error {} too high", err / samples);
     }
 }
+
 

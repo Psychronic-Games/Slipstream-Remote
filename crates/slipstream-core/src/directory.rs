@@ -141,6 +141,14 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Decodes hex; `None` if it isn't valid hex.
+pub fn unhex(s: &str) -> Option<Vec<u8>> {
+    if !s.is_ascii() || !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
+}
+
 #[derive(Deserialize)]
 struct Envelope {
     ok: bool,
@@ -257,6 +265,21 @@ impl DirectoryClient {
         msg.extend_from_slice(payload.as_bytes());
         let sig = secret.sign(&msg);
         Ok(serde_json::json!({ "op": op, "payload": payload, "sig": hex(&sig.to_bytes()) }))
+    }
+
+    /// Exchanges a setup code for the station's config (address, access
+    /// key, name). Needs no key: it's how an app gets one.
+    pub async fn link(&self, code: &str) -> Result<crate::provision::StationConfig> {
+        #[derive(Deserialize)]
+        struct R {
+            server: String,
+            #[serde(default)]
+            key: Option<String>,
+            #[serde(default)]
+            org: Option<String>,
+        }
+        let r: R = self.call(serde_json::json!({ "op": "link", "code": code })).await?;
+        Ok(crate::provision::StationConfig { server: r.server, key: r.key, org: r.org })
     }
 
     /// Claims (or refreshes) this device's ID and marks it online.

@@ -13,26 +13,41 @@ back up.*
 | Relay-only session through the station | ✅ |
 | Wrong clock (a month behind, a year ahead) | ✅ against the live station |
 | Self-update: offer, download, checksum, swap, restart; tampered file rejected | ✅ |
+| Signed updates (release key, unsigned/foreign builds refused) | ⚠️ unit tests; first signed release not deployed yet |
+| Parallel password guessing held to the lockout | ✅ end-to-end test |
+| Station on the server's PHP 8.4 (no extensions): setup, sign-in, settings, download password, devices, key renewal, update offer | ✅ against a local copy; all PHP lint-clean |
+| Signed update installs; tampered, unsigned and foreign manifests and a swapped binary are refused | ✅ against a local station |
+| Windows build under Wine: host at 1440p/60 fps, GUI | ✅ |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Portable Linux binary (glibc 2.31, no PipeWire link) | ⚠️ needs only libc, libm, libpthread and libdl (glibc symbols ≤ 2.30); the Debian server that failed before hasn't re-tried it |
 | Host chat as its own window (KDE Wayland) | ✅ |
 | Windows pointer drawing | ✅ unit tests under Wine; real hardware pending |
 | X11 host | ⚠️ implemented, lightly tested |
-| macOS | ❌ never built (the CI job exists but has not run), packaged or run |
+| macOS | ⚠️ type-checks for Apple Silicon (cross-checked from Linux); `scripts/build-macos.sh` packages it; not yet run on a Mac |
+| Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
 `cargo test --workspace` passes: unit tests plus in-process sessions
 covering video and input, files, chat and clipboard.
 
 ## Known gaps and limits
 
-- **macOS**: no `.app` packaging in `build-station.sh`; never run. Its
+- **macOS**: packaged by `scripts/build-macos.sh` but never run on a Mac.
+  Not notarised (Apple Developer Program not joined yet), so users choose
+  *Open Anyway*, and permissions may need granting again after updates. Its
   capture may or may not show the pointer (`cursor_in_video` is false, so
-  the viewer keeps its own pointer visible).
+  the viewer keeps its own pointer visible). `slipstream://` links don't
+  reach the app on macOS (winit doesn't pass URL events on); setup codes do.
 - **Windows elevation**: the app runs as the user, so it can't control UAC
   prompts, elevated windows or the login screen. That needs a Windows
   service running as SYSTEM.
-- **Windows signing**: the .exe is unsigned, so SmartScreen warns about it.
-- **Software video only**: OpenH264 on the CPU. Fine at 1080p; heavy at 4K.
+- **Windows signing**: set up for SignPath (free for open source) in the
+  release workflow, which needs the repository public on GitHub. Until then
+  the .exe is unsigned and SmartScreen warns about it.
+- **Software video only**: OpenH264 on the CPU (with its SIMD code: builds
+  need `nasm`). On the dev machine a fully moving picture runs at 60 fps up
+  to 1080p, about 56 at 1440p and 37 at 4K. Static and typing content is far
+  cheaper. Hardware encoding is issue 06.
+- **Windows capture** makes several full-frame copies inside xcap (issue 15).
 - **No audio.**
 - **x86_64 only**: no ARM Linux or Windows-on-ARM builds yet.
 - **Wayland unattended access**: depends on the portal's restore token
@@ -51,13 +66,13 @@ in [issues/](issues/README.md).
    Linux app on the Debian server.
 2. **Push to GitHub**, get CI green on all three OSes, and attach release
    builds.
-3. **macOS**: package `Slipstream.app` (bundle, `station.json`, icon), test
-   capture, input and permissions on a real Mac, and add it to
-   `build-station.sh` / CI.
+3. **macOS**: run `scripts/build-macos.sh` on the Mac; test install, Open
+   Anyway, permissions, capture, input, setup code and an update (issue 03).
 4. **Windows service** for UAC, elevated apps and the login screen
    (unattended access to servers).
 5. **Hardware encoding**: NVENC, VA-API, Media Foundation, VideoToolbox.
-6. **Code signing** for Windows (and notarisation for macOS).
+6. **Code signing**: apply to SignPath once the repo is public (issue 05);
+   Apple notarisation when the Developer Program is joined.
 7. **Audio streaming.**
 8. **Address book** with saved devices and credentials (OS keychain).
 9. **Android**: viewer first, then host (MediaProjection +

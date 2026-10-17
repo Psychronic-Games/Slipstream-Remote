@@ -1,8 +1,10 @@
 //! Host-side video pipeline: capture → encode → send, paced by viewer acks.
 //!
 //! The encoder only starts a frame when fewer than `limit` frames are
-//! unacknowledged, where `limit` grows with the measured round-trip time so
-//! that high-latency links still get full frame rates. Frames are skipped
+//! unacknowledged, where `limit` grows with the link's base round-trip time
+//! so that high-latency links still get full frame rates. (The base, not the
+//! smoothed RTT: that includes queueing, and letting queueing raise the
+//! limit would only queue more.) Frames are skipped
 //! *before* encoding, so the H.264 reference chain is never broken.
 //!
 //! Bitrate adapts AIMD-style: if frame round trips stretch well beyond the
@@ -106,7 +108,7 @@ impl Flow {
 
 fn limit(s: &FlowState, base: u32, frame_interval: Duration) -> u64 {
     let base = base.max(1) as u64;
-    match s.srtt {
+    match s.min_rtt {
         Some(rtt) if !frame_interval.is_zero() => {
             let needed = (rtt.as_secs_f64() / frame_interval.as_secs_f64()).ceil() as u64 + 1;
             needed.clamp(base, 8)
@@ -152,6 +154,10 @@ impl Pipeline {
 
     pub fn set_settings(&self, s: StreamSettings) {
         *self.settings.lock().unwrap() = s;
+    }
+
+    pub fn settings(&self) -> StreamSettings {
+        *self.settings.lock().unwrap()
     }
 }
 
@@ -208,6 +214,9 @@ fn encode_loop(
     let mut encoder = Encoder::new(EncoderSettings { bitrate_kbps: applied.bitrate_kbps, max_fps: applied.max_fps as f32 });
     let mut rate: Option<RateControl> = None;
     let mut last_frame: Option<RawFrame> = None;
+    // The newest frame rate control skipped. Damage-driven capture may send
+    // nothing more once the screen goes still, so it's retried then.
+    let mut skipped: Option<RawFrame> = None;
     // When the last frame was *taken* (not sent), so encode time doesn't
     // stretch the frame interval.
     let mut last_taken = Instant::now() - Duration::from_secs(1);
@@ -232,8 +241,11 @@ fn encode_loop(
         let frame = match capture.next(Duration::from_millis(100)) {
             Ok(Some(f)) => f,
             Ok(None) => {
-                // Screen is static. Only re-encode if a keyframe is owed.
-                if keyframe.load(Ordering::Relaxed)
+                // Screen is static: send a skipped frame, or re-encode the
+                // last one if a keyframe is owed.
+                if let Some(f) = skipped.take() {
+                    f
+                } else if keyframe.load(Ordering::Relaxed)
                     && let Some(f) = last_frame.clone()
                 {
                     f
@@ -257,9 +269,12 @@ fn encode_loop(
             if let Some(kbps) = rc.update(srtt, min_rtt) {
                 tracing::debug!(kbps, ?srtt, ?min_rtt, "bitrate adjusted");
                 encoder.set_settings(EncoderSettings { bitrate_kbps: kbps, max_fps: applied.max_fps as f32 });
-                keyframe.store(true, Ordering::Relaxed);
             }
         }
+        // Keep every frame while the link keeps up; drop frames to hold the
+        // rate once it's congested, or when the viewer chose a fixed rate.
+        let congested = rate.as_ref().is_some_and(|r| r.current_kbps < r.target_kbps);
+        encoder.set_frame_skip(applied.bitrate_kbps != 0 || congested);
 
         let force = keyframe.swap(false, Ordering::Relaxed);
         let encoded = match encoder.encode(&frame, force) {
@@ -268,6 +283,9 @@ fn encode_loop(
                 if force {
                     keyframe.store(true, Ordering::Relaxed);
                 }
+                if let Some(old) = skipped.replace(frame) {
+                    capture.recycle(old);
+                }
                 continue;
             }
             Err(e) => {
@@ -275,7 +293,12 @@ fn encode_loop(
                 return;
             }
         };
-        last_frame = Some(frame);
+        if let Some(old) = skipped.take() {
+            capture.recycle(old);
+        }
+        if let Some(old) = last_frame.replace(frame) {
+            capture.recycle(old);
+        }
         let seq = flow.take_seq();
         let msg = VideoFrame {
             seq,
@@ -313,26 +336,51 @@ mod tests {
     #[test]
     #[ignore]
     fn pipeline_rate() {
-        use slipstream_platform::Backend;
-        let mut tp = slipstream_platform::test_pattern::TestPattern::new(1280, 720);
-        let capture = tp.capture(0, 60).unwrap();
-        let flow = Flow::new();
-        let (tx, mut rx) = mpsc::channel(4);
-        let (etx, _erx) = mpsc::unbounded_channel();
-        let _p = Pipeline::start(capture, flow.clone(), StreamSettings::default(), tx, etx);
-        let start = Instant::now();
-        let mut n = 0;
-        let mut skipped_seq = 0;
-        let mut last_seq = 0;
-        while start.elapsed() < Duration::from_secs(3) {
-            if let Some(f) = rx.blocking_recv() {
-                n += 1;
-                skipped_seq += f.seq - last_seq - 1;
-                last_seq = f.seq;
-                flow.ack(f.seq);
+        use slipstream_codec::PixelFormat;
+        use slipstream_platform::{FrameSlot, FrameStream};
+        // Replays pre-rendered, fully moving frames at 60 fps through a real
+        // frame slot: a worst case for the encoder (every pixel changes).
+        for (w, h) in [(1280u32, 720u32), (1920, 1080), (2560, 1440), (3840, 2160)] {
+            let frames: Vec<Vec<u8>> = (0..8u32)
+                .map(|t| {
+                    let mut d = vec![255u8; (w * h * 4) as usize];
+                    for (i, px) in d.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                        let (x, y) = (i as u32 % w, i as u32 / w);
+                        px[0] = ((x + t * 9) % 256) as u8;
+                        px[1] = ((y + t * 5) % 256) as u8;
+                        px[2] = if ((x + t * 9) / 40 + y / 40) % 2 == 0 { 220 } else { 30 };
+                    }
+                    d
+                })
+                .collect();
+            let slot = FrameSlot::new();
+            let producer = slot.clone();
+            std::thread::spawn(move || {
+                let mut i = 0;
+                while !producer.is_closed() {
+                    let mut data = producer.buffer(frames[0].len());
+                    data.extend_from_slice(&frames[i % frames.len()]);
+                    producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
+                    i += 1;
+                    std::thread::sleep(Duration::from_micros(16_667));
+                }
+            });
+            let capture = FrameStream::new(slot);
+            let flow = Flow::new();
+            let (tx, mut rx) = mpsc::channel(4);
+            let (etx, _erx) = mpsc::unbounded_channel();
+            let _p = Pipeline::start(capture, flow.clone(), StreamSettings::default(), tx, etx);
+            let start = Instant::now();
+            let (mut n, mut bytes) = (0, 0);
+            while start.elapsed() < Duration::from_secs(3) {
+                if let Some(f) = rx.blocking_recv() {
+                    n += 1;
+                    bytes += f.data.len();
+                    flow.ack(f.seq);
+                }
             }
+            println!("{w}x{h}: {:.1} fps through the pipeline, {:.0} KB/frame", n as f64 / 3.0, bytes as f64 / n.max(1) as f64 / 1024.0);
         }
-        println!("{:.1} fps through the pipeline ({skipped_seq} seq gaps)", n as f64 / 3.0);
     }
 
     #[test]

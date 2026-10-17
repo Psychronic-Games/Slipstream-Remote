@@ -78,8 +78,18 @@ fn text_field(ui: &mut Ui, value: &mut String, hint: &str, password: bool) -> eg
 
 pub fn ui(app: &mut App, ui: &mut Ui) {
     let mut reset_permission = false;
+    let mut link_now = false;
+    let linking = app.linking();
+    let network_help = match &app.org {
+        Some(org) => format!(
+            "Set up by {org}'s station when you downloaded this app. Change these only if {org} asks you to."
+        ),
+        None => "Your station gives this device its ID, and relays the link when the two computers can't reach \
+                 each other directly. Enter its web address, e.g. support.example.com."
+            .to_string(),
+    };
     let f = &mut app.settings_form;
-    theme::panel(ui, "Station identity", pal::LAVENDER, |ui| {
+    theme::panel(ui, "Device identity", pal::LAVENDER, |ui| {
         row(ui, "Device name", |ui| {
             text_field(ui, &mut f.device_name, "My Computer", false);
         });
@@ -87,22 +97,24 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     ui.add_space(14.0);
 
     theme::panel(ui, "Network", pal::BLUE, |ui| {
-        ui.label(
-            RichText::new(
-                "The server hands out IDs and relays traffic when a direct link is impossible. \
-                 Enter its web address — e.g. relay.example.com. See docs/SERVER.md to run your own.",
-            )
-            .color(pal::DIM),
-        );
+        ui.label(RichText::new(network_help).color(pal::DIM));
         ui.add_space(6.0);
         row(ui, "Server address", |ui| {
-            text_field(ui, &mut f.server, "relay.example.com", false);
+            text_field(ui, &mut f.server, "support.example.com", false);
         });
         row(ui, "Access key", |ui| {
             text_field(ui, &mut f.key, "only for private stations", true);
         });
+        row(ui, "Setup code", |ui| {
+            ui.horizontal(|ui| {
+                let r = text_field(ui, &mut app.link_code, "from the station's download page (fills in the key)", false);
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let label = if linking { "Connecting…" } else { "Connect" };
+                link_now = ui.add_enabled_ui(!linking, |ui| theme::pill(ui, label, pal::BLUE)).inner.clicked() || enter;
+            });
+        });
         row(ui, "Public fallback relays", |ui| {
-            ui.checkbox(&mut f.public_relays, "Also use the free n0 relays (applies after restart)");
+            ui.checkbox(&mut f.public_relays, "Also use the free public relays (applies after restart)");
         });
     });
     ui.add_space(14.0);
@@ -146,6 +158,16 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         });
     });
     ui.add_space(14.0);
+    if link_now {
+        let code = slipstream_core::provision::normalize_code(&app.link_code);
+        let station = app.settings_form.server.trim().to_string();
+        if station.is_empty() || code.len() != slipstream_core::provision::CODE_LEN {
+            app.toast("Enter the server address above and the 8-character setup code", pal::RED);
+        } else {
+            let ctx = ui.ctx().clone();
+            app.start_link(&ctx, slipstream_core::provision::StationLink { station, code }, true);
+        }
+    }
     if reset_permission {
         app.client.update_settings(|s| s.host.portal_restore_token = None);
         app.toast("Screen-sharing permission will be asked again next session", pal::VIOLET);
@@ -260,7 +282,7 @@ pub fn about_ui(app: &mut App, ui: &mut Ui) {
         ui.label("Fast, free and open-source remote desktop. No accounts, no subscriptions.");
         ui.label("Every session is end-to-end encrypted; servers only ever see ciphertext.");
         ui.add_space(10.0);
-        ui.label(RichText::new("STATION KEY").font(theme::display(15.0)).color(pal::LAVENDER));
+        ui.label(RichText::new("DEVICE KEY").font(theme::display(15.0)).color(pal::LAVENDER));
         ui.label(RichText::new(app.client.endpoint_id().to_string()).font(theme::mono(14.0)).color(pal::BLUE));
         ui.add_space(10.0);
         ui.label(RichText::new("LICENSE").font(theme::display(15.0)).color(pal::LAVENDER));

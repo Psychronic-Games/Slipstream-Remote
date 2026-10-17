@@ -44,7 +44,8 @@ pub fn integrate() -> Result<()> {
     let entry = format!(
         "[Desktop Entry]\nType=Application\nName=Slipstream Remote\nGenericName=Remote Desktop\n\
          Comment=Fast, free, open-source remote desktop\nExec=\"{}\" %U\nIcon={APP_ID}\nTerminal=false\n\
-         Categories=Network;RemoteAccess;\nKeywords=remote;desktop;support;teamviewer;\nStartupWMClass={APP_ID}\n",
+         Categories=Network;RemoteAccess;\nKeywords=remote;desktop;support;teamviewer;\nStartupWMClass={APP_ID}\n\
+         MimeType=x-scheme-handler/slipstream;\n",
         exe.display()
     );
     changed |= write_if_changed(&data.join(format!("applications/{APP_ID}.desktop")), entry.as_bytes())?;
@@ -52,6 +53,10 @@ pub fn integrate() -> Result<()> {
         tracing::info!("installed desktop entry and icon for {}", exe.display());
         // Nudge menu caches; harmless if these tools are missing.
         let _ = std::process::Command::new("update-desktop-database").arg(data.join("applications")).status();
+        // Open slipstream:// links (the station page's Connect button) with us.
+        let _ = std::process::Command::new("xdg-mime")
+            .args(["default", &format!("{APP_ID}.desktop"), "x-scheme-handler/slipstream"])
+            .status();
         let _ = std::process::Command::new("gtk-update-icon-cache").args(["-q", "-t"]).arg(data.join("icons/hicolor")).status();
     }
     Ok(())

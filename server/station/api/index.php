@@ -37,6 +37,18 @@ if (!is_array($req)) {
 $cfg = slip_config();
 $station = slip_station();
 
+// Setup codes (from the download page) buy an app this station's config,
+// access key included, so they come before the key check.
+if (($req['op'] ?? '') === 'link') {
+    if (!slip_rate_ok('link', 20)) {
+        fail('too many attempts, slow down', 429);
+    }
+    if (!slip_link_ok((string)($req['code'] ?? ''))) {
+        fail('that setup code is not valid — codes last ' . SLIP_CODE_DAYS . ' days; get a new one from ' . slip_base_url(), 403);
+    }
+    reply(['ok' => true] + slip_client_config());
+}
+
 // Private stations only serve apps carrying the access key.
 if ($key = slip_access_key()) {
     $given = $req['key'] ?? '';
@@ -74,6 +86,7 @@ try {
                 'size' => (int)$f['size'],
                 'sha256' => (string)$f['sha256'],
                 'os' => (string)$f['os'],
+                'sig' => (string)($f['sig'] ?? ''),
             ]]);
 
         case 'lookup':

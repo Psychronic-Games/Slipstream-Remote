@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+fast_image_resize = "6.1.0"
 openh264 = "0.9.9"
+openh264-sys2 = "0.9.9"
 tracing.workspace = true
 yuv = "0.8.19"

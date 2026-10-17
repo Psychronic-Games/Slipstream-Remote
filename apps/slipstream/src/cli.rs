@@ -48,6 +48,13 @@ pub async fn info() -> Result<()> {
         ),
         None => println!("server       : (none — run `slipstream set-server relay.example.com`)"),
     }
+    match slipstream_core::release::trusted_keys().as_slice() {
+        [] => println!("updates      : off (this build has no update key)"),
+        keys => {
+            let keys: Vec<String> = keys.iter().map(|k| k.fmt_short().to_string()).collect();
+            println!("updates      : signed by {}", keys.join(", "));
+        }
+    }
     Ok(())
 }
 
@@ -138,7 +145,13 @@ pub async fn connect(id: &str, password: &str, seconds: u64, ops: FileOps) -> Re
     let id: DeviceId = id.parse()?;
     let store = Store::open_default()?;
     let (client, _events) = Client::start(store, ClientOptions::default()).await?;
-    let (session, mut events) = client.connect(id, password, |p| println!("… {p}")).await?;
+    let (session, mut events) = match client.connect(id, password, |p| println!("… {p}")).await {
+        Ok(s) => s,
+        Err(e) => {
+            client.shutdown().await;
+            return Err(e);
+        }
+    };
     let info = session.info().clone();
     println!("connected to {} ({}), {} display(s)", info.host_name, info.os, info.displays.len());
     if ops.ls.is_some() || ops.put.is_some() || ops.get.is_some() {
@@ -180,20 +193,24 @@ pub async fn update() -> Result<()> {
     let store = Store::open_default()?;
     let (client, _events) = Client::start(store, ClientOptions::default()).await?;
     println!("this is Slipstream {}", slipstream_core::version_string());
-    match client.check_update().await? {
-        None => println!("up to date"),
-        Some(info) => {
-            println!("installing {}…", info.label());
-            let exe = client
-                .install_update(&info, |done, total| {
-                    if total > 0 && done == total {
-                        println!("downloaded {} bytes", total);
-                    }
-                })
-                .await?;
-            println!("updated {} — restart Slipstream to use it", exe.display());
+    let result = async {
+        match client.check_update().await? {
+            None => println!("up to date"),
+            Some(info) => {
+                println!("installing {}…", info.label());
+                let exe = client
+                    .install_update(&info, |done, total| {
+                        if total > 0 && done == total {
+                            println!("downloaded {} bytes", total);
+                        }
+                    })
+                    .await?;
+                println!("updated {} — restart Slipstream to use it", exe.display());
+            }
         }
+        anyhow::Ok(())
     }
+    .await;
     client.shutdown().await;
-    Ok(())
+    result
 }

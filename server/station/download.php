@@ -1,8 +1,8 @@
 <?php
 /**
- * Serves a client build preconfigured for this station: the station's
- * address, access key and name are appended to the executable (or added to
- * the macOS app bundle), so the app works with no setup.
+ * Serves a client build for this station. Unsigned builds get the station's
+ * address, access key and name appended, so they work with no setup; signed
+ * ones are served untouched and link up with a setup code instead.
  */
 require __DIR__ . '/lib/slipstream.php';
 
@@ -52,33 +52,16 @@ while (ob_get_level()) {
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
 
-if ($os === 'macos') {
-    // Add Contents/Resources/station.json inside the zipped app bundle.
-    if (!class_exists('ZipArchive')) {
-        http_response_code(500);
-        exit('This server needs the PHP zip extension to prepare macOS downloads.');
-    }
-    $tmp = tempnam(sys_get_temp_dir(), 'slip');
-    copy($b['path'], $tmp);
-    $zip = new ZipArchive();
-    if ($zip->open($tmp) !== true) {
-        http_response_code(500);
-        exit('Broken macOS build on the server.');
-    }
-    $app = null;
-    for ($i = 0; $i < $zip->numFiles; $i++) {
-        if (preg_match('#^(.*?\.app)/Contents/#', $zip->getNameIndex($i), $m)) {
-            $app = $m[1];
-            break;
-        }
-    }
-    $zip->addFromString(($app ?? 'Slipstream.app') . '/Contents/Resources/station.json', json_encode(slip_client_config(), JSON_UNESCAPED_SLASHES));
-    $zip->close();
-    header('Content-Type: application/zip');
-    header(slip_disposition("$base (macOS).zip"));
-    header('Content-Length: ' . filesize($tmp));
-    readfile($tmp);
-    unlink($tmp);
+// Signed apps (and the Mac bundle, whose seal any added file breaks) go out
+// byte-for-byte as released. They link to this station with the setup code
+// that the download URL carries (see index.php). Unsigned builds get the
+// station's settings appended, so they need no setup at all.
+if ($b['signed'] || $os === 'macos') {
+    $name = ['windows' => "$base.exe", 'macos' => "$base (macOS).zip"][$os] ?? $base;
+    header('Content-Type: ' . ($os === 'macos' ? 'application/zip' : 'application/octet-stream'));
+    header(slip_disposition($name));
+    header('Content-Length: ' . $b['size']);
+    readfile($b['path']);
     exit;
 }
 

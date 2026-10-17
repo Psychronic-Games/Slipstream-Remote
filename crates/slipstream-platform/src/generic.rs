@@ -96,102 +96,35 @@ impl Backend for GenericBackend {
     fn capture(&mut self, display: u32, max_fps: u32) -> Result<FrameStream> {
         let d = self.displays.get(display as usize).cloned().with_context(|| format!("display {display} not found"))?;
         let origin = (d.x, d.y);
-        let monitors = Monitor::all()?;
-        let monitor = monitors
-            .into_iter()
-            .nth(display as usize)
-            .with_context(|| format!("display {display} not found"))?;
+        let index = display as usize;
+        Monitor::all()?.into_iter().nth(index).with_context(|| format!("display {display} not found"))?;
         let slot = FrameSlot::new();
         let producer = slot.clone();
         let min_interval = Duration::from_secs_f64(1.0 / max_fps.clamp(1, 240) as f64);
-
-        match monitor.video_recorder() {
-            Ok((recorder, frames)) => {
-                recorder.start().map_err(|e| anyhow!("starting capture: {e}"))?;
-                thread::Builder::new().name("capture".into()).spawn(move || {
-                    // The recorder only delivers frames when the picture
-                    // changes, and they carry no pointer. Keep the latest
-                    // clean frame so that pointer moves on a still screen
-                    // (and changes that arrive while throttled) still go out.
-                    let poll = (min_interval / 2).max(Duration::from_millis(4));
-                    let mut last = Instant::now() - min_interval;
-                    let mut clean = None;
-                    let mut dirty = false;
-                    let mut shown = None;
-                    while !producer.is_closed() {
-                        match frames.recv_timeout(poll) {
-                            Ok(f) => {
-                                clean = Some(frames.try_iter().last().unwrap_or(f));
-                                dirty = true;
-                            }
-                            Err(mpsc::RecvTimeoutError::Timeout) => {}
-                            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                                producer.fail("capture ended");
-                                break;
-                            }
-                        }
-                        let Some(f) = &clean else { continue };
-                        let pointer = pointer_now();
-                        if !(dirty || pointer != shown) || last.elapsed() < min_interval.mul_f32(0.8) {
-                            continue;
-                        }
-                        last = Instant::now();
-                        dirty = false;
-                        shown = pointer;
-                        let mut data = f.raw.clone();
-                        if let Some(p) = pointer {
-                            draw_pointer(&mut data, f.width, f.height, f.width * 4, origin, p);
-                        }
-                        producer.put(RawFrame {
-                            width: f.width,
-                            height: f.height,
-                            stride: f.width * 4,
-                            format: PixelFormat::Rgba,
-                            data,
-                        });
+        // Monitor handles and the recorder (an AVCaptureSession on macOS)
+        // aren't Send: create them on the capture thread.
+        thread::Builder::new().name("capture".into()).spawn(move || {
+            let Some(monitor) = Monitor::all().ok().and_then(|m| m.into_iter().nth(index)) else {
+                producer.fail("display disappeared");
+                return;
+            };
+            match monitor.video_recorder() {
+                Ok((recorder, frames)) => match recorder.start() {
+                    Ok(()) => {
+                        record(&producer, &frames, min_interval, origin);
+                        let _ = recorder.stop();
                     }
-                    let _ = recorder.stop();
-                })?;
-            }
-            Err(e) => {
-                // Fall back to polling screenshots.
-                tracing::warn!("video recorder unavailable ({e}), polling screenshots");
-                // Monitor handles aren't Send on every OS: look it up in the thread.
-                let index = display as usize;
-                thread::Builder::new().name("capture".into()).spawn(move || {
-                    let Some(monitor) = Monitor::all().ok().and_then(|m| m.into_iter().nth(index)) else {
-                        producer.fail("display disappeared");
-                        return;
-                    };
-                    while !producer.is_closed() {
-                        let t = Instant::now();
-                        match monitor.capture_image() {
-                            Ok(img) => {
-                                let (w, h) = img.dimensions();
-                                let mut data = img.into_raw();
-                                if let Some(p) = pointer_now() {
-                                    draw_pointer(&mut data, w, h, w * 4, origin, p);
-                                }
-                                producer.put(RawFrame {
-                                    width: w,
-                                    height: h,
-                                    stride: w * 4,
-                                    format: PixelFormat::Rgba,
-                                    data,
-                                });
-                            }
-                            Err(e) => {
-                                producer.fail(format!("screenshot failed: {e}"));
-                                break;
-                            }
-                        }
-                        if let Some(rest) = min_interval.checked_sub(t.elapsed()) {
-                            thread::sleep(rest);
-                        }
+                    Err(e) => {
+                        tracing::warn!("video recorder didn't start ({e}), polling screenshots");
+                        poll_screenshots(&producer, &monitor, min_interval, origin);
                     }
-                })?;
+                },
+                Err(e) => {
+                    tracing::warn!("video recorder unavailable ({e}), polling screenshots");
+                    poll_screenshots(&producer, &monitor, min_interval, origin);
+                }
             }
-        }
+        })?;
         Ok(FrameStream::new(slot))
     }
 
@@ -202,6 +135,71 @@ impl Backend for GenericBackend {
             .cloned()
             .with_context(|| format!("display {display} not found"))?;
         self.input.send((d, event)).map_err(|_| anyhow!("input worker stopped"))
+    }
+}
+
+/// Streams the recorder's frames. It only delivers frames when the picture
+/// changes, and they carry no pointer. So the latest clean frame is kept,
+/// and pointer moves on a still screen (and changes that arrive while
+/// throttled) still go out.
+#[cfg(not(target_os = "linux"))]
+fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interval: Duration, origin: (i32, i32)) {
+    let poll = (min_interval / 2).max(Duration::from_millis(4));
+    let mut last = Instant::now() - min_interval;
+    let mut clean = None;
+    let mut dirty = false;
+    let mut shown = None;
+    while !producer.is_closed() {
+        match frames.recv_timeout(poll) {
+            Ok(f) => {
+                clean = Some(frames.try_iter().last().unwrap_or(f));
+                dirty = true;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                producer.fail("capture ended");
+                return;
+            }
+        }
+        let Some(f) = &clean else { continue };
+        let pointer = pointer_now();
+        if !(dirty || pointer != shown) || last.elapsed() < min_interval.mul_f32(0.8) {
+            continue;
+        }
+        last = Instant::now();
+        dirty = false;
+        shown = pointer;
+        let mut data = producer.buffer(f.raw.len());
+        data.extend_from_slice(&f.raw);
+        if let Some(p) = pointer {
+            draw_pointer(&mut data, f.width, f.height, f.width * 4, origin, p);
+        }
+        producer.put(RawFrame { width: f.width, height: f.height, stride: f.width * 4, format: PixelFormat::Rgba, data });
+    }
+}
+
+/// Fallback: polls screenshots at the frame rate.
+#[cfg(not(target_os = "linux"))]
+fn poll_screenshots(producer: &FrameSlot, monitor: &Monitor, min_interval: Duration, origin: (i32, i32)) {
+    while !producer.is_closed() {
+        let t = Instant::now();
+        match monitor.capture_image() {
+            Ok(img) => {
+                let (w, h) = img.dimensions();
+                let mut data = img.into_raw();
+                if let Some(p) = pointer_now() {
+                    draw_pointer(&mut data, w, h, w * 4, origin, p);
+                }
+                producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Rgba, data });
+            }
+            Err(e) => {
+                producer.fail(format!("screenshot failed: {e}"));
+                return;
+            }
+        }
+        if let Some(rest) = min_interval.checked_sub(t.elapsed()) {
+            thread::sleep(rest);
+        }
     }
 }
 

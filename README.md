@@ -39,7 +39,7 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 | Linux — Wayland (KDE, GNOME, wlroots) | desktop portal + PipeWire | ✅ | tested (KDE) |
 | Linux — X11 | MIT-SHM + XTest | ✅ | in testing |
 | Windows 10/11 | DXGI + SendInput | ✅ | tested |
-| macOS 12+ | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | written; not yet built or tested |
+| macOS 12+ | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | builds (`scripts/build-macos.sh`); testing on a real Mac next |
 | Android | planned | planned | |
 
 The Linux app is a single file that runs on any 64-bit distribution from
@@ -61,7 +61,8 @@ password. See [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md#1-set-up-your-st
 ### 2. Get the app
 
 Download it from your station's page (`https://support.example.com/`) on
-every computer — it arrives already configured for your station. Any OS can
+every computer — it connects to your station by itself (or with the setup
+code shown on the page). Any OS can
 control any other.
 
 ### 3. Connect
@@ -111,6 +112,7 @@ Build dependencies, cross-compiling and the release checklist are in
 | [Status](docs/STATUS.md) | What's verified, known gaps, next steps |
 | [Open issues](docs/issues/README.md) | The work queue, ready to file on GitHub |
 | [Changelog](CHANGELOG.md) | What's in each version |
+| [Code signing policy](docs/CODE-SIGNING.md) | What is signed, by whom, and privacy |
 
 ## How it works
 

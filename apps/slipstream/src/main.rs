@@ -10,7 +10,12 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::Layer as _;
 
 #[derive(Debug, Parser)]
-#[command(name = "slipstream", version = slipstream_core::VERSION_STRING, about = "Fast, free, open-source remote desktop")]
+#[command(
+    name = "slipstream",
+    version = slipstream_core::VERSION_STRING,
+    about = "Fast, free, open-source remote desktop",
+    args_conflicts_with_subcommands = true
+)]
 struct Args {
     /// Share an animated test pattern instead of the real screen (demo/testing).
     #[arg(long, global = true)]
@@ -43,6 +48,14 @@ struct Args {
     /// Open on this page: bridge, links, config, about (testing).
     #[arg(long, hide = true)]
     page: Option<String>,
+
+    /// Initial window size, e.g. 1180x1400 (testing).
+    #[arg(long, hide = true, value_parser = parse_size)]
+    window_size: Option<[f32; 2]>,
+
+    /// A `slipstream://link?…` URL to open (the station page's Connect button).
+    #[arg(value_name = "LINK", hide = true, value_parser = parse_link)]
+    link: Option<String>,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -124,9 +137,26 @@ fn main() -> anyhow::Result<()> {
                 page: args.page,
                 minimized: args.minimized,
                 open_files: args.open_files,
+                window_size: args.window_size,
+                link: args.link,
             })
         }
     }
+}
+
+/// Only `slipstream://` URLs, so a mistyped command still gets an error.
+fn parse_link(s: &str) -> Result<String, String> {
+    if s.starts_with("slipstream://") {
+        Ok(s.to_string())
+    } else {
+        Err(format!("unknown command {s:?} (see --help)"))
+    }
+}
+
+fn parse_size(s: &str) -> Result<[f32; 2], String> {
+    let (w, h) = s.split_once('x').ok_or("expected WIDTHxHEIGHT")?;
+    let n = |v: &str| v.trim().parse::<f32>().map_err(|e| e.to_string());
+    Ok([n(w)?, n(h)?])
 }
 
 /// If this copy of the app came from a station's download page, adopt that

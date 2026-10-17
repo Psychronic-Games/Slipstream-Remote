@@ -7,6 +7,8 @@ mod desktop;
 mod home;
 mod keys;
 mod remote;
+#[cfg(windows)]
+mod scheme;
 mod settings;
 mod single;
 pub mod theme;
@@ -23,7 +25,11 @@ use eframe::{
     egui::{self, Align2, Color32, Pos2, Rect, Ui, UiBuilder, pos2, vec2},
     egui_wgpu,
 };
-use slipstream_core::{config::Store, directory::DeviceId};
+use slipstream_core::{
+    config::Store,
+    directory::{DeviceId, DirectoryClient},
+    provision::{StationConfig, StationLink},
+};
 use slipstream_session::{Client, ClientEvent, ClientOptions, DirStatus, ViewerEvent, ViewerSession};
 use theme::{Corner, pal};
 use tokio::sync::{mpsc as tmpsc, oneshot};
@@ -40,19 +46,27 @@ pub struct GuiOptions {
     pub minimized: bool,
     /// Open the file transfer window when a session starts (testing).
     pub open_files: bool,
+    /// Initial window size (testing, e.g. full-page screenshots).
+    pub window_size: Option<[f32; 2]>,
+    /// A `slipstream://link?…` URL the app was opened with.
+    pub link: Option<String>,
 }
 
 pub fn run(opts: GuiOptions) -> Result<()> {
     let store = Store::open_default()?;
     // Only one Slipstream per profile: a second launch just brings the
     // running one to the front.
-    let Some(instance) = single::Instance::acquire(store.dir()) else {
+    let Some(instance) = single::Instance::acquire(store.dir(), opts.link.as_deref()) else {
         tracing::info!("Slipstream is already running; showing its window");
         return Ok(());
     };
     #[cfg(target_os = "linux")]
     if let Err(e) = desktop::integrate() {
         tracing::debug!("desktop integration skipped: {e:#}");
+    }
+    #[cfg(windows)]
+    if let Err(e) = scheme::register() {
+        tracing::debug!("link handler not registered: {e:#}");
     }
     let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().enable_all().build()?);
     let (client, events) =
@@ -62,11 +76,17 @@ pub fn run(opts: GuiOptions) -> Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("Slipstream Remote")
             .with_app_id("slipstream-remote") // must match the .desktop file name (Wayland icons)
-            .with_inner_size([1180.0, 760.0])
+            .with_inner_size(opts.window_size.unwrap_or([1180.0, 760.0]))
             .with_min_inner_size([820.0, 560.0])
             .with_icon(theme::icon(128))
             .with_drag_and_drop(true),
         renderer: eframe::Renderer::Wgpu,
+        // Queue one frame, not two: a remote screen is all about latency
+        // (this saves a refresh interval, ~17 ms at 60 Hz).
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            surface: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let rt2 = rt.clone();
@@ -92,6 +112,16 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             }
             app.screenshot = opts.screenshot;
             app.show_requests = Some(instance.listen(cc.egui_ctx.clone()));
+            // Link to a station: as asked, or (no station yet) from where the
+            // browser says this download came from.
+            let link = opts.link.as_deref().and_then(StationLink::parse).map(|l| (l, true)).or_else(|| {
+                app.client.settings().server.url.is_none().then(|| {
+                    slipstream_core::provision::download_origins().iter().find_map(|u| StationLink::parse(u)).map(|l| (l, false))
+                })?
+            });
+            if let Some((link, asked)) = link {
+                app.start_link(&cc.egui_ctx, link, asked);
+            }
             app.start_hidden = opts.minimized && app.tray.is_some();
             app.open_files = opts.open_files;
             Ok(Box::new(app))
@@ -190,8 +220,13 @@ pub struct App {
     start_hidden: bool,
     /// The window is hidden in the tray.
     hidden: bool,
-    /// Another launch asked us to show the window.
-    show_requests: Option<mpsc::Receiver<()>>,
+    /// Another launch asked us to show the window (or to link).
+    show_requests: Option<mpsc::Receiver<single::Request>>,
+    /// Exchanging a setup code with a station: (asked by the user, result).
+    link_job: Option<(bool, oneshot::Receiver<Result<StationConfig, String>>)>,
+    /// The Bridge/Config "connect to your station" form.
+    pub link_station: String,
+    pub link_code: String,
     window_title: String,
     logo: Option<egui::TextureHandle>,
     pub update: Option<UpdateState>,
@@ -251,6 +286,9 @@ impl App {
             start_hidden: false,
             hidden: false,
             show_requests: None,
+            link_job: None,
+            link_station: String::new(),
+            link_code: String::new(),
             logo: None,
             window_title: String::new(),
             update: None,
@@ -292,7 +330,7 @@ impl App {
                 ClientEvent::HostSessionEnded { session, reason } => {
                     if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
                         let peer = s.peer.clone();
-                        self.toast(format!("{peer} disconnected — {reason}"), pal::LAVENDER);
+                        self.toast(format!("Link with {peer} closed: {reason}"), pal::LAVENDER);
                     }
                     self.incoming.retain(|s| s.id != session);
                 }
@@ -410,6 +448,48 @@ impl App {
             let _ = tx.send(client.check_update().await.map_err(|e| format!("{e:#}")));
             wake.request_repaint();
         });
+    }
+
+    /// Exchanges `link`'s setup code for its station's config, then switches
+    /// to that station. `asked`: the user did this (a button, a typed code),
+    /// so it replaces a server they typed in by hand and errors are shown.
+    pub fn start_link(&mut self, ctx: &egui::Context, link: StationLink, asked: bool) {
+        let wake = ctx.clone();
+        let (tx, rx) = oneshot::channel();
+        self.link_job = Some((asked, rx));
+        self.rt.spawn(async move {
+            let r = async { DirectoryClient::new(&link.station, None)?.link(&link.code).await }.await;
+            let _ = tx.send(r.map_err(|e| format!("{e:#}")));
+            wake.request_repaint();
+        });
+    }
+
+    pub fn linking(&self) -> bool {
+        self.link_job.is_some()
+    }
+
+    fn poll_link(&mut self) {
+        let Some((asked, rx)) = &mut self.link_job else { return };
+        let Ok(result) = rx.try_recv() else { return };
+        let asked = *asked;
+        self.link_job = None;
+        match result {
+            Ok(cfg) => {
+                self.client.update_settings(|s| {
+                    if asked {
+                        s.server.provisioned = true;
+                    }
+                    slipstream_core::provision::apply(s, &cfg);
+                });
+                self.settings_form = settings::SettingsForm::from(&self.client.settings());
+                self.org = cfg.org.clone();
+                self.link_code.clear();
+                let name = cfg.org.unwrap_or_else(|| cfg.server.clone());
+                self.toast(format!("Connected to {name}"), pal::GREEN);
+            }
+            Err(e) if asked => self.toast(format!("Couldn't connect to the station: {e}"), pal::RED),
+            Err(e) => tracing::info!("linking from the download address failed: {e}"),
+        }
     }
 
     fn poll_update(&mut self, ctx: &egui::Context) {
@@ -850,7 +930,16 @@ impl eframe::App for App {
             self.start_hidden = false;
             self.set_visible(ctx, false);
         }
-        let mut show = self.show_requests.as_ref().is_some_and(|rx| rx.try_recv().is_ok());
+        let mut show = false;
+        while let Some(req) = self.show_requests.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            show = true;
+            if let single::Request::Link(url) = req {
+                match StationLink::parse(&url) {
+                    Some(link) => self.start_link(ctx, link, true),
+                    None => self.toast("That link isn't a Slipstream station link", pal::RED),
+                }
+            }
+        }
         while let Some(cmd) = self.tray.as_ref().and_then(|t| t.poll()) {
             match cmd {
                 tray::TrayCmd::Show => show = true,
@@ -918,6 +1007,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.poll_attempt(&ctx);
         self.poll_update(&ctx);
+        self.poll_link();
         for tab in &mut self.tabs {
             tab.poll(&ctx);
         }

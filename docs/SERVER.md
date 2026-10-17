@@ -4,9 +4,11 @@ Slipstream isn't a central service. Anyone — an IT firm, a company, a family
 — can run their own **station**: one self-contained web folder that gives
 them a private remote-support service:
 
-- **Download page** — clients get apps that are already configured for your
-  station (address, access key and your organisation's name are built into
-  each download). Nothing to type.
+- **Download page** — clients get apps that connect to your
+  station by themselves: unsigned builds carry its address, access key and
+  your organisation's name; signed builds and the Mac app pick them up from
+  the download address, a *Connect this app* button or a setup code shown on
+  the page. Usually nothing to type.
 - **Private directory** — the 9-digit IDs of *your* clients' devices, listed
   in your admin page with their online status. Apps from other stations
   can't use yours.
@@ -62,12 +64,17 @@ yet. Your settings and device list live in the data folder and are
 untouched. The full release checklist is in [BUILDING.md](BUILDING.md).
 
 `clients/manifest.json` (written by the build script) records the version,
-build number and checksums. Apps check your station about 20 seconds after
+build number, checksums and release signatures. Apps check your station about 20 seconds after
 they start and every 6 hours; when a newer build is there they offer
 **Install & restart**. The update is downloaded from your station
-(preconfigured, like the download page), verified against the manifest,
-swapped in, and the app restarts — keeping its settings, ID and passwords.
+(preconfigured, like the download page), checked against the release key
+built into the app, swapped in, and the app restarts — keeping its settings, ID and passwords.
 Headless machines can run `slipstream update`.
+
+The release key stays on the machine that builds the package. Someone who
+breaks into the web server can't push their own app as an update: the apps
+refuse anything not signed with that key. See
+[BUILDING.md](BUILDING.md#the-release-signing-key).
 
 Apps installed in a protected folder (e.g. by a system package) can't
 replace themselves and point users to the download page instead.

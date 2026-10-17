@@ -143,8 +143,17 @@ they follow automatically.
 
 Send your clients to your station's address, e.g.
 `https://support.example.com/`. The page offers the right download for their
-computer. Every download is **already configured for your station**: there
-is nothing to type and no setup.
+computer. The app **connects to your station by itself**:
+
+- Apps you build yourself carry your station's settings inside the download.
+- Signed apps (from a release) and the Mac app are the same file for
+  everyone. They read your station from the download address the browser
+  recorded on the file.
+- If that didn't work (say the file was copied to a USB stick), the app
+  asks for a station. The download page has a **Connect this app** button,
+  and also shows your station's address and a **setup code** (like
+  `K7MQ-2XPA`) to type in instead. Codes last 30 days; renewing the access
+  key cancels them.
 
 ### Windows 10/11
 
@@ -168,13 +177,20 @@ Ubuntu 20.04, Fedora, Arch…) and needs no extra packages.
   *Share/Allow*. The choice is remembered for later sessions.
 - **X11**: works without any prompt.
 
-### macOS
+### macOS (12 or newer, Apple Silicon or Intel)
 
-macOS builds are not packaged by the build script yet. They have to be
-built on a Mac and dropped into the station's `clients/` folder as
-`slipstream-macos.zip`. The first time, macOS asks for **Screen Recording**
-and **Accessibility** permission (*System Settings → Privacy & Security*);
-both are needed for someone to see and control the Mac.
+1. Download the zip, open it and move **Slipstream** to *Applications*.
+2. Open it. The app isn't notarised by Apple yet, so macOS refuses the
+   first time: go to *System Settings → Privacy & Security* and choose
+   **Open Anyway**.
+3. Allow **Screen Recording** and **Accessibility** when asked (also under
+   *Privacy & Security*). Both are needed for someone to see and control
+   the Mac. Restart the app after granting them.
+4. If it asks for a station, enter the address and setup code from the
+   download page (the *Connect this app* button doesn't work on Macs yet).
+
+Until the app is notarised, macOS may ask for these permissions again after
+an update.
 
 ### What your client sees
 
@@ -293,7 +309,8 @@ start and then every 6 hours. When a newer build is there, a banner offers
 **Install & restart**. The app then:
 
 - downloads the update from your station,
-- checks it against the station's checksums,
+- checks its signature against the release key the app was built with,
+  and its checksum,
 - swaps it in and restarts,
 - keeps its ID, passwords and settings.
 
@@ -314,6 +331,8 @@ broken session.
 | **"This is a private Slipstream station"** | The app wasn't downloaded from this station, or the access key was renewed. Download the app again from the station page. |
 | **Partner not found / offline** | The other computer's app isn't running, has *Accept connections* off, or has no internet. Its status light should say *Online*. |
 | **Wrong password** | One-time passwords change after every session. Ask for the current one. |
+| **"Too many wrong passwords"** | After three wrong tries the computer waits before it checks another password, longer each time (up to 5 minutes). Wait the time shown, then try the right one. |
+| Update not offered, log says **"signature doesn't match"** | The station's apps were built with a different release key from yours. Download the app from the station page again. |
 | Connection works but is slow, stats say **RELAY** | Both sides are behind strict firewalls, so traffic goes through your station. Try the *Speed* or *Low bandwidth* preset. |
 | Black or frozen screen from a Wayland computer | The screen-sharing prompt on that computer wasn't approved. Approve it, or reset it under *Config → Screen permission*. |
 | Mac shows a black screen or ignores the mouse | Grant **Screen Recording** and **Accessibility** to Slipstream in *System Settings → Privacy & Security*, then restart the app. |

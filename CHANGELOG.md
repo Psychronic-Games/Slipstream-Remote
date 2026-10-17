@@ -3,6 +3,85 @@
 Build numbers are the git commit count. The app shows them as
 `0.5.0 (build N · commit)`.
 
+## Unreleased
+
+### Security
+- Updates are signed. The station build script signs every app in the
+  manifest with a release key that stays on the build machine, and apps
+  install only updates signed by the key they were built with. Before
+  this, anyone who got into the web host could have pushed their own app
+  to every client.
+- Password guesses sent over many connections at once are now counted one
+  by one, so they hit the lockout like any others. Before, parallel
+  connections could get several extra guesses in before it started. A
+  viewer that doesn't answer the password challenge within 10 s is
+  dropped.
+
+### Performance
+- OpenH264 is now built with its SIMD assembly (builds need `nasm`; the
+  build script refuses to run without it). Encoding is 2.2x faster, decoding
+  about 1.3x (4K: 27 → 12.5 ms per frame).
+- A fully moving picture streams at up to 60 fps instead of about 17: the
+  encoder keeps every frame while the link keeps up, and only drops frames
+  once the connection is congested or a fixed bitrate was chosen.
+- Bitrate changes no longer rebuild the encoder or force a keyframe.
+- The in-flight frame limit follows the link's base round trip, not one
+  inflated by queueing.
+- Control and input go before video, and video before file transfers.
+- Capture reuses frame buffers instead of allocating one per frame, and the
+  X11 host skips unchanged frames.
+- PipeWire is asked for no more frames than the session uses.
+- The viewer shows frames one display refresh sooner.
+
+### Fixes
+- Sessions could break when a large message (clipboard text) arrived over a
+  slow link while video was flowing: a half-read message was dropped.
+- Screens bigger than 4K (5120×1440 ultrawides, 5K) couldn't be shared;
+  they are now scaled to fit.
+- A frame the encoder skipped could leave the viewer with a stale picture
+  once the screen stopped changing.
+- Raising the frame rate (e.g. *Low bandwidth* → *Balanced*) didn't speed
+  up capture; it now restarts at the new rate.
+- On a Windows PC in light mode, the app used egui's default (small) text
+  sizes.
+- A normal disconnect showed as "connection lost: closed by peer". The
+  goodbye message now arrives first, and either side says who ended it.
+- "Waiting for the remote side to allow screen sharing" only appears when
+  there is a prompt.
+- `slipstream update` and `connect` close their connection on errors
+  (no more "Endpoint dropped" error lines).
+
+### Downloads and setup
+- Signed apps and the Mac app are served exactly as released (one file for
+  everyone, so signatures stay valid and browsers stop flagging every
+  download as "uncommon"). They connect to their station by themselves,
+  from the download address the browser recorded on the file. Failing that,
+  there's a **Connect this app** button (a `slipstream://` link, registered
+  on Windows and Linux) and a **setup code** on the download page. Codes
+  last 30 days and are cancelled by renewing the access key. Unsigned builds
+  still carry the settings inside the download.
+- New on the Bridge when no station is set: a *Connect to your station* form.
+  Config has a *Setup code* field.
+- macOS: `scripts/build-macos.sh` builds a universal, ad-hoc signed
+  `Slipstream.app`. The app compiles for macOS for the first time, after a
+  fix to the capture thread. Updates replace the bundle's contents instead
+  of writing a zip over the executable.
+- Releases: `.github/workflows/release.yml` builds all three platforms from
+  a tag and has SignPath sign the Windows app. `build-station.sh
+  --from-release DIR` assembles a station from such a release, checking the
+  apps trust this machine's release key.
+
+### Interface
+- The local computer is "This device" ("station" now always means the
+  organisation's server). Network settings explain themselves without
+  developer jargon.
+- Station pages use the app's body font, and themed checkboxes.
+
+### Tools
+- `tools/slipstream-release` creates the release key and writes the
+  signed manifest; `build-station.sh` uses it.
+- `slipstream info` shows which release keys the app trusts.
+
 ## 0.5.0 — 2026-10-16
 
 The first working release. It was built from scratch in a day and tested

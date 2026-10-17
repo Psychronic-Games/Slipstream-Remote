@@ -15,6 +15,7 @@ install -Dm644 packaging/linux/slipstream.png "$DATA/icons/hicolor/256x256/apps/
 install -Dm644 packaging/linux/slipstream-remote.desktop "$DATA/applications/slipstream-remote.desktop"
 sed -i "s|^Exec=slipstream|Exec=$BIN/slipstream|" "$DATA/applications/slipstream-remote.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database "$DATA/applications" || true
+command -v xdg-mime >/dev/null && xdg-mime default slipstream-remote.desktop x-scheme-handler/slipstream || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q "$DATA/icons/hicolor" || true
 
 echo "==> Installed:"

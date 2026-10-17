@@ -1,0 +1,133 @@
+# Builds a release from a version tag (v0.6.0 …): Linux, Windows (signed
+# through SignPath when it's set up) and macOS, published as a draft GitHub
+# release. Stations are then assembled from it with
+#   scripts/build-station.sh --from-release <tag>
+# which also signs the update manifest with the release key. That key stays
+# on the maintainer's machine; CI only gets its public half.
+#
+# Repository variables (Settings → Secrets and variables → Actions):
+#   SLIPSTREAM_UPDATE_KEYS   release public key (`slipstream-release pubkey`)
+#   SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_POLICY_SLUG
+#                            from SignPath, once the project is accepted
+# Secret:
+#   SIGNPATH_API_TOKEN
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  SLIPSTREAM_UPDATE_KEYS: ${{ vars.SLIPSTREAM_UPDATE_KEYS }}
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 } # the build number is the commit count
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-unknown-linux-gnu }
+      - uses: ilammy/setup-nasm@v1
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang libxkbcommon-dev libdbus-1-dev
+          pip3 install ziglang
+          cargo install --locked cargo-zigbuild
+      - name: Check the tag matches Cargo.toml
+        run: test "v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" = "$GITHUB_REF_NAME"
+      - name: Build (portable, glibc 2.31+)
+        run: |
+          STUB=$RUNNER_TEMP/zig-stubs; mkdir -p $STUB
+          echo "" > $STUB/empty.c
+          python3 -m ziglang cc -target x86_64-linux-gnu.2.31 -shared -o $STUB/libpipewire-0.3.so $STUB/empty.c
+          RUSTFLAGS="-L native=$STUB" cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 -p slipstream -p slipstream-server
+          ! grep -qs "not using any assembly" target/x86_64-unknown-linux-gnu/release/build/openh264-sys2-*/output
+          mkdir out
+          cp target/x86_64-unknown-linux-gnu/release/slipstream out/slipstream-linux-x86_64
+          cp target/x86_64-unknown-linux-gnu/release/slipstream-server out/slipstream-server-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: out/ }
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/setup-nasm@v1
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --release -p slipstream
+          ! grep -qs "not using any assembly" target/release/build/openh264-sys2-*/output
+          mkdir out && cp target/release/slipstream.exe out/slipstream-windows-x86_64.exe
+      - id: unsigned
+        uses: actions/upload-artifact@v4
+        with: { name: windows-unsigned, path: out/ }
+      - name: Sign with SignPath
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+      - name: Pick the signed build if there is one
+        shell: bash
+        run: |
+          mkdir final
+          if [ -f signed/slipstream-windows-x86_64.exe ]; then
+            cp signed/slipstream-windows-x86_64.exe final/ && echo windows-x86_64 > final/signed.txt
+          else
+            cp out/slipstream-windows-x86_64.exe final/ && : > final/signed.txt
+          fi
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: final/ }
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
+      - run: brew install nasm
+      - run: scripts/build-macos.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: macos, path: dist/slipstream-macos.zip }
+
+  release:
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - name: Describe the build
+        run: |
+          signed=$(cat artifacts/signed.txt 2>/dev/null || true)
+          python3 - "$signed" > artifacts/release.json <<'PY'
+          import json, subprocess, sys
+          git = lambda *a: subprocess.check_output(["git", *a], text=True).strip()
+          version = open("Cargo.toml").read().split('version = "', 1)[1].split('"', 1)[0]
+          print(json.dumps({
+              "version": version,
+              "build": int(git("rev-list", "--count", "HEAD")),
+              "commit": git("rev-parse", "--short", "HEAD"),
+              "signed": [p for p in sys.argv[1].split() if p],
+          }, indent=2))
+          PY
+          rm -f artifacts/signed.txt
+          cat artifacts/release.json
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: artifacts/*

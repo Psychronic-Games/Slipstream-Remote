@@ -1,13 +1,13 @@
 //! Host side of a session: authenticate the viewer, share the screen,
 //! apply its input.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use iroh::endpoint::{Connection, SendStream};
 use slipstream_core::{
     auth::{HostAuth, password_secret},
-    framing::{expect_msg, read_msg, write_msg},
+    framing::{MsgReader, expect_msg, write_msg},
     proto::{
         Capabilities, ClipboardData, DisplayInfo, HostMsg, PROTOCOL_VERSION, SessionInfo, StreamSettings, VideoFrame,
         ViewerMsg,
@@ -22,6 +22,12 @@ use crate::{
     video::{Flow, Pipeline},
 };
 
+/// How long a viewer may queue behind another viewer's password check.
+const AUTH_QUEUE_WAIT: Duration = Duration::from_secs(15);
+/// How long the challenge and answer may take. The answer is computed, not
+/// typed, so this only cuts off stalled connections holding up the queue.
+const AUTH_RESPONSE_WAIT: Duration = Duration::from_secs(10);
+
 async fn fail(send: &mut SendStream, reason: impl Into<String>, retry_after_secs: u32) -> Result<()> {
     write_msg(send, &HostMsg::AuthFailed { reason: reason.into(), retry_after_secs }).await?;
     send.finish().ok();
@@ -31,6 +37,7 @@ async fn fail(send: &mut SendStream, reason: impl Into<String>, retry_after_secs
 pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
     let peer = conn.remote_id();
     let (mut send, mut recv) = conn.accept_bi().await.context("waiting for control stream")?;
+    send.set_priority(slipstream_core::proto::PRIORITY_CONTROL).ok();
     let ViewerMsg::Hello { version, viewer_name } = expect_msg(&mut recv).await? else {
         bail!("expected Hello");
     };
@@ -47,36 +54,46 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
         fail(&mut send, "this device is not accepting connections", 0).await?;
         return Ok(());
     }
-    let locked = inner.throttle.lock().unwrap().locked();
-    if let Some(wait) = locked {
-        fail(&mut send, "too many wrong passwords — try again shortly", wait.as_secs() as u32 + 1).await?;
-        return Ok(());
-    }
-
-    // Password check (see slipstream_core::auth).
-    let mut secrets = vec![password_secret(&inner.one_time_password())];
-    if let Some(p) = settings.host.permanent_secret() {
-        secrets.push(p);
-    }
-    let (auth, pakes) = HostAuth::start(&secrets, &inner.endpoint.id(), &peer);
-    write_msg(&mut send, &HostMsg::AuthChallenge { pakes }).await?;
-    let ViewerMsg::AuthResponse { pakes, confirms } = expect_msg(&mut recv).await? else {
-        bail!("expected AuthResponse");
-    };
-    let confirm = match auth.finish(&pakes, &confirms) {
-        Ok(c) => {
-            inner.throttle.lock().unwrap().record_success();
-            c
-        }
-        Err(_) => {
-            let wait = {
-                let mut t = inner.throttle.lock().unwrap();
-                t.record_failure();
-                t.locked().map(|d| d.as_secs() as u32 + 1).unwrap_or(0)
-            };
-            warn!(%peer, "wrong password");
-            fail(&mut send, "wrong password", wait).await?;
+    // Password check (see slipstream_core::auth), one at a time: the
+    // throttle stays locked until this attempt is counted, so parallel
+    // connections can't slip extra guesses in before the lockout starts.
+    let confirm = {
+        let Ok(mut throttle) = tokio::time::timeout(AUTH_QUEUE_WAIT, inner.throttle.lock()).await else {
+            fail(&mut send, "the device is busy with another sign-in — try again", 5).await?;
             return Ok(());
+        };
+        if let Some(wait) = throttle.locked() {
+            fail(&mut send, "too many wrong passwords — try again shortly", wait.as_secs() as u32 + 1).await?;
+            return Ok(());
+        }
+        let mut secrets = vec![password_secret(&inner.one_time_password())];
+        if let Some(p) = settings.host.permanent_secret() {
+            secrets.push(p);
+        }
+        let (auth, pakes) = HostAuth::start(&secrets, &inner.endpoint.id(), &peer);
+        let exchange = async {
+            write_msg(&mut send, &HostMsg::AuthChallenge { pakes }).await?;
+            expect_msg(&mut recv).await
+        };
+        let ViewerMsg::AuthResponse { pakes, confirms } = tokio::time::timeout(AUTH_RESPONSE_WAIT, exchange)
+            .await
+            .context("viewer didn't answer the password challenge")??
+        else {
+            bail!("expected AuthResponse");
+        };
+        match auth.finish(&pakes, &confirms) {
+            Ok(c) => {
+                throttle.record_success();
+                c
+            }
+            Err(_) => {
+                throttle.record_failure();
+                let wait = throttle.locked().map(|d| d.as_secs() as u32 + 1).unwrap_or(0);
+                drop(throttle);
+                warn!(%peer, "wrong password");
+                fail(&mut send, "wrong password", wait).await?;
+                return Ok(());
+            }
         }
     };
 
@@ -85,13 +102,23 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
     let (displays, cursor_in_video) = {
         let mut backend = inner.backend.lock().await;
         if backend.is_none() {
-            write_msg(&mut send, &HostMsg::Notice("Waiting for the remote side to allow screen sharing…".into()))
-                .await?;
             let opts = OpenOptions {
                 test_pattern: inner.opts.test_pattern,
                 restore_token: settings.host.portal_restore_token.clone(),
             };
-            match slipstream_platform::open(&opts).await {
+            let open = slipstream_platform::open(&opts);
+            tokio::pin!(open);
+            // Only mention the prompt if there evidently is one (opening
+            // is instant on X11, Windows, or with a remembered permission).
+            let opened = tokio::select! {
+                r = &mut open => r,
+                _ = tokio::time::sleep(Duration::from_millis(700)) => {
+                    write_msg(&mut send, &HostMsg::Notice("Waiting for the remote side to allow screen sharing…".into()))
+                        .await?;
+                    open.await
+                }
+            };
+            match opened {
                 Ok(b) => {
                     if let Some(token) = b.restore_token() {
                         set_restore_token(&inner, token);
@@ -157,22 +184,36 @@ fn set_restore_token(inner: &Inner, token: String) {
     }
 }
 
+/// Starts capturing `display`. The outer error means the backend is gone
+/// (fatal); the inner one that this capture failed.
+async fn open_capture(
+    inner: &Inner,
+    display: u32,
+    max_fps: u32,
+) -> Result<Result<slipstream_platform::FrameStream>> {
+    let mut b = inner.backend.lock().await;
+    let b = b.as_mut().context("screen backend gone")?;
+    Ok(b.capture(display, max_fps))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn session_loop(
     inner: &Arc<Inner>,
     conn: &Connection,
     id: u64,
     mut send: SendStream,
-    mut recv: iroh::endpoint::RecvStream,
+    recv: iroh::endpoint::RecvStream,
     displays: Vec<DisplayInfo>,
     caps: Capabilities,
     mut cmds: mpsc::UnboundedReceiver<HostSessionCmd>,
 ) -> Result<String> {
+    let mut recv = MsgReader::<ViewerMsg>::spawn(recv);
     // Video writer: owns the uni-stream, fed by the encoder thread.
     let (video_tx, mut video_rx) = mpsc::channel::<VideoFrame>(4);
     let video_conn = conn.clone();
     let writer = tokio::spawn(async move {
         let mut stream = video_conn.open_uni().await?;
+        stream.set_priority(slipstream_core::proto::PRIORITY_VIDEO).ok();
         while let Some(frame) = video_rx.recv().await {
             write_msg(&mut stream, &frame).await?;
         }
@@ -198,8 +239,13 @@ async fn session_loop(
 
     loop {
         tokio::select! {
-            msg = read_msg::<ViewerMsg>(&mut recv) => {
-                let Some(msg) = msg? else { return Ok("viewer closed the session".into()) };
+            msg = recv.next() => {
+                let msg = match msg {
+                    Ok(m) => m,
+                    // The read fails first when the connection closes.
+                    Err(e) => return conn.close_reason().map(|r| crate::closed_reason(&r, "they")).ok_or(e),
+                };
+                let Some(msg) = msg else { return Ok("they ended the session".into()) };
                 match msg {
                     ViewerMsg::StartStream { display: d, settings } => {
                         if !displays.iter().any(|x| x.index == d) {
@@ -209,12 +255,7 @@ async fn session_loop(
                         display = d;
                         let stream_settings = sanitize_settings(settings);
                         drop(pipeline.take()); // stop the old capture first
-                        let capture = {
-                            let mut b = inner.backend.lock().await;
-                            let b = b.as_mut().context("screen backend gone")?;
-                            b.capture(display, stream_settings.max_fps)
-                        };
-                        match capture {
+                        match open_capture(inner, display, stream_settings.max_fps).await? {
                             Ok(c) => {
                                 pipeline = Some(Pipeline::start(c, flow.clone(), stream_settings, video_tx.clone(), err_tx.clone()));
                                 let info = &displays[display as usize];
@@ -226,7 +267,18 @@ async fn session_loop(
                         }
                     }
                     ViewerMsg::SetSettings(s) => {
-                        if let Some(p) = &pipeline { p.set_settings(sanitize_settings(s)); }
+                        let s = sanitize_settings(s);
+                        let Some(p) = &pipeline else { continue };
+                        if s.max_fps == p.settings().max_fps {
+                            p.set_settings(s);
+                            continue;
+                        }
+                        // Capture is paced at the frame rate it started with.
+                        drop(pipeline.take());
+                        match open_capture(inner, display, s.max_fps).await? {
+                            Ok(c) => pipeline = Some(Pipeline::start(c, flow.clone(), s, video_tx.clone(), err_tx.clone())),
+                            Err(e) => write_msg(&mut send, &HostMsg::Notice(format!("capture failed: {e:#}"))).await?,
+                        }
                     }
                     ViewerMsg::FrameAck { seq } => flow.ack(seq),
                     ViewerMsg::RequestKeyframe => {
@@ -249,7 +301,7 @@ async fn session_loop(
                         let text: String = text.chars().take(4000).collect();
                         inner.emit(ClientEvent::HostChat { session: id, text });
                     }
-                    ViewerMsg::Bye => return Ok("viewer disconnected".into()),
+                    ViewerMsg::Bye => return Ok("they ended the session".into()),
                     ViewerMsg::Hello { .. } | ViewerMsg::AuthResponse { .. } => bail!("protocol violation"),
                 }
             }
@@ -263,17 +315,18 @@ async fn session_loop(
                 // The portal session may have been revoked; reopen next time.
                 *inner.backend.lock().await = None;
                 write_msg(&mut send, &HostMsg::Bye { reason: format!("screen capture stopped: {err}") }).await.ok();
-                return Ok(format!("capture stopped: {err}"));
+                crate::flush(&mut send).await;
+                return Ok(format!("screen capture stopped: {err}"));
             }
             cmd = cmds.recv() => match cmd {
                 Some(HostSessionCmd::Chat(text)) => write_msg(&mut send, &HostMsg::Chat(text)).await?,
                 Some(HostSessionCmd::Disconnect) | None => {
                     write_msg(&mut send, &HostMsg::Bye { reason: "the host ended the session".into() }).await.ok();
-                    send.finish().ok();
-                    return Ok("ended by host".into());
+                    crate::flush(&mut send).await;
+                    return Ok("you ended the session".into());
                 }
             },
-            reason = conn.closed() => return Ok(format!("connection lost: {reason}")),
+            reason = conn.closed() => return Ok(crate::closed_reason(&reason, "they")),
         }
     }
 }

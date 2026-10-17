@@ -11,9 +11,9 @@ build time:
 
 ```sh
 # Arch / CachyOS
-sudo pacman -S pipewire libxkbcommon clang
+sudo pacman -S pipewire libxkbcommon clang nasm
 # Debian / Ubuntu
-sudo apt install libpipewire-0.3-dev libspa-0.2-dev clang libxkbcommon-dev libxdo-dev libxtst-dev libdbus-1-dev
+sudo apt install libpipewire-0.3-dev libspa-0.2-dev clang nasm libxkbcommon-dev libxdo-dev libxtst-dev libdbus-1-dev
 ```
 
 The finished app does **not** need these libraries at runtime. PipeWire is
@@ -46,12 +46,15 @@ default (for example the real clipboard round-trip). Run them with
 | `clients/slipstream-linux-x86_64` | `cargo zigbuild` for glibc 2.31 | Runs on Debian 11 / Ubuntu 20.04 and newer. Falls back to a native build (newer glibc only) without zig. |
 | `bin/slipstream-server-linux-x86_64` | same | The relay the station runs. |
 | `clients/slipstream-windows-x86_64.exe` | `cargo xwin` (MSVC target, cross-compiled from Linux) | Skipped when cargo-xwin isn't installed. |
-| `clients/slipstream-macos.zip` | — | Copied in if you put it at `dist/slipstream-macos.zip` (build `Slipstream.app` on a Mac). |
-| `clients/manifest.json` | the script | Version, build number, commit, and size + SHA-256 of each app, for self-update. |
+| `clients/slipstream-macos.zip` | `scripts/build-macos.sh` on a Mac | Universal (Apple Silicon + Intel), ad-hoc signed. Taken from `dist/slipstream-macos.zip` if it's from the same build. |
+| `clients/manifest.json` | `tools/slipstream-release` | Version, build number, commit, and size, SHA-256 and release signature of each app, for self-update. |
 
 One-time tool setup:
 
 ```sh
+# nasm: OpenH264's SIMD code. Without it video encoding is 2-3x slower,
+# so build-station.sh refuses to run.
+sudo pacman -S nasm        # or: sudo apt install nasm / brew install nasm
 # Zig (any recent version) somewhere on PATH, e.g. ~/.local/share/zig
 cargo install cargo-zigbuild cargo-xwin
 rustup target add x86_64-pc-windows-msvc
@@ -60,6 +63,27 @@ rustup target add x86_64-pc-windows-msvc
 The script makes an empty stand-in `libpipewire-0.3.so` in
 `~/.cache/slipstream-zig-stubs`, because libspa-sys asks the linker for it.
 The path must not contain spaces.
+
+### The release signing key
+
+Apps only install updates signed with the release key they were built
+with. The manifest's checksums alone would not protect them: whoever got
+into the web host could replace an app and its checksum together.
+
+- On the first run, `build-station.sh` creates the key at
+  `~/.config/slipstream-release/update-signing.key`, outside the project.
+  It never goes to the station. Set `SLIPSTREAM_SIGNING_KEY` to keep it
+  somewhere else.
+- **Back the key up.** Apps built with it accept updates only from it.
+  Without it, every installed app has to be downloaded again by hand.
+- The script builds the key's public half into every app
+  (`SLIPSTREAM_UPDATE_KEYS`), then signs each app's platform, version,
+  build, size and SHA-256 into `manifest.json`.
+- To move to a new key, build one release with the old key and
+  `SLIPSTREAM_EXTRA_UPDATE_KEYS=<new public key>`. Once the apps have
+  updated to it, switch to the new key.
+- `slipstream info` shows which keys an app trusts. A plain `cargo build`
+  has none, so it never installs updates.
 
 ### Version and build numbers
 
@@ -89,7 +113,7 @@ rebuilds every platform it lists.
    On a shared host, copy each file to a temporary name and rename it into
    place, so nobody downloads a half-written file.
 4. If `bin/` changed, press **Restart relay** on the admin page.
-5. Check the update is offered:
+5. Check the update is offered and carries a `sig`:
 
    ```sh
    curl -s -X POST https://support.example.com/api/ -H 'Content-Type: application/json' \
@@ -98,6 +122,40 @@ rebuilds every platform it lists.
 
 Running apps pick the update up within 6 hours, or about 20 seconds after
 they next start.
+
+### The macOS app
+
+On a Mac with the Xcode command line tools, Rust and `brew install nasm`:
+
+```sh
+SLIPSTREAM_UPDATE_KEYS=<release public key> scripts/build-macos.sh
+```
+
+`target/release/slipstream-release pubkey` on the build machine prints the
+key. The script writes `dist/slipstream-macos.zip`. If the project folder
+syncs between the machines (Dropbox), `build-station.sh` finds it there;
+otherwise copy it over. Build both from the same commit, or the script
+leaves the Mac app out (a mismatched build number would make Macs update in
+a loop).
+
+### Releases from CI (signed apps)
+
+`.github/workflows/release.yml` runs on a version tag (`git tag v0.6.0 &&
+git push --tags`). It builds Linux, Windows and macOS, has SignPath sign the
+Windows app, and publishes everything plus `release.json` as a draft GitHub
+release. Then, on the machine with the release key:
+
+```sh
+gh release download v0.6.0 -D /tmp/rel
+scripts/build-station.sh --from-release /tmp/rel
+```
+
+That signs the update manifest and marks the signed apps, so the station
+serves them untouched. Before the first release, set the repository
+variable `SLIPSTREAM_UPDATE_KEYS` to your release public key; the script
+refuses a release built with a different one. The SignPath variables are
+described at the top of the workflow, and the signing policy is in
+[CODE-SIGNING.md](CODE-SIGNING.md).
 
 ### Protocol changes
 
@@ -137,6 +195,7 @@ crates/slipstream-core/    protocol, auth, directory client, config, clock
 crates/slipstream-codec/   H.264 encode/decode
 crates/slipstream-platform/ screen capture, input, clipboard per OS
 crates/slipstream-session/ host/viewer sessions, files, updates
+tools/slipstream-release/  release key and signed update manifest (build-station.sh uses it)
 server/station/            the PHP station (download page, API, admin)
 packaging/                 desktop entry, icons, Windows resources, server configs
 scripts/                   build-station.sh, try-local.sh, install-linux.sh, file-issues.sh

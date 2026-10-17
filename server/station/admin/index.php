@@ -236,6 +236,9 @@ slip_page_start('Station admin', '../');
   <div class="panel">
     <?php $man = slip_client_manifest(); ?>
     <p><?= $man ? 'Serving version <b>' . h($man['version']) . '</b> (build ' . (int)$man['build'] . ' · ' . h($man['commit'] ?? '') . '). Apps update to this automatically.'
+            . (isset($man['signer'])
+                ? ' Signed with release key <span class="mono">' . h(substr((string)$man['signer'], 0, 16)) . '…</span>'
+                : ' <span class="warn">Not signed: apps with signed updates won\'t install it. Rebuild with the current scripts/build-station.sh.</span>')
         : '<span class="warn">No manifest.json — apps can\'t auto-update. Upload builds made with scripts/build-station.sh.</span>' ?></p>
     <table>
     <?php foreach ($builds as $os => $b): ?>

@@ -1,49 +1,67 @@
 ---
-title: "macOS: package Slipstream.app and test it on a real Mac"
+title: "macOS: build Slipstream.app on a Mac and test it"
 labels: [platform:macos, priority:high]
 ---
 
 ## Background
 
-The macOS code paths exist (xcap capture, enigo input, tray, LaunchAgent
-autostart, and the station's support for `station.json` in the bundle), but
-nothing has been built or run on a Mac. `build-station.sh` only copies
-`dist/slipstream-macos.zip` when someone provides one.
+`scripts/build-macos.sh` builds a universal (Apple Silicon + Intel), ad-hoc
+signed `Slipstream.app` and zips it to `dist/slipstream-macos.zip`. The code
+type-checks for `aarch64-apple-darwin` (cross-checked from Linux, which
+already caught one macOS-only compile error), but it has never been built
+or run on a Mac.
 
-## Tasks
+The station serves the zip untouched; the app links to its station from the
+download address or a setup code. Self-updates replace the bundle's
+`Contents` folder.
 
-- [ ] Bundle layout: `Slipstream.app/Contents/{MacOS/slipstream, Info.plist,
-      Resources/slipstream.icns}`. The `.icns` can be made from
-      `slipstream export-icon`.
-- [ ] `Info.plist` needs:
-  - the bundle id (`dev.slipstream.remote`),
-  - `NSScreenCaptureUsageDescription` and an Apple Events / Accessibility
-    explanation,
-  - `LSMinimumSystemVersion` 12.0.
-- [ ] Universal binary (`aarch64` + `x86_64` via `lipo`), or two downloads.
-- [ ] Check that `download.php` puts `station.json` inside the zipped bundle
-      correctly, and that `provision::apply` reads it on first start.
-- [ ] On a real Mac, test:
-  - Screen Recording and Accessibility prompts appear, and the app works
-    after granting them;
-  - capture, input, keyboard layout, multi-monitor, Retina scaling;
-  - whether the video shows the pointer. If it does, set
-    `cursor_in_video` true for macOS in `generic.rs`.
-- [ ] Self-update on macOS: replacing a binary inside a bundle and
-      restarting.
-- [ ] Build it in CI and add it to `build-station.sh` and the update
-      manifest (`macos-aarch64`).
+## Build
 
-## Done when
+```sh
+xcode-select --install          # once
+brew install nasm               # once; rustup from rustup.rs
+SLIPSTREAM_UPDATE_KEYS=<release public key> scripts/build-macos.sh
+```
 
-A Mac user can download from the station page, grant the two permissions,
-be controlled from Linux and Windows, and control them in turn.
+## Checklist
+
+**Install**
+- [ ] The zip from the station page opens; *Slipstream* moves to
+      Applications and starts after *Open Anyway* (Privacy & Security).
+- [ ] The Dock and app switcher show the icon and "Slipstream Remote".
+- [ ] It connects to the station by itself (download address), or with the
+      setup code on the Bridge.
+
+**Being controlled (host)**
+- [ ] Screen Recording and Accessibility prompts appear; after granting and
+      restarting, a viewer sees the screen and can move, click and type.
+- [ ] Retina scaling: the pointer lands where it should; the keyboard works
+      across layouts (try a non-US layout).
+- [ ] Multi-monitor switching.
+- [ ] Whether the video shows the pointer. If it does, set
+      `cursor_in_video` true for macOS in `generic.rs`.
+
+**Controlling others (viewer)**
+- [ ] Control the Linux and Windows machines; full screen; special keys.
+- [ ] File manager, drag and drop, clipboard and chat both ways.
+
+**Updates**
+- [ ] With a newer build on the station, *Install & restart* works and the
+      app still opens afterwards (no "damaged" message).
+- [ ] Note whether Screen Recording / Accessibility have to be granted
+      again after the update (expected while it's ad-hoc signed).
+
+## Known gaps
+
+- `slipstream://` links don't reach the app: macOS delivers them as Apple
+  Events and winit (through eframe) doesn't pass them on. Setup codes work.
+  A fix needs an Apple Event handler (`NSAppleEventManager`) or winit
+  support.
+- Not notarised (needs the $99/year Apple Developer Program; see issue 05).
 
 ## Pointers
 
-- `crates/slipstream-platform/src/generic.rs` (macOS stubs for pointer
-  drawing, `cursor_in_video`)
-- `server/station/download.php` (macOS branch)
-- `crates/slipstream-core/src/provision.rs`
-- `crates/slipstream-session/src/update.rs`
-- `apps/slipstream/src/gui/autostart.rs` (LaunchAgent)
+- `scripts/build-macos.sh` (bundle, Info.plist, icon, signing)
+- `crates/slipstream-platform/src/generic.rs` (capture thread)
+- `crates/slipstream-session/src/update.rs` (`install_bundle`)
+- `crates/slipstream-core/src/provision.rs` (`download_origins`)

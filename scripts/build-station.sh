@@ -1,12 +1,35 @@
 #!/usr/bin/env bash
 # Assembles a ready-to-upload Slipstream Station in dist/slipstream-station/:
-# the PHP site, the relay program (bin/) and whatever client builds exist
-# (clients/). Upload the folder's contents to the root of a (sub)domain,
-# open /admin/ and follow the setup.
+# the PHP site, the relay program (bin/) and the apps (clients/). Upload the
+# folder's contents to the root of a (sub)domain, open /admin/ and follow
+# the setup.
 #
-#   scripts/build-station.sh   # builds Linux, plus Windows if cargo-xwin is installed
+#   scripts/build-station.sh                     # build Linux (+ Windows with cargo-xwin) here
+#   scripts/build-station.sh --from-release DIR  # use a CI release's files (signed apps)
+#
+# For --from-release, download every file of the GitHub release (including
+# release.json) into DIR, e.g. `gh release download v0.6.0 -D DIR`.
+#
+# Updates are signed with a release key kept on this machine (created on the
+# first run; see tools/slipstream-release). Set SLIPSTREAM_SIGNING_KEY to
+# use a key file elsewhere, and SLIPSTREAM_EXTRA_UPDATE_KEYS (hex, comma
+# separated) to make the apps also trust other keys, e.g. while moving to a
+# new key.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+FROM=""
+if [ "${1:-}" = "--from-release" ]; then
+  FROM="${2:?usage: scripts/build-station.sh --from-release DIR}"
+  [ -f "$FROM/release.json" ] || { echo "error: $FROM/release.json not found: download every file of the release" >&2; exit 1; }
+fi
+
+echo "==> Release signing key"
+cargo build --release -p slipstream-release
+RELEASE=target/release/slipstream-release
+SLIPSTREAM_UPDATE_KEYS="$("$RELEASE" pubkey)${SLIPSTREAM_EXTRA_UPDATE_KEYS:+,$SLIPSTREAM_EXTRA_UPDATE_KEYS}"
+export SLIPSTREAM_UPDATE_KEYS
+echo "    apps will trust: $SLIPSTREAM_UPDATE_KEYS"
 
 OUT=dist/slipstream-station
 rm -rf "$OUT"
@@ -14,57 +37,114 @@ mkdir -p dist
 cp -r server/station "$OUT"
 rm -f "$OUT"/bin/README.txt "$OUT"/clients/README.txt
 
-# Linux builds target glibc 2.31 (Debian 11 / Ubuntu 20.04 and newer) via
-# cargo-zigbuild, so they run on far more systems than the build machine.
-if command -v zig >/dev/null && cargo zigbuild --help >/dev/null 2>&1; then
-  echo "==> Linux builds (portable, glibc 2.31+)"
-  # libspa-sys asks the linker for libpipewire even though we load it at
-  # runtime; give zig's linker an empty stand-in (dropped as unused).
-  STUB="${XDG_CACHE_HOME:-$HOME/.cache}/slipstream-zig-stubs"
-  mkdir -p "$STUB"
-  [ -f "$STUB/libpipewire-0.3.so" ] || { echo "" > "$STUB/empty.c"; zig cc -target x86_64-linux-gnu.2.31 -shared -o "$STUB/libpipewire-0.3.so" "$STUB/empty.c"; }
-  RUSTFLAGS="-L native=$STUB" cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 -p slipstream -p slipstream-server
-  LINUX=target/x86_64-unknown-linux-gnu/release
-else
-  echo "==> Linux builds (native — install zig + cargo-zigbuild for portable builds)"
-  cargo build --release -p slipstream -p slipstream-server
-  LINUX=target/release
-fi
-cp "$LINUX/slipstream-server" "$OUT/bin/slipstream-server-linux-x86_64"
-cp "$LINUX/slipstream" "$OUT/clients/slipstream-linux-x86_64"
+# The apps' build number as written into Info.plist (macOS zip).
+mac_build() {
+  python3 -c 'import sys, zipfile, plistlib
+z = zipfile.ZipFile(sys.argv[1])
+name = next(n for n in z.namelist() if n.endswith(".app/Contents/Info.plist"))
+print(plistlib.loads(z.read(name)).get("CFBundleVersion", ""))' "$1" 2>/dev/null || true
+}
 
-# Every build listed in the manifest must come from this run (same build
-# number), or apps would loop updating to a stale binary.
-if cargo xwin --help >/dev/null 2>&1; then
-  echo "==> Windows app (cross-compiled)"
-  cargo xwin build --release --target x86_64-pc-windows-msvc -p slipstream
-  cp target/x86_64-pc-windows-msvc/release/slipstream.exe "$OUT/clients/slipstream-windows-x86_64.exe"
-else
-  echo "==> Skipping Windows app (install cargo-xwin to build it)"
-fi
-# macOS builds come from CI or a Mac: drop slipstream-macos.zip (containing
-# Slipstream.app) into clients/.
-[ -f dist/slipstream-macos.zip ] && cp dist/slipstream-macos.zip "$OUT/clients/"
-
-# Update manifest: apps compare (version, build) with their own and verify
-# the download against these checksums.
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 0)
-COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
-{
-  printf '{\n  "version": "%s",\n  "build": %s,\n  "commit": "%s",\n  "built": %s,\n  "platforms": {' "$VERSION" "$BUILD" "$COMMIT" "$(date +%s)"
-  sep=""
-  for spec in "linux-x86_64:linux:slipstream-linux-x86_64" "windows-x86_64:windows:slipstream-windows-x86_64.exe" "macos-aarch64:macos:slipstream-macos.zip"; do
-    IFS=: read -r platform os file <<< "$spec"
-    f="$OUT/clients/$file"
-    [ -f "$f" ] || continue
-    printf '%s\n    "%s": {"os": "%s", "file": "%s", "size": %s, "sha256": "%s"}' "$sep" "$platform" "$os" "$file" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
-    sep=","
+if [ -n "$FROM" ]; then
+  # ── From a CI release ───────────────────────────────────────────────────
+  read -r VERSION BUILD COMMIT SIGNED < <(python3 -c 'import json, sys
+r = json.load(open(sys.argv[1]))
+print(r["version"], r["build"], r["commit"], ",".join(r.get("signed", [])) or "-")' "$FROM/release.json")
+  [ "$SIGNED" = "-" ] && SIGNED=""
+  echo "==> Release $VERSION build $BUILD ($COMMIT), signed: ${SIGNED:-none}"
+  cp "$FROM/slipstream-server-linux-x86_64" "$OUT/bin/"
+  for f in slipstream-linux-x86_64 slipstream-windows-x86_64.exe slipstream-macos.zip; do
+    [ -f "$FROM/$f" ] && cp "$FROM/$f" "$OUT/clients/"
   done
-  printf '\n  }\n}\n'
-} > "$OUT/clients/manifest.json"
-echo "==> Manifest: version $VERSION build $BUILD ($COMMIT)"
+  # The apps must trust this machine's key, or they'd refuse every update.
+  KEY=$("$RELEASE" pubkey)
+  for f in "$OUT"/clients/slipstream-linux-x86_64 "$OUT"/clients/slipstream-windows-x86_64.exe; do
+    if [ -f "$f" ] && ! grep -qa "$KEY" "$f"; then
+      echo "error: $(basename "$f") wasn't built with this machine's release key ($KEY)." >&2
+      echo "       Set the repository variable SLIPSTREAM_UPDATE_KEYS to it and release again." >&2
+      exit 1
+    fi
+  done
+  if [ -f "$OUT/clients/slipstream-macos.zip" ] && [ "$(mac_build "$OUT/clients/slipstream-macos.zip")" != "$BUILD" ]; then
+    echo "error: slipstream-macos.zip isn't build $BUILD" >&2
+    exit 1
+  fi
+else
+  # ── Build here ──────────────────────────────────────────────────────────
+  # OpenH264 quietly falls back to plain C without nasm, which makes video
+  # encoding and decoding 2-3x slower. Never ship that.
+  if ! command -v nasm >/dev/null; then
+    echo "error: nasm not found. Install it (e.g. pacman -S nasm / apt install nasm), or put it on PATH." >&2
+    exit 1
+  fi
+  # OpenH264 builds cached from before nasm was installed stay plain C until
+  # rebuilt: clean them. check_asm DIR verifies a finished build.
+  for t in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc ""; do
+    dir=target/${t:+$t/}release
+    if grep -qs "not using any assembly" "$dir"/build/openh264-sys2-*/output; then
+      cargo clean --release -p openh264-sys2 ${t:+--target $t}
+    fi
+  done
+  check_asm() {
+    if grep -qs "not using any assembly" "$1"/build/openh264-sys2-*/output; then
+      echo "error: OpenH264 in $1 was built without assembly (is nasm working?)" >&2
+      exit 1
+    fi
+  }
 
-chmod 755 "$OUT"/bin/* 2>/dev/null || true
+  # Linux builds target glibc 2.31 (Debian 11 / Ubuntu 20.04 and newer) via
+  # cargo-zigbuild, so they run on far more systems than the build machine.
+  if command -v zig >/dev/null && cargo zigbuild --help >/dev/null 2>&1; then
+    echo "==> Linux builds (portable, glibc 2.31+)"
+    # libspa-sys asks the linker for libpipewire even though we load it at
+    # runtime; give zig's linker an empty stand-in (dropped as unused).
+    STUB="${XDG_CACHE_HOME:-$HOME/.cache}/slipstream-zig-stubs"
+    mkdir -p "$STUB"
+    [ -f "$STUB/libpipewire-0.3.so" ] || { echo "" > "$STUB/empty.c"; zig cc -target x86_64-linux-gnu.2.31 -shared -o "$STUB/libpipewire-0.3.so" "$STUB/empty.c"; }
+    RUSTFLAGS="-L native=$STUB" cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 -p slipstream -p slipstream-server
+    LINUX=target/x86_64-unknown-linux-gnu/release
+  else
+    echo "==> Linux builds (native — install zig + cargo-zigbuild for portable builds)"
+    cargo build --release -p slipstream -p slipstream-server
+    LINUX=target/release
+  fi
+  check_asm "$LINUX"
+  cp "$LINUX/slipstream-server" "$OUT/bin/slipstream-server-linux-x86_64"
+  cp "$LINUX/slipstream" "$OUT/clients/slipstream-linux-x86_64"
+
+  # Every build listed in the manifest must come from this run (same build
+  # number), or apps would loop updating to a stale binary.
+  if cargo xwin --help >/dev/null 2>&1; then
+    echo "==> Windows app (cross-compiled)"
+    cargo xwin build --release --target x86_64-pc-windows-msvc -p slipstream
+    check_asm target/x86_64-pc-windows-msvc/release
+    cp target/x86_64-pc-windows-msvc/release/slipstream.exe "$OUT/clients/slipstream-windows-x86_64.exe"
+  else
+    echo "==> Skipping Windows app (install cargo-xwin to build it)"
+  fi
+
+  VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+  BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+  COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
+  SIGNED=""
+  # The macOS app is built on a Mac (scripts/build-macos.sh writes
+  # dist/slipstream-macos.zip). Only take it if it's from this same build.
+  if [ -f dist/slipstream-macos.zip ]; then
+    MAC_BUILD=$(mac_build dist/slipstream-macos.zip)
+    if [ "$MAC_BUILD" = "$BUILD" ]; then
+      cp dist/slipstream-macos.zip "$OUT/clients/"
+    else
+      echo "==> Skipping dist/slipstream-macos.zip: it's build ${MAC_BUILD:-?}, not $BUILD. Rebuild it on the Mac." >&2
+    fi
+  fi
+fi
+
+# Update manifest: apps compare (version, build) with their own, check the
+# release signature, and verify the download against the signed checksum.
+# Code-signed apps are marked, so the station serves them untouched.
+"$RELEASE" manifest "$OUT/clients" --version "$VERSION" --build "$BUILD" --commit "$COMMIT" ${SIGNED:+--signed "$SIGNED"}
+echo "==> Signed manifest: version $VERSION build $BUILD ($COMMIT)"
+
+chmod 755 "$OUT"/bin/* "$OUT"/clients/slipstream-linux-x86_64 2>/dev/null || true
 echo "==> Station assembled in $OUT:"
 ls -la "$OUT/bin" "$OUT/clients" | grep -v "^total"

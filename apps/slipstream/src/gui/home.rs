@@ -1,4 +1,4 @@
-//! Bridge (home) page: this station's ID/password, connect form, recents.
+//! Bridge (home) page: this device's ID/password, connect form, recents.
 
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Ui, vec2};
 use slipstream_session::DirStatus;
@@ -35,7 +35,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
 }
 
 fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
-    theme::panel(ui, "This station", pal::LAVENDER, |ui| {
+    theme::panel(ui, "This device", pal::LAVENDER, |ui| {
         ui.label(RichText::new("Give your partner this ID and password to let them in.").color(pal::DIM));
         ui.add_space(8.0);
 
@@ -73,6 +73,10 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             }
         });
         ui.add_space(10.0);
+        if app.dir_status == DirStatus::NotConfigured {
+            link_form(app, ui, t);
+            return;
+        }
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
             theme::lamp(ui.painter(), rect.center(), color, t);
@@ -91,6 +95,54 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             ui.label(RichText::new("Unattended access enabled — your permanent password also works.").small().color(pal::DIM));
         }
     });
+}
+
+/// For an app that isn't linked to a station yet: its address and a setup
+/// code, both shown on the station's download page.
+fn link_form(app: &mut App, ui: &mut Ui, t: f64) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+        theme::lamp(ui.painter(), rect.center(), pal::RED, t);
+        ui.label(RichText::new("NOT CONNECTED TO A STATION").font(theme::display(17.0)).color(pal::RED));
+    });
+    ui.label(
+        RichText::new(
+            "Press “Connect this app” on your support provider's download page, or enter the station address \
+             and setup code shown there.",
+        )
+        .color(pal::DIM),
+    );
+    ui.add_space(4.0);
+    let field = |ui: &mut Ui, value: &mut String, hint: &str, width: f32| {
+        theme::input_frame()
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(value)
+                        .hint_text(hint)
+                        .font(theme::mono(18.0))
+                        .frame(egui::Frame::NONE)
+                        .desired_width(width),
+                )
+            })
+            .inner
+    };
+    let mut go = false;
+    ui.horizontal(|ui| {
+        let a = field(ui, &mut app.link_station, "support.example.com", 190.0);
+        let c = field(ui, &mut app.link_code, "SETUP CODE", 110.0);
+        go = (a.lost_focus() || c.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let label = if app.linking() { "Connecting…" } else { "Connect" };
+        go |= ui.add_enabled_ui(!app.linking(), |ui| theme::pill(ui, label, pal::ORANGE)).inner.clicked();
+    });
+    if go && !app.linking() {
+        let code = slipstream_core::provision::normalize_code(&app.link_code);
+        if app.link_station.trim().is_empty() || code.len() != slipstream_core::provision::CODE_LEN {
+            app.toast("Enter the station address and the 8-character setup code", pal::RED);
+        } else {
+            let link = slipstream_core::provision::StationLink { station: app.link_station.trim().to_string(), code };
+            app.start_link(&ui.ctx().clone(), link, true);
+        }
+    }
 }
 
 fn connect_panel(app: &mut App, ui: &mut Ui) {
@@ -244,7 +296,7 @@ fn incoming_banner(app: &mut App, ui: &mut Ui, t: f64) {
                 ui.label(
                     RichText::new({
                         let secs = s.started.elapsed().as_secs();
-                        format!("{} is controlling this station · {:02}:{:02}", s.peer, secs / 60, secs % 60)
+                        format!("{} is controlling this device · {:02}:{:02}", s.peer, secs / 60, secs % 60)
                     })
                         .font(theme::body(17.0)),
                 );

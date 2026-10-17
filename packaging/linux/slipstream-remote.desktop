@@ -9,3 +9,4 @@ Terminal=false
 Categories=Network;RemoteAccess;
 Keywords=remote;desktop;teamviewer;vnc;support;
 StartupWMClass=slipstream-remote
+MimeType=x-scheme-handler/slipstream;

@@ -89,7 +89,9 @@ pub(crate) struct Inner {
     dir_client: watch::Sender<Option<DirectoryClient>>,
     server_changed: tokio::sync::Notify,
     pub password: Mutex<String>,
-    pub throttle: Mutex<AuthThrottle>,
+    /// Held for the whole password exchange, so checks run one at a time
+    /// (see `host::run_session`).
+    pub throttle: tokio::sync::Mutex<AuthThrottle>,
     pub backend: tokio::sync::Mutex<Option<Box<dyn Backend>>>,
     pub host_sessions: Mutex<HashMap<u64, mpsc::UnboundedSender<HostSessionCmd>>>,
     next_session: AtomicU64,
@@ -142,7 +144,7 @@ impl Client {
             dir_client: watch::Sender::new(None),
             server_changed: tokio::sync::Notify::new(),
             password: Mutex::new(password.clone()),
-            throttle: Mutex::new(AuthThrottle::new()),
+            throttle: tokio::sync::Mutex::new(AuthThrottle::new()),
             backend: tokio::sync::Mutex::new(None),
             host_sessions: Mutex::new(HashMap::new()),
             next_session: AtomicU64::new(0),
@@ -304,7 +306,15 @@ impl Client {
         let dc = self.directory().await?;
         let Some(v) = dc.update_check(&slipstream_core::platform()).await? else { return Ok(None) };
         let info: update::UpdateInfo = serde_json::from_value(v).context("unreadable update info")?;
-        Ok(info.is_newer().then_some(info))
+        if !info.is_newer() {
+            return Ok(None);
+        }
+        // Don't offer what we wouldn't install.
+        if let Err(e) = info.verify_signature(&slipstream_core::release::trusted_keys()) {
+            warn!(version = %info.label(), "not offering update: {e:#}");
+            return Err(e);
+        }
+        Ok(Some(info))
     }
 
     /// Downloads, verifies and installs an update. Returns the app path to
@@ -469,6 +479,24 @@ async fn update_task(client: Client) {
     }
 }
 
+/// Why a connection went away, in words for the UI. Code 0 is how both
+/// sides close a session normally.
+pub(crate) fn closed_reason(e: &iroh::endpoint::ConnectionError, peer: &str) -> String {
+    use iroh::endpoint::ConnectionError;
+    match e {
+        ConnectionError::ApplicationClosed(c) if c.error_code == 0u32.into() => format!("{peer} ended the session"),
+        ConnectionError::TimedOut => "connection lost (no response)".into(),
+        other => format!("connection lost: {other}"),
+    }
+}
+
+/// Lets a final message on `send` (a `Bye`) reach the peer before the
+/// connection is closed: closing discards anything still unsent.
+pub(crate) async fn flush(send: &mut iroh::endpoint::SendStream) {
+    send.finish().ok();
+    let _ = tokio::time::timeout(Duration::from_millis(500), send.stopped()).await;
+}
+
 async fn accept_task(inner: Arc<Inner>) {
     while let Some(incoming) = inner.endpoint.accept().await {
         let inner = inner.clone();
@@ -582,6 +610,79 @@ mod tests {
         host.shutdown().await;
         let _ = std::fs::remove_dir_all(hdir);
         let _ = std::fs::remove_dir_all(vdir);
+    }
+
+    /// Big control messages (clipboard) arrive intact while video and frame
+    /// acks are flowing, and the session survives them.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn large_clipboard_during_video() {
+        use slipstream_platform::clipboard::ClipboardSource;
+        let host_clip = Arc::new(Mutex::new(None::<String>));
+        let viewer_clip = Arc::new(Mutex::new(None::<String>));
+        let (host, mut hev, _) = client_with("bhost", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
+        let (viewer, _vev, _) = client_with("bviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
+        let (session, mut events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Stats(s) if s.fps > 10.0)).await, "video flowing");
+
+        let poll = |clip: &Arc<Mutex<Option<String>>>, want: &str| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if clip.lock().unwrap().as_deref() == Some(want) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            false
+        };
+        for round in 0..4 {
+            let text: String = (0..600_000).map(|i| char::from(b'a' + ((i * 7 + round) % 26) as u8)).collect();
+            *viewer_clip.lock().unwrap() = Some(text.clone());
+            assert!(tokio::task::block_in_place(|| poll(&host_clip, &text)), "viewer → host, round {round}");
+            let back = text.to_uppercase();
+            *host_clip.lock().unwrap() = Some(back.clone());
+            assert!(tokio::task::block_in_place(|| poll(&viewer_clip, &back)), "host → viewer, round {round}");
+        }
+        session.send(ViewerCmd::Chat("still here".into()));
+        assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::HostChat { text, .. } if text == "still here")).await);
+
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+    }
+
+    /// Guesses sent in parallel are still counted one by one: only the free
+    /// attempts get a verdict, the rest hit the lockout.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn parallel_guesses_hit_the_lockout() {
+        let (host, _hev, hdir) = client("phost", true).await;
+        let (viewer, _vev, vdir) = client("pviewer", false).await;
+        let addr = host.endpoint_addr();
+
+        let attempts = (0..8).map(|i| {
+            let (viewer, addr) = (viewer.clone(), addr.clone());
+            tokio::spawn(async move {
+                let r = viewer.connect_direct(addr, &format!("guess {i}"), |_| {}).await;
+                format!("{:#}", r.err().expect("a guess got in"))
+            })
+        });
+        let errors: Vec<String> = futures_join(attempts).await;
+        let locked = errors.iter().filter(|e| e.contains("too many wrong passwords")).count();
+        let wrong = errors.iter().filter(|e| e.starts_with("wrong password")).count();
+        assert_eq!(wrong + locked, errors.len(), "unexpected errors: {errors:?}");
+        assert!(wrong <= 3, "{wrong} guesses were checked: {errors:?}");
+
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
+    }
+
+    async fn futures_join<T>(tasks: impl Iterator<Item = tokio::task::JoinHandle<T>>) -> Vec<T> {
+        let mut out = Vec::new();
+        for t in tasks.collect::<Vec<_>>() {
+            out.push(t.await.unwrap());
+        }
+        out
     }
 
     async fn wait_for<T>(rx: &mut mpsc::UnboundedReceiver<T>, mut pred: impl FnMut(&T) -> bool) -> bool {
@@ -699,7 +800,18 @@ mod tests {
         *host_clip.lock().unwrap() = Some("copied on host".into());
         assert!(tokio::task::block_in_place(|| poll(&viewer_clip, "copied on host")), "host → viewer clipboard");
 
+        // A normal disconnect reaches the host as such, not as a lost link.
         drop(session);
+        let mut why = String::new();
+        assert!(wait_for(&mut hev, |e| match e {
+            ClientEvent::HostSessionEnded { reason, .. } => {
+                why = reason.clone();
+                true
+            }
+            _ => false,
+        })
+        .await);
+        assert_eq!(why, "they ended the session");
         viewer.shutdown().await;
         host.shutdown().await;
     }

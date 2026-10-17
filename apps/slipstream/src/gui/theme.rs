@@ -75,7 +75,11 @@ pub fn install(ctx: &egui::Context) {
     fonts.families.insert(FontFamily::Name(ANTONIO_BOLD.into()), with("Antonio-Bold", &fallback_prop));
     ctx.set_fonts(fonts);
 
-    ctx.global_style_mut(|style| {
+    // The console look is always dark. egui keeps separate dark and light
+    // styles and follows the OS by default, so pin dark mode and style both:
+    // otherwise a light-mode Windows got egui's stock sizes (12.5 px text).
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.all_styles_mut(|style| {
         use egui::TextStyle::*;
         style.text_styles = [
             (Heading, display_bold(26.0)),

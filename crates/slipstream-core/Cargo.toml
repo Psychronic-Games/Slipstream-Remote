@@ -24,3 +24,7 @@ tokio = { workspace = true, features = ["full"] }
 toml = "1.1.8"
 tracing.workspace = true
 webpki-roots = "1"
+
+[target."cfg(unix)".dependencies]
+plist = { version = "1.10.1", default-features = false }
+xattr = "1.6.1"

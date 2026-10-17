@@ -140,6 +140,11 @@ fn capture_loop(d: &DisplayInfo, interval: Duration, slot: &FrameSlot) -> Result
     let shm = Shm::new(&conn, len).map_err(|e| tracing::info!("X11: {e}; using GetImage")).ok();
     let cursor = conn.xfixes_query_version(5, 0).ok().and_then(|c| c.reply().ok()).is_some();
     let mut next = Instant::now();
+    // X11 has no "picture changed" signal without XDamage, so compare with
+    // the last frame sent: an idle desktop then costs a grab and a compare,
+    // not an encode.
+    let mut prev: Vec<u8> = Vec::new();
+    let mut prev_cursor = None;
     while !slot.is_closed() {
         let mut data = match &shm {
             Some(shm) => {
@@ -149,7 +154,9 @@ fn capture_loop(d: &DisplayInfo, interval: Duration, slot: &FrameSlot) -> Result
                 if reply.depth < 24 {
                     bail!("unsupported colour depth {}", reply.depth);
                 }
-                shm.bytes().to_vec()
+                let mut data = slot.buffer(len);
+                data.extend_from_slice(&shm.bytes()[..len]);
+                data
             }
             None => {
                 let reply = conn.get_image(ImageFormat::Z_PIXMAP, root, d.x as i16, d.y as i16, w, h, !0)?.reply()?;
@@ -159,11 +166,20 @@ fn capture_loop(d: &DisplayInfo, interval: Duration, slot: &FrameSlot) -> Result
                 reply.data
             }
         };
-        if cursor && let Ok(c) = conn.xfixes_get_cursor_image()?.reply() {
-            draw_cursor(&mut data, w as i32, h as i32, c.x as i32 - c.xhot as i32 - d.x, c.y as i32 - c.yhot as i32 - d.y, c.width as i32, c.height as i32, &c.cursor_image);
+        let pointer = if cursor { conn.xfixes_get_cursor_image()?.reply().ok() } else { None };
+        let pointer_at = pointer.as_ref().map(|c| (c.x, c.y, c.cursor_serial));
+        if data == prev && pointer_at == prev_cursor {
+            slot.reuse(data);
+        } else {
+            prev.clear();
+            prev.extend_from_slice(&data);
+            prev_cursor = pointer_at;
+            if let Some(c) = pointer {
+                draw_cursor(&mut data, w as i32, h as i32, c.x as i32 - c.xhot as i32 - d.x, c.y as i32 - c.yhot as i32 - d.y, c.width as i32, c.height as i32, &c.cursor_image);
+            }
+            // Z_PIXMAP 24/32-bit on little-endian is B, G, R, X.
+            slot.put(RawFrame { width: w as u32, height: h as u32, stride: w as u32 * 4, format: PixelFormat::Bgra, data });
         }
-        // Z_PIXMAP 24/32-bit on little-endian is B, G, R, X.
-        slot.put(RawFrame { width: w as u32, height: h as u32, stride: w as u32 * 4, format: PixelFormat::Bgra, data });
         next += interval;
         match next.checked_duration_since(Instant::now()) {
             Some(wait) => thread::sleep(wait),

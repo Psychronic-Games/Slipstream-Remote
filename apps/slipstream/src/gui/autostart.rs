@@ -39,20 +39,16 @@ const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
 #[cfg(target_os = "windows")]
 pub fn is_enabled() -> bool {
-    std::process::Command::new("reg")
-        .args(["query", RUN_KEY, "/v", "SlipstreamRemote"])
-        .output()
-        .is_ok_and(|o| o.status.success())
+    super::scheme::reg(&["query", RUN_KEY, "/v", "SlipstreamRemote"]).is_ok_and(|o| o.status.success())
 }
 
 #[cfg(target_os = "windows")]
 pub fn set_enabled(on: bool) -> Result<()> {
     let status = if on {
-        std::process::Command::new("reg")
-            .args(["add", RUN_KEY, "/v", "SlipstreamRemote", "/t", "REG_SZ", "/d", &format!("\"{}\" --minimized", exe()?), "/f"])
-            .status()?
+        let command = format!("\"{}\" --minimized", exe()?);
+        super::scheme::reg(&["add", RUN_KEY, "/v", "SlipstreamRemote", "/t", "REG_SZ", "/d", &command, "/f"])?.status
     } else {
-        std::process::Command::new("reg").args(["delete", RUN_KEY, "/v", "SlipstreamRemote", "/f"]).status()?
+        super::scheme::reg(&["delete", RUN_KEY, "/v", "SlipstreamRemote", "/f"])?.status
     };
     anyhow::ensure!(status.success() || !on, "registry update failed");
     Ok(())

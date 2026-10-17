@@ -9,6 +9,8 @@
 @font-face { font-family: "Antonio"; src: url("Antonio-Bold.ttf") format("truetype"); font-weight: 700; }
 @font-face { font-family: "Antonio"; src: url("Antonio-Regular.ttf") format("truetype"); font-weight: 400; }
 @font-face { font-family: "Share Tech Mono"; src: url("ShareTechMono-Regular.ttf") format("truetype"); }
+@font-face { font-family: "Barlow Semi Condensed"; src: url("BarlowSemiCondensed-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Barlow Semi Condensed"; src: url("BarlowSemiCondensed-SemiBold.ttf") format("truetype"); font-weight: 600 700; font-display: swap; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--tan); }
 body { font: 17px/1.55 "Barlow Semi Condensed", system-ui, sans-serif; }
@@ -47,6 +49,7 @@ h2.lav { color: var(--lav); } h2.blue { color: var(--blue); } h2.violet { color:
 .btn.lav, button.lav { background: var(--lav); } .btn.blue, button.blue { background: var(--blue); } .btn.red, button.red { background: var(--red); }
 .btn.small, button.small { font-size: 15px; padding: 4px 16px; margin-top: 0; }
 .btn[disabled], .btn.off { background: #333; color: #777; pointer-events: none; }
+input[type=checkbox], input[type=radio] { accent-color: var(--orange); width: 18px; height: 18px; vertical-align: -3px; margin-right: 6px; }
 input[type=text], input[type=password], input[type=number], textarea, select {
   background: #04060c; color: var(--tan); border: 1.5px solid rgba(255,153,0,.7); border-radius: 16px;
   padding: 8px 14px; font: 17px "Barlow Semi Condensed", system-ui, sans-serif; width: 100%; max-width: 480px; }

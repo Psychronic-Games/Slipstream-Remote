@@ -2102,6 +2102,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
+name = "fast_image_resize"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9c50201dc184ba6553da1695aac20a042efffbe2d84542cee31917c86c3ab1e"
+dependencies = [
+ "cfg-if",
+ "document-features",
+ "num-traits",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6568,7 +6580,9 @@ name = "slipstream-codec"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "fast_image_resize",
  "openh264",
+ "openh264-sys2",
  "tracing",
  "yuv",
 ]
@@ -6583,6 +6597,7 @@ dependencies = [
  "directories",
  "httpdate",
  "iroh",
+ "plist",
  "postcard",
  "rand 0.9.5",
  "reqwest",
@@ -6596,6 +6611,7 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "tracing",
  "webpki-roots",
+ "xattr",
 ]
 
 [[package]]
@@ -6617,6 +6633,19 @@ dependencies = [
  "windows-sys 0.61.2",
  "x11rb",
  "xcap",
+]
+
+[[package]]
+name = "slipstream-release"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "directories",
+ "iroh",
+ "serde_json",
+ "sha2 0.10.9",
+ "slipstream-core",
 ]
 
 [[package]]
@@ -8851,6 +8880,16 @@ dependencies = [
  "rusticata-macros",
  "thiserror 2.0.21",
  "time",
+]
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix 1.1.5",
 ]
 
 [[package]]

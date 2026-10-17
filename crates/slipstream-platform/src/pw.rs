@@ -233,7 +233,8 @@ impl Capture {
                 &*self._events,
                 (&mut *self._state as *mut State).cast(),
             );
-            let pod_bytes = format_pod()?;
+            let max_fps = (1.0 / self._state.min_interval.as_secs_f64()).round().clamp(1.0, 240.0) as u32;
+            let pod_bytes = format_pod(max_fps)?;
             let mut params = [pod_bytes.as_ptr().cast::<spa::spa_pod>()];
             let rc = (api.stream_connect)(
                 self.stream,
@@ -276,7 +277,9 @@ impl Drop for Capture {
 }
 
 /// The formats we accept: 32-bit RGB variants, any size, up to 1000 fps.
-fn format_pod() -> Result<Vec<u8>> {
+/// Formats we accept. The frame rate is capped at the session's, so the
+/// compositor doesn't render frames (say at 144 Hz) only for us to drop them.
+fn format_pod(max_fps: u32) -> Result<Vec<u8>> {
     use libspa::{
         param::format::FormatProperties,
         pod::{Value, serialize::PodSerializer},
@@ -312,9 +315,9 @@ fn format_pod() -> Result<Vec<u8>> {
             Choice,
             Range,
             Fraction,
-            Fraction { num: 60, denom: 1 },
+            Fraction { num: max_fps.min(60), denom: 1 },
             Fraction { num: 0, denom: 1 },
-            Fraction { num: 1000, denom: 1 }
+            Fraction { num: max_fps, denom: 1 }
         ),
     );
     Ok(PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &Value::Object(obj))
@@ -394,5 +397,7 @@ unsafe fn take_frame(st: &mut State, buf: *mut PwBuffer) {
     }
     let bytes = unsafe { std::slice::from_raw_parts((d.data as *const u8).add(offset), needed) };
     st.last = Instant::now();
-    st.slot.put(RawFrame { width: w, height: h, stride, format, data: bytes.to_vec() });
+    let mut data = st.slot.buffer(needed);
+    data.extend_from_slice(bytes);
+    st.slot.put(RawFrame { width: w, height: h, stride, format, data });
 }

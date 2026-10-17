@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 /// Bumped whenever the session protocol changes incompatibly.
 pub const PROTOCOL_VERSION: u32 = 3;
 
+/// QUIC send priorities (higher goes first). Input, acks and control beat
+/// video, and video beats file transfers, so a big copy can't freeze the
+/// picture or the mouse. File streams keep the default, 0.
+pub const PRIORITY_CONTROL: i32 = 20;
+pub const PRIORITY_VIDEO: i32 = 10;
+
 /// ALPN for remote-control sessions (viewer → host).
 pub const ALPN_REMOTE: &[u8] = b"slipstream/remote/1";
 
