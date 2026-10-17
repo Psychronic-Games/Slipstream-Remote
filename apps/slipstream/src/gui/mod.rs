@@ -908,13 +908,17 @@ fn pick_renderer(rt: &tokio::runtime::Runtime) -> bool {
         return true;
     }
     if let Err(e) = softgl::prepare() {
-        tracing::warn!("no software renderer: {e:#}");
+        softgl::set_problem(format!("{e:#}"));
         return false;
     }
-    use_software_gl();
+    if !use_software_gl() {
+        softgl::retry();
+        return false;
+    }
     if count_adapters(rt, Backends::GL) > 0 {
         return true;
     }
+    softgl::set_problem("the software renderer found no OpenGL to draw with".into());
     softgl::retry(); // couldn't even start: not a crash, try again next time
     false
 }
@@ -949,7 +953,7 @@ pub fn probe_gl() -> i32 {
 /// Makes Mesa's `opengl32.dll` (unpacked by `softgl::prepare`) the one this
 /// process uses, with its CPU renderer.
 #[cfg(windows)]
-fn use_software_gl() {
+fn use_software_gl() -> bool {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::LibraryLoader::{LoadLibraryW, SetDllDirectoryW};
     let dir = softgl::dir();
@@ -964,7 +968,13 @@ fn use_software_gl() {
         // by-name loads get (opengl32 is delay-loaded, see build.rs).
         !LoadLibraryW(wide(&dir.join("opengl32.dll")).as_ptr()).is_null()
     };
-    tracing::info!(dir = %dir.display(), loaded, "using the built-in software renderer");
+    if !loaded {
+        let e = std::io::Error::last_os_error();
+        softgl::set_problem(format!("Windows wouldn't load the software renderer ({e})"));
+        return false;
+    }
+    tracing::info!(dir = %dir.display(), "using the built-in software renderer");
+    true
 }
 
 /// How many adapters wgpu finds on these backends.

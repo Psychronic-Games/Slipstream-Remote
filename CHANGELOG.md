@@ -29,6 +29,9 @@ Build numbers are the git commit count. The app shows them as
   viewer is told why the screen is black or nothing happened, and what
   fixes it (Windows hides those screens from normal apps).
 - The compact window's ID and password can be selected and copied.
+- The compact window's title fits long organisation names on one line
+  ("SLIPSTREAM REMOTE · SECTION 31 - TECH" lost its last word), and the
+  window says why the full window couldn't start.
 
 ### Session tools
 - **Copy and paste files** between the computers, like text. Copy files

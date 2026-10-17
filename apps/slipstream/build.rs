@@ -12,7 +12,11 @@ fn main() {
         // OpenGL loads on first use instead of at start, so the software
         // renderer's opengl32.dll can be loaded first (gui::use_software_gl).
         if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
-            println!("cargo:rustc-link-arg-bins=/DELAYLOAD:opengl32.dll");
+            // Direct3D too: under Wine its d3d11 is built on OpenGL and would
+            // load that first (and loading on first use costs nothing).
+            for dll in ["opengl32.dll", "d3d11.dll", "dxgi.dll"] {
+                println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}");
+            }
             println!("cargo:rustc-link-lib=delayimp");
         }
     }

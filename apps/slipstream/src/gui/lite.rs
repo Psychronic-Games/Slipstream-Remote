@@ -19,7 +19,7 @@ use slipstream_core::{directory::DirectoryClient, provision::StationLink};
 use slipstream_session::{Client, ClientEvent, DirStatus, update::UpdateInfo};
 use tokio::{runtime::Runtime, sync::mpsc};
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM},
     Graphics::Gdi::{
         AddFontMemResourceEx, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
         CreateFontW, CreateSolidBrush, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject,
@@ -145,10 +145,12 @@ pub fn run(
         title: "SLIPSTREAM REMOTE".into(),
         id: client.settings().host.last_device_id.map(|i| i.to_string()).unwrap_or_else(|| "--- --- ---".into()),
         status: "Contacting the station…".into(),
-        note: if super::softgl::failed_before() {
-            "The full window didn't start on this computer last time, so this is the compact one. The computer can still be controlled as usual.".into()
-        } else {
-            "This computer's graphics can't run the full window. It can still be controlled as usual.".into()
+        note: match super::softgl::problem() {
+            _ if super::softgl::failed_before() => {
+                "The full window didn't start on this computer last time, so this is the compact one. It can still be controlled as usual.".into()
+            }
+            Some(why) => format!("Compact window: {why}. The computer can still be controlled as usual."),
+            None => "Compact window. The computer can still be controlled as usual.".into(),
         },
         ..Default::default()
     }));
@@ -278,6 +280,39 @@ pub fn run(
     Ok(())
 }
 
+/// The title's current font, when [`fit_title`] made one.
+static TITLE_FONT: AtomicUsize = AtomicUsize::new(0);
+
+/// Gives the title the largest font (34 px down to 20) at which `text`
+/// fits its width.
+unsafe fn fit_title(ctrl: HWND, text: &str) {
+    const WIDTH: i32 = 460;
+    let w: Vec<u16> = text.encode_utf16().collect();
+    // SAFETY: measuring with fonts we create, on the control's own DC.
+    unsafe {
+        let hdc = GetDC(ctrl);
+        let mut chosen = std::ptr::null_mut();
+        for size in (20..=34).rev().step_by(2) {
+            let f = font(size, false, "Antonio");
+            let old = SelectObject(hdc, f);
+            let mut extent = SIZE { cx: 0, cy: 0 };
+            GetTextExtentPoint32W(hdc, w.as_ptr(), w.len() as i32, &mut extent);
+            SelectObject(hdc, old);
+            if extent.cx <= WIDTH || size == 20 {
+                chosen = f;
+                break;
+            }
+            DeleteObject(f);
+        }
+        ReleaseDC(ctrl, hdc);
+        SendMessageW(ctrl, WM_SETFONT, chosen as WPARAM, 1);
+        let previous = TITLE_FONT.swap(chosen as usize, Ordering::Relaxed);
+        if previous != 0 {
+            DeleteObject(previous as _);
+        }
+    }
+}
+
 unsafe fn font(height: i32, bold: bool, face: &str) -> HFONT {
     let face = wide(face);
     // SAFETY: a valid face name; the other arguments are plain values.
@@ -314,7 +349,11 @@ unsafe fn build(hwnd: HWND) -> Vec<(i32, HWND)> {
             font(19, false, "Antonio"),
         );
         BUTTON_FONT.store(btn as usize, Ordering::Relaxed);
-        add(&stat, ID_TITLE, SS_NOPREFIX, (20, 26, 460, 46), title);
+        // One line: a long organisation name shrinks the font (fit_title),
+        // and only past the smallest size gets an ellipsis.
+        const SS_LEFTNOWORDWRAP: u32 = 0xC;
+        const SS_ENDELLIPSIS: u32 = 0x4000;
+        add(&stat, ID_TITLE, SS_NOPREFIX | SS_LEFTNOWORDWRAP | SS_ENDELLIPSIS, (20, 26, 460, 46), title);
         add(&stat, ID_ID_LABEL, 0, (20, 74, 300, 26), label);
         add(&edit, ID_ID, text, (20, 98, 460, 58), big);
         add(&stat, ID_PW_LABEL, 0, (20, 154, 300, 26), label);
@@ -359,6 +398,10 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     // In the update's slot (an update comes first): after the software
     // renderer failed to start, a way to give it another go.
     let full = !update && super::softgl::failed_before();
+    if !ui.shown.iter().any(|(i, t)| *i == ID_TITLE && *t == title) {
+        // SAFETY: the live title control.
+        unsafe { fit_title(control(ui, ID_TITLE), &title) };
+    }
     set_text(ui, ID_TITLE, &title);
     set_text(ui, ID_ID_LABEL, "YOUR ID");
     set_text(ui, ID_ID, &id);

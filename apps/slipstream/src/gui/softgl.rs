@@ -84,6 +84,18 @@ pub fn prepare() -> Result<()> {
     Ok(())
 }
 
+/// Why the software renderer isn't drawing, for the compact window to show.
+static PROBLEM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn set_problem(why: String) {
+    tracing::warn!("software renderer: {why}");
+    *PROBLEM.lock().unwrap() = Some(why);
+}
+
+pub fn problem() -> Option<String> {
+    PROBLEM.lock().unwrap().clone()
+}
+
 /// Starting on the software renderer, first frame not drawn yet.
 static PENDING: AtomicBool = AtomicBool::new(false);
 
