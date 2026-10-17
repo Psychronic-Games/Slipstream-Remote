@@ -264,27 +264,48 @@ fn incoming_banner(app: &mut App, ui: &mut Ui, t: f64) {
         if let Some(id) = chat
             && let Some(s) = app.incoming.iter_mut().find(|s| s.id == id)
         {
-            s.show_chat = !s.show_chat;
+            let mut chat = s.chat.lock().expect("chat lock");
+            chat.open = !chat.open;
         }
     });
 }
 
-/// Floating chat windows for incoming sessions (shown on any page).
+/// Chat with whoever is controlling this computer, in its own window that
+/// can be moved anywhere.
 pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
-    let client = app.client.clone();
-    for s in &mut app.incoming {
-        if !s.show_chat {
-            continue;
+    static ICON: std::sync::OnceLock<std::sync::Arc<egui::IconData>> = std::sync::OnceLock::new();
+    for s in &app.incoming {
+        let id = egui::ViewportId::from_hash_of(("incoming-chat", s.id));
+        {
+            let chat = s.chat.lock().expect("chat lock");
+            if !chat.open {
+                continue;
+            }
+            if chat.ping {
+                ctx.request_repaint_of(id);
+            }
         }
-        let mut open = true;
-        egui::Window::new(format!("CHAT · {}", s.peer.to_uppercase()))
-            .id(egui::Id::unique(("incoming-chat", s.id)))
-            .open(&mut open)
-            .default_size([360.0, 300.0])
-            .show(ctx, |ui| {
-                chat_ui(ui, &mut s.chat, &mut s.chat_input, |text| client.host_chat(s.id, text));
-            });
-        s.show_chat = open;
+        let builder = egui::ViewportBuilder::default()
+            .with_title(format!("Chat - {} - Slipstream Remote", s.peer))
+            .with_app_id("slipstream-remote")
+            .with_icon(ICON.get_or_init(|| std::sync::Arc::new(theme::icon(64))).clone())
+            .with_inner_size([380.0, 420.0])
+            .with_min_inner_size([280.0, 200.0]);
+        let (chat, client, session, peer) = (s.chat.clone(), app.client.clone(), s.id, s.peer.clone());
+        ctx.show_viewport_deferred(id, builder, move |ui, _class| {
+            let mut guard = chat.lock().expect("chat lock");
+            let chat = &mut *guard;
+            if std::mem::take(&mut chat.ping) {
+                ui.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
+            }
+            ui.painter().rect_filled(ui.max_rect(), 0.0, pal::BG);
+            let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect().shrink(12.0)));
+            theme::header(&mut inner, &format!("Subspace chat · {peer}"), pal::LAVENDER);
+            chat_ui(&mut inner, &mut chat.log, &mut chat.input, |text| client.host_chat(session, text));
+            if ui.input(|i| i.viewport().close_requested()) {
+                chat.open = false;
+            }
+        });
     }
 }
 

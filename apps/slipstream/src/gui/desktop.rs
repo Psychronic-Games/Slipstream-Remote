@@ -24,6 +24,10 @@ pub fn integrate() -> Result<()> {
     if Path::new(&format!("/usr/share/applications/{APP_ID}.desktop")).exists() {
         return Ok(());
     }
+    // Side profiles (testing, portable use) leave the user's launcher alone.
+    if std::env::var_os("SLIPSTREAM_HOME").is_some() {
+        return Ok(());
+    }
     let exe = std::env::current_exe()?;
     let data = directories::BaseDirs::new().context("no home directory")?.data_dir().to_path_buf();
     let mut changed = false;

@@ -142,12 +142,21 @@ impl UpdateState {
     }
 }
 
+/// Chat with whoever is controlling this computer. Shared with its window,
+/// which egui draws on that window's own schedule.
+#[derive(Default)]
+pub struct HostChat {
+    pub log: Vec<(bool, String)>,
+    pub input: String,
+    pub open: bool,
+    /// A message arrived: flash the chat window.
+    pub ping: bool,
+}
+
 pub struct IncomingSession {
     pub id: u64,
     pub peer: String,
-    pub chat: Vec<(bool, String)>,
-    pub chat_input: String,
-    pub show_chat: bool,
+    pub chat: Arc<Mutex<HostChat>>,
     pub started: Instant,
 }
 
@@ -276,9 +285,7 @@ impl App {
                     self.incoming.push(IncomingSession {
                         id: session,
                         peer,
-                        chat: Vec::new(),
-                        chat_input: String::new(),
-                        show_chat: false,
+                        chat: Default::default(),
                         started: Instant::now(),
                     });
                 }
@@ -291,8 +298,10 @@ impl App {
                 }
                 ClientEvent::HostChat { session, text } => {
                     if let Some(s) = self.incoming.iter_mut().find(|s| s.id == session) {
-                        s.chat.push((false, text));
-                        s.show_chat = true;
+                        let mut chat = s.chat.lock().expect("chat lock");
+                        chat.log.push((false, text));
+                        chat.open = true;
+                        chat.ping = true;
                     }
                 }
                 ClientEvent::FileReceived { path, .. } => {
@@ -836,6 +845,7 @@ impl eframe::App for App {
             self.window_title = title;
         }
         self.update_tray();
+        home::incoming_windows(self, ctx);
         if self.start_hidden {
             self.start_hidden = false;
             self.set_visible(ctx, false);
@@ -959,7 +969,6 @@ impl eframe::App for App {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
 
-        home::incoming_windows(self, &ctx);
         self.draw_tray_hint(&ctx);
         self.draw_attempt_overlay(&ctx);
         self.draw_toasts(&ctx);
