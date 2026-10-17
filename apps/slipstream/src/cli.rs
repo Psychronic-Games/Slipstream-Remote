@@ -58,7 +58,9 @@ pub async fn info() -> Result<()> {
     Ok(())
 }
 
-pub async fn host(test_pattern: bool, password: Option<String>) -> Result<()> {
+/// Headless host. `service`: started by the Windows service, so it installs
+/// updates itself and exits for the service to restart it.
+pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -> Result<()> {
     let store = Store::open_default()?;
     if let Some(pw) = &password {
         let mut s = store.load_settings();
@@ -84,6 +86,13 @@ pub async fn host(test_pattern: bool, password: Option<String>) -> Result<()> {
                     ClientEvent::Org(Some(o)) => println!("station  {o}"),
                     ClientEvent::Org(None) => {}
                     ClientEvent::Notice(n) => println!("notice: {n}"),
+                    ClientEvent::UpdateAvailable(u) if service => {
+                        tracing::info!(version = %u.label(), "installing update");
+                        match client.install_update(&u, |_, _| {}).await {
+                            Ok(_) => break, // the service restarts with the new program
+                            Err(e) => tracing::warn!("update failed: {e:#}"),
+                        }
+                    }
                     ClientEvent::UpdateAvailable(u) => println!("update available: {} (run `slipstream update`)", u.label()),
                 }
             }

@@ -108,6 +108,13 @@ impl Backend for GenericBackend {
                 producer.fail("display disappeared");
                 return;
             };
+            // Service mode follows the input desktop (login screen, UAC),
+            // which only screenshot capture on this thread can do.
+            #[cfg(target_os = "windows")]
+            if crate::windesk::following() {
+                poll_screenshots(&producer, &monitor, min_interval, origin);
+                return;
+            }
             match monitor.video_recorder() {
                 Ok((recorder, frames)) => match recorder.start() {
                     Ok(()) => {
@@ -178,11 +185,23 @@ fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interv
     }
 }
 
+#[cfg(target_os = "windows")]
+fn following_desktops() -> bool {
+    crate::windesk::following()
+}
+#[cfg(target_os = "macos")]
+fn following_desktops() -> bool {
+    false
+}
+
 /// Fallback: polls screenshots at the frame rate.
 #[cfg(not(target_os = "linux"))]
 fn poll_screenshots(producer: &FrameSlot, monitor: &Monitor, min_interval: Duration, origin: (i32, i32)) {
+    let mut failures = 0;
     while !producer.is_closed() {
         let t = Instant::now();
+        #[cfg(target_os = "windows")]
+        crate::windesk::follow();
         match monitor.capture_image() {
             Ok(img) => {
                 let (w, h) = img.dimensions();
@@ -193,10 +212,18 @@ fn poll_screenshots(producer: &FrameSlot, monitor: &Monitor, min_interval: Durat
                 producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Rgba, data });
             }
             Err(e) => {
-                producer.fail(format!("screenshot failed: {e}"));
-                return;
+                // A desktop switch (UAC prompt, login screen) can fail a
+                // few captures; keep trying for a while in service mode.
+                failures += 1;
+                if !following_desktops() || failures > 50 {
+                    producer.fail(format!("screenshot failed: {e}"));
+                    return;
+                }
+                thread::sleep(Duration::from_millis(100));
+                continue;
             }
         }
+        failures = 0;
         if let Some(rest) = min_interval.checked_sub(t.elapsed()) {
             thread::sleep(rest);
         }
@@ -215,6 +242,21 @@ fn input_worker(rx: mpsc::Receiver<(DisplayInfo, InputEvent)>) {
     let mut wheel = (0.0f32, 0.0f32);
     let mut last_display = None;
     while let Ok((display, event)) = rx.recv() {
+        // Service mode: inject on whichever desktop has input (login screen,
+        // UAC prompt), and turn Ctrl+Alt+Del into the real thing.
+        #[cfg(target_os = "windows")]
+        {
+            crate::windesk::follow();
+            if let InputEvent::Key { code, down: true } = &event
+                && code == "Delete"
+                && crate::windesk::following()
+                && ["ControlLeft", "ControlRight"].iter().any(|k| held.key_down(k))
+                && ["AltLeft", "AltRight"].iter().any(|k| held.key_down(k))
+                && crate::windesk::request_sas()
+            {
+                continue;
+            }
+        }
         for ev in held.process(event) {
             if let Err(e) = apply(&mut enigo, &display, ev, &mut wheel) {
                 tracing::debug!("input event failed: {e}");

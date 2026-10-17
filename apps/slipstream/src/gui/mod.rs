@@ -71,8 +71,14 @@ pub fn run(opts: GuiOptions) -> Result<()> {
         tracing::debug!("link handler not registered: {e:#}");
     }
     let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().enable_all().build()?);
+    // With the Windows service running, it hosts this computer (same
+    // identity): the app then only controls others.
+    #[cfg(windows)]
+    let via_service = crate::service::running();
+    #[cfg(not(windows))]
+    let via_service = false;
     let (client, events) =
-        rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: true, ..Default::default() }))?;
+        rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: !via_service, ..Default::default() }))?;
 
     // Without a graphics adapter wgpu can use (Windows Server 2016's
     // Direct3D 12 can't run the shaders it needs, for one), show the compact
@@ -127,6 +133,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
                 app.start_connect(&cc.egui_ctx);
             }
             app.screenshot = opts.screenshot;
+            app.via_service = via_service;
             let wake = cc.egui_ctx.clone();
             app.show_requests = Some(instance.listen(move || wake.request_repaint()));
             // Link to a station: as asked, or (no station yet) from where the
@@ -241,6 +248,10 @@ pub struct App {
     show_requests: Option<mpsc::Receiver<single::Request>>,
     /// Exchanging a setup code with a station: (asked by the user, result).
     link_job: Option<(bool, oneshot::Receiver<Result<StationConfig, String>>)>,
+    /// The Windows service hosts this computer (see `crate::service`).
+    pub via_service: bool,
+    /// Installing or removing the service: (restart afterwards, result).
+    service_job: Option<(bool, oneshot::Receiver<Result<u32, String>>)>,
     /// The Bridge/Config "connect to your station" form.
     pub link_station: String,
     pub link_code: String,
@@ -304,6 +315,8 @@ impl App {
             hidden: false,
             show_requests: None,
             link_job: None,
+            via_service: false,
+            service_job: None,
             link_station: String::new(),
             link_code: String::new(),
             logo: None,
@@ -484,6 +497,58 @@ impl App {
 
     pub fn linking(&self) -> bool {
         self.link_job.is_some()
+    }
+
+    /// Installs (or removes) the Windows service, through the administrator
+    /// prompt; the app restarts afterwards so it hosts (or stops hosting).
+    #[cfg(windows)]
+    pub fn service_action(&mut self, ctx: &egui::Context, install: bool) {
+        if install && self.client.settings().host.permanent_password_secret.is_none() {
+            self.toast("Set and save an unattended password first: the service has no one-time passwords", pal::RED);
+            return;
+        }
+        let args = if install {
+            match Store::open_default() {
+                Ok(store) => format!("service install --from \"{}\"", store.dir().display()),
+                Err(e) => return self.toast(format!("{e:#}"), pal::RED),
+            }
+        } else {
+            "service uninstall".to_string()
+        };
+        let (tx, rx) = oneshot::channel();
+        // Adding or removing the service changes who hosts: restart then.
+        self.service_job = Some((install != self.via_service, rx));
+        let wake = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::service::run_elevated(&args).map_err(|e| format!("{e:#}")));
+            wake.request_repaint();
+        });
+    }
+
+    #[cfg(windows)]
+    pub fn service_busy(&self) -> bool {
+        self.service_job.is_some()
+    }
+
+    fn poll_service(&mut self, ctx: &egui::Context) {
+        let Some((restart, rx)) = &mut self.service_job else { return };
+        let Ok(result) = rx.try_recv() else { return };
+        let restart = *restart;
+        self.service_job = None;
+        match result {
+            Ok(0) if !restart => self.toast("The service has the new settings", pal::GREEN),
+            Ok(0) => {
+                self.toast("Done: restarting Slipstream", pal::GREEN);
+                if let Ok(exe) = std::env::current_exe()
+                    && std::process::Command::new(exe).env("SLIPSTREAM_RESTARTED", "1").spawn().is_ok()
+                {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            Ok(code) => self.toast(format!("That didn't work (code {code}): details are in the log file"), pal::RED),
+            Err(e) => self.toast(e, pal::RED),
+        }
     }
 
     fn poll_link(&mut self) {
@@ -1039,6 +1104,7 @@ impl eframe::App for App {
         self.poll_attempt(&ctx);
         self.poll_update(&ctx);
         self.poll_link();
+        self.poll_service(&ctx);
         for tab in &mut self.tabs {
             tab.poll(&ctx);
         }

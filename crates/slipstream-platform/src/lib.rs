@@ -23,6 +23,8 @@ mod x11;
 pub mod wayland;
 #[cfg(target_os = "windows")]
 mod win_cursor;
+#[cfg(target_os = "windows")]
+pub mod windesk;
 
 use std::collections::HashSet;
 
@@ -112,6 +114,11 @@ fn button_from_key(k: MouseButtonKey) -> MouseButton {
 }
 
 impl HeldInputs {
+    /// Whether the key with this `code` is held down.
+    pub fn key_down(&self, code: &str) -> bool {
+        self.keys.contains(code)
+    }
+
     /// Expands an event into the concrete events to inject, tracking state.
     pub fn process(&mut self, event: InputEvent) -> Vec<InputEvent> {
         match event {

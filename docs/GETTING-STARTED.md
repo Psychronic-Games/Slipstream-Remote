@@ -263,9 +263,32 @@ regular clients), set this up on that computer, under **Config**:
 
 Then connect with the ID and the unattended password.
 
-For headless machines without a desktop session, `slipstream host
---password …` runs a host from the command line. Note that this needs a
-logged-in graphical session to capture.
+### Windows: the Slipstream service
+
+Without the service, Slipstream runs as the logged-in user, so Windows
+keeps it away from UAC prompts, windows running as administrator, and the
+login screen. For servers and machines you look after unattended, install
+the service: **Config → Incoming access → Windows service → Install**
+(Windows asks for administrator rights). It uses this computer's station
+and unattended password, and keeps the same ID.
+
+With the service:
+
+- you can approve UAC prompts, type into administrator windows, and log in
+  at the login screen; *Keys → Ctrl + Alt + Del* sends the real thing;
+- it runs from boot, before anyone logs in, and survives logging off;
+- it installs updates by itself;
+- the app on that computer stops hosting (the Bridge says *Service
+  running*) but can still control others.
+
+The service keeps its own copy of the settings: after changing the
+unattended password or permissions, press **Update** next to it. From an
+administrator command prompt: `slipstream service install [--password …]`,
+`slipstream service uninstall`, `slipstream service status`.
+
+For headless Linux machines, `slipstream host --password …` runs a host
+from the command line (it needs a logged-in graphical session to
+capture).
 
 ---
 

@@ -25,6 +25,13 @@ Build numbers are the git commit count. The app shows them as
   first, then tighter buttons, then a screen menu.
 
 ### Windows
+- **Slipstream service** (*Config → Incoming access → Windows service*, or
+  `slipstream service install`): unattended access that includes UAC
+  prompts, administrator windows and the login screen, from boot. A
+  LocalSystem supervisor keeps a host running in the console session as
+  SYSTEM; the host follows the input desktop, and Ctrl+Alt+Del is generated
+  for real (`SendSAS`). Same ID as before; settings in a profile only SYSTEM
+  and administrators can read; updates install themselves.
 - Windows Server 2016 and other machines wgpu can't draw on (its Direct3D
   12 backend needs Shader Model 6, which Windows 10 1607 doesn't have)
   get a compact window instead of nothing: built from plain Win32 controls

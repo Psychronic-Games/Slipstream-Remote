@@ -29,6 +29,26 @@ These matter for real IT support and for unattended servers.
   install`).
 - Self-update has to stop the service, swap the binary and start it again.
 
+## Status
+
+Implemented (`apps/slipstream/src/service.rs`,
+`crates/slipstream-platform/src/windesk.rs`): the supervisor service, the
+host in the console session as SYSTEM, desktop following, SendSAS for
+Ctrl+Alt+Del, a locked-down machine profile, install / update / remove from
+Config or the CLI, automatic updates (the service restarts itself when its
+program changes). Install, start, a session and uninstall work under Wine;
+session 0, the secure desktop and SendSAS can only be checked on real
+Windows.
+
+## Still to check on real Windows
+
+- [ ] Install from Config on Windows 11 and on Server 2016.
+- [ ] Approve a UAC prompt remotely; type into an elevated window.
+- [ ] Ctrl+Alt+Del from *Keys*; log in at the login screen; lock and unlock.
+- [ ] Log off and back on, switch users: the host follows the session.
+- [ ] An update arrives: the service restarts on the new program.
+- [ ] Remove from Config: the app hosts again.
+
 ## Done when
 
 From another computer you can approve a UAC prompt, type into an elevated

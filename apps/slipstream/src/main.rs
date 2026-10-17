@@ -5,6 +5,8 @@
 
 mod cli;
 mod gui;
+#[cfg(windows)]
+mod service;
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::Layer as _;
@@ -104,22 +106,80 @@ enum Command {
     Info,
     /// Update to the newest build your station offers.
     Update,
+    /// Windows: run as a service, for unattended access including the login
+    /// screen and administrator prompts.
+    #[cfg(windows)]
+    Service {
+        #[command(subcommand)]
+        action: ServiceCmd,
+    },
     /// Write the app icon as a PNG (used by packaging scripts).
     #[command(hide = true)]
     ExportIcon { path: std::path::PathBuf, #[arg(long, default_value_t = 256)] size: u32 },
 }
 
+#[cfg(windows)]
+#[derive(Debug, Subcommand)]
+enum ServiceCmd {
+    /// Install and start the service (as administrator). Uses this
+    /// computer's station and unattended password.
+    Install {
+        /// Set this unattended password for the service.
+        #[arg(long)]
+        password: Option<String>,
+        /// Settings folder to copy from (default: this user's).
+        #[arg(long)]
+        from: Option<std::path::PathBuf>,
+    },
+    /// Stop and remove the service (as administrator).
+    Uninstall,
+    /// Show whether the service is installed and running.
+    Status,
+    /// Run as the service (started by Windows).
+    #[command(hide = true)]
+    Run,
+    /// The host the service runs in the user's session.
+    #[command(hide = true)]
+    Host,
+}
+
 fn main() -> anyhow::Result<()> {
     #[cfg(windows)]
     attach_parent_console();
-    init_logging();
     let args = Args::parse();
+    // The service and its host use the machine profile, logs included.
+    #[cfg(windows)]
+    if let Some(Command::Service { action: ServiceCmd::Run | ServiceCmd::Host }) = &args.command {
+        // SAFETY: still single-threaded here.
+        unsafe { std::env::set_var("SLIPSTREAM_HOME", service::machine_home()) };
+    }
+    init_logging();
     if !matches!(args.command, Some(Command::ExportIcon { .. })) {
         apply_station_config();
     }
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     match args.command {
-        Some(Command::Host { password }) => rt.block_on(cli::host(args.test_pattern, password)),
+        Some(Command::Host { password }) => rt.block_on(cli::host(args.test_pattern, password, false)),
+        #[cfg(windows)]
+        Some(Command::Service { action }) => match action {
+            ServiceCmd::Install { password, from } => service::install(password.as_deref(), from.as_deref()),
+            ServiceCmd::Uninstall => service::uninstall(),
+            ServiceCmd::Status => {
+                println!("{}", match service::state() {
+                    None => "not installed".to_string(),
+                    Some(s) => format!("{s:?}"),
+                });
+                Ok(())
+            }
+            ServiceCmd::Run => {
+                drop(rt);
+                service::run()
+            }
+            ServiceCmd::Host => {
+                slipstream_platform::windesk::set_follow_input_desktop(true);
+                rt.block_on(cli::host(false, None, true))
+            }
+        },
         Some(Command::Connect { id, password, seconds, ls, put, to, get }) => {
             rt.block_on(cli::connect(&id, &password, seconds, cli::FileOps { ls, put, to, get }))
         }

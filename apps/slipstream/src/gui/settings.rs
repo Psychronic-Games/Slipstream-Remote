@@ -84,6 +84,10 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     let mut reset_permission = false;
     let mut link_now = false;
     let linking = app.linking();
+    #[cfg(windows)]
+    let (via_service, service_busy) = (app.via_service, app.service_busy());
+    #[cfg(windows)]
+    let mut service_clicked: Option<bool> = None;
     let network_help = match &app.org {
         Some(org) => format!(
             "Set up by {org}'s station when you downloaded this app. Change these only if {org} asks you to."
@@ -161,8 +165,40 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 reset_permission = true;
             }
         });
+        #[cfg(windows)]
+        row(ui, "Windows service", |ui| {
+            let tip = "Unattended access including UAC prompts, elevated windows and the login screen. Needs administrator rights and an unattended password.";
+            ui.add_enabled_ui(!service_busy, |ui| {
+                if service_busy {
+                    theme::pill(ui, "Working…", pal::BLUE);
+                } else if via_service {
+                    if theme::pill(ui, "Update", pal::BLUE).on_hover_text("Give the service this page's saved settings").clicked() {
+                        service_clicked = Some(true);
+                    }
+                    if theme::pill(ui, "Remove", pal::RED).clicked() {
+                        service_clicked = Some(false);
+                    }
+                } else if theme::pill(ui, "Install", pal::BLUE).on_hover_text(tip).clicked() {
+                    service_clicked = Some(true);
+                }
+            });
+            ui.label(RichText::new(if via_service { "Running" } else { "Not installed" }).color(pal::DIM));
+        });
+        #[cfg(windows)]
+        if via_service {
+            ui.label(
+                RichText::new("The service keeps its own copy of these settings: after saving, press Update to give it the new ones.")
+                    .small()
+                    .color(pal::DIM),
+            );
+        }
     });
     ui.add_space(14.0);
+    #[cfg(windows)]
+    if let Some(install) = service_clicked {
+        let ctx = ui.ctx().clone();
+        app.service_action(&ctx, install);
+    }
     if link_now {
         let code = slipstream_core::provision::normalize_code(&app.link_code);
         let station = app.settings_form.server.trim().to_string();

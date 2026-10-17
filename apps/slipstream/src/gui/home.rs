@@ -60,6 +60,21 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             }
         });
         ui.add_space(4.0);
+        if app.via_service {
+            // The service hosts this computer: unattended password only.
+            ui.label(RichText::new("REACHABLE THROUGH THE SLIPSTREAM SERVICE").font(theme::display(15.0)).color(pal::LAVENDER));
+            ui.label(
+                RichText::new("Use this computer's unattended password. The service also reaches the login screen and administrator prompts.")
+                    .color(pal::DIM),
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+                theme::lamp(ui.painter(), rect.center(), pal::GREEN, t);
+                ui.label(RichText::new("SERVICE RUNNING · READY FOR LINK").font(theme::display(17.0)).color(pal::GREEN));
+            });
+            return;
+        }
         ui.label(RichText::new("ONE-TIME PASSWORD").font(theme::display(15.0)).color(pal::LAVENDER));
         ui.horizontal(|ui| {
             ui.label(RichText::new(&app.password).font(theme::mono(34.0)).color(pal::GOLD));
