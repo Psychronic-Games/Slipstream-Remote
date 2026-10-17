@@ -55,6 +55,7 @@ in `target/` can be rebuilt. Dependencies are built without debug info
 | `bin/slipstream-server-linux-x86_64` | same | The relay the station runs. |
 | `clients/slipstream-windows-x86_64.exe` | `cargo xwin` (MSVC target, cross-compiled from Linux) | Skipped when cargo-xwin isn't installed. |
 | `clients/slipstream-macos.zip` | `scripts/build-macos.sh` on a Mac | Universal (Apple Silicon + Intel), ad-hoc signed. Taken from `dist/slipstream-macos.zip` if it's from the same build. |
+| `clients/softgl/*.dll.gz` | Mesa for Windows ([mesa-dist-win](https://github.com/pal1000/mesa-dist-win)), pinned in `packaging/windows/softgl.txt` | The CPU OpenGL driver for Windows machines whose graphics can't run the full window. The archive is downloaded once into `~/.cache/slipstream-mesa` and checked against the pins; needs `7z`. Skipped with a warning otherwise. |
 | `clients/manifest.json` | `tools/slipstream-release` | Version, build number, commit, and size, SHA-256 and release signature of each app, for self-update. |
 
 One-time tool setup:
@@ -63,6 +64,8 @@ One-time tool setup:
 # nasm: OpenH264's SIMD code. Without it video encoding is 2-3x slower,
 # so build-station.sh refuses to run.
 sudo pacman -S nasm        # or: sudo apt install nasm / brew install nasm
+# 7z: unpacks the Mesa archive for the software renderer.
+sudo pacman -S 7zip        # or: sudo apt install 7zip
 # Zig (any recent version) somewhere on PATH, e.g. ~/.local/share/zig
 cargo install cargo-zigbuild cargo-xwin
 rustup target add x86_64-pc-windows-msvc

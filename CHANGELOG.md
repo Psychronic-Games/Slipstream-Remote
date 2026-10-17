@@ -5,6 +5,26 @@ Build numbers are the git commit count. The app shows them as
 
 ## Unreleased
 
+### From testing build 19
+- **The full window on Windows Server 2016** and other machines whose
+  graphics can't run it: *Full window* in the compact window (or
+  `slipstream software-renderer`) fetches Mesa's CPU OpenGL driver
+  (llvmpipe, 22 MB) from the station, and the app then opens the full
+  window with it. The station's build script packages the two Mesa DLLs;
+  apps accept only the exact files whose checksums they carry
+  (`packaging/windows/softgl.txt`). OpenGL is now delay-loaded so that copy
+  is used rather than System32's.
+- **Full screen**: the toolbar's menus no longer vanish as you move into
+  them; Ctrl+Alt+Enter leaves (or enters) full screen and is never sent
+  to the remote computer; leaving the session for the Bridge or another
+  page brings the window back, instead of a full-screen Bridge with no way
+  out.
+- When the remote computer is at its lock screen or a UAC prompt, or
+  Ctrl+Alt+Del is sent, and it doesn't run the Slipstream service, the
+  viewer is told why the screen is black or nothing happened, and what
+  fixes it (Windows hides those screens from normal apps).
+- The compact window's ID and password can be selected and copied.
+
 ### Session tools
 - **Copy and paste files** between the computers, like text. Copy files
   in Explorer, Finder or a Linux file manager, click into the remote

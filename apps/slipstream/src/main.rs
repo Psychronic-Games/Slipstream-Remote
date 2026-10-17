@@ -111,6 +111,9 @@ enum Command {
     Info,
     /// Update to the newest build your station offers.
     Update,
+    /// Download the software renderer from your station, for machines whose
+    /// graphics can't run the full window (e.g. Windows Server 2016).
+    SoftwareRenderer,
     /// Windows: run as a service, for unattended access including the login
     /// screen and administrator prompts.
     #[cfg(windows)]
@@ -192,6 +195,7 @@ fn main() -> anyhow::Result<()> {
         Some(Command::SetPassword { password }) => cli::set_password(password.as_deref()),
         Some(Command::Info) => rt.block_on(cli::info()),
         Some(Command::Update) => rt.block_on(cli::update()),
+        Some(Command::SoftwareRenderer) => rt.block_on(cli::software_renderer()),
         Some(Command::ExportIcon { path, size }) => gui::export_icon(&path, size),
         None => {
             drop(rt);

@@ -6795,6 +6795,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "directories",
+ "flate2",
  "iroh",
  "rand 0.9.5",
  "reqwest",

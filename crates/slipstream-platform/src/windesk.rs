@@ -90,6 +90,26 @@ pub fn follow() -> bool {
     }
 }
 
+/// Is Windows showing a desktop this (non-service) process can't see: the
+/// lock or login screen, or a UAC prompt? Only the service reaches those,
+/// so capture shows black and input goes nowhere meanwhile.
+pub fn input_desktop_hidden() -> bool {
+    if following() {
+        return false;
+    }
+    const DESKTOP_READOBJECTS: u32 = 0x0001;
+    // SAFETY: opening the input desktop for its name, then closing it.
+    unsafe {
+        let desk = OpenInputDesktop(0, 0, DESKTOP_READOBJECTS);
+        if desk.is_null() {
+            return true; // Winlogon and the secure desktop refuse us
+        }
+        let name = desktop_name(desk);
+        CloseDesktop(desk);
+        !name.eq_ignore_ascii_case("Default")
+    }
+}
+
 /// Asks the service to generate Ctrl+Alt+Del. False if no service listens.
 pub fn request_sas() -> bool {
     let name: Vec<u16> = SAS_EVENT.encode_utf16().chain([0]).collect();

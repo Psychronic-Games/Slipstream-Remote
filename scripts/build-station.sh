@@ -139,6 +139,34 @@ else
   fi
 fi
 
+# The software OpenGL driver for Windows machines whose graphics can't run
+# the full window (Windows Server 2016…): the Mesa DLLs pinned in
+# packaging/windows/softgl.txt, gzipped. The archive is cached.
+softgl() {
+  local pins=packaging/windows/softgl.txt url sha archive tmp name fsha
+  read -r url sha < <(awk '$1 == "archive" { print $2, $3 }' "$pins")
+  archive="${XDG_CACHE_HOME:-$HOME/.cache}/slipstream-mesa/$(basename "$url")"
+  mkdir -p "$(dirname "$archive")" || return 1
+  if [ ! -f "$archive" ]; then
+    echo "==> Downloading $(basename "$url")"
+    curl -fsSL -o "$archive.part" "$url" && mv "$archive.part" "$archive" || return 1
+  fi
+  echo "$sha  $archive" | sha256sum -c --quiet || { rm -f "$archive"; return 1; }
+  command -v 7z >/dev/null || { echo "7z is needed to unpack Mesa" >&2; return 1; }
+  tmp=$(mktemp -d)
+  mkdir -p "$OUT/clients/softgl"
+  while read -r name fsha; do
+    7z e -y -o"$tmp" "$archive" "x64/$name" >/dev/null || return 1
+    echo "$fsha  $tmp/$name" | sha256sum -c --quiet || return 1
+    gzip -9n -c "$tmp/$name" > "$OUT/clients/softgl/$name.gz" || return 1
+  done < <(awk '$1 == "file" { print $2, $3 }' "$pins")
+  rm -rf "$tmp"
+  echo "==> Software OpenGL driver: Mesa $(awk '$1 == "version" { print $2 }' "$pins")"
+}
+if ! softgl; then
+  echo "warning: no software OpenGL driver in this station; machines like Windows Server 2016 keep the compact window" >&2
+fi
+
 # Update manifest: apps compare (version, build) with their own, check the
 # release signature, and verify the download against the signed checksum.
 # Code-signed apps are marked, so the station serves them untouched.
@@ -147,4 +175,4 @@ echo "==> Signed manifest: version $VERSION build $BUILD ($COMMIT)"
 
 chmod 755 "$OUT"/bin/* "$OUT"/clients/slipstream-linux-x86_64 2>/dev/null || true
 echo "==> Station assembled in $OUT:"
-ls -la "$OUT/bin" "$OUT/clients" | grep -v "^total"
+ls -la "$OUT/bin" "$OUT/clients" "$OUT/clients/softgl" 2>/dev/null | grep -v "^total"

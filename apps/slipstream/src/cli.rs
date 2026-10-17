@@ -234,6 +234,27 @@ pub async fn connect(id: &str, password: &str, seconds: u64, ops: FileOps, forwa
 }
 
 /// Checks the station for a newer build and installs it.
+pub async fn software_renderer() -> Result<()> {
+    let dir = slipstream_session::softgl::dir();
+    if slipstream_session::softgl::installed() {
+        println!("the software renderer is already in {}", dir.display());
+        return Ok(());
+    }
+    let store = Store::open_default()?;
+    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let result = client
+        .install_software_renderer(|done, total| {
+            if total > 0 && done == total {
+                println!("downloaded {total} bytes");
+            }
+        })
+        .await;
+    client.shutdown().await;
+    result?;
+    println!("installed Mesa {} in {}: start Slipstream for the full window", slipstream_session::softgl::version(), dir.display());
+    Ok(())
+}
+
 pub async fn update() -> Result<()> {
     let store = Store::open_default()?;
     let (client, _events) = Client::start(store, ClientOptions::default()).await?;

@@ -1,0 +1,10 @@
+# Mesa's CPU OpenGL driver (llvmpipe), for Windows machines whose graphics
+# can't run the full Slipstream window (Windows Server 2016, VMs without a
+# display driver). scripts/build-station.sh puts these files on the station;
+# apps download them on request and accept only these exact files.
+# Mesa is MIT licensed; libgallium_wgl.dll includes LLVM (Apache-2.0 with
+# LLVM exception). Builds from https://github.com/pal1000/mesa-dist-win.
+version 26.2.4
+archive https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z 351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695
+file opengl32.dll 75b295fc80df0eaa8f1264c28663f6932c8b72d36513eb092556608858b7f5e0
+file libgallium_wgl.dll 53e49adf87590d5b0cab8553b1e98084812040cc1fca8c487695b17b7af3702e

@@ -31,6 +31,8 @@ pub enum CapturedKey {
     Shortcut(&'static str, Option<String>),
     /// A paste with files on this computer's clipboard.
     PasteFiles(Vec<std::path::PathBuf>),
+    /// Ctrl+Alt+Enter: full screen on/off, never sent to the remote side.
+    ToggleFullscreen,
 }
 
 /// Files on their way to the remote clipboard for a paste.
@@ -74,6 +76,8 @@ pub struct RemoteTab {
     unread: bool,
     captured: bool,
     fullscreen: bool,
+    /// Full screen: when the pointer last brought the toolbar up.
+    toolbar_seen: Option<Instant>,
     video_rect: Option<Rect>,
     last_pointer: Option<(f32, f32)>,
     held_buttons: HashSet<usize>,
@@ -130,6 +134,7 @@ impl RemoteTab {
             unread: false,
             captured: false,
             fullscreen: false,
+            toolbar_seen: None,
             video_rect: None,
             last_pointer: None,
             held_buttons: HashSet::new(),
@@ -251,6 +256,21 @@ impl RemoteTab {
         }
     }
 
+    fn toggle_fullscreen(&mut self, ctx: &egui::Context) {
+        self.fullscreen = !self.fullscreen;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
+        if self.fullscreen {
+            self.notice = Some(("Full screen: point at the top edge for the bar, or press Ctrl+Alt+Enter to leave".into(), Instant::now()));
+        }
+    }
+
+    /// Leaving the session's page: don't strand the window in full screen.
+    pub fn leave_fullscreen(&mut self, ctx: &egui::Context) {
+        if self.fullscreen {
+            self.toggle_fullscreen(ctx);
+        }
+    }
+
     pub fn forward_keys(&mut self, keys: Vec<CapturedKey>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
         for k in keys {
             match k {
@@ -274,6 +294,11 @@ impl RemoteTab {
                     self.input(InputEvent::Key { code: code.into(), down: false });
                 }
                 CapturedKey::PasteFiles(paths) => self.paste_files(paths, rt, ctx),
+                CapturedKey::ToggleFullscreen => {
+                    // Ctrl and Alt went over already: let them go there.
+                    self.release_keyboard();
+                    self.toggle_fullscreen(ctx);
+                }
             }
         }
     }
@@ -294,9 +319,19 @@ impl RemoteTab {
 
         let pointer = ctx.input(|i| i.pointer.hover_pos());
         let toolbar_h = 44.0;
-        let show_toolbar = !self.fullscreen
-            || pointer.is_some_and(|p| p.y < full.top() + toolbar_h + 4.0)
-            || self.closed.is_some();
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::Enter)) {
+            self.toggle_fullscreen(&ctx);
+        }
+        // Full screen: the bar comes down at the top edge and stays while one
+        // of its menus is open (the pointer is then below it) or briefly after.
+        if pointer.is_some_and(|p| p.y < full.top() + toolbar_h + 4.0) || egui::Popup::is_any_open(&ctx) {
+            self.toolbar_seen = Some(Instant::now());
+        }
+        let lingering = self.toolbar_seen.is_some_and(|t| t.elapsed().as_millis() < 700);
+        if self.fullscreen && lingering {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        let show_toolbar = !self.fullscreen || lingering || self.closed.is_some();
         let chat_w = if self.show_chat { 330.0 } else { 0.0 };
         let video_area = Rect::from_min_max(
             pos2(full.left(), full.top() + if self.fullscreen { 0.0 } else { toolbar_h }),
@@ -602,9 +637,11 @@ impl RemoteTab {
             }
         }
 
-        if theme::pill(ui, if self.fullscreen { "Window" } else { "Full" }, pal::BLUE).clicked() {
-            self.fullscreen = !self.fullscreen;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
+        if theme::pill(ui, if self.fullscreen { "Window" } else { "Full" }, pal::BLUE)
+            .on_hover_text("Full screen on/off (Ctrl+Alt+Enter)")
+            .clicked()
+        {
+            self.toggle_fullscreen(&ctx);
         }
 
         let mut combo: Option<&'static [&'static str]> = None;

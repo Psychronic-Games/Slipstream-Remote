@@ -1,7 +1,10 @@
 //! Host side of a session: authenticate the viewer, share the screen,
 //! apply its input.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, bail};
 use iroh::endpoint::{Connection, SendStream};
@@ -9,8 +12,8 @@ use slipstream_core::{
     auth::{HostAuth, password_secret},
     framing::{MsgReader, expect_msg, write_msg},
     proto::{
-        Capabilities, ClipboardData, DisplayInfo, HostMsg, PROTOCOL_VERSION, SessionInfo, StreamSettings, VideoFrame,
-        ViewerMsg,
+        Capabilities, ClipboardData, DisplayInfo, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo, StreamSettings,
+        VideoFrame, ViewerMsg,
     },
 };
 use slipstream_platform::{
@@ -194,6 +197,46 @@ fn fsops_summary(paths: &[std::path::PathBuf]) -> (Vec<slipstream_core::proto::C
     crate::fsops::summarize(paths, 10_000)
 }
 
+const LOCKED_NOTICE: &str = "That computer is showing its lock screen or an administrator prompt, which Windows hides \
+     from apps. Install the Slipstream service there (Config → Windows service) to reach those.";
+const SAS_NOTICE: &str = "Windows only takes Ctrl+Alt+Del from a service: install the Slipstream service on that \
+     computer (Config → Windows service).";
+
+fn desktop_hidden() -> bool {
+    #[cfg(windows)]
+    return slipstream_platform::windesk::input_desktop_hidden();
+    #[allow(unreachable_code)]
+    false
+}
+
+fn service_mode() -> bool {
+    #[cfg(windows)]
+    return slipstream_platform::windesk::following();
+    #[allow(unreachable_code)]
+    false
+}
+
+/// Tracks Ctrl/Alt; true when this event completes Ctrl+Alt+Del.
+fn wants_sas(held: &mut Vec<String>, ev: &InputEvent) -> bool {
+    let InputEvent::Key { code, down } = ev else {
+        if matches!(ev, InputEvent::ReleaseAll) {
+            held.clear();
+        }
+        return false;
+    };
+    if code.starts_with("Control") || code.starts_with("Alt") {
+        held.retain(|k| k != code);
+        if *down {
+            held.push(code.clone());
+        }
+        return false;
+    }
+    *down
+        && code == "Delete"
+        && held.iter().any(|k| k.starts_with("Control"))
+        && held.iter().any(|k| k.starts_with("Alt"))
+}
+
 /// Turns privacy mode off when a session that switched it on ends.
 struct PrivacyGuard {
     inner: Arc<Inner>,
@@ -292,9 +335,25 @@ async fn session_loop(
     let mut _audio: Option<slipstream_audio::Capture> = None;
     // Privacy mode, lifted however the session ends.
     let mut privacy = PrivacyGuard { inner: inner.clone(), on: false };
+    // Windows without the service: say so when the screen it can't reach
+    // (lock screen, UAC prompt) is up, or Ctrl+Alt+Del is asked for.
+    let mut desktop_tick = tokio::time::interval(Duration::from_secs(3));
+    let mut hidden_since: Option<Instant> = None;
+    let mut held_mods: Vec<String> = Vec::new();
 
     loop {
         tokio::select! {
+            _ = desktop_tick.tick() => {
+                if desktop_hidden() {
+                    let due = hidden_since.is_none_or(|t| t.elapsed() >= Duration::from_secs(15));
+                    if due {
+                        hidden_since = Some(Instant::now());
+                        write_msg(&mut send, &HostMsg::Notice(LOCKED_NOTICE.into())).await?;
+                    }
+                } else {
+                    hidden_since = None;
+                }
+            }
             msg = recv.next() => {
                 let msg = match msg {
                     Ok(m) => m,
@@ -341,6 +400,9 @@ async fn session_loop(
                         if let Some(p) = &pipeline { p.request_keyframe(); }
                     }
                     ViewerMsg::Input(ev) => {
+                        if cfg!(windows) && caps.input && wants_sas(&mut held_mods, &ev) && !service_mode() {
+                            write_msg(&mut send, &HostMsg::Notice(SAS_NOTICE.into())).await?;
+                        }
                         if caps.input {
                             let mut b = inner.backend.lock().await;
                             if let Some(b) = b.as_mut()
@@ -434,5 +496,27 @@ struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
 impl<T> Drop for AbortOnDrop<T> {
     fn drop(&mut self) {
         self.0.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ctrl_alt_del_is_recognised() {
+        let key = |code: &str, down| InputEvent::Key { code: code.into(), down };
+        let mut held = Vec::new();
+        assert!(!wants_sas(&mut held, &key("Delete", true)), "Delete alone");
+        wants_sas(&mut held, &key("ControlLeft", true));
+        assert!(!wants_sas(&mut held, &key("Delete", true)), "Ctrl+Delete");
+        wants_sas(&mut held, &key("AltRight", true));
+        assert!(wants_sas(&mut held, &key("Delete", true)));
+        assert!(!wants_sas(&mut held, &key("Delete", false)), "the release");
+        wants_sas(&mut held, &key("AltRight", false));
+        assert!(!wants_sas(&mut held, &key("Delete", true)), "Alt let go");
+        wants_sas(&mut held, &key("AltLeft", true));
+        wants_sas(&mut held, &InputEvent::ReleaseAll);
+        assert!(!wants_sas(&mut held, &key("Delete", true)), "after ReleaseAll");
     }
 }

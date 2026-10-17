@@ -24,6 +24,27 @@ if (!empty($station['download_password_hash']) && !$isApp) {
     }
 }
 
+// The software OpenGL driver for Windows machines whose graphics can't run
+// the full window (packaging/windows/softgl.txt). Apps accept only the
+// exact files they have checksums for.
+$extra = (string)($_GET['extra'] ?? '');
+if ($extra !== '') {
+    $path = realpath(SLIP_ROOT) . "/clients/softgl/$extra.gz";
+    if (!in_array($extra, ['opengl32.dll', 'libgallium_wgl.dll'], true) || !is_file($path)) {
+        http_response_code(404);
+        exit('That download is not available.');
+    }
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+    header('Cache-Control: no-store');
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Type: application/gzip');
+    header('Content-Length: ' . filesize($path));
+    readfile($path);
+    exit;
+}
+
 $os = (string)($_GET['os'] ?? '');
 $builds = slip_client_builds();
 $b = $builds[$os] ?? null;

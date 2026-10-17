@@ -83,6 +83,12 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     // Without a graphics adapter wgpu can use (Windows Server 2016's
     // Direct3D 12 can't run the shaders it needs, for one), show the compact
     // native window instead: the computer can still be controlled.
+    // The software OpenGL driver, if this machine fetched it, is put first
+    // in line before anything loads OpenGL.
+    #[cfg(windows)]
+    if slipstream_session::softgl::installed() {
+        use_software_gl();
+    }
     #[cfg(windows)]
     if std::env::var_os("SLIPSTREAM_LITE").is_some() || !graphics_available(&rt) {
         tracing::warn!("no usable graphics adapter: using the compact window");
@@ -888,9 +894,27 @@ impl App {
     }
 }
 
-/// Writes the app icon as PNG, or as a multi-size Windows `.ico` if the
-/// path ends in `.ico`.
-/// "Slipstream Remote - Acme IT" (matches the station's download names).
+/// Makes `opengl32.dll` load from the software driver's folder (searched
+/// after the app's own folder, before System32), with Mesa's CPU renderer.
+#[cfg(windows)]
+fn use_software_gl() {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::LibraryLoader::{LoadLibraryW, SetDllDirectoryW};
+    let dir = slipstream_session::softgl::dir();
+    let wide = |p: &std::path::Path| p.as_os_str().encode_wide().chain([0]).collect::<Vec<u16>>();
+    // SAFETY: NUL-terminated paths. Setting the variable is sound: nothing
+    // else reads the environment while the app starts up.
+    let loaded = unsafe {
+        std::env::set_var("GALLIUM_DRIVER", "llvmpipe");
+        // Mesa's opengl32.dll finds libgallium_wgl.dll through this folder.
+        SetDllDirectoryW(wide(&dir).as_ptr());
+        // Loaded by full path now, it's the opengl32.dll that wgpu's later
+        // by-name loads get (opengl32 is delay-loaded, see build.rs).
+        !LoadLibraryW(wide(&dir.join("opengl32.dll")).as_ptr()).is_null()
+    };
+    tracing::info!(dir = %dir.display(), loaded, "using the software OpenGL driver");
+}
+
 /// Whether wgpu finds any adapter at all on this machine.
 #[cfg(windows)]
 fn graphics_available(rt: &tokio::runtime::Runtime) -> bool {
@@ -904,6 +928,7 @@ fn graphics_available(rt: &tokio::runtime::Runtime) -> bool {
     !adapters.is_empty()
 }
 
+/// "Slipstream Remote - Acme IT" (matches the station's download names).
 fn window_title(org: Option<&str>) -> String {
     match org.map(str::trim).filter(|o| !o.is_empty() && !o.eq_ignore_ascii_case("Slipstream Remote")) {
         Some(o) => format!("Slipstream Remote - {o}"),
@@ -911,6 +936,8 @@ fn window_title(org: Option<&str>) -> String {
     }
 }
 
+/// Writes the app icon as PNG, or as a multi-size Windows `.ico` if the
+/// path ends in `.ico`.
 pub fn export_icon(path: &std::path::Path, size: u32) -> Result<()> {
     if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ico")) {
         return std::fs::write(path, ico_bytes(&[16, 24, 32, 48, 64, 128, 256])?).map_err(Into::into);
@@ -1109,6 +1136,13 @@ impl eframe::App for App {
         for ev in raw.events.drain(..) {
             match ev {
                 egui::Event::Key { physical_key, key, pressed, repeat, modifiers } => {
+                    // Ours, not theirs: the way out of full screen.
+                    if key == egui::Key::Enter && modifiers.ctrl && modifiers.alt {
+                        if pressed && !repeat {
+                            self.captured_keys.push(remote::CapturedKey::ToggleFullscreen);
+                        }
+                        continue;
+                    }
                     // A paste sends this computer's clipboard over first:
                     // text through the session, files by upload.
                     if pressed && !repeat && clipboard_shortcut(modifiers, key) == Some(Shortcut::Paste) {
@@ -1169,6 +1203,13 @@ impl eframe::App for App {
         } else {
             if matches!(self.page, Page::Remote(_)) {
                 self.page = Page::Home;
+            }
+            // Full screen belongs to a session; the other pages get the window back.
+            for tab in &mut self.tabs {
+                tab.leave_fullscreen(&ctx);
+            }
+            if ctx.input(|i| i.viewport().fullscreen == Some(true)) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
             }
             let content = self.draw_frame(ui);
             let mut child = ui.new_child(UiBuilder::new().max_rect(content));

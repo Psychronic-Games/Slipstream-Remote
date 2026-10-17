@@ -54,8 +54,10 @@ struct View {
     online: bool,
     note: String,
     update: Option<UpdateInfo>,
-    /// The update is installed: relaunch from here.
+    /// The update (or the software renderer) is installed: relaunch from here.
     relaunch: Option<PathBuf>,
+    /// Downloading the software renderer.
+    fetching: bool,
 }
 
 const ID_TITLE: i32 = 101;
@@ -69,6 +71,7 @@ const BTN_NEW: i32 = 201;
 const BTN_COPY: i32 = 202;
 const BTN_UPDATE: i32 = 203;
 const BTN_QUIT: i32 = 204;
+const BTN_FULL: i32 = 205;
 
 /// "Something changed": refresh the texts.
 const WM_REFRESH: u32 = WM_APP + 1;
@@ -144,7 +147,11 @@ pub fn run(
         title: "SLIPSTREAM REMOTE".into(),
         id: client.settings().host.last_device_id.map(|i| i.to_string()).unwrap_or_else(|| "--- --- ---".into()),
         status: "Contacting the station…".into(),
-        note: "This computer's graphics can't run the full Slipstream window. It can still be controlled as usual.".into(),
+        note: if slipstream_session::softgl::installed() {
+            "Not even the software renderer can draw here, so this is the compact window. The computer can still be controlled as usual.".into()
+        } else {
+            "This computer's graphics can't run the full window. It can still be controlled as usual; Full window fetches a software renderer (22 MB).".into()
+        },
         ..Default::default()
     }));
 
@@ -283,7 +290,7 @@ unsafe fn build(hwnd: HWND) -> Vec<(i32, HWND)> {
     // SAFETY: creating child controls of our live window.
     unsafe {
         let hinst = GetModuleHandleW(std::ptr::null());
-        let (stat, button) = (wide("STATIC"), wide("BUTTON"));
+        let (stat, button, edit) = (wide("STATIC"), wide("BUTTON"), wide("EDIT"));
         let mut out = Vec::new();
         let mut add = |class: &[u16], id: i32, style: u32, (x, y, w, h): (i32, i32, i32, i32), f: HFONT| {
             let empty = wide("");
@@ -292,6 +299,12 @@ unsafe fn build(hwnd: HWND) -> Vec<(i32, HWND)> {
             out.push((id, c));
         };
         const SS_NOPREFIX: u32 = 0x80;
+        // The ID and password are read-only edit boxes so they can be
+        // selected and copied; Windows colours them like the labels
+        // (WM_CTLCOLORSTATIC).
+        const ES_AUTOHSCROLL: u32 = 0x80;
+        const ES_READONLY: u32 = 0x800;
+        let text = ES_READONLY | ES_AUTOHSCROLL;
         let (title, label, big, mid, status, small, btn) = (
             font(34, false, "Antonio"),
             font(17, false, "Antonio"),
@@ -304,16 +317,22 @@ unsafe fn build(hwnd: HWND) -> Vec<(i32, HWND)> {
         BUTTON_FONT.store(btn as usize, Ordering::Relaxed);
         add(&stat, ID_TITLE, SS_NOPREFIX, (20, 26, 460, 46), title);
         add(&stat, ID_ID_LABEL, 0, (20, 74, 300, 26), label);
-        add(&stat, ID_ID, 0, (20, 98, 460, 58), big);
+        add(&edit, ID_ID, text, (20, 98, 460, 58), big);
         add(&stat, ID_PW_LABEL, 0, (20, 154, 300, 26), label);
-        add(&stat, ID_PW, SS_NOPREFIX, (20, 178, 460, 46), mid);
+        add(&edit, ID_PW, text, (20, 178, 460, 46), mid);
         add(&stat, ID_STATUS, SS_NOPREFIX, (20, 226, 460, 28), status);
         add(&stat, ID_NOTE, SS_NOPREFIX, (20, 258, 460, 46), small);
         let pill = BS_OWNERDRAW as u32;
         add(&button, BTN_NEW, pill, (20, 318, 138, 34), btn);
         add(&button, BTN_COPY, pill, (166, 318, 88, 34), btn);
         add(&button, BTN_UPDATE, pill, (262, 318, 128, 34), btn);
+        add(&button, BTN_FULL, pill, (262, 318, 128, 34), btn);
         add(&button, BTN_QUIT, pill, (398, 318, 82, 34), btn);
+        // Edit boxes pad their text; line it up with the labels.
+        const EM_SETMARGINS: u32 = 0xD3;
+        for (_, c) in out.iter().filter(|(id, _)| [ID_ID, ID_PW].contains(id)) {
+            SendMessageW(*c, EM_SETMARGINS, 3, 0);
+        }
         out
     }
 }
@@ -334,10 +353,12 @@ fn set_text(ui: &mut Ui, id: i32, text: &str) {
 }
 
 fn refresh(ui: &mut Ui, hwnd: HWND) {
-    let (title, id, pw, status, online, note, update) = {
+    let (title, id, pw, status, online, note, update, fetching) = {
         let v = ui.view.lock().unwrap();
-        (v.title.clone(), v.id.clone(), v.password.clone(), v.status.clone(), v.online, v.note.clone(), v.update.is_some())
+        (v.title.clone(), v.id.clone(), v.password.clone(), v.status.clone(), v.online, v.note.clone(), v.update.is_some(), v.fetching)
     };
+    // The update's slot, unless there's an update to install.
+    let full = !update && !fetching && !slipstream_session::softgl::installed();
     set_text(ui, ID_TITLE, &title);
     set_text(ui, ID_ID_LABEL, "YOUR ID");
     set_text(ui, ID_ID, &id);
@@ -348,10 +369,12 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     set_text(ui, BTN_NEW, "New password");
     set_text(ui, BTN_COPY, "Copy");
     set_text(ui, BTN_UPDATE, "Install update");
+    set_text(ui, BTN_FULL, "Full window");
     set_text(ui, BTN_QUIT, "Quit");
     // SAFETY: live controls of our window.
     unsafe {
         ShowWindow(control(ui, BTN_UPDATE), if update { SW_SHOW } else { SW_HIDE });
+        ShowWindow(control(ui, BTN_FULL), if full { SW_SHOW } else { SW_HIDE });
         if online != ui.online {
             ui.online = online;
             ONLINE.store(online, Ordering::Relaxed);
@@ -473,6 +496,7 @@ unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
         BTN_NEW => ("NEW PASSWORD", VIOLET),
         BTN_COPY => ("COPY", LAVENDER),
         BTN_UPDATE => ("INSTALL UPDATE", GREEN),
+        BTN_FULL => ("FULL WINDOW", BLUE),
         BTN_QUIT => ("QUIT", RED),
         _ => ("", DIM),
     };
@@ -590,6 +614,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         copy(hwnd, &format!("ID: {}\r\nPassword: {}", v.id, v.password));
                     }
                     BTN_UPDATE => install_update(ui),
+                    BTN_FULL => fetch_full_window(ui),
                     BTN_QUIT => unsafe {
                         DestroyWindow(hwnd);
                     },
@@ -637,6 +662,42 @@ fn link(ui: &Ui, url: &str) {
             Err(e) => format!("Couldn't connect to the station: {e:#}"),
         };
         view.lock().unwrap().note = note;
+        wake(WM_REFRESH);
+    });
+}
+
+/// Fetches the software renderer, then relaunches into the full window.
+fn fetch_full_window(ui: &Ui) {
+    let (client, view) = (ui.client.clone(), ui.view.clone());
+    {
+        let mut v = view.lock().unwrap();
+        if v.fetching {
+            return;
+        }
+        v.fetching = true;
+        v.note = "Downloading the software renderer…".into();
+    }
+    wake(WM_REFRESH);
+    ui.rt.spawn(async move {
+        let (shown, mut last) = (view.clone(), u64::MAX);
+        let result = client
+            .install_software_renderer(move |done, total| {
+                let pct = (done * 100).checked_div(total).unwrap_or(0);
+                if pct != last {
+                    last = pct;
+                    shown.lock().unwrap().note = format!("Downloading the software renderer… {pct}%");
+                    wake(WM_REFRESH);
+                }
+            })
+            .await;
+        {
+            let mut v = view.lock().unwrap();
+            v.fetching = false;
+            match result.and_then(|()| Ok(std::env::current_exe()?)) {
+                Ok(exe) => v.relaunch = Some(exe),
+                Err(e) => v.note = format!("Couldn't get the full window: {e:#}"),
+            }
+        }
         wake(WM_REFRESH);
     });
 }

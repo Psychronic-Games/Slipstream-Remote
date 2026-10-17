@@ -5,6 +5,7 @@ mod cursor_folder;
 pub mod files;
 pub mod fsops;
 mod host;
+pub mod softgl;
 pub mod tunnel;
 pub mod update;
 mod video;
@@ -329,6 +330,13 @@ impl Client {
         let staged = update::download(dc.base_url(), dc.key(), info, progress).await?;
         let staged2 = staged.clone();
         tokio::task::spawn_blocking(move || update::install(&staged2)).await?
+    }
+
+    /// Fetches the software OpenGL driver for machines whose graphics
+    /// can't run the full window (Windows; see `softgl`).
+    pub async fn install_software_renderer(&self, progress: impl FnMut(u64, u64)) -> Result<()> {
+        let dc = self.directory().await?;
+        softgl::install(dc.base_url(), dc.key(), progress).await
     }
 
     pub async fn shutdown(&self) {

@@ -226,7 +226,7 @@ The toolbar along the top:
 |---|---|
 | **Bridge** (the delta pointing back) | Back to your home page. The session keeps running and is listed under *Links*. |
 | **SCREEN 1 2 3…** | Switch between the remote computer's screens (shown when it has several). |
-| **Full** | Full screen. Move the mouse to the top edge to bring the toolbar back. |
+| **Full** | Full screen. Move the mouse to the top edge to bring the toolbar back; **Ctrl+Alt+Enter** leaves full screen too. |
 | **Keys** | Send keys your own computer would catch: Ctrl+Alt+Del, Alt+Tab, the Windows key, Alt+F4, Print Screen, Ctrl+Esc. |
 | **Chat** | Text chat with the person at the remote computer. On their side it opens in its own window. |
 | **Files** | The two-pane file manager: your computer on the left, theirs on the right. Select files or folders and send them either way, or make folders. |
@@ -378,6 +378,9 @@ broken session.
 | App says **Server unreachable** | Check the computer's internet connection and that the station's address opens in a browser. A computer clock that is wrong does *not* matter: Slipstream corrects for it. |
 | **"This is a private Slipstream station"** | The app wasn't downloaded from this station, or the access key was renewed. Download the app again from the station page. |
 | **Partner not found / offline** | The other computer's app isn't running, has *Accept connections* off, or has no internet. Its status light should say *Online*. |
+| Remote screen is **black** after the other person logs off, locks the computer or closes another remote tool | Windows is showing its lock screen, which normal apps can't see (the session bar says so). Install the [Slipstream service](#windows-the-slipstream-service) on that computer to reach the lock and login screens. |
+| **Ctrl+Alt+Del does nothing** | Windows only accepts it from a service: install the [Slipstream service](#windows-the-slipstream-service) on the remote computer. |
+| A **small window** instead of the full app (Windows Server 2016, some VMs) | The graphics there can't run the full window. Press **Full window** in it: it downloads a software renderer (22 MB) from your station and restarts. Or run `slipstream software-renderer`. The small window still lets others control the computer. |
 | **Wrong password** | One-time passwords change after every session. Ask for the current one. |
 | **"Too many wrong passwords"** | After three wrong tries the computer waits before it checks another password, longer each time (up to 5 minutes). Wait the time shown, then try the right one. |
 | Update not offered, log says **"signature doesn't match"** | The station's apps were built with a different release key from yours. Download the app from the station page again. |
