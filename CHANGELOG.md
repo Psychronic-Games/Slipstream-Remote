@@ -25,10 +25,17 @@ Build numbers are the git commit count. The app shows them as
   first, then tighter buttons, then a screen menu.
 
 ### Windows
-- Windows Server 2016 (and other machines without a usable GPU): the app
-  now falls back to Windows' software renderer instead of exiting without
-  a word, and any start-up failure shows a message box.
-- The C runtime is linked in: no Visual C++ redistributable needed.
+- Windows Server 2016 and other machines wgpu can't draw on (its Direct3D
+  12 backend needs Shader Model 6, which Windows 10 1607 doesn't have)
+  get a compact window instead of nothing: built from plain Win32 controls
+  in the console style (the app's fonts, pill buttons, colour strips). It
+  shows the ID, password and link status, takes *Connect this app* links
+  and installs updates; the computer can be controlled as usual.
+  `SLIPSTREAM_LITE=1` forces it.
+- Elsewhere the app falls back to a software renderer when there's no GPU,
+  and any start-up failure shows a message box.
+- The C runtime is linked in (no Visual C++ redistributable needed), and
+  the .exe has a manifest (themed controls, per-monitor DPI, Windows 10/11).
 
 ### Security
 - Updates are signed. The station build script signs every app in the

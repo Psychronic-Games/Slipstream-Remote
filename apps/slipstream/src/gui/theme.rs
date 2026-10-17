@@ -50,16 +50,23 @@ pub fn body(size: f32) -> FontId {
 }
 
 /// Fonts + global visuals. Call once at startup.
+// The bundled fonts (SIL OFL), also used by the compact Windows window.
+pub const FONT_ANTONIO: &[u8] = include_bytes!("../../assets/fonts/Antonio-Regular.ttf");
+pub const FONT_ANTONIO_BOLD: &[u8] = include_bytes!("../../assets/fonts/Antonio-Bold.ttf");
+pub const FONT_BARLOW: &[u8] = include_bytes!("../../assets/fonts/BarlowSemiCondensed-Regular.ttf");
+pub const FONT_BARLOW_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/BarlowSemiCondensed-SemiBold.ttf");
+pub const FONT_MONO: &[u8] = include_bytes!("../../assets/fonts/ShareTechMono-Regular.ttf");
+
 pub fn install(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     let add = |fonts: &mut FontDefinitions, name: &str, bytes: &'static [u8]| {
         fonts.font_data.insert(name.into(), FontData::from_static(bytes).into());
     };
-    add(&mut fonts, "Antonio-Regular", include_bytes!("../../assets/fonts/Antonio-Regular.ttf"));
-    add(&mut fonts, "Antonio-Bold", include_bytes!("../../assets/fonts/Antonio-Bold.ttf"));
-    add(&mut fonts, "Barlow", include_bytes!("../../assets/fonts/BarlowSemiCondensed-Regular.ttf"));
-    add(&mut fonts, "Barlow-SemiBold", include_bytes!("../../assets/fonts/BarlowSemiCondensed-SemiBold.ttf"));
-    add(&mut fonts, "ShareTechMono", include_bytes!("../../assets/fonts/ShareTechMono-Regular.ttf"));
+    add(&mut fonts, "Antonio-Regular", FONT_ANTONIO);
+    add(&mut fonts, "Antonio-Bold", FONT_ANTONIO_BOLD);
+    add(&mut fonts, "Barlow", FONT_BARLOW);
+    add(&mut fonts, "Barlow-SemiBold", FONT_BARLOW_SEMIBOLD);
+    add(&mut fonts, "ShareTechMono", FONT_MONO);
 
     // Keep egui's defaults as fallbacks for symbols and emoji.
     let fallback_prop = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();

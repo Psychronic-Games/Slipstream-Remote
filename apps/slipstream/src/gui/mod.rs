@@ -6,6 +6,8 @@ mod files;
 mod desktop;
 mod home;
 mod keys;
+#[cfg(windows)]
+mod lite;
 mod remote;
 #[cfg(windows)]
 mod scheme;
@@ -72,6 +74,15 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     let (client, events) =
         rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: true, ..Default::default() }))?;
 
+    // Without a graphics adapter wgpu can use (Windows Server 2016's
+    // Direct3D 12 can't run the shaders it needs, for one), show the compact
+    // native window instead: the computer can still be controlled.
+    #[cfg(windows)]
+    if std::env::var_os("SLIPSTREAM_LITE").is_some() || !graphics_available(&rt) {
+        tracing::warn!("no usable graphics adapter: using the compact window");
+        return lite::run(rt, client, events, instance, opts.screenshot);
+    }
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Slipstream Remote")
@@ -116,7 +127,8 @@ pub fn run(opts: GuiOptions) -> Result<()> {
                 app.start_connect(&cc.egui_ctx);
             }
             app.screenshot = opts.screenshot;
-            app.show_requests = Some(instance.listen(cc.egui_ctx.clone()));
+            let wake = cc.egui_ctx.clone();
+            app.show_requests = Some(instance.listen(move || wake.request_repaint()));
             // Link to a station: as asked, or (no station yet) from where the
             // browser says this download came from.
             let link = opts.link.as_deref().and_then(StationLink::parse).map(|l| (l, true)).or_else(|| {
@@ -811,6 +823,19 @@ impl App {
 /// Writes the app icon as PNG, or as a multi-size Windows `.ico` if the
 /// path ends in `.ico`.
 /// "Slipstream Remote - Acme IT" (matches the station's download names).
+/// Whether wgpu finds any adapter at all on this machine.
+#[cfg(windows)]
+fn graphics_available(rt: &tokio::runtime::Runtime) -> bool {
+    use eframe::egui_wgpu::{WgpuSetupCreateNew, wgpu};
+    let instance = wgpu::Instance::new(WgpuSetupCreateNew::without_display_handle().instance_descriptor);
+    let adapters = rt.block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    for a in &adapters {
+        let info = a.get_info();
+        tracing::info!(name = %info.name, backend = ?info.backend, kind = ?info.device_type, "graphics adapter found");
+    }
+    !adapters.is_empty()
+}
+
 fn window_title(org: Option<&str>) -> String {
     match org.map(str::trim).filter(|o| !o.is_empty() && !o.eq_ignore_ascii_case("Slipstream Remote")) {
         Some(o) => format!("Slipstream Remote - {o}"),

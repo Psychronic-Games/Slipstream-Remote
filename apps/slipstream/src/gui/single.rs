@@ -13,8 +13,6 @@ use std::{
     time::Duration,
 };
 
-use eframe::egui;
-
 const SHOW: &[u8; 16] = b"slipstream:show\n";
 /// Followed by the URL and a newline.
 const LINK: &[u8; 16] = b"slipstream:link\n";
@@ -74,8 +72,8 @@ impl Instance {
         }
     }
 
-    /// Serves requests from later launches.
-    pub fn listen(self, ctx: egui::Context) -> mpsc::Receiver<Request> {
+    /// Serves requests from later launches; `wake` is called after each.
+    pub fn listen(self, wake: impl Fn() + Send + 'static) -> mpsc::Receiver<Request> {
         let (tx, rx) = mpsc::channel();
         let _ = thread::Builder::new().name("single-instance".into()).spawn(move || {
             for stream in self.listener.incoming().flatten() {
@@ -102,7 +100,7 @@ impl Instance {
                 if tx.send(req).is_err() {
                     return;
                 }
-                ctx.request_repaint();
+                wake();
             }
         });
         rx

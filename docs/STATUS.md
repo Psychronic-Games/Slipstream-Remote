@@ -18,6 +18,7 @@ back up.*
 | Station on the server's PHP 8.4 (no extensions): setup, sign-in, settings, download password, devices, key renewal, update offer | ✅ against a local copy; all PHP lint-clean |
 | Signed update installs; tampered, unsigned and foreign manifests and a swapped binary are refused | ✅ against a local station |
 | Windows build under Wine: host at 1440p/60 fps, GUI | ✅ |
+| Compact window (no usable GPU, e.g. Windows Server 2016): ID/password/status, being controlled | ✅ under Wine (forced); real Server 2016 pending |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Portable Linux binary (glibc 2.31, no PipeWire link) | ⚠️ needs only libc, libm, libpthread and libdl (glibc symbols ≤ 2.30); the Debian server that failed before hasn't re-tried it |
 | Host chat as its own window (KDE Wayland) | ✅ |
