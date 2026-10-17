@@ -20,6 +20,10 @@ back up.*
 | Windows build under Wine: host at 1440p/60 fps, GUI | ✅ |
 | Compact window (no usable GPU, e.g. Windows Server 2016): ID/password/status, being controlled | ✅ under Wine (forced); real Server 2016 pending |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
+| Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
+| Port forwarding | ✅ end-to-end test (echo through the tunnel, unreachable target, refused when not allowed) |
+| Privacy mode | ⚠️ builds for Windows; needs a real Windows 10 2004+ machine (capture exclusion doesn't exist under Wine) |
+| Windows service | ⚠️ install, a session at 1440p/60 and uninstall under Wine; UAC, login screen and Ctrl+Alt+Del need real Windows (issue 04) |
 | Portable Linux binary (glibc 2.31, no PipeWire link) | ⚠️ needs only libc, libm, libpthread and libdl (glibc symbols ≤ 2.30); the Debian server that failed before hasn't re-tried it |
 | Host chat as its own window (KDE Wayland) | ✅ |
 | Windows pointer drawing | ✅ unit tests under Wine; real hardware pending |
@@ -28,7 +32,8 @@ back up.*
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
 `cargo test --workspace` passes: unit tests plus in-process sessions
-covering video and input, files, chat and clipboard.
+covering video and input, files, chat, clipboard text and files, sound
+and port forwarding.
 
 ## Known gaps and limits
 
@@ -38,9 +43,12 @@ covering video and input, files, chat and clipboard.
   capture may or may not show the pointer (`cursor_in_video` is false, so
   the viewer keeps its own pointer visible). `slipstream://` links don't
   reach the app on macOS (winit doesn't pass URL events on); setup codes do.
-- **Windows elevation**: the app runs as the user, so it can't control UAC
-  prompts, elevated windows or the login screen. That needs a Windows
-  service running as SYSTEM.
+- **Windows elevation**: without the Slipstream service the app runs as
+  the user, so it can't control UAC prompts, elevated windows or the login
+  screen. The service does, but hasn't been tried on real Windows yet.
+- **Privacy mode** needs Windows 10 2004 or later on the remote side, and
+  blocks the local keyboard and mouse only under the service (Windows
+  allows `BlockInput` only to elevated programs).
 - **Windows signing**: set up for SignPath (free for open source) in the
   release workflow, which needs the repository public on GitHub. Until then
   the .exe is unsigned and SmartScreen warns about it.
@@ -71,8 +79,9 @@ in [issues/](issues/README.md).
    builds.
 3. **macOS**: run `scripts/build-macos.sh` on the Mac; test install, Open
    Anyway, permissions, capture, input, setup code and an update (issue 03).
-4. **Windows service** for UAC, elevated apps and the login screen
-   (unattended access to servers).
+4. **Try the new session tools on real machines** (issue 16): the
+   Windows service, privacy mode, copying files both ways, port
+   forwarding to Remote Desktop.
 5. **Hardware encoding**: NVENC, VA-API, Media Foundation, VideoToolbox.
 6. **Code signing**: apply to SignPath once the repo is public (issue 05);
    Apple notarisation when the Developer Program is joined.

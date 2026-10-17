@@ -98,6 +98,9 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             .with_icon(theme::icon(128))
             .with_drag_and_drop(true),
         renderer: eframe::Renderer::Wgpu,
+        // Ctrl+C/X/V are handled in `raw_input_hook`, which can see files
+        // on the clipboard (egui only knows text).
+        clipboard_shortcuts: false,
         // Queue one frame, not two: a remote screen is all about latency
         // (this saves a refresh interval, ~17 ms at 60 Hz).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
@@ -1072,12 +1075,32 @@ impl eframe::App for App {
         let focused_now = raw.focused;
         let lost_focus = self.window_focused && !focused_now;
         self.window_focused = focused_now;
-        let Some(tab) = self.focused_tab_mut() else { return };
-        if lost_focus {
-            tab.release_keyboard();
-            return;
-        }
-        if !tab.keyboard_captured() {
+        let captured = match self.focused_tab_mut() {
+            Some(tab) if lost_focus => {
+                tab.release_keyboard();
+                false
+            }
+            Some(tab) => tab.keyboard_captured(),
+            None => false,
+        };
+        if !captured {
+            // Ours: the usual clipboard shortcuts for egui's text fields.
+            for ev in &mut raw.events {
+                if let egui::Event::Key { key, pressed: true, modifiers, .. } = *ev
+                    && let Some(shortcut) = clipboard_shortcut(modifiers, key)
+                {
+                    *ev = match shortcut {
+                        Shortcut::Cut => egui::Event::Cut,
+                        Shortcut::Copy => egui::Event::Copy,
+                        Shortcut::Paste => match slipstream_platform::clipboard::read_local() {
+                            Some(slipstream_platform::clipboard::Clip::Text(t)) => {
+                                egui::Event::Paste(t.replace("\r\n", "\n"))
+                            }
+                            _ => continue,
+                        },
+                    };
+                }
+            }
             return;
         }
         // Steal keyboard events so egui doesn't act on them (Tab focus
@@ -1085,13 +1108,26 @@ impl eframe::App for App {
         let mut keep = Vec::with_capacity(raw.events.len());
         for ev in raw.events.drain(..) {
             match ev {
-                egui::Event::Key { physical_key, key, pressed, repeat, .. } => {
+                egui::Event::Key { physical_key, key, pressed, repeat, modifiers } => {
+                    // A paste sends this computer's clipboard over first:
+                    // text through the session, files by upload.
+                    if pressed && !repeat && clipboard_shortcut(modifiers, key) == Some(Shortcut::Paste) {
+                        use slipstream_platform::clipboard::{Clip, read_local};
+                        match read_local() {
+                            Some(Clip::Files(paths)) => {
+                                self.captured_keys.push(remote::CapturedKey::PasteFiles(paths));
+                                continue;
+                            }
+                            Some(Clip::Text(text)) => {
+                                self.captured_keys.push(remote::CapturedKey::Shortcut("KeyV", Some(text)));
+                                continue;
+                            }
+                            None => {}
+                        }
+                    }
                     let k = physical_key.unwrap_or(key);
                     self.captured_keys.push(remote::CapturedKey::Key { key: k, pressed, repeat });
                 }
-                egui::Event::Copy => self.captured_keys.push(remote::CapturedKey::Shortcut("KeyC", None)),
-                egui::Event::Cut => self.captured_keys.push(remote::CapturedKey::Shortcut("KeyX", None)),
-                egui::Event::Paste(text) => self.captured_keys.push(remote::CapturedKey::Shortcut("KeyV", Some(text))),
                 egui::Event::Text(_) | egui::Event::Ime(_) => {}
                 other => keep.push(other),
             }
@@ -1116,7 +1152,7 @@ impl eframe::App for App {
             let full = ui.max_rect();
             let mut action = remote::TabAction::None;
             if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
-                tab.forward_keys(keys);
+                tab.forward_keys(keys, &self.rt, &ctx);
                 action = tab.ui(ui, full, self.t0.elapsed().as_secs_f64(), &self.rt);
             }
             match action {
@@ -1160,5 +1196,30 @@ impl eframe::App for App {
         self.draw_attempt_overlay(&ctx);
         self.draw_toasts(&ctx);
         self.maybe_screenshot(&ctx);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shortcut {
+    Cut,
+    Copy,
+    Paste,
+}
+
+/// The platform's clipboard shortcuts (as egui-winit would recognise them).
+fn clipboard_shortcut(m: egui::Modifiers, key: egui::Key) -> Option<Shortcut> {
+    use egui::Key;
+    let win = cfg!(windows);
+    match key {
+        Key::Cut => Some(Shortcut::Cut),
+        Key::Copy => Some(Shortcut::Copy),
+        Key::Paste => Some(Shortcut::Paste),
+        Key::X if m.command_only() => Some(Shortcut::Cut),
+        Key::C if m.command_only() => Some(Shortcut::Copy),
+        Key::V if m.command_only() => Some(Shortcut::Paste),
+        Key::Delete if win && m.shift => Some(Shortcut::Cut),
+        Key::Insert if win && m.ctrl => Some(Shortcut::Copy),
+        Key::Insert if win && m.shift => Some(Shortcut::Paste),
+        _ => None,
     }
 }

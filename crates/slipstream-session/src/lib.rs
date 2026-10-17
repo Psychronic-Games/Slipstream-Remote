@@ -5,6 +5,7 @@ mod cursor_folder;
 pub mod files;
 pub mod fsops;
 mod host;
+pub mod tunnel;
 pub mod update;
 mod video;
 pub mod viewer;
@@ -488,7 +489,9 @@ async fn update_task(client: Client) {
 pub(crate) fn closed_reason(e: &iroh::endpoint::ConnectionError, peer: &str) -> String {
     use iroh::endpoint::ConnectionError;
     match e {
-        ConnectionError::ApplicationClosed(c) if c.error_code == 0u32.into() => format!("{peer} ended the session"),
+        ConnectionError::ApplicationClosed(c) if c.error_code == 0u32.into() => {
+            format!("{peer} ended the session")
+        }
         ConnectionError::TimedOut => "connection lost (no response)".into(),
         other => format!("connection lost: {other}"),
     }
@@ -631,18 +634,18 @@ mod tests {
     /// acks are flowing, and the session survives them.
     #[tokio::test(flavor = "multi_thread")]
     async fn large_clipboard_during_video() {
-        use slipstream_platform::clipboard::ClipboardSource;
-        let host_clip = Arc::new(Mutex::new(None::<String>));
-        let viewer_clip = Arc::new(Mutex::new(None::<String>));
+        use slipstream_platform::clipboard::{Clip, ClipboardSource};
+        let host_clip = Arc::new(Mutex::new(None::<Clip>));
+        let viewer_clip = Arc::new(Mutex::new(None::<Clip>));
         let (host, mut hev, _) = client_with("bhost", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
         let (viewer, _vev, _) = client_with("bviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
         let (session, mut events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Stats(s) if s.fps > 10.0)).await, "video flowing");
 
-        let poll = |clip: &Arc<Mutex<Option<String>>>, want: &str| {
+        let poll = |clip: &Arc<Mutex<Option<Clip>>>, want: &str| {
             let deadline = Instant::now() + Duration::from_secs(10);
             while Instant::now() < deadline {
-                if clip.lock().unwrap().as_deref() == Some(want) {
+                if matches!(&*clip.lock().unwrap(), Some(Clip::Text(t)) if t == want) {
                     return true;
                 }
                 std::thread::sleep(Duration::from_millis(20));
@@ -651,10 +654,10 @@ mod tests {
         };
         for round in 0..4 {
             let text: String = (0..600_000).map(|i| char::from(b'a' + ((i * 7 + round) % 26) as u8)).collect();
-            *viewer_clip.lock().unwrap() = Some(text.clone());
+            *viewer_clip.lock().unwrap() = Some(Clip::Text(text.clone()));
             assert!(tokio::task::block_in_place(|| poll(&host_clip, &text)), "viewer → host, round {round}");
             let back = text.to_uppercase();
-            *host_clip.lock().unwrap() = Some(back.clone());
+            *host_clip.lock().unwrap() = Some(Clip::Text(back.clone()));
             assert!(tokio::task::block_in_place(|| poll(&viewer_clip, &back)), "host → viewer, round {round}");
         }
         session.send(ViewerCmd::Chat("still here".into()));
@@ -703,6 +706,127 @@ mod tests {
         drop(session);
         viewer.shutdown().await;
         host.shutdown().await;
+    }
+
+    /// Copied files: pasted from the viewer onto the host's clipboard, and
+    /// fetched from the host's clipboard onto the viewer's.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clipboard_files_both_ways() {
+        use slipstream_platform::clipboard::{Clip, ClipboardSource};
+        let host_clip = Arc::new(Mutex::new(None::<Clip>));
+        let viewer_clip = Arc::new(Mutex::new(None::<Clip>));
+        let (host, _hev, hdir) = client_with("fhost", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
+        let (viewer, _vev, vdir) =
+            client_with("fviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
+        let (session, mut events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+
+        let src = vdir.join("to-paste");
+        std::fs::create_dir_all(src.join("Folder/sub")).unwrap();
+        std::fs::write(src.join("Folder/sub/a.txt"), b"alpha").unwrap();
+        let big: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(src.join("big.bin"), &big).unwrap();
+
+        let poll_files = |clip: &Arc<Mutex<Option<Clip>>>| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if let Some(Clip::Files(f)) = &*clip.lock().unwrap() {
+                    return f.clone();
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Vec::new()
+        };
+        let read = |files: &[std::path::PathBuf], name: &str| {
+            let p = files
+                .iter()
+                .find(|p| p.file_name().is_some_and(|n| n == name))
+                .unwrap_or_else(|| panic!("{name} in {files:?}"));
+            p.to_path_buf()
+        };
+
+        // Viewer → host.
+        let last = Arc::new(Mutex::new((0, 0)));
+        let l = last.clone();
+        let n = session
+            .paste_files(vec![src.join("Folder"), src.join("big.bin")], move |a, b| *l.lock().unwrap() = (a, b))
+            .await
+            .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(*last.lock().unwrap(), (300_005, 300_005), "progress");
+        let pasted = tokio::task::block_in_place(|| poll_files(&host_clip));
+        assert_eq!(pasted.len(), 2, "{pasted:?}");
+        assert_eq!(std::fs::read(read(&pasted, "big.bin")).unwrap(), big);
+        assert_eq!(std::fs::read(read(&pasted, "Folder").join("sub/a.txt")).unwrap(), b"alpha");
+        assert!(viewer_clip.lock().unwrap().is_none(), "the paste didn't echo back");
+
+        // Host → viewer.
+        let there = hdir.join("copied.txt");
+        std::fs::write(&there, b"from the host").unwrap();
+        *host_clip.lock().unwrap() = Some(Clip::Files(vec![there]));
+        let fetched = tokio::task::block_in_place(|| poll_files(&viewer_clip));
+        assert_eq!(fetched.len(), 1, "{fetched:?}");
+        assert_eq!(std::fs::read(read(&fetched, "copied.txt")).unwrap(), b"from the host");
+        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Notice(n) if n.contains("Copied 1 file"))).await);
+
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
+    }
+
+    /// Port forwarding carries a TCP connection both ways, and is refused
+    /// unless the host allows it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tunnel_end_to_end() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // An echo server "on the host's network".
+        let echo = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let echo_port = echo.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = echo.accept().await {
+                tokio::spawn(async move {
+                    let (mut r, mut w) = s.split();
+                    let _ = tokio::io::copy(&mut r, &mut w).await;
+                });
+            }
+        });
+
+        let (host, _hev, _) = client_with("thost", true, Default::default(), |s| s.host.allow_tunnels = true).await;
+        let (viewer, _vev, _) = client("tviewer", false).await;
+        let (session, _events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let tunnel = session.tunnel(0, "127.0.0.1".into(), echo_port).await.unwrap();
+
+        let mut c = tokio::net::TcpStream::connect(("127.0.0.1", tunnel.local_port)).await.unwrap();
+        let payload: Vec<u8> = (0..200_000u32).map(|i| (i % 253) as u8).collect();
+        c.write_all(&payload).await.unwrap();
+        c.shutdown().await.unwrap();
+        let mut back = Vec::new();
+        tokio::time::timeout(Duration::from_secs(10), c.read_to_end(&mut back)).await.unwrap().unwrap();
+        assert_eq!(back, payload, "echo through the tunnel");
+
+        // A target the host can't reach: the error comes back.
+        let dead = session.tunnel(0, "127.0.0.1".into(), 1).await.unwrap();
+        let mut c = tokio::net::TcpStream::connect(("127.0.0.1", dead.local_port)).await.unwrap();
+        let mut buf = [0u8; 1];
+        let _ = tokio::time::timeout(Duration::from_secs(10), c.read(&mut buf)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(dead.status().last_error.is_some_and(|e| e.contains("can't reach")), "{:?}", dead.status());
+        drop(session);
+
+        // Forwarding off (the default): refused before any port opens.
+        let (strict, _sev, _) = client("tstrict", true).await;
+        let (session2, _e2) =
+            viewer.connect_direct(strict.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        assert!(!session2.info().capabilities.tunnels);
+        assert!(session2.tunnel(0, "127.0.0.1".into(), echo_port).await.is_err());
+
+        drop(session2);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        strict.shutdown().await;
     }
 
     /// Guesses sent in parallel are still counted one by one: only the free
@@ -827,9 +951,9 @@ mod tests {
     /// Chat and clipboard text flow both ways.
     #[tokio::test(flavor = "multi_thread")]
     async fn chat_and_clipboard_both_ways() {
-        use slipstream_platform::clipboard::ClipboardSource;
-        let host_clip = Arc::new(Mutex::new(Some("host start".to_string())));
-        let viewer_clip = Arc::new(Mutex::new(Some("viewer start".to_string())));
+        use slipstream_platform::clipboard::{Clip, ClipboardSource};
+        let host_clip = Arc::new(Mutex::new(Some(Clip::Text("host start".into()))));
+        let viewer_clip = Arc::new(Mutex::new(Some(Clip::Text("viewer start".into()))));
         let (host, mut hev, _) = client_with("chost", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
         let (viewer, _vev, _) = client_with("cviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
         let (session, mut events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
@@ -839,10 +963,10 @@ mod tests {
         host.host_chat(1, "hello viewer".into());
         assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Chat(t) if t == "hello viewer")).await);
 
-        let poll = |clip: &Arc<Mutex<Option<String>>>, want: &str| {
+        let poll = |clip: &Arc<Mutex<Option<Clip>>>, want: &str| {
             let deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < deadline {
-                if clip.lock().unwrap().as_deref() == Some(want) {
+                if matches!(&*clip.lock().unwrap(), Some(Clip::Text(t)) if t == want) {
                     return true;
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -850,9 +974,9 @@ mod tests {
             false
         };
         // Copy on the viewer → appears on the host, and vice versa.
-        *viewer_clip.lock().unwrap() = Some("copied on viewer".into());
+        *viewer_clip.lock().unwrap() = Some(Clip::Text("copied on viewer".into()));
         assert!(tokio::task::block_in_place(|| poll(&host_clip, "copied on viewer")), "viewer → host clipboard");
-        *host_clip.lock().unwrap() = Some("copied on host".into());
+        *host_clip.lock().unwrap() = Some(Clip::Text("copied on host".into()));
         assert!(tokio::task::block_in_place(|| poll(&viewer_clip, "copied on host")), "host → viewer clipboard");
 
         // A normal disconnect reaches the host as such, not as a lost link.

@@ -30,7 +30,17 @@ fn draw_pointer(_: &mut [u8], _: u32, _: u32, _: u32, _: (i32, i32), _: ()) {}
 
 pub struct GenericBackend {
     displays: Vec<DisplayInfo>,
-    input: mpsc::Sender<(DisplayInfo, InputEvent)>,
+    input: mpsc::Sender<InputCmd>,
+    #[cfg(target_os = "windows")]
+    curtain: Option<crate::privacy::Curtain>,
+}
+
+/// Work for the input thread.
+enum InputCmd {
+    Event(DisplayInfo, InputEvent),
+    /// Block (or unblock) the local keyboard and mouse: privacy mode.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    BlockLocal(bool),
 }
 
 impl GenericBackend {
@@ -38,7 +48,12 @@ impl GenericBackend {
         let displays = list_displays()?;
         let (tx, rx) = mpsc::channel();
         thread::Builder::new().name("input".into()).spawn(move || input_worker(rx))?;
-        Ok(Self { displays, input: tx })
+        Ok(Self {
+            displays,
+            input: tx,
+            #[cfg(target_os = "windows")]
+            curtain: None,
+        })
     }
 }
 
@@ -84,6 +99,24 @@ impl Backend for GenericBackend {
 
     fn displays(&self) -> Vec<DisplayInfo> {
         self.displays.clone()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn privacy_supported(&self) -> bool {
+        crate::privacy::supported()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn set_privacy(&mut self, on: bool, who: &str) -> Result<()> {
+        if on {
+            if self.curtain.is_none() {
+                self.curtain = Some(crate::privacy::Curtain::show(who)?);
+            }
+        } else {
+            self.curtain = None;
+        }
+        let _ = self.input.send(InputCmd::BlockLocal(on));
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -136,12 +169,8 @@ impl Backend for GenericBackend {
     }
 
     fn inject(&mut self, display: u32, event: InputEvent) -> Result<()> {
-        let d = self
-            .displays
-            .get(display as usize)
-            .cloned()
-            .with_context(|| format!("display {display} not found"))?;
-        self.input.send((d, event)).map_err(|_| anyhow!("input worker stopped"))
+        let d = self.displays.get(display as usize).cloned().with_context(|| format!("display {display} not found"))?;
+        self.input.send(InputCmd::Event(d, event)).map_err(|_| anyhow!("input worker stopped"))
     }
 }
 
@@ -230,7 +259,7 @@ fn poll_screenshots(producer: &FrameSlot, monitor: &Monitor, min_interval: Durat
     }
 }
 
-fn input_worker(rx: mpsc::Receiver<(DisplayInfo, InputEvent)>) {
+fn input_worker(rx: mpsc::Receiver<InputCmd>) {
     let mut enigo = match Enigo::new(&Settings::default()) {
         Ok(e) => e,
         Err(e) => {
@@ -241,7 +270,23 @@ fn input_worker(rx: mpsc::Receiver<(DisplayInfo, InputEvent)>) {
     let mut held = HeldInputs::default();
     let mut wheel = (0.0f32, 0.0f32);
     let mut last_display = None;
-    while let Ok((display, event)) = rx.recv() {
+    while let Ok(cmd) = rx.recv() {
+        let (display, event) = match cmd {
+            InputCmd::Event(d, e) => (d, e),
+            InputCmd::BlockLocal(on) => {
+                // Only an elevated process may (the service's host is SYSTEM);
+                // otherwise the local user can still type, but sees the curtain.
+                #[cfg(target_os = "windows")]
+                {
+                    crate::windesk::follow();
+                    // SAFETY: plain call; the blocking thread's own SendInput still works.
+                    let ok = unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::BlockInput(on as i32) } != 0;
+                    tracing::info!(on, ok, "local input blocking");
+                }
+                let _ = on;
+                continue;
+            }
+        };
         // Service mode: inject on whichever desktop has input (login screen,
         // UAC prompt), and turn Ctrl+Alt+Del into the real thing.
         #[cfg(target_os = "windows")]

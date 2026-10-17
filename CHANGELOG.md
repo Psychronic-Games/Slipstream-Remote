@@ -5,6 +5,27 @@ Build numbers are the git commit count. The app shows them as
 
 ## Unreleased
 
+### Session tools
+- **Copy and paste files** between the computers, like text. Copy files
+  in Explorer, Finder or a Linux file manager, click into the remote
+  screen and press Ctrl+V: they're uploaded onto the remote clipboard and
+  pasted there. Files copied on the remote computer are fetched onto this
+  computer's clipboard (up to 64 MB / 500 files at a time; more than that
+  is left to *Files*). Needs *Clipboard* and *Files* allowed on the host.
+- **Privacy mode** (*Tools ▾* in the session bar): blacks out the remote
+  computer's own screens while you work, with a note saying who is
+  connected. The black screen is hidden from capture, so you still see the
+  desktop. Its keyboard and mouse are blocked too when the host runs as
+  the Slipstream service. Windows 10 2004 or later; it switches off when
+  the session ends.
+- **Port forwarding** (*Tools ▾ → Port forwarding…*, or
+  `slipstream connect --forward 13389:localhost:3389`): a port on this
+  computer that reaches a service on the remote computer or its network,
+  such as Remote Desktop or a router's admin page. Each connection gets a
+  QUIC stream of its own. Off unless the host allows it under *Config →
+  Permissions → Port forwarding*.
+- `PROTOCOL_VERSION` 5: every computer needs this version.
+
 ### Sound
 - The remote computer's sound can be played on the viewer: a **Sound**
   toggle in the session bar, and a default in *Config → Viewing* (off

@@ -13,7 +13,10 @@ use slipstream_core::{
         ViewerMsg,
     },
 };
-use slipstream_platform::{OpenOptions, clipboard::Clipboard};
+use slipstream_platform::{
+    OpenOptions,
+    clipboard::{Clip, Clipboard},
+};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -99,7 +102,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
 
     // Open (or reuse) the screen session. On Wayland the first time this
     // shows the desktop's "allow screen sharing" dialog on this machine.
-    let (displays, cursor_in_video) = {
+    let (displays, cursor_in_video, privacy) = {
         let mut backend = inner.backend.lock().await;
         if backend.is_none() {
             let opts = OpenOptions {
@@ -133,7 +136,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
                 }
             }
         }
-        backend.as_ref().map(|b| (b.displays(), b.cursor_in_video())).unwrap_or_default()
+        backend.as_ref().map(|b| (b.displays(), b.cursor_in_video(), b.privacy_supported())).unwrap_or_default()
     };
 
     let capabilities = Capabilities {
@@ -141,6 +144,8 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
         clipboard: settings.host.allow_clipboard,
         file_transfer: settings.host.allow_file_transfer,
         audio: settings.host.allow_audio && (inner.opts.test_pattern || slipstream_audio::capture_supported()),
+        privacy,
+        tunnels: settings.host.allow_tunnels,
         chat: true,
         cursor_in_video,
     };
@@ -157,7 +162,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
     inner.host_sessions.lock().unwrap().insert(id, cmd_tx);
     inner.emit(ClientEvent::HostSessionStarted { session: id, peer: viewer_name.clone() });
 
-    let reason = match session_loop(&inner, &conn, id, send, recv, displays, capabilities, cmd_rx).await {
+    let reason = match session_loop(&inner, &conn, id, &viewer_name, send, recv, displays, capabilities, cmd_rx).await {
         Ok(r) => r,
         Err(e) => format!("{e:#}"),
     };
@@ -182,6 +187,29 @@ fn set_restore_token(inner: &Inner, token: String) {
     };
     if changed {
         inner.save_settings();
+    }
+}
+
+fn fsops_summary(paths: &[std::path::PathBuf]) -> (Vec<slipstream_core::proto::ClipFile>, u64, u64) {
+    crate::fsops::summarize(paths, 10_000)
+}
+
+/// Turns privacy mode off when a session that switched it on ends.
+struct PrivacyGuard {
+    inner: Arc<Inner>,
+    on: bool,
+}
+
+impl Drop for PrivacyGuard {
+    fn drop(&mut self) {
+        if self.on {
+            let inner = self.inner.clone();
+            tokio::spawn(async move {
+                if let Some(b) = inner.backend.lock().await.as_mut() {
+                    let _ = b.set_privacy(false, "");
+                }
+            });
+        }
     }
 }
 
@@ -224,6 +252,7 @@ async fn session_loop(
     inner: &Arc<Inner>,
     conn: &Connection,
     id: u64,
+    viewer: &str,
     mut send: SendStream,
     recv: iroh::endpoint::RecvStream,
     displays: Vec<DisplayInfo>,
@@ -247,13 +276,13 @@ async fn session_loop(
 
     // File browsing and transfer requests from the viewer.
     let files_inner = inner.clone();
-    let policy = files::FilePolicy { browse: caps.file_transfer, receive: caps.file_transfer };
+    let policy = files::FilePolicy { browse: caps.file_transfer, receive: caps.file_transfer, tunnels: caps.tunnels };
     let on_saved: Arc<dyn Fn(std::path::PathBuf) + Send + Sync> =
         Arc::new(move |path| files_inner.emit(ClientEvent::FileReceived { session: id, path }));
-    let _files_guard = AbortOnDrop(tokio::spawn(files::serve(conn.clone(), policy, on_saved)));
-
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();
     let clipboard = if caps.clipboard { Clipboard::start(clip_tx, &inner.opts.clipboard) } else { None };
+    // Pasted files go onto this clipboard (only when clipboard sharing is on).
+    let _files_guard = AbortOnDrop(tokio::spawn(files::serve(conn.clone(), policy, on_saved, clipboard.clone())));
 
     let flow = Flow::new();
     let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();
@@ -261,6 +290,8 @@ async fn session_loop(
     let mut display = displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
     // The host's sound, while the viewer wants it (capture stops on drop).
     let mut _audio: Option<slipstream_audio::Capture> = None;
+    // Privacy mode, lifted however the session ends.
+    let mut privacy = PrivacyGuard { inner: inner.clone(), on: false };
 
     loop {
         tokio::select! {
@@ -322,11 +353,25 @@ async fn session_loop(
                     ViewerMsg::Clipboard(ClipboardData::Text(t)) => {
                         if let Some(c) = &clipboard { c.set_text(t); }
                     }
+                    // Viewers paste files with uploads + StreamOpen::ClipboardFiles.
+                    ViewerMsg::Clipboard(ClipboardData::Files { .. }) => {}
                     ViewerMsg::Chat(text) => {
                         let text: String = text.chars().take(4000).collect();
                         inner.emit(ClientEvent::HostChat { session: id, text });
                     }
                     ViewerMsg::Bye => return Ok("they ended the session".into()),
+                    ViewerMsg::SetPrivacy(on) => {
+                        if caps.privacy && on != privacy.on {
+                            let r = match inner.backend.lock().await.as_mut() {
+                                Some(b) => b.set_privacy(on, viewer),
+                                None => Err(anyhow::anyhow!("screen backend gone")),
+                            };
+                            match r {
+                                Ok(()) => privacy.on = on,
+                                Err(e) => write_msg(&mut send, &HostMsg::Notice(format!("Privacy mode: {e:#}"))).await?,
+                            }
+                        }
+                    }
                     ViewerMsg::SetAudio(on) => {
                         _audio = None;
                         if on && caps.audio {
@@ -342,11 +387,20 @@ async fn session_loop(
                     ViewerMsg::Hello { .. } | ViewerMsg::AuthResponse { .. } => bail!("protocol violation"),
                 }
             }
-            Some(text) = clip_rx.recv() => {
-                if text.len() <= 1 << 20 {
+            Some(clip) = clip_rx.recv() => match clip {
+                Clip::Text(text) if text.len() <= 1 << 20 => {
                     write_msg(&mut send, &HostMsg::Clipboard(ClipboardData::Text(text))).await?;
                 }
-            }
+                Clip::Text(_) => {}
+                // Copied files: tell the viewer what they are (it decides
+                // whether to fetch them), if it may have them.
+                Clip::Files(paths) if caps.file_transfer => {
+                    let summary = tokio::task::spawn_blocking(move || fsops_summary(&paths)).await?;
+                    let (items, total_bytes, file_count) = summary;
+                    write_msg(&mut send, &HostMsg::Clipboard(ClipboardData::Files { items, total_bytes, file_count })).await?;
+                }
+                Clip::Files(_) => {}
+            },
             Some(err) = err_rx.recv() => {
                 drop(pipeline.take());
                 // The portal session may have been revoked; reopen next time.

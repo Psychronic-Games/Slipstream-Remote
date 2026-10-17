@@ -100,7 +100,7 @@ the throttle locked until the attempt is counted, so opening many
 connections at once gains no extra guesses. A viewer that doesn't answer
 the challenge within 10 s is dropped.
 
-## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 4)
+## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 5)
 
 * **Control stream** (bi-directional, length-prefixed `postcard`): auth,
   session info (displays and capabilities), input events, frame acks,
@@ -116,11 +116,32 @@ the challenge within 10 s is dropped.
 * **File streams:** every later bi-stream starts with a `StreamOpen` request
   (`List`, `Places`, `Download`, `Upload`, `MakeDir`) and gets a
   `StreamReply`. An upload names a target: the default folder, a folder
-  path, or `UnderCursor`, which on Windows asks Explorer which folder window
-  is under the pointer (used for drag and drop).
+  path, `UnderCursor`, which on Windows asks Explorer which folder window
+  is under the pointer (used for drag and drop), or `Clipboard { batch }`.
+* **Copied files:** the clipboard holds text or a file list. A host's
+  file list goes to the viewer as a summary (`ClipboardData::Files`: names,
+  total size and count) and the viewer downloads it, if small enough, into
+  a temporary paste folder that it puts on its own clipboard. The other
+  way, Ctrl+V in the viewer uploads the files with
+  `UploadTarget::Clipboard { batch }`, then `StreamOpen::ClipboardFiles {
+  batch }` puts that batch's folder contents on the host's clipboard
+  before the paste keystroke is sent. Paste folders older than a day are
+  removed.
+* **Tunnels:** `StreamOpen::Tunnel { host, port }` asks the host to
+  connect to `host:port` (10 s timeout); after `Ready` the stream carries
+  that TCP connection's bytes both ways, half-closes included. The viewer
+  listens on 127.0.0.1 and opens one stream per accepted connection
+  (`crates/slipstream-session/src/tunnel.rs`). Hosts refuse unless
+  *Port forwarding* is allowed.
+* **Privacy mode** (`ViewerMsg::SetPrivacy`): on Windows the host shows a
+  topmost, click-through black window excluded from capture
+  (`WDA_EXCLUDEFROMCAPTURE`, build 19041 and later), and the input thread
+  calls `BlockInput`, which still lets its own injected input through. The
+  host turns it off when the session ends however it ends.
 * **Capabilities** tell the viewer what the host allows (input, clipboard,
-  files, chat) and whether its video already shows the mouse pointer
-  (`cursor_in_video`). The viewer hides its own pointer only in that case.
+  files, chat, sound, privacy mode, tunnels) and whether its video already
+  shows the mouse pointer (`cursor_in_video`). The viewer hides its own
+  pointer only in that case.
 
 `postcard` has no optional fields, so any change to a message bumps
 `PROTOCOL_VERSION`. Mismatched peers refuse each other with a "please

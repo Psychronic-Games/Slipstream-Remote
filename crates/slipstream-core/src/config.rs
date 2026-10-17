@@ -64,6 +64,9 @@ pub struct HostSettings {
     pub allow_file_transfer: bool,
     /// Let viewers hear this computer's sound.
     pub allow_audio: bool,
+    /// Let viewers forward ports through this computer (reach its own
+    /// services and its network). Off by default.
+    pub allow_tunnels: bool,
     /// Last numeric ID the server gave us (display only; the server is authoritative).
     pub last_device_id: Option<DeviceId>,
     /// Wayland portal token so screen-sharing permission survives restarts.
@@ -138,6 +141,7 @@ impl Default for HostSettings {
             allow_clipboard: true,
             allow_file_transfer: true,
             allow_audio: true,
+            allow_tunnels: false,
             last_device_id: None,
             portal_restore_token: None,
         }

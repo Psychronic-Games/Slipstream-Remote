@@ -28,15 +28,22 @@ pub struct FilePolicy {
     pub browse: bool,
     /// Receive uploads.
     pub receive: bool,
+    /// Forward TCP connections (`StreamOpen::Tunnel`).
+    pub tunnels: bool,
 }
 
 /// Serves file requests arriving on `conn` until it closes. `on_saved` is
 /// told about each received file.
-pub async fn serve(conn: Connection, policy: FilePolicy, on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>) {
+pub async fn serve(
+    conn: Connection,
+    policy: FilePolicy,
+    on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>,
+    clipboard: Option<slipstream_platform::clipboard::Clipboard>,
+) {
     while let Ok((send, recv)) = conn.accept_bi().await {
-        let on_saved = on_saved.clone();
+        let (on_saved, clipboard) = (on_saved.clone(), clipboard.clone());
         tokio::spawn(async move {
-            if let Err(e) = handle(send, recv, policy, on_saved).await {
+            if let Err(e) = handle(send, recv, policy, on_saved, clipboard).await {
                 tracing::debug!("file request failed: {e:#}");
             }
         });
@@ -47,10 +54,49 @@ async fn reply(send: &mut SendStream, r: &StreamReply) -> Result<()> {
     write_msg(send, r).await
 }
 
-async fn handle(mut send: SendStream, mut recv: RecvStream, policy: FilePolicy, on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>) -> Result<()> {
+async fn handle(
+    mut send: SendStream,
+    mut recv: RecvStream,
+    policy: FilePolicy,
+    on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>,
+    clipboard: Option<slipstream_platform::clipboard::Clipboard>,
+) -> Result<()> {
     let req: StreamOpen = expect_msg(&mut recv).await?;
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
+        StreamOpen::ClipboardFiles { batch } => {
+            let r = match &clipboard {
+                Some(cb) if policy.receive => {
+                    let dir = fsops::paste_dir(batch);
+                    let items: Vec<PathBuf> =
+                        std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
+                    cb.set_files(items);
+                    StreamReply::Done
+                }
+                _ => denied("Pasting files"),
+            };
+            reply(&mut send, &r).await?;
+        }
+        StreamOpen::Tunnel { host, port } => {
+            if !policy.tunnels {
+                return reply(&mut send, &denied("Port forwarding")).await;
+            }
+            let target = format!("{host}:{port}");
+            match tokio::time::timeout(std::time::Duration::from_secs(10), tokio::net::TcpStream::connect(&target))
+                .await
+            {
+                Ok(Ok(tcp)) => {
+                    tracing::info!(%target, "tunnel opened");
+                    reply(&mut send, &StreamReply::Ready).await?;
+                    crate::tunnel::splice(tcp, send, recv).await;
+                }
+                Ok(Err(e)) => {
+                    reply(&mut send, &StreamReply::Error(format!("can't reach {target} from that computer: {e}")))
+                        .await?
+                }
+                Err(_) => reply(&mut send, &StreamReply::Error(format!("{target} didn't answer"))).await?,
+            }
+        }
         StreamOpen::Places => {
             let r = if policy.browse { StreamReply::Places(fsops::places()) } else { denied("Browsing files") };
             reply(&mut send, &r).await?;
@@ -116,7 +162,14 @@ async fn handle(mut send: SendStream, mut recv: RecvStream, policy: FilePolicy, 
             let base = match &target {
                 UploadTarget::Default => fsops::default_upload_dir(),
                 UploadTarget::Folder(f) => PathBuf::from(f),
-                UploadTarget::UnderCursor => crate::cursor_folder::folder_under_cursor().unwrap_or_else(fsops::default_upload_dir),
+                UploadTarget::UnderCursor => {
+                    crate::cursor_folder::folder_under_cursor().unwrap_or_else(fsops::default_upload_dir)
+                }
+                UploadTarget::Clipboard { batch } => {
+                    let dir = fsops::paste_dir(*batch);
+                    let _ = tokio::fs::create_dir_all(&dir).await;
+                    dir
+                }
             };
             if !base.is_dir() {
                 reply(&mut send, &StreamReply::Error(format!("folder {} does not exist", base.display()))).await?;
@@ -166,7 +219,7 @@ impl RemoteFs {
         Self { conn }
     }
 
-    async fn ask(&self, req: StreamOpen) -> Result<(SendStream, RecvStream, StreamReply)> {
+    pub(crate) async fn ask(&self, req: StreamOpen) -> Result<(SendStream, RecvStream, StreamReply)> {
         let (mut send, mut recv) = self.conn.open_bi().await.context("connection closed")?;
         write_msg(&mut send, &req).await?;
         let reply: StreamReply = expect_msg(&mut recv).await?;

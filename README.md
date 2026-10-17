@@ -18,9 +18,15 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
   loop keeps latency low instead of letting frames queue up.
 - **Full control** — mouse, wheel, keyboard (physical keys, works across
   layouts), Ctrl+Alt+Del and other special keys, multi-monitor switching.
-- **Clipboard sync, chat, and a two-pane file manager** — browse both
-  computers, send and receive files and folders, or drag files from your
-  desktop straight onto the remote screen.
+- **Clipboard sync, chat, and a two-pane file manager** — copy and paste
+  text and files between the computers, browse both, send and receive
+  folders, or drag files from your desktop straight onto the remote screen.
+- **Sound** from the remote computer, when you want it.
+- **Unattended Windows servers** — the Slipstream service reaches UAC
+  prompts, administrator windows and the login screen.
+- **Privacy mode** blacks out the remote screen while you work, and
+  **port forwarding** reaches services on the remote network (its Remote
+  Desktop, a router's admin page).
 - **Quality presets** — Balanced, Speed, Quality, Low bandwidth; automatic
   bitrate adaptation.
 - **Runs in the tray**, starts with the system, stays reachable.
@@ -124,7 +130,6 @@ protocol, the latency control loop and the platform backends.
 - Hardware video encoding (NVENC, VA-API, VideoToolbox, Media Foundation)
 - Android app (viewer first, then host)
 - Address book with saved credentials (OS keychain)
-- Windows service / pre-login access
 
 ## License
 

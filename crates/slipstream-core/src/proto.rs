@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the session protocol changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Audio travels as QUIC datagrams (a lost one is concealed, never waited
 /// for): `[AUDIO_DATAGRAM][u16 LE sequence][Opus packet]`, 20 ms each.
@@ -49,6 +49,8 @@ pub enum ViewerMsg {
     Bye,
     /// Start or stop sending the host's sound.
     SetAudio(bool),
+    /// Black out the host's own screen (privacy mode), or stop.
+    SetPrivacy(bool),
 }
 
 /// Messages sent by the host on the control stream.
@@ -87,6 +89,10 @@ pub struct Capabilities {
     pub cursor_in_video: bool,
     /// The host can share its sound (and allows it).
     pub audio: bool,
+    /// The host can black out its own screen during the session.
+    pub privacy: bool,
+    /// The host allows port forwarding (`StreamOpen::Tunnel`).
+    pub tunnels: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -157,6 +163,22 @@ pub enum InputEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClipboardData {
     Text(String),
+    /// Files copied on the host: what they are, so the viewer can decide
+    /// whether to fetch them for pasting.
+    Files {
+        items: Vec<ClipFile>,
+        total_bytes: u64,
+        file_count: u64,
+    },
+}
+
+/// One top-level item of a copied file list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipFile {
+    pub path: String,
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
 }
 
 /// Where an uploaded file should go on the receiving side.
@@ -169,6 +191,9 @@ pub enum UploadTarget {
     /// Whatever folder is under the receiver's mouse pointer (e.g. an
     /// Explorer window), falling back to the Desktop.
     UnderCursor,
+    /// A temporary folder for files being pasted (see
+    /// [`StreamOpen::ClipboardFiles`]); one per paste.
+    Clipboard { batch: u64 },
 }
 
 /// First message on every bi-stream after the control stream.
@@ -186,6 +211,13 @@ pub enum StreamOpen {
     Places,
     /// Create a folder: [`StreamReply::Done`].
     MakeDir { path: String },
+    /// Port forwarding: the host connects to `host:port` (as seen from the
+    /// host) and, after [`StreamReply::Ready`], the stream carries that TCP
+    /// connection's bytes both ways.
+    Tunnel { host: String, port: u16 },
+    /// Put the files uploaded to `UploadTarget::Clipboard { batch }` on the
+    /// receiver's clipboard, ready to paste: [`StreamReply::Done`].
+    ClipboardFiles { batch: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

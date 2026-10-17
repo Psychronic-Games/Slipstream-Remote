@@ -92,6 +92,11 @@ enum Command {
         /// Download a remote file into the current folder and exit.
         #[arg(long)]
         get: Option<String>,
+        /// Forward a local port through the link, until Ctrl+C: LOCAL:HOST:PORT
+        /// (HOST as seen from the remote computer), or LOCAL:PORT for its
+        /// localhost. E.g. `--forward 13389:3389` for its Remote Desktop.
+        #[arg(long, value_name = "LOCAL:HOST:PORT")]
+        forward: Vec<String>,
     },
     /// Set the server (a domain or URL, e.g. `relay.example.com`).
     SetServer {
@@ -180,8 +185,8 @@ fn main() -> anyhow::Result<()> {
                 rt.block_on(cli::host(false, None, true))
             }
         },
-        Some(Command::Connect { id, password, seconds, ls, put, to, get }) => {
-            rt.block_on(cli::connect(&id, &password, seconds, cli::FileOps { ls, put, to, get }))
+        Some(Command::Connect { id, password, seconds, ls, put, to, get, forward }) => {
+            rt.block_on(cli::connect(&id, &password, seconds, cli::FileOps { ls, put, to, get }, forward))
         }
         Some(Command::SetServer { address, key }) => cli::set_server(&address, key),
         Some(Command::SetPassword { password }) => cli::set_password(password.as_deref()),

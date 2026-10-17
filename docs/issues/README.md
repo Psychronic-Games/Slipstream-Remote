@@ -23,6 +23,7 @@ track them.
 | 13 | [ARM builds](13-arm-builds.md) | infra |
 | 14 | [Windows .exe version from Cargo.toml](14-version-in-one-place.md) | infra, good first issue |
 | 15 | [Windows: capture straight from DXGI](15-windows-capture-dxgi.md) | Windows, performance |
+| 16 | [Try the new session tools on real machines](16-session-tools-real-machines.md) | testing |
 
 **Start with 01.** It's a checklist for testing the 0.5.0 fixes on the
 laptop and the Debian server. 02 and 03 follow.

@@ -18,11 +18,11 @@ use slipstream_core::{
     directory::DeviceId,
     framing::{MsgReader, expect_msg, read_msg, write_msg},
     proto::{
-        ALPN_REMOTE, ClipboardData, DisplayInfo, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo, StreamSettings,
-        VideoFrame, ViewerMsg,
+        ALPN_REMOTE, ClipFile, ClipboardData, DisplayInfo, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
+        StreamSettings, UploadTarget, VideoFrame, ViewerMsg,
     },
 };
-use slipstream_platform::clipboard::{Clipboard, ClipboardSource};
+use slipstream_platform::clipboard::{Clip, Clipboard, ClipboardSource};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -39,6 +39,8 @@ pub enum ViewerCmd {
     Clipboard(String),
     /// Play the remote computer's sound, or stop.
     Audio(bool),
+    /// Black out the remote computer's own screen, or stop.
+    Privacy(bool),
     Disconnect,
 }
 
@@ -106,6 +108,7 @@ impl FrameShared {
 /// A live remote-control session. Dropping it disconnects.
 pub struct ViewerSession {
     cmds: mpsc::UnboundedSender<ViewerCmd>,
+    conn: Connection,
     fs: RemoteFs,
     frames: Arc<FrameShared>,
     info: SessionInfo,
@@ -113,6 +116,15 @@ pub struct ViewerSession {
 }
 
 impl ViewerSession {
+    /// Forwards 127.0.0.1:`local_port` (0 = any) here to `host:port` as
+    /// seen from the remote computer, while the session lasts (see `tunnel`).
+    pub async fn tunnel(&self, local_port: u16, host: String, port: u16) -> Result<crate::tunnel::Tunnel> {
+        if !self.info.capabilities.tunnels {
+            bail!("that computer doesn't allow port forwarding (Config → Permissions there)");
+        }
+        crate::tunnel::open(self.conn.clone(), local_port, host, port).await
+    }
+
     pub fn info(&self) -> &SessionInfo {
         &self.info
     }
@@ -141,6 +153,86 @@ impl ViewerSession {
     pub fn command_sender(&self) -> mpsc::UnboundedSender<ViewerCmd> {
         self.cmds.clone()
     }
+
+    /// Copies local files onto the remote computer's clipboard, ready for
+    /// the paste that follows (Ctrl+V there pastes them into the folder or
+    /// app in front). `progress` gets (bytes sent, bytes in all).
+    pub fn paste_files(
+        &self,
+        paths: Vec<std::path::PathBuf>,
+        mut progress: impl FnMut(u64, u64) + Send + 'static,
+    ) -> impl Future<Output = Result<usize>> + Send + 'static {
+        let caps = &self.info.capabilities;
+        let allowed = caps.clipboard && caps.file_transfer;
+        let fs = self.fs.clone();
+        async move {
+            if !allowed {
+                bail!("that computer doesn't accept files (Config → Permissions there)");
+            }
+            let files = tokio::task::spawn_blocking(move || {
+                let mut all = Vec::new();
+                for p in &paths {
+                    all.extend(crate::fsops::walk_local(p)?);
+                }
+                anyhow::Ok(all)
+            })
+            .await??;
+            let total: u64 = files.iter().map(|f| f.2).sum();
+            let batch = rand::random::<u64>();
+            let mut sent = 0;
+            for (local, rel, _) in &files {
+                fs.upload(local, UploadTarget::Clipboard { batch }, rel.clone(), |n| {
+                    sent += n;
+                    progress(sent, total);
+                })
+                .await?;
+            }
+            let (_send, _recv, reply) = fs.ask(slipstream_core::proto::StreamOpen::ClipboardFiles { batch }).await?;
+            if !matches!(reply, slipstream_core::proto::StreamReply::Done) {
+                bail!("unexpected reply {reply:?}");
+            }
+            Ok(files.len())
+        }
+    }
+}
+
+/// Biggest copy fetched automatically when the remote computer's clipboard
+/// holds files; larger ones are left to the Files window.
+const AUTO_FETCH_BYTES: u64 = 64 << 20;
+const AUTO_FETCH_FILES: u64 = 500;
+
+/// Fetches files copied on the remote computer and puts them on this
+/// computer's clipboard.
+async fn fetch_clipboard_files(
+    fs: RemoteFs,
+    clipboard: Clipboard,
+    items: Vec<ClipFile>,
+    events: mpsc::UnboundedSender<ViewerEvent>,
+) {
+    let result = async {
+        let dir = tokio::task::spawn_blocking(|| crate::fsops::paste_dir(rand::random())).await?;
+        let mut count = 0;
+        for item in &items {
+            for (remote, rel, _) in fs.walk(item.path.clone(), item.is_dir, item.name.clone(), item.size).await? {
+                let dest = dir.join(crate::fsops::safe_relative(&rel)?);
+                fs.download(remote, &dest, |_| {}).await?;
+                count += 1;
+            }
+        }
+        let top: Vec<_> = std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        if top.is_empty() {
+            bail!("nothing to copy");
+        }
+        clipboard.set_files(top);
+        anyhow::Ok(count)
+    }
+    .await;
+    let notice = match result {
+        Ok(1) => "Copied 1 file from the remote computer — ready to paste here".to_string(),
+        Ok(n) => format!("Copied {n} files from the remote computer — ready to paste here"),
+        Err(e) => format!("Couldn't copy the remote computer's files: {e:#}"),
+    };
+    let _ = events.send(ViewerEvent::Notice(notice));
 }
 
 impl Drop for ViewerSession {
@@ -205,6 +297,7 @@ pub(crate) async fn connect(
     let clipboard = (settings.sync_clipboard && info.capabilities.clipboard).then_some(clipboard);
     let audio = settings.play_audio && info.capabilities.audio;
     let fs = RemoteFs::new(conn.clone());
+    let tunnel_conn = conn.clone();
     tokio::spawn(run(
         conn,
         send,
@@ -218,7 +311,7 @@ pub(crate) async fn connect(
         audio,
         audio_out,
     ));
-    Ok((ViewerSession { cmds: cmd_tx, fs, frames, info, peer }, ev_rx))
+    Ok((ViewerSession { cmds: cmd_tx, conn: tunnel_conn, fs, frames, info, peer }, ev_rx))
 }
 
 /// Opens the speakers and asks the host for its sound. A speaker problem is
@@ -367,6 +460,8 @@ async fn session(
 
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();
     let clipboard = sync_clipboard.and_then(|source| Clipboard::start(clip_tx, &source));
+    // The latest fetch of files copied over there (a newer copy replaces it).
+    let mut _clip_fetch: Option<Abort<()>> = None;
 
     let mut stats_tick = tokio::time::interval(Duration::from_secs(1));
     let mut last_stats = (Instant::now(), 0u64, 0u64);
@@ -388,6 +483,22 @@ async fn session(
                     HostMsg::Clipboard(ClipboardData::Text(t)) => {
                         if let Some(c) = &clipboard { c.set_text(t); }
                     }
+                    HostMsg::Clipboard(ClipboardData::Files { items, total_bytes, file_count }) => {
+                        let Some(c) = &clipboard else { continue };
+                        if total_bytes > AUTO_FETCH_BYTES || file_count > AUTO_FETCH_FILES {
+                            let _ = events.send(ViewerEvent::Notice(format!(
+                                "Files copied over there ({file_count} files, {} MB) are too many to copy through the clipboard — use Files instead",
+                                total_bytes >> 20
+                            )));
+                        } else if !items.is_empty() {
+                            _clip_fetch = Some(Abort(tokio::spawn(fetch_clipboard_files(
+                                RemoteFs::new(conn.clone()),
+                                c.clone(),
+                                items,
+                                events.clone(),
+                            ))));
+                        }
+                    }
                     HostMsg::Chat(t) => { let _ = events.send(ViewerEvent::Chat(t)); }
                     HostMsg::Notice(n) => { let _ = events.send(ViewerEvent::Notice(n)); }
                     HostMsg::Bye { reason } => return Ok(reason),
@@ -398,8 +509,11 @@ async fn session(
                 DecoderOut::Ack(seq) => write_msg(send, &ViewerMsg::FrameAck { seq }).await?,
                 DecoderOut::NeedKeyframe => write_msg(send, &ViewerMsg::RequestKeyframe).await?,
             },
-            Some(text) = clip_rx.recv() => {
-                if text.len() <= 1 << 20 {
+            Some(clip) = clip_rx.recv() => {
+                // Local files go over on paste (`paste_files`), not on copy.
+                if let Clip::Text(text) = clip
+                    && text.len() <= 1 << 20
+                {
                     write_msg(send, &ViewerMsg::Clipboard(ClipboardData::Text(text))).await?;
                 }
             }
@@ -413,6 +527,7 @@ async fn session(
                 Some(ViewerCmd::Clipboard(t)) => {
                     write_msg(send, &ViewerMsg::Clipboard(ClipboardData::Text(t))).await?;
                 }
+                Some(ViewerCmd::Privacy(on)) => write_msg(send, &ViewerMsg::SetPrivacy(on)).await?,
                 Some(ViewerCmd::Audio(on)) => {
                     _audio = None;
                     if on {

@@ -143,6 +143,55 @@ pub fn unique_path(path: &Path) -> PathBuf {
     (1..).map(|i| dir.join(format!("{stem} ({i}){ext}"))).find(|p| !p.exists()).expect("unbounded")
 }
 
+/// The temporary folder for one paste of copied files. Older ones (from a
+/// day ago) are removed when a new one is made.
+pub fn paste_dir(batch: u64) -> PathBuf {
+    let root = std::env::temp_dir().join("Slipstream Remote paste");
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for e in entries.flatten() {
+            let old = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() > 24 * 3600));
+            if old {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+    }
+    root.join(format!("{batch:016x}"))
+}
+
+/// What a list of copied files amounts to: top-level items, total bytes
+/// and file count (stops counting past `limit` files).
+pub fn summarize(paths: &[PathBuf], limit: u64) -> (Vec<slipstream_core::proto::ClipFile>, u64, u64) {
+    let (mut bytes, mut count) = (0u64, 0u64);
+    let mut items = Vec::new();
+    for p in paths {
+        let is_dir = p.is_dir();
+        let mut size = 0;
+        let mut stack = vec![p.clone()];
+        while let Some(q) = stack.pop() {
+            if count > limit {
+                break;
+            }
+            match std::fs::metadata(&q) {
+                Ok(m) if m.is_dir() => {
+                    stack.extend(std::fs::read_dir(&q).into_iter().flatten().flatten().map(|e| e.path()))
+                }
+                Ok(m) => {
+                    size += m.len();
+                    count += 1;
+                }
+                Err(_) => {}
+            }
+        }
+        bytes += size;
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        items.push(slipstream_core::proto::ClipFile { path: display(p), name, is_dir, size });
+    }
+    (items, bytes, count)
+}
+
 /// All files under `root` (recursively) with their paths relative to the
 /// parent of `root`, e.g. `Photos/2026/a.jpg`. A plain file yields itself.
 pub fn walk_local(root: &Path) -> Result<Vec<(PathBuf, String, u64)>> {

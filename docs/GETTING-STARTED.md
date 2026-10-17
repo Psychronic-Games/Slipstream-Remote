@@ -224,12 +224,14 @@ The toolbar along the top:
 
 | Button | What it does |
 |---|---|
-| **◀ Bridge** | Back to your home page. The session keeps running and is listed under *Links*. |
-| **1 2 3…** | Switch between the remote computer's screens (shown when it has several). |
+| **Bridge** (the delta pointing back) | Back to your home page. The session keeps running and is listed under *Links*. |
+| **SCREEN 1 2 3…** | Switch between the remote computer's screens (shown when it has several). |
 | **Full** | Full screen. Move the mouse to the top edge to bring the toolbar back. |
 | **Keys** | Send keys your own computer would catch: Ctrl+Alt+Del, Alt+Tab, the Windows key, Alt+F4, Print Screen, Ctrl+Esc. |
 | **Chat** | Text chat with the person at the remote computer. On their side it opens in its own window. |
 | **Files** | The two-pane file manager: your computer on the left, theirs on the right. Select files or folders and send them either way, or make folders. |
+| **Sound** | Play the remote computer's sound here, or stop. The default is under *Config → Remote sound*. |
+| **Tools ▾** | **Privacy mode** blacks out the remote computer's own screen while you work (Windows 10 2004 and later). **Port forwarding…** opens tunnels, see below. |
 | **Balanced ▾** | Quality preset: *Balanced*, *Speed* (lowest delay), *Quality* (sharpest picture) and *Low bandwidth* (slow connections). |
 | Stats | Frames per second, bandwidth, round-trip time, and **DIRECT** or **RELAY** (whether traffic goes peer-to-peer or through your station). |
 | **End link** | Disconnect. |
@@ -241,11 +243,33 @@ You can also:
   the desktop.
 - **Copy and paste** text between the two computers. The clipboard syncs both
   ways while connected, unless switched off in Settings.
+- **Copy and paste files.** Copy files or folders on your computer, click
+  into the remote screen and press Ctrl+V (Cmd+V on a Mac): they're
+  uploaded and pasted into whatever is in front over there, such as an
+  Explorer window or the desktop. Files copied on the remote computer
+  arrive on your clipboard, ready to paste (up to 64 MB or 500 files at a
+  time; use *Files* for more).
 - **Run several sessions** at once. Each one is listed on the *Links* page.
 
 Files sent without choosing a folder (for example dropped on the remote
 window when no folder is under the pointer) land on the receiving computer's
 Desktop, or in *Downloads* if there is no Desktop folder.
+
+### Port forwarding
+
+A tunnel makes a service on the remote computer, or on its network,
+reachable from yours: its Remote Desktop, a web admin page, a printer or
+router. In *Tools ▾ → Port forwarding…*, enter a local port (or leave it
+empty for any free one), the host as the remote computer sees it
+(`localhost` for the computer itself, or an address on its network) and
+the port. Then point your program at `127.0.0.1:<local port>`; for
+Remote Desktop, `mstsc /v:127.0.0.1:13389`. Tunnels close with the session.
+
+From the command line: `slipstream connect <ID> --forward
+13389:localhost:3389` (repeat `--forward` for more).
+
+The remote computer has to allow it: *Config → Permissions → Port
+forwarding*, which is off by default.
 
 ---
 
@@ -302,12 +326,13 @@ The **Config** page on each computer:
 | Server address / Access key | Filled in by the download; change only to move to another station. |
 | Public fallback relays | Use the free public relays if your station's relay can't be reached (if your station allows it). |
 | Accept connections | Turn off to make this computer unreachable. It can still connect out. |
-| Permissions | What connected people may do: **Control** (mouse and keyboard), **Clipboard**, **Files**. Untick any to allow view-only, no clipboard, or no file access. |
+| Permissions | What connected people may do: **Control** (mouse and keyboard), **Clipboard**, **Files**, **Sound** (hear this computer) and **Port forwarding** (off by default). Untick any to allow view-only, no clipboard, or no file access. |
 | One-time password length | Longer means harder to guess. |
 | Unattended password, Start with system, Close button | See [Unattended access](#unattended-access). |
 | Screen permission | Wayland: forget the remembered screen-sharing approval, so it's asked again. |
 | Max frame rate | Upper limit for the video you *receive*. |
-| Clipboard sync | Share clipboard text with remote computers. |
+| Clipboard sync | Share copied text and files with remote computers. |
+| Remote sound | Whether sessions start with the remote computer's sound on. |
 
 Settings, the computer's identity (its ID) and passwords are stored in the
 user's settings folder: `~/.config/slipstream` on Linux,

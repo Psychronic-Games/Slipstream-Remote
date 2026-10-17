@@ -150,7 +150,19 @@ async fn file_ops(fs: &slipstream_session::RemoteFs, ops: FileOps) -> Result<()>
     Ok(())
 }
 
-pub async fn connect(id: &str, password: &str, seconds: u64, ops: FileOps) -> Result<()> {
+/// Parses `LOCAL:HOST:PORT` or `LOCAL:PORT` (the remote's localhost).
+pub fn parse_forward(spec: &str) -> Result<(u16, String, u16)> {
+    let parts: Vec<&str> = spec.split(':').collect();
+    let num = |s: &str| s.parse::<u16>().with_context(|| format!("{s:?} is not a port number"));
+    match parts.as_slice() {
+        [local, port] => Ok((num(local)?, "localhost".into(), num(port)?)),
+        [local, host, port] if !host.is_empty() => Ok((num(local)?, host.to_string(), num(port)?)),
+        _ => anyhow::bail!("expected LOCAL:HOST:PORT or LOCAL:PORT, got {spec:?}"),
+    }
+}
+
+pub async fn connect(id: &str, password: &str, seconds: u64, ops: FileOps, forward: Vec<String>) -> Result<()> {
+    let forward = forward.iter().map(|f| parse_forward(f)).collect::<Result<Vec<_>>>()?;
     let id: DeviceId = id.parse()?;
     let store = Store::open_default()?;
     let (client, _events) = Client::start(store, ClientOptions::default()).await?;
@@ -163,6 +175,30 @@ pub async fn connect(id: &str, password: &str, seconds: u64, ops: FileOps) -> Re
     };
     let info = session.info().clone();
     println!("connected to {} ({}), {} display(s)", info.host_name, info.os, info.displays.len());
+    if !forward.is_empty() {
+        let mut tunnels = Vec::new();
+        for (local, host, port) in forward {
+            match session.tunnel(local, host.clone(), port).await {
+                Ok(t) => {
+                    println!(
+                        "forwarding 127.0.0.1:{} → {host}:{port} on {} (Ctrl+C to stop)",
+                        t.local_port, info.host_name
+                    );
+                    tunnels.push(t);
+                }
+                Err(e) => {
+                    drop(session);
+                    client.shutdown().await;
+                    return Err(e);
+                }
+            }
+        }
+        let _ = tokio::signal::ctrl_c().await;
+        drop(tunnels);
+        drop(session);
+        client.shutdown().await;
+        return Ok(());
+    }
     if ops.ls.is_some() || ops.put.is_some() || ops.get.is_some() {
         let r = file_ops(&session.fs(), ops).await;
         drop(session);

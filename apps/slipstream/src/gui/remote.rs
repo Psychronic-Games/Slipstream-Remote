@@ -1,7 +1,11 @@
 //! A remote-control session tab: the remote screen, input forwarding and
 //! the session toolbar.
 
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use eframe::{
     egui::{self, Align, Align2, Color32, Layout, PointerButton, Rect, RichText, Sense, Ui, UiBuilder, pos2, vec2},
@@ -17,9 +21,24 @@ use tokio::sync::mpsc;
 use super::{files::FileManager, home, keys, theme, theme::pal, video};
 
 pub enum CapturedKey {
-    Key { key: egui::Key, pressed: bool, repeat: bool },
-    /// A clipboard shortcut egui turned into an event; replay as Ctrl/Cmd+key.
+    Key {
+        key: egui::Key,
+        pressed: bool,
+        repeat: bool,
+    },
+    /// A paste with text on this computer's clipboard: send the text, then
+    /// replay the key (Ctrl/Cmd is already held over there).
     Shortcut(&'static str, Option<String>),
+    /// A paste with files on this computer's clipboard.
+    PasteFiles(Vec<std::path::PathBuf>),
+}
+
+/// Files on their way to the remote clipboard for a paste.
+#[derive(Default)]
+struct Pasting {
+    sent: u64,
+    total: u64,
+    done: Option<Result<usize, String>>,
 }
 
 pub enum TabAction {
@@ -64,6 +83,14 @@ pub struct RemoteTab {
     pub files: FileManager,
     /// Playing the remote computer's sound.
     audio: bool,
+    /// The remote computer's own screen is blacked out.
+    privacy: bool,
+    show_tunnels: bool,
+    tunnels: Vec<slipstream_session::tunnel::Tunnel>,
+    /// The "add a tunnel" form: local port, remote host, remote port.
+    tunnel_form: (String, String, String),
+    tunnel_error: Option<String>,
+    pasting: Option<Arc<Mutex<Pasting>>>,
 }
 
 impl RemoteTab {
@@ -110,6 +137,12 @@ impl RemoteTab {
             forward_repeats,
             notice: None,
             audio,
+            privacy: false,
+            show_tunnels: false,
+            tunnels: Vec::new(),
+            tunnel_form: (String::new(), "localhost".into(), String::new()),
+            tunnel_error: None,
+            pasting: None,
             files,
         }
     }
@@ -124,7 +157,8 @@ impl RemoteTab {
         }
     }
 
-    pub fn poll(&mut self, _ctx: &egui::Context) {
+    pub fn poll(&mut self, ctx: &egui::Context) {
+        self.poll_paste(ctx);
         while let Ok(ev) = self.events.try_recv() {
             match ev {
                 ViewerEvent::Stats(s) => self.stats = s,
@@ -157,7 +191,67 @@ impl RemoteTab {
         self.captured = false;
     }
 
-    pub fn forward_keys(&mut self, keys: Vec<CapturedKey>) {
+    /// Ctrl+V with files copied here: upload them onto the remote
+    /// clipboard, then paste there.
+    fn paste_files(&mut self, paths: Vec<std::path::PathBuf>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
+        let caps = &self.info.capabilities;
+        if !(caps.clipboard && caps.file_transfer) {
+            self.notice = Some((
+                "That computer doesn't accept files — drop them on the screen or use Files".into(),
+                Instant::now(),
+            ));
+            return;
+        }
+        if self.pasting.is_some() {
+            return; // one at a time
+        }
+        let state = Arc::new(Mutex::new(Pasting::default()));
+        let (s, wake) = (state.clone(), ctx.clone());
+        let progress = move |sent, total| {
+            let mut p = s.lock().unwrap();
+            (p.sent, p.total) = (sent, total);
+            wake.request_repaint();
+        };
+        let job = self.session.paste_files(paths, progress);
+        let (s, wake) = (state.clone(), ctx.clone());
+        rt.spawn(async move {
+            let r = job.await.map_err(|e| format!("{e:#}"));
+            s.lock().unwrap().done = Some(r);
+            wake.request_repaint();
+        });
+        self.pasting = Some(state);
+    }
+
+    fn poll_paste(&mut self, ctx: &egui::Context) {
+        let Some(state) = &self.pasting else { return };
+        let mut p = state.lock().unwrap();
+        let Some(done) = p.done.take() else {
+            let pct = (p.sent * 100).checked_div(p.total).unwrap_or(0);
+            self.notice = Some((format!("Copying files to the remote clipboard… {pct}%"), Instant::now()));
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            return;
+        };
+        drop(p);
+        self.pasting = None;
+        match done {
+            Ok(n) => {
+                // Ctrl (Cmd on a Mac) may have been let go meanwhile.
+                let held =
+                    ["ControlLeft", "ControlRight", "MetaLeft", "MetaRight"].iter().any(|k| self.held_keys.contains(k));
+                if held {
+                    self.send_combo(&["KeyV"]);
+                } else if self.info.os == "macOS" {
+                    self.send_combo(&["MetaLeft", "KeyV"]);
+                } else {
+                    self.send_combo(&["ControlLeft", "KeyV"]);
+                }
+                self.notice = Some((format!("Pasted {n} file{}", if n == 1 { "" } else { "s" }), Instant::now()));
+            }
+            Err(e) => self.notice = Some((format!("Couldn't paste the files: {e}"), Instant::now())),
+        }
+    }
+
+    pub fn forward_keys(&mut self, keys: Vec<CapturedKey>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
         for k in keys {
             match k {
                 CapturedKey::Key { key, pressed, repeat } => {
@@ -179,6 +273,7 @@ impl RemoteTab {
                     self.input(InputEvent::Key { code: code.into(), down: true });
                     self.input(InputEvent::Key { code: code.into(), down: false });
                 }
+                CapturedKey::PasteFiles(paths) => self.paste_files(paths, rt, ctx),
             }
         }
     }
@@ -230,6 +325,7 @@ impl RemoteTab {
         }
 
         self.files.ui(&ctx, rt);
+        self.tunnels_window(&ctx, rt);
         self.handle_drops(ui, &ctx, video_area, rt);
 
         if let Some(reason) = self.closed.clone() {
@@ -553,6 +649,30 @@ impl RemoteTab {
             self.send(ViewerCmd::Audio(self.audio));
         }
 
+        // Tools: privacy mode, port forwarding. Gold while privacy is on.
+        let (privacy_ok, tunnels_ok) = (self.info.capabilities.privacy, self.info.capabilities.tunnels);
+        let tools_color = if self.privacy { pal::GOLD } else { pal::LAVENDER };
+        ui.menu_button(RichText::new("TOOLS ▾").font(theme::display(17.0)).color(tools_color), |ui| {
+            let mut privacy = self.privacy;
+            let r = ui
+                .add_enabled(privacy_ok, egui::Checkbox::new(&mut privacy, "Privacy mode"))
+                .on_hover_text("Black out the remote computer's own screen while you work: people there can't watch (or, with the Slipstream service, type)")
+                .on_disabled_hover_text("Needs a Windows 10 (2004 or later) or Windows 11 computer on the other end");
+            if r.changed() {
+                self.privacy = privacy;
+                self.send(ViewerCmd::Privacy(privacy));
+                ui.close();
+            }
+            let r = ui
+                .add_enabled(tunnels_ok, egui::Button::new("Port forwarding…"))
+                .on_hover_text("Reach a service on the remote computer or its network, e.g. its Remote Desktop")
+                .on_disabled_hover_text("Not allowed on that computer (its Config → Permissions → Port forwarding)");
+            if r.clicked() {
+                self.show_tunnels = true;
+                ui.close();
+            }
+        });
+
         let mut new_preset = None;
         // Only the arrow when there's no room for the preset's name.
         let preset_label = if ui.available_width() < 120.0 { "▾".to_string() } else { format!("{} ▾", PRESETS[self.preset].0.to_uppercase()) };
@@ -571,6 +691,94 @@ impl RemoteTab {
             self.send(ViewerCmd::Settings(PRESETS[i].1));
         }
         action
+    }
+
+    /// The port forwarding window: open tunnels and a form to add one.
+    fn tunnels_window(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime) {
+        if !self.show_tunnels {
+            return;
+        }
+        let mut open = true;
+        let mut close: Option<usize> = None;
+        let mut add = false;
+        egui::Window::new(RichText::new("PORT FORWARDING").font(theme::display(18.0)).color(pal::GOLD))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "A port on this computer that reaches a service as {} sees it: its own (localhost) or another machine on its network.",
+                        self.info.host_name
+                    ))
+                    .color(pal::DIM),
+                );
+                ui.add_space(6.0);
+                for (i, t) in self.tunnels.iter().enumerate() {
+                    let st = t.status();
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("127.0.0.1:{} → {}:{}", t.local_port, t.host, t.port)).font(theme::mono(16.0)).color(pal::TAN));
+                        ui.label(RichText::new(format!("{} open · {} so far", st.active, st.total)).color(pal::DIM));
+                        if ui.small_button("Copy").on_hover_text("Copy the local address").clicked() {
+                            ui.ctx().copy_text(format!("127.0.0.1:{}", t.local_port));
+                        }
+                        if ui.small_button("Close").clicked() {
+                            close = Some(i);
+                        }
+                    });
+                    if let Some(e) = st.last_error {
+                        ui.label(RichText::new(e).small().color(pal::RED));
+                    }
+                }
+                if !self.tunnels.is_empty() {
+                    ui.separator();
+                }
+                ui.horizontal(|ui| {
+                    let (local, host, port) = &mut self.tunnel_form;
+                    ui.label("Local port");
+                    ui.add(egui::TextEdit::singleline(local).hint_text("auto").desired_width(60.0));
+                    ui.label("→");
+                    ui.add(egui::TextEdit::singleline(host).hint_text("localhost").desired_width(130.0));
+                    ui.label(":");
+                    ui.add(egui::TextEdit::singleline(port).hint_text("3389").desired_width(60.0));
+                    add = theme::pill(ui, "Forward", pal::GOLD).clicked();
+                });
+                if let Some(e) = &self.tunnel_error {
+                    ui.label(RichText::new(e).color(pal::RED));
+                }
+                ui.label(
+                    RichText::new("Example: local port 13389 → localhost : 3389, then open Remote Desktop to 127.0.0.1:13389.")
+                        .small()
+                        .color(pal::DIM),
+                );
+            });
+        if let Some(i) = close {
+            self.tunnels.remove(i);
+        }
+        if add {
+            let (local, host, port) = &self.tunnel_form;
+            let local: Result<u16, _> = if local.trim().is_empty() { Ok(0) } else { local.trim().parse() };
+            let host = if host.trim().is_empty() { "localhost".to_string() } else { host.trim().to_string() };
+            match (local, port.trim().parse::<u16>()) {
+                (Ok(local), Ok(port)) => match rt.block_on(self.session.tunnel(local, host, port)) {
+                    Ok(t) => {
+                        self.tunnels.push(t);
+                        self.tunnel_error = None;
+                        self.tunnel_form.0.clear();
+                        self.tunnel_form.2.clear();
+                    }
+                    Err(e) => self.tunnel_error = Some(format!("{e:#}")),
+                },
+                _ => self.tunnel_error = Some("Enter port numbers (1–65535)".into()),
+            }
+        }
+        if !open {
+            self.show_tunnels = false;
+        }
+        if !self.tunnels.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        }
     }
 
     /// Frame rate, bandwidth, round trip and path, right to left; the full

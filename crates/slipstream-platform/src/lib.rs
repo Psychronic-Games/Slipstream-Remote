@@ -15,6 +15,8 @@ pub mod test_pattern;
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub mod generic;
+#[cfg(target_os = "windows")]
+mod privacy;
 #[cfg(target_os = "linux")]
 mod pw;
 #[cfg(target_os = "linux")]
@@ -56,6 +58,17 @@ pub trait Backend: Send {
     /// Whether captured frames show the mouse pointer.
     fn cursor_in_video(&self) -> bool {
         false
+    }
+
+    /// Whether this computer can black out its own screen (privacy mode).
+    fn privacy_supported(&self) -> bool {
+        false
+    }
+
+    /// Blacks out (or restores) the computer's own screen, showing that
+    /// `who` is working on it, while capture still sees the desktop.
+    fn set_privacy(&mut self, _on: bool, _who: &str) -> Result<()> {
+        anyhow::bail!("privacy mode isn't supported on this computer")
     }
 }
 
