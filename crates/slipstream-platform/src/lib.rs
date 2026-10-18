@@ -11,6 +11,7 @@
 pub mod clipboard;
 pub mod keymap;
 pub mod machine;
+pub mod pace;
 mod slot;
 pub mod test_pattern;
 
@@ -26,6 +27,8 @@ mod x11;
 pub mod wayland;
 #[cfg(target_os = "windows")]
 mod win_cursor;
+#[cfg(target_os = "windows")]
+mod win_gdi;
 #[cfg(target_os = "windows")]
 pub mod windesk;
 

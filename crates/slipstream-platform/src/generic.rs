@@ -26,7 +26,7 @@ fn pointer_now() -> Option<()> {
     None
 }
 #[cfg(target_os = "macos")]
-fn draw_pointer(_: &mut [u8], _: u32, _: u32, _: u32, _: (i32, i32), _: ()) {}
+fn draw_pointer(_: &mut [u8], _: u32, _: u32, _: u32, _: (i32, i32), _: (), _: bool) {}
 
 pub struct GenericBackend {
     displays: Vec<DisplayInfo>,
@@ -129,6 +129,8 @@ impl Backend for GenericBackend {
     fn capture(&mut self, display: u32, max_fps: u32) -> Result<FrameStream> {
         let d = self.displays.get(display as usize).cloned().with_context(|| format!("display {display} not found"))?;
         let origin = (d.x, d.y);
+        #[cfg(target_os = "windows")]
+        let size = (d.width, d.height);
         let index = display as usize;
         Monitor::all()?.into_iter().nth(index).with_context(|| format!("display {display} not found"))?;
         let slot = FrameSlot::new();
@@ -141,17 +143,18 @@ impl Backend for GenericBackend {
                 producer.fail("display disappeared");
                 return;
             };
-            // Service mode follows the input desktop (login screen, UAC),
-            // which only screenshot capture on this thread can do.
+            // Service mode follows the input desktop (login screen, UAC).
             #[cfg(target_os = "windows")]
             if crate::windesk::following() {
-                poll_screenshots(&producer, &monitor, min_interval, origin);
+                follow_desktops(&producer, &monitor, min_interval, origin, size);
                 return;
             }
             match monitor.video_recorder() {
                 Ok((recorder, frames)) => match recorder.start() {
                     Ok(()) => {
-                        record(&producer, &frames, min_interval, origin);
+                        if record(&producer, &frames, min_interval, origin) {
+                            producer.fail("capture ended");
+                        }
                         let _ = recorder.stop();
                     }
                     Err(e) => {
@@ -177,9 +180,11 @@ impl Backend for GenericBackend {
 /// Streams the recorder's frames. It only delivers frames when the picture
 /// changes, and they carry no pointer. So the latest clean frame is kept,
 /// and pointer moves on a still screen (and changes that arrive while
-/// throttled) still go out.
+/// throttled) still go out. Returns true if the recorder stopped (on
+/// Windows, a desktop switch ends DXGI duplication), false once the
+/// session closed the stream.
 #[cfg(not(target_os = "linux"))]
-fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interval: Duration, origin: (i32, i32)) {
+fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interval: Duration, origin: (i32, i32)) -> bool {
     let poll = (min_interval / 2).max(Duration::from_millis(4));
     let mut last = Instant::now() - min_interval;
     let mut clean = None;
@@ -192,10 +197,7 @@ fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interv
                 dirty = true;
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                producer.fail("capture ended");
-                return;
-            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return true,
         }
         let Some(f) = &clean else { continue };
         let pointer = pointer_now();
@@ -208,10 +210,111 @@ fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interv
         let mut data = producer.buffer(f.raw.len());
         data.extend_from_slice(&f.raw);
         if let Some(p) = pointer {
-            draw_pointer(&mut data, f.width, f.height, f.width * 4, origin, p);
+            draw_pointer(&mut data, f.width, f.height, f.width * 4, origin, p, false);
         }
         producer.put(RawFrame { width: f.width, height: f.height, stride: f.width * 4, format: PixelFormat::Rgba, data });
     }
+    false
+}
+
+/// Service mode: DXGI duplication (fast, and free while nothing changes)
+/// while the normal desktop has input; GDI screenshots on the login screen
+/// and UAC's secure desktop, which duplication can't follow. A desktop
+/// switch ends duplication, and the loop picks again.
+#[cfg(target_os = "windows")]
+fn follow_desktops(producer: &FrameSlot, monitor: &Monitor, min_interval: Duration, origin: (i32, i32), size: (u32, u32)) {
+    // When duplication isn't available on the normal desktop either (no
+    // display driver that supports it), stay on GDI and retry now and then.
+    let mut try_dxgi_at = Instant::now();
+    while !producer.is_closed() {
+        crate::windesk::follow();
+        if Instant::now() >= try_dxgi_at && crate::windesk::on_default_desktop() {
+            // Duplication only delivers a frame once something changes:
+            // show the screen as it is meanwhile.
+            gdi_once(producer, origin, size);
+            match monitor.video_recorder().map_err(|e| e.to_string()).and_then(|(r, f)| r.start().map(|()| (r, f)).map_err(|e| e.to_string())) {
+                Ok((recorder, frames)) => {
+                    tracing::info!("screen capture: DXGI duplication");
+                    let ended = record(producer, &frames, min_interval, origin);
+                    let _ = recorder.stop();
+                    if !ended {
+                        return;
+                    }
+                    tracing::info!("screen capture: duplication ended (desktop switch?)");
+                    continue;
+                }
+                Err(e) => {
+                    tracing::info!("screen capture: DXGI duplication unavailable ({e}), using GDI");
+                    try_dxgi_at = Instant::now() + Duration::from_secs(60);
+                }
+            }
+        }
+        if !gdi_until(producer, min_interval, origin, size, || Instant::now() >= try_dxgi_at && crate::windesk::on_default_desktop()) {
+            return;
+        }
+    }
+}
+
+/// One GDI frame of the screen as it is now.
+#[cfg(target_os = "windows")]
+fn gdi_once(producer: &FrameSlot, origin: (i32, i32), (w, h): (u32, u32)) {
+    let Some(mut gdi) = crate::win_gdi::GdiCapture::new(origin.0, origin.1, w, h) else { return };
+    let mut data = producer.buffer(w as usize * h as usize * 4);
+    if gdi.grab(&mut data) {
+        if let Some(p) = pointer_now() {
+            draw_pointer(&mut data, w, h, w * 4, origin, p, true);
+        }
+        producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
+    }
+}
+
+/// GDI capture following the input desktop, until `switch` says to try
+/// something else (true) or the stream closes or fails (false).
+#[cfg(target_os = "windows")]
+fn gdi_until(producer: &FrameSlot, min_interval: Duration, origin: (i32, i32), size: (u32, u32), switch: impl Fn() -> bool) -> bool {
+    let mut gdi: Option<crate::win_gdi::GdiCapture> = None;
+    let mut failures = 0;
+    let mut pace = crate::pace::Pace::new("screen capture (GDI)");
+    let mut checked = Instant::now();
+    while !producer.is_closed() {
+        let t = Instant::now();
+        if crate::windesk::follow() {
+            gdi = None; // its screen DC belongs to the old desktop
+        }
+        if checked.elapsed() >= Duration::from_millis(500) {
+            checked = Instant::now();
+            if switch() {
+                return true;
+            }
+        }
+        if gdi.is_none() {
+            gdi = crate::win_gdi::GdiCapture::new(origin.0, origin.1, size.0, size.1);
+        }
+        let (w, h) = size;
+        let mut data = producer.buffer(w as usize * h as usize * 4);
+        if gdi.as_mut().is_some_and(|g| g.grab(&mut data)) {
+            failures = 0;
+            if let Some(p) = pointer_now() {
+                draw_pointer(&mut data, w, h, w * 4, origin, p, true);
+            }
+            producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
+            pace.add(t.elapsed());
+        } else {
+            // A desktop switch can fail a few captures; keep trying a while.
+            gdi = None;
+            failures += 1;
+            if failures > 50 {
+                producer.fail("screen capture failed");
+                return false;
+            }
+            thread::sleep(Duration::from_millis(100));
+            continue;
+        }
+        if let Some(rest) = min_interval.checked_sub(t.elapsed()) {
+            thread::sleep(rest);
+        }
+    }
+    false
 }
 
 #[cfg(target_os = "windows")]
@@ -236,7 +339,7 @@ fn poll_screenshots(producer: &FrameSlot, monitor: &Monitor, min_interval: Durat
                 let (w, h) = img.dimensions();
                 let mut data = img.into_raw();
                 if let Some(p) = pointer_now() {
-                    draw_pointer(&mut data, w, h, w * 4, origin, p);
+                    draw_pointer(&mut data, w, h, w * 4, origin, p, false);
                 }
                 producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Rgba, data });
             }

@@ -90,6 +90,22 @@ pub fn follow() -> bool {
     }
 }
 
+/// Does the normal desktop have input (not the login screen or a UAC
+/// prompt)? For the service's helper, which may open any desktop.
+pub fn on_default_desktop() -> bool {
+    const DESKTOP_READOBJECTS: u32 = 0x0001;
+    // SAFETY: opening the input desktop for its name, then closing it.
+    unsafe {
+        let desk = OpenInputDesktop(0, 0, DESKTOP_READOBJECTS);
+        if desk.is_null() {
+            return false;
+        }
+        let name = desktop_name(desk);
+        CloseDesktop(desk);
+        name.eq_ignore_ascii_case("Default")
+    }
+}
+
 /// Is Windows showing a desktop this (non-service) process can't see: the
 /// lock or login screen, or a UAC prompt? Only the service reaches those,
 /// so capture shows black and input goes nowhere meanwhile.

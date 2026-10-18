@@ -220,6 +220,7 @@ fn encode_loop(
     // When the last frame was *taken* (not sent), so encode time doesn't
     // stretch the frame interval.
     let mut last_taken = Instant::now() - Duration::from_secs(1);
+    let mut pace = slipstream_platform::pace::Pace::new("video encoding");
 
     while !stop.load(Ordering::Relaxed) {
         let current = *settings.lock().unwrap();
@@ -277,8 +278,12 @@ fn encode_loop(
         encoder.set_frame_skip(applied.bitrate_kbps != 0 || congested);
 
         let force = keyframe.swap(false, Ordering::Relaxed);
+        let t = Instant::now();
         let encoded = match encoder.encode(&frame, force) {
-            Ok(Some(e)) => e,
+            Ok(Some(e)) => {
+                pace.add(t.elapsed());
+                e
+            }
             Ok(None) => {
                 if force {
                     keyframe.store(true, Ordering::Relaxed);

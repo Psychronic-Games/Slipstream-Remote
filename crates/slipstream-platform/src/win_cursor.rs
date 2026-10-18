@@ -151,9 +151,9 @@ pub fn current() -> Option<Pointer> {
     }
 }
 
-/// Composites `pointer` into an RGBA frame showing the monitor whose
-/// top-left corner is at `origin` (screen coordinates).
-pub fn draw(frame: &mut [u8], fw: u32, fh: u32, stride: u32, origin: (i32, i32), pointer: Pointer) {
+/// Composites `pointer` into an RGBA (or, with `bgra`, BGRA) frame showing
+/// the monitor whose top-left corner is at `origin` (screen coordinates).
+pub fn draw(frame: &mut [u8], fw: u32, fh: u32, stride: u32, origin: (i32, i32), pointer: Pointer, bgra: bool) {
     let handle = pointer.handle as HCURSOR;
     let pos = pointer.pos;
     CACHE.with(|cache| {
@@ -187,7 +187,7 @@ pub fn draw(frame: &mut [u8], fw: u32, fh: u32, stride: u32, origin: (i32, i32),
                     continue;
                 }
                 for i in 0..3 {
-                    let src = c.rgba[s + i] as u32;
+                    let src = c.rgba[s + if bgra { 2 - i } else { i }] as u32;
                     frame[d + i] = ((src * a + frame[d + i] as u32 * (255 - a)) / 255) as u8;
                 }
             }

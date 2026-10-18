@@ -13,6 +13,21 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Faster video from the Windows service
+- With the service, the host captured the screen as a full GDI screenshot
+  every frame, through a library call that made a new screen-sized bitmap
+  each time and swapped every pixel's colour bytes. On a machine without
+  a graphics card that capped video at about 20 frames a second. Now:
+  - DXGI Desktop Duplication on the normal desktop, as the app already
+    uses without the service. It's fast, and costs nothing while the
+    screen is still.
+  - On the login screen and UAC prompts, which duplication can't follow,
+    a GDI capturer that keeps one bitmap and hands frames on as they are.
+  - The host switches between them as the desktop changes.
+- The host logs its pace every 30 seconds (frames a second and
+  milliseconds per frame, for capture and for encoding), so a slow stage
+  shows in the log. *Config → Service log* opens it.
+
 ## 0.6.0 — 2026-10-17
 
 ### Service install, the remote pointer, lighter software drawing
