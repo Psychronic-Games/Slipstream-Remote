@@ -72,6 +72,15 @@ Build numbers are the git commit count. The app shows them as
   started or removed. An install stops the service to replace the
   program, and starting it in between ran the old program and failed the
   install's own start.
+- Reinstalling the service failed with "Access is denied" on the
+  identity, and older builds could give the computer a new ID. Each
+  install set the profile's permissions file by file (`icacls /T`). On a
+  reinstall that left the files already there with no permissions at
+  all, so the install couldn't replace the identity and the service
+  couldn't read it. The folder's permissions are now set on the folder
+  alone and everything inside is reset to inherit them. The service runs
+  that repair whenever it starts, so damaged installs heal. The identity
+  is now swapped in as a fresh file instead of copied over the old one.
 - When the service won't install or start, Config (and the Bridge) shows
   Windows' own explanation, selectable and with *Copy*: the service's
   state and exit code, its command line, and the Service Control

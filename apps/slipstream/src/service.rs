@@ -92,6 +92,15 @@ pub fn hosted_id() -> Option<slipstream_core::directory::DeviceId> {
     id
 }
 
+/// Makes everything in the profile inherit the folder's permissions.
+/// Installs before build 36 set them file by file (`icacls /T`), which on a
+/// reinstall left the files already there with no permissions at all: the
+/// install then couldn't replace the identity, and the service couldn't
+/// read it (older builds then made a new one: a new ID).
+fn repair_permissions() {
+    let _ = quiet("icacls").arg(machine_home().join("*")).args(["/reset", "/T", "/C", "/Q"]).output();
+}
+
 /// Creates the public folder, readable by all users (the profile around it
 /// is administrators-only).
 fn ensure_public_dir() -> PathBuf {
@@ -396,11 +405,12 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     // the password digest.
     let acl = quiet("icacls")
         .arg(&home)
-        .args(["/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "/grant:r", "*S-1-5-32-544:(OI)(CI)F", "/T", "/Q"])
+        .args(["/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "/grant:r", "*S-1-5-32-544:(OI)(CI)F", "/Q"])
         .status()?;
     if !acl.success() {
         bail!("couldn't restrict access to {}", home.display());
     }
+    repair_permissions();
     // Everyone may read the ID the service hosts as (see hosted_id); the
     // old one is gone until the service has registered again.
     let public = ensure_public_dir();
@@ -410,11 +420,7 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     // Same identity, so the computer keeps its ID.
     let key = user.dir().join("identity.key");
     if key.exists() {
-        let copy = home.join("identity.key");
-        std::fs::copy(&key, &copy).context("copying this computer's identity to the service")?;
-        if std::fs::read(&key).ok() != std::fs::read(&copy).ok() {
-            bail!("the service's copy of this computer's identity doesn't match (it would get a new ID)");
-        }
+        hand_over_identity(&key, &home.join("identity.key"))?;
     }
 
     // Every user's sign-in starts the app hidden in the tray, to show the
@@ -502,6 +508,41 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     println!("Slipstream service installed and running ({}).", installed.display());
     if let Some(id) = settings.host.last_device_id {
         println!("This computer is reachable as ID {id} with its unattended password.");
+    }
+    Ok(())
+}
+
+/// Gives the service this computer's identity (so it keeps the app's ID).
+/// Put in place as a fresh file, like the settings, never written over the
+/// old one: a copy left by an earlier install or by the service itself can
+/// refuse writes (read-only, or permissions only SYSTEM has), while
+/// replacing it in this administrators' folder always works.
+fn hand_over_identity(key: &Path, dest: &Path) -> Result<()> {
+    let bytes = std::fs::read(key).with_context(|| format!("reading this computer's identity ({})", key.display()))?;
+    if std::fs::read(dest).is_ok_and(|have| have == bytes) {
+        return Ok(());
+    }
+    let tmp = dest.with_extension("new");
+    let _ = std::fs::remove_file(&tmp);
+    std::fs::write(&tmp, &bytes).with_context(|| format!("writing the service's identity ({})", tmp.display()))?;
+    if let Ok(meta) = std::fs::metadata(dest)
+        && meta.permissions().readonly()
+    {
+        let mut p = meta.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        p.set_readonly(false);
+        let _ = std::fs::set_permissions(dest, p);
+    }
+    if let Err(e) = std::fs::rename(&tmp, dest) {
+        // Last resort for a copy nobody may replace: administrators can
+        // take it over, then remove it.
+        let _ = quiet("takeown").arg("/F").arg(dest).arg("/A").output();
+        let _ = quiet("icacls").arg(dest).args(["/grant", "*S-1-5-32-544:F", "/Q"]).output();
+        let _ = std::fs::remove_file(dest);
+        std::fs::rename(&tmp, dest).map_err(|_| e).with_context(|| format!("replacing the service's identity ({})", dest.display()))?;
+    }
+    if std::fs::read(dest).ok().as_deref() != Some(bytes.as_slice()) {
+        bail!("the service's copy of this computer's identity doesn't match (it would get a new ID)");
     }
     Ok(())
 }
@@ -615,6 +656,7 @@ fn run_service() -> Result<()> {
         });
     };
     report(ServiceState::Running, 0);
+    repair_permissions();
     ensure_public_dir();
     tracing::info!("service started (build {})", slipstream_core::BUILD_NUMBER);
     let exit = supervise(&stop_rx);
