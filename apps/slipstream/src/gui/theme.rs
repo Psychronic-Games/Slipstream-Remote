@@ -396,6 +396,242 @@ fn pill_with(ui: &mut Ui, label: &str, color: Color32, min: Vec2, icon: Option<P
     if ui.is_enabled() { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp }
 }
 
+/// Small code-native vector symbols: no font glyphs or raster scaling.
+#[derive(Clone, Copy)]
+pub enum ConsoleIcon {
+    Back,
+    Fullscreen,
+    Window,
+    Keys,
+    Chat,
+    Files,
+    Sound,
+    Muted,
+    Tools,
+    Performance,
+    End,
+    Console,
+}
+impl ConsoleIcon {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Back => "Bridge",
+            Self::Fullscreen => "Full screen",
+            Self::Window => "Window",
+            Self::Keys => "Keys",
+            Self::Chat => "Chat",
+            Self::Files => "Files",
+            Self::Sound => "Sound",
+            Self::Muted => "Muted",
+            Self::Tools => "Tools",
+            Self::Performance => "Picture quality",
+            Self::End => "End link",
+            Self::Console => "Console",
+        }
+    }
+}
+
+pub fn console_button(ui: &mut Ui, label: &str, color: Color32, icon: ConsoleIcon, menu: bool) -> Response {
+    let galley = ui.painter().layout_no_wrap(label.to_uppercase(), display(17.0), pal::BG);
+    let text_w = galley.size().x;
+    let width = 16.0 + 18.0 + if text_w > 0.0 { 6.0 + text_w } else { 0.0 } + if menu { 12.0 } else { 0.0 };
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 36.0), Sense::click());
+    let enabled = ui.is_enabled();
+    let fill = if !enabled {
+        color.gamma_multiply(0.35)
+    } else if response.is_pointer_button_down_on() {
+        Color32::WHITE
+    } else if response.hovered() {
+        lighten(color, 0.22)
+    } else {
+        color
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 6.0, fill);
+    let symbol = Rect::from_center_size(pos2(rect.left() + 17.0, rect.center().y), vec2(18.0, 18.0));
+    console_icon(painter, symbol, icon, pal::BG, fill);
+    painter.galley(pos2(symbol.right() + 6.0, rect.center().y - galley.size().y / 2.0), galley, pal::BG);
+    if menu {
+        let c = pos2(rect.right() - 8.0, rect.center().y);
+        painter.add(Shape::line(
+            vec![c + vec2(-3.0, -1.5), c + vec2(0.0, 1.5), c + vec2(3.0, -1.5)],
+            Stroke::new(1.5, pal::BG),
+        ));
+    }
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, if label.is_empty() { icon.label() } else { label }));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color32, fill: Color32) {
+    let at = |(x, y): (f32, f32)| rect.min + vec2(x * rect.width(), y * rect.height());
+    let stroke = Stroke::new(1.5, ink);
+    let line = |points: &[(f32, f32)]| p.add(Shape::line(points.iter().copied().map(at).collect(), stroke));
+    let box_at = |a, b| Rect::from_min_max(at(a), at(b));
+    match icon {
+        ConsoleIcon::Back => back_delta(p, rect, ink, fill),
+        ConsoleIcon::Chat => {
+            p.rect_stroke(box_at((0.08, 0.12), (0.92, 0.74)), 3.0, stroke, egui::StrokeKind::Inside);
+            p.add(Shape::convex_polygon(
+                vec![at((0.25, 0.66)), at((0.25, 0.93)), at((0.52, 0.7))],
+                ink,
+                Stroke::NONE,
+            ));
+            for x in [0.3, 0.5, 0.7] {
+                p.circle_filled(at((x, 0.43)), 0.9, ink);
+            }
+        }
+        ConsoleIcon::Files => {
+            line(&[(0.06, 0.82), (0.06, 0.22), (0.4, 0.22), (0.52, 0.35), (0.93, 0.35), (0.93, 0.82), (0.06, 0.82)]);
+            line(&[(0.1, 0.43), (0.9, 0.43)]);
+        }
+        ConsoleIcon::Keys => {
+            p.rect_stroke(box_at((0.04, 0.2), (0.96, 0.84)), 2.0, stroke, egui::StrokeKind::Inside);
+            for x in [0.23, 0.42, 0.61, 0.8] {
+                for y in [0.37, 0.53] {
+                    p.circle_filled(at((x, y)), 0.8, ink);
+                }
+            }
+            line(&[(0.3, 0.7), (0.7, 0.7)]);
+        }
+        ConsoleIcon::Fullscreen => {
+            for pts in [
+                &[(0.08, 0.38), (0.08, 0.08), (0.38, 0.08)][..],
+                &[(0.62, 0.08), (0.92, 0.08), (0.92, 0.38)],
+                &[(0.08, 0.62), (0.08, 0.92), (0.38, 0.92)],
+                &[(0.62, 0.92), (0.92, 0.92), (0.92, 0.62)],
+            ] {
+                line(pts);
+            }
+        }
+        ConsoleIcon::Window => {
+            p.rect_stroke(box_at((0.32, 0.08), (0.92, 0.68)), 2.0, stroke, egui::StrokeKind::Inside);
+            let front = box_at((0.08, 0.32), (0.68, 0.92));
+            p.rect_filled(front, 2.0, fill);
+            p.rect_stroke(front, 2.0, stroke, egui::StrokeKind::Inside);
+        }
+        ConsoleIcon::Sound | ConsoleIcon::Muted => {
+            line(&[(0.38, 0.2), (0.18, 0.38), (0.04, 0.38), (0.04, 0.64), (0.18, 0.64), (0.38, 0.82), (0.38, 0.2)]);
+            if matches!(icon, ConsoleIcon::Muted) {
+                line(&[(0.61, 0.35), (0.91, 0.67)]);
+                line(&[(0.91, 0.35), (0.61, 0.67)]);
+            } else {
+                line(&[(0.58, 0.32), (0.69, 0.5), (0.58, 0.69)]);
+                line(&[(0.77, 0.19), (0.94, 0.5), (0.77, 0.82)]);
+            }
+        }
+        ConsoleIcon::Tools => {
+            line(&[
+                (0.83, 0.08),
+                (0.7, 0.32),
+                (0.51, 0.34),
+                (0.4, 0.19),
+                (0.54, 0.04),
+                (0.31, 0.13),
+                (0.25, 0.37),
+                (0.37, 0.53),
+                (0.09, 0.81),
+                (0.09, 0.91),
+                (0.21, 0.93),
+                (0.54, 0.6),
+                (0.75, 0.6),
+                (0.93, 0.4),
+                (0.94, 0.23),
+                (0.83, 0.08),
+            ]);
+        }
+        ConsoleIcon::Performance => {
+            let points = (0..=20)
+                .map(|i| {
+                    let a = PI + i as f32 * PI / 20.0;
+                    at((0.5 + a.cos() * 0.43, 0.72 + a.sin() * 0.53))
+                })
+                .collect();
+            p.add(Shape::line(points, stroke));
+            line(&[(0.08, 0.76), (0.92, 0.76)]);
+            line(&[(0.5, 0.68), (0.74, 0.3)]);
+            p.circle_filled(at((0.5, 0.68)), 1.8, ink);
+        }
+        ConsoleIcon::End => {
+            line(&[(0.5, 0.1), (0.12, 0.1), (0.12, 0.9), (0.5, 0.9)]);
+            line(&[(0.4, 0.5), (0.94, 0.5)]);
+            line(&[(0.73, 0.28), (0.95, 0.5), (0.73, 0.72)]);
+        }
+        ConsoleIcon::Console => {
+            p.rect_stroke(box_at((0.04, 0.1), (0.96, 0.9)), 2.0, stroke, egui::StrokeKind::Inside);
+            line(&[(0.21, 0.31), (0.39, 0.5), (0.21, 0.69)]);
+            line(&[(0.5, 0.69), (0.77, 0.69)]);
+        }
+    }
+}
+
+/// Complete the horizontal rail between controls and connection figures.
+pub fn session_rail_label(p: &egui::Painter, rect: Rect, label: &str) {
+    if rect.width()<12.0 {return;}
+    p.rect_filled(rect,6.0,pal::TAN);
+    if rect.width()>80.0 {
+        let text=rect.shrink2(vec2(10.0,0.0));
+        p.with_clip_rect(text).text(text.left_center(),Align2::LEFT_CENTER,label,display_bold(17.0),pal::BG);
+    }
+}
+
+/// Use only spare letterboxing; the remote picture and its input mapping
+/// retain exactly the same rectangle, including while zooming or panning.
+pub fn session_rails(p: &egui::Painter, full: Rect, video: Rect, picture: Option<Rect>) -> f32 {
+    let Some(picture) = picture.map(|r| r.intersect(video)).filter(|r| r.is_positive()) else {
+        return 0.0;
+    };
+    let gutter = (picture.left() - video.left()).max(0.0);
+    let width = if gutter >= 64.0 { (gutter - 40.0).min(44.0) } else { 0.0 };
+    if width > 0.0 {
+        let left = full.left();
+        let right = left + width;
+        let clip = Rect::from_min_max(pos2(left, video.top()), pos2(picture.left() - 4.0, video.bottom()));
+        let p = p.with_clip_rect(clip.intersect(p.clip_rect()));
+        let h = video.height();
+        for (start, end, color) in [
+            (0.0, 0.28, pal::ORANGE),
+            (0.28, 0.5, pal::PEACH),
+            (0.5, 0.78, pal::LAVENDER),
+            (0.78, 1.0, pal::BLUE),
+        ] {
+            let top = video.top() + h * start + if start > 0.0 { 4.0 } else { 0.0 };
+            p.rect_filled(Rect::from_min_max(pos2(left, top), pos2(right, video.top() + h * end)), 0.0, color);
+        }
+        let elbow = 32.0;
+        p.rect_filled(Rect::from_min_size(pos2(right, video.top()), vec2(elbow, elbow)), 0.0, pal::ORANGE);
+        p.circle_filled(pos2(right + elbow, video.top() + elbow), elbow, Color32::BLACK);
+        let foot = Rect::from_min_max(pos2(left, video.bottom() - 12.0), pos2(picture.left() - 4.0, video.bottom()));
+        p.rect_filled(
+            foot,
+            CornerRadius {
+                sw: 12,
+                ne: 6,
+                ..Default::default()
+            },
+            pal::BLUE,
+        );
+        p.rect_filled(Rect::from_min_size(pos2(right, foot.top() - elbow), vec2(elbow, elbow)), 0.0, pal::BLUE);
+        p.circle_filled(pos2(right + elbow, foot.top() - elbow), elbow, Color32::BLACK);
+
+    }
+    let right_gap = video.right() - picture.right();
+    if right_gap >= 30.0 {
+        let x = video.right() - 8.0;
+        let split = video.top() + video.height() * 0.7;
+        p.rect_filled(
+            Rect::from_min_max(pos2(x, video.top()), pos2(video.right(), split - 2.0)),
+            CornerRadius { ne: 4, ..Default::default() },
+            pal::LAVENDER,
+        );
+        p.rect_filled(
+            Rect::from_min_max(pos2(x, split + 2.0), video.max),
+            CornerRadius { se: 4, ..Default::default() },
+            pal::BLUE,
+        );
+    }
+    width
+}
+
 /// A panel header: rounded cap, title, and a rule running to the edge.
 pub fn header(ui: &mut Ui, title: &str, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
@@ -428,15 +664,26 @@ pub const FOOTER_SPACE: f32 = FOOT + 4.0 + 8.0 + 2.0;
 /// Desktop window chrome in the console palette. Returns the content area
 /// below the draggable title strip; full screen and mobile use the whole UI.
 pub fn native_title_bar(ui: &mut Ui, title: &str) -> Rect {
+    native_title_bar_with_rail(ui,title,false)
+}
+
+pub fn native_title_bar_with_rail(ui: &mut Ui, title: &str, linked:bool) -> Rect {
+    super::window_shape::update();
     let area=ui.max_rect();
+    let square=cfg!(target_os="android") || ui.input(|i|i.viewport().fullscreen==Some(true)||i.viewport().maximized==Some(true));
+    ui.painter().rect_filled(area,if square{0.0}else{18.0},pal::BG);
     if cfg!(target_os="android") || ui.input(|i|i.viewport().fullscreen==Some(true)) {return area;}
     let maximized=ui.input(|i|i.viewport().maximized==Some(true));
     let bar=Rect::from_min_max(area.min+vec2(5.0,4.0),pos2(area.right()-5.0,area.top()+38.0));
     let p=ui.painter();
-    p.rect_filled(bar,16.0,pal::PANEL);
-    p.rect_stroke(bar,16.0,Stroke::new(1.0,pal::VIOLET),egui::StrokeKind::Inside);
-    p.rect_filled(Rect::from_min_size(bar.min,vec2(14.0,bar.height())),CornerRadius {nw:16,sw:16,..Default::default()},pal::LAVENDER);
-    let mut right=bar.right()-3.0;
+    if linked {
+        p.rect_filled(bar,CornerRadius{nw:18,ne:16,..Default::default()},pal::LAVENDER);
+    } else {
+        p.rect_filled(bar,16.0,pal::PANEL);
+        p.rect_stroke(bar,16.0,Stroke::new(1.0,pal::VIOLET),egui::StrokeKind::Inside);
+        p.rect_filled(Rect::from_min_size(bar.min,vec2(14.0,bar.height())),CornerRadius {nw:16,sw:16,..Default::default()},pal::LAVENDER);
+    }
+    let mut right=bar.right()-9.0;
     for (symbol,hint,color,command) in [
         (0,"Close",pal::PEACH,egui::ViewportCommand::Close),
         (if maximized{3}else{1},if maximized{"Restore window"}else{"Maximize"},pal::LAVENDER,egui::ViewportCommand::Maximized(!maximized)),
@@ -446,7 +693,8 @@ pub fn native_title_bar(ui: &mut Ui, title: &str) -> Rect {
         let rect=Rect::from_min_max(pos2(right-width,bar.top()+3.0),pos2(right,bar.bottom()-3.0));
         let response=ui.interact(rect,ui.scope_id().with(("native-window",hint)),Sense::click());
         let fill=if response.hovered(){pal::TAN}else{color};
-        p.rect_filled(rect,14.0,fill);
+        if linked {p.rect_filled(rect.expand(2.0),11.0,pal::BG);}
+        p.rect_filled(rect,9.0,fill);
         let icon=Rect::from_center_size(rect.center(),vec2(18.0,19.0));
         let stroke=Stroke::new(2.0,pal::BG);
         match symbol {
@@ -467,7 +715,7 @@ pub fn native_title_bar(ui: &mut Ui, title: &str) -> Rect {
         right=rect.left()-4.0;
     }
     let title_rect=Rect::from_min_max(bar.min+vec2(22.0,0.0),pos2(right-4.0,bar.bottom()));
-    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title,display_bold(17.0),pal::LAVENDER);
+    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title,display_bold(17.0),if linked{pal::BG}else{pal::LAVENDER});
     let drag=ui.interact(title_rect,ui.scope_id().with("native-title-drag"),Sense::click_and_drag());
     if drag.double_clicked(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));}
     else if drag.drag_started(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);}
@@ -798,4 +1046,10 @@ pub fn render_logo(size: u32, badge: bool) -> egui::IconData {
 /// The app icon (window, tray, desktop entry, Windows .exe).
 pub fn icon(size: u32) -> egui::IconData {
     render_logo(size, true)
+}
+
+
+/// X11 and Windows use native window masks; Wayland uses alpha compositing.
+pub fn transparent_window() -> bool {
+    cfg!(target_os="linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
 }

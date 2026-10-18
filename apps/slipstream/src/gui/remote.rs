@@ -18,7 +18,7 @@ use slipstream_core::{
 use slipstream_session::{FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 use tokio::sync::mpsc;
 
-use super::{files::FileManager, home, keys, theme, theme::pal, touch, video};
+use super::{files::FileManager, home, keys, theme, theme::{pal,ConsoleIcon as Icon}, touch, video};
 
 pub enum CapturedKey {
     Key {
@@ -359,7 +359,7 @@ impl RemoteTab {
         ui.painter().rect_filled(full, 0.0, Color32::BLACK);
 
         let pointer = ctx.input(|i| i.pointer.hover_pos());
-        let toolbar_h = 44.0;
+        let toolbar_h = 36.0;
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::Enter)) {
             self.toggle_fullscreen(&ctx);
         }
@@ -383,6 +383,8 @@ impl RemoteTab {
         );
 
         self.draw_video(ui, video_area, t);
+        let rail_width=(!self.fullscreen && !cfg!(target_os="android"))
+            .then(||theme::session_rails(ui.painter(),full,video_area,self.video_rect));
         self.handle_pointer(ui, video_area);
 
         if self.show_chat {
@@ -404,7 +406,7 @@ impl RemoteTab {
 
         if show_toolbar {
             let bar = Rect::from_min_size(full.min, vec2(full.width(), toolbar_h));
-            action = self.toolbar(ui, bar, t);
+            action = self.toolbar(ui, bar, t, rail_width);
         }
 
         self.files.ui(&ctx, rt);
@@ -632,59 +634,52 @@ impl RemoteTab {
         }
     }
 
-    fn toolbar(&mut self, ui: &mut Ui, bar: Rect, t: f64) -> TabAction {
+    fn toolbar(&mut self, ui: &mut Ui, bar: Rect, t: f64, rail_width:Option<f32>) -> TabAction {
         let mut action = TabAction::None;
         let painter = ui.painter();
         painter.rect_filled(bar, 0.0, pal::BG);
-        // Left cap + bottom rule: a slim console strip.
-        painter.rect_filled(
-            Rect::from_min_size(bar.min + vec2(8.0, 6.0), vec2(36.0, bar.height() - 12.0)),
-            egui::CornerRadius { nw: 16, sw: 16, ..Default::default() },
-            pal::ORANGE,
-        );
-        painter.line_segment(
-            [pos2(bar.left(), bar.bottom() - 1.0), pos2(bar.right(), bar.bottom() - 1.0)],
-            egui::Stroke::new(1.0, pal::ORANGE.gamma_multiply(0.4)),
-        );
-        let ctx = ui.ctx().clone();
-        let inner = bar.shrink2(vec2(8.0, 6.0)).with_min_x(bar.left() + 50.0);
-        // Narrower windows get a tighter bar rather than overlapping buttons.
-        let w = bar.width();
-        if w < super::NARROW {
-            return self.toolbar_narrow(ui, inner, &ctx, t);
+        let rail=rail_width.unwrap_or(0.0);
+        if rail_width.is_some() {
+            let turn=Rect::from_min_max(bar.min,pos2(bar.left()+rail.max(36.0)+32.0,bar.bottom()));
+            painter.rect_filled(turn,egui::CornerRadius{nw:32,..Default::default()},pal::ORANGE);
+            painter.text(pos2(turn.right()-17.0,turn.center().y),Align2::CENTER_CENTER,"LINK",theme::display_bold(14.0),pal::BG);
+        } else {
+            painter.rect_filled(Rect::from_min_size(bar.min+vec2(8.0,6.0),vec2(36.0,bar.height()-12.0)),egui::CornerRadius{nw:10,sw:10,..Default::default()},pal::ORANGE);
         }
+        let ctx = ui.ctx().clone();
+        let start=rail.max(36.0)+36.0;
+        let inner = bar.with_min_x(bar.left()+start);
+        let w=bar.width()-(start-72.0);
+        if w<1100.0 {return self.toolbar_narrow(ui,inner,&ctx,t);}
         let compact_stats = w < 1460.0;
         let tight = w < 1320.0;
-        let show_host_name = w >= 1240.0;
-        let screens_as_menu = w < 1100.0;
-        let icon_only_back = w < 920.0;
+        let screens_as_menu = w < 1360.0;
+        let icon_only_back = w < 1280.0;
 
         // Right side first, so the buttons know how much room is left.
         let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
-        right.spacing_mut().item_spacing.x = 6.0;
-        if theme::pill(&mut right, "End link", pal::RED).clicked() {
+        right.spacing_mut().item_spacing.x = 4.0;
+        if theme::console_button(&mut right, "End link", pal::RED,Icon::End,false).clicked() {
             self.send(ViewerCmd::Disconnect);
             action = TabAction::Close;
         }
-        self.stats_readout(&mut right, if compact_stats { Detail::Compact } else { Detail::Full }, t);
+        let stats=egui::Frame::new().fill(pal::PANEL).corner_radius(6.0).inner_margin(egui::Margin::symmetric(8,0));
+        stats.show(&mut right,|ui| {ui.set_min_height(36.0);self.stats_readout(ui,if compact_stats {Detail::Compact}else{Detail::Full},t);});
         let right_left = right.min_rect().left();
 
         let left_rect = inner.with_max_x(right_left - 12.0);
         let mut child = ui.new_child(UiBuilder::new().max_rect(left_rect).layout(Layout::left_to_right(Align::Center)));
         child.set_clip_rect(left_rect.expand2(vec2(0.0, 8.0)));
         let ui = &mut child;
-        ui.spacing_mut().item_spacing.x = if tight { 5.0 } else { 6.0 };
+        ui.spacing_mut().item_spacing.x = 4.0;
         if tight {
             ui.spacing_mut().button_padding.x = 8.0;
         }
 
         let back_tip = format!("Back to the Bridge (the link with {} keeps running)", self.info.host_name);
-        if theme::back_pill(ui, if icon_only_back { "" } else { "Bridge" }, pal::PEACH).on_hover_text(back_tip).clicked() {
+        if theme::console_button(ui, if icon_only_back { "" } else { "Bridge" }, pal::PEACH,Icon::Back,false).on_hover_text(back_tip).clicked() {
             self.release_keyboard();
             action = TabAction::Bridge;
-        }
-        if show_host_name {
-            ui.label(RichText::new(self.info.host_name.to_uppercase()).font(theme::display_bold(20.0)).color(pal::TAN));
         }
 
         if self.info.displays.len() > 1 {
@@ -693,23 +688,23 @@ impl RemoteTab {
             };
             let mut pick = None;
             if screens_as_menu {
-                ui.menu_button(RichText::new(format!("SCREEN {} ▾", self.display + 1)).font(theme::display(17.0)).color(pal::VIOLET), |ui| {
+                let screens=theme::console_button(ui,&format!("Screen {}",self.display+1),pal::VIOLET,Icon::Window,true);
+                egui::Popup::menu(&screens).show(|ui| {
                     for d in &self.info.displays {
                         if ui.selectable_label(d.index == self.display, tip(d)).clicked() {
                             pick = Some(d.index);
                             ui.close();
                         }
                     }
-                })
-                .response
-                .on_hover_text("The remote computer's screens: pick one to view");
+                });
+                screens.on_hover_text("The remote computer's screens: pick one to view");
             } else {
                 ui.add_space(4.0);
                 ui.label(RichText::new("SCREEN").font(theme::display(15.0)).color(pal::LAVENDER))
                     .on_hover_text("The remote computer's screens: pick one to view");
                 for d in &self.info.displays {
                     let color = if d.index == self.display { pal::GOLD } else { pal::VIOLET };
-                    if theme::pill(ui, &format!("{}", d.index + 1), color).on_hover_text(tip(d)).clicked() {
+                    if theme::console_button(ui, &format!("{}", d.index + 1), color,Icon::Window,false).on_hover_text(tip(d)).clicked() {
                         pick = Some(d.index);
                     }
                 }
@@ -720,20 +715,21 @@ impl RemoteTab {
             }
         }
 
-        if theme::pill(ui, if self.fullscreen { "Window" } else { "Full" }, pal::BLUE)
+        if theme::console_button(ui, if self.fullscreen { "Window" } else { "Full" }, pal::BLUE,if self.fullscreen{Icon::Window}else{Icon::Fullscreen},false)
             .on_hover_text("Full screen on/off (Ctrl+Alt+Enter)")
             .clicked()
         {
             self.toggle_fullscreen(&ctx);
         }
 
-        ui.menu_button(RichText::new("KEYS").font(theme::display(17.0)).color(pal::LAVENDER), |ui| self.keys_menu(ui));
+        let keys=theme::console_button(ui,"Keys",pal::LAVENDER,Icon::Keys,true);
+        egui::Popup::menu(&keys).show(|ui|self.keys_menu(ui));
 
         let chat_label = if self.unread { "Chat ◆" } else { "Chat" };
-        if theme::pill(ui, chat_label, pal::LAVENDER).clicked() {
+        if theme::console_button(ui,chat_label,pal::LAVENDER,Icon::Chat,false).clicked() {
             self.show_chat = !self.show_chat;
         }
-        if self.info.capabilities.file_transfer && theme::pill(ui, "Files", pal::GOLD).on_hover_text("Browse and transfer files").clicked() {
+        if self.info.capabilities.file_transfer && theme::console_button(ui,"Files",pal::GOLD,Icon::Files,false).on_hover_text("Browse and transfer files").clicked() {
             self.files.open = !self.files.open;
             self.release_keyboard();
         }
@@ -745,7 +741,7 @@ impl RemoteTab {
             (true, true) => ("Sound", pal::GOLD, "Playing the remote computer's sound. Click to mute"),
             (true, false) => ("Muted", pal::LAVENDER.gamma_multiply(0.6), "Click to hear the remote computer's sound"),
         };
-        let sound = ui.add_enabled_ui(can_hear, |ui| theme::pill(ui, label, color)).inner.on_hover_text(tip).on_disabled_hover_text(tip);
+        let sound = ui.add_enabled_ui(can_hear, |ui| theme::console_button(ui,label,color,if self.audio{Icon::Sound}else{Icon::Muted},false)).inner.on_hover_text(tip).on_disabled_hover_text(tip);
         if sound.clicked() {
             self.audio = !self.audio;
             self.send(ViewerCmd::Audio(self.audio));
@@ -753,13 +749,15 @@ impl RemoteTab {
 
         // Tools: privacy mode, port forwarding. Gold while privacy is on.
         let tools_color = if self.privacy { pal::GOLD } else { pal::LAVENDER };
-        ui.menu_button(RichText::new("TOOLS ▾").font(theme::display(17.0)).color(tools_color), |ui| self.tools_menu(ui));
+        let tools=theme::console_button(ui,"Tools",tools_color,Icon::Tools,true);
+        egui::Popup::menu(&tools).show(|ui|self.tools_menu(ui));
 
-        // Only the arrow when there's no room for the preset's name.
-        let preset_label = if ui.available_width() < 120.0 { "▾".to_string() } else { format!("{} ▾", PRESETS[self.preset].0.to_uppercase()) };
-        ui.menu_button(RichText::new(preset_label).font(theme::display(17.0)).color(pal::BLUE), |ui| self.quality_menu(ui))
-            .response
-            .on_hover_text("Picture quality");
+        let preset_label=if ui.available_width()<145.0 {""}else{PRESETS[self.preset].0};
+        let quality=theme::console_button(ui,preset_label,pal::BLUE,Icon::Performance,true)
+            .on_hover_text(format!("Picture quality · {}",PRESETS[self.preset].0));
+        egui::Popup::menu(&quality).show(|ui|self.quality_menu(ui));
+        let gap=Rect::from_min_max(pos2(ui.min_rect().right()+4.0,bar.top()),pos2(right_left-4.0,bar.bottom()));
+        theme::session_rail_label(ui.painter(),gap,&self.info.host_name.to_uppercase());
         action
     }
 
@@ -768,21 +766,22 @@ impl RemoteTab {
     fn toolbar_narrow(&mut self, ui: &mut Ui, inner: Rect, ctx: &egui::Context, t: f64) -> TabAction {
         let mut action = TabAction::None;
         let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
-        right.spacing_mut().item_spacing.x = 6.0;
-        if theme::pill(&mut right, "End", pal::RED).clicked() {
+        right.spacing_mut().item_spacing.x = 4.0;
+        if theme::console_button(&mut right,"End",pal::RED,Icon::End,false).clicked() {
             self.send(ViewerCmd::Disconnect);
             action = TabAction::Close;
         }
-        self.stats_readout(&mut right, Detail::Fps, t);
+        egui::Frame::new().fill(pal::PANEL).corner_radius(6.0).inner_margin(egui::Margin::symmetric(8,0))
+            .show(&mut right,|ui|{ui.set_min_height(36.0);self.stats_readout(ui,Detail::Fps,t)});
         let left_rect = inner.with_max_x(right.min_rect().left() - 8.0);
         let mut left = ui.new_child(UiBuilder::new().max_rect(left_rect).layout(Layout::left_to_right(Align::Center)));
         left.set_clip_rect(left_rect.expand2(vec2(0.0, 8.0)));
-        left.spacing_mut().item_spacing.x = 6.0;
-        if theme::back_pill(&mut left, "", pal::PEACH).clicked() {
+        left.spacing_mut().item_spacing.x = 4.0;
+        if theme::console_button(&mut left,"",pal::PEACH,Icon::Back,false).clicked() {
             self.release_keyboard();
             action = TabAction::Bridge;
         }
-        let console = theme::pill(&mut left, "Console", if self.unread { pal::GOLD } else { pal::LAVENDER });
+        let console = theme::console_button(&mut left,"Console",if self.unread {pal::GOLD}else{pal::LAVENDER},Icon::Console,true);
         egui::Popup::menu(&console).show(|ui| {
             ui.set_min_width(230.0);
             if self.info.displays.len() > 1 {
@@ -828,6 +827,8 @@ impl RemoteTab {
             ui.menu_button("Tools", |ui| self.tools_menu(ui));
             ui.menu_button(format!("Quality: {}", PRESETS[self.preset].0), |ui| self.quality_menu(ui));
         });
+        let gap=Rect::from_min_max(pos2(left.min_rect().right()+4.0,inner.top()),pos2(right.min_rect().left()-4.0,inner.bottom()));
+        theme::session_rail_label(ui.painter(),gap,&self.info.host_name.to_uppercase());
         action
     }
 

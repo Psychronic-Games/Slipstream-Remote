@@ -625,6 +625,7 @@ const TOP: [(i32, i32, u32); 4] = [(12, 96, ORANGE), (102, 300, PEACH), (306, 36
 const BOTTOM: [(i32, i32, u32); 3] = [(12, 96, LAVENDER), (102, 340, BLUE), (346, 488, GOLD)];
 
 unsafe fn paint_frame(hwnd: HWND) {
+    super::window_shape::update();
     // SAFETY: a standard BeginPaint/EndPaint pair on our window.
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();

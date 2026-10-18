@@ -6776,6 +6776,7 @@ dependencies = [
  "wgpu-hal",
  "windows-service",
  "windows-sys 0.61.2",
+ "x11rb",
 ]
 
 [[package]]

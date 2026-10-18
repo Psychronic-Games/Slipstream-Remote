@@ -27,7 +27,9 @@ pub struct TestPattern {
 
 impl TestPattern {
     pub fn new(width: u32, height: u32) -> Self {
-        Self { width, height, log: Arc::default() }
+        // A cursor appears after input arrives; an initial (0,0) crosshair
+        // looks like a white frame around the streamed picture in previews.
+        Self { width, height, log: Arc::new(Mutex::new(InputLog { pointer: (-1.0, -1.0), ..Default::default() })) }
     }
 
     /// Shared record of every injected event (for tests).

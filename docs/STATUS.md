@@ -1,7 +1,15 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.11.0. Read this first when
+*Updated 2026-10-18; latest release 0.11.1. Read this first when
 picking the work back up.*
+
+**0.11.1:** remote-session LCARS rails in existing side letterboxing,
+a swept LINK elbow, full-height toolbar segments with vector icons, and
+rounded native window bounds. Native corner masks are used on Windows and
+X11; Wayland uses alpha compositing. Full-screen/maximized windows remain
+rectangular. Linux checks cover wide/compact layouts, chat, popup menus,
+full screen and native shapes. Windows native code is cross-checked; real-VM
+confirmation remains useful.
 
 **0.11.0:** device names, routed subnet/VLAN scans, a detached scanner,
 peripheral/printer/network-drive inventory, restored Windows service chat,

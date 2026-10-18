@@ -240,6 +240,7 @@ impl NetworkScanner {
         let viewport = egui::ViewportId::from_hash_of(("network-scan", id));
         let builder = egui::ViewportBuilder::default()
             .with_decorations(false)
+            .with_transparent(theme::transparent_window())
             .with_title(format!("Network scan · {host} · Slipstream Remote"))
             .with_app_id("slipstream-remote")
             .with_icon({

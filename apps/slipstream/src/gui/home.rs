@@ -466,6 +466,7 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
         }
         let builder = egui::ViewportBuilder::default()
             .with_decorations(false)
+            .with_transparent(theme::transparent_window())
             .with_title(format!("Chat - {} - Slipstream Remote", s.peer))
             .with_app_id("slipstream-remote")
             .with_icon(ICON.get_or_init(|| std::sync::Arc::new(theme::icon(64))).clone())

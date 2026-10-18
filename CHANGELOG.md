@@ -13,6 +13,21 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Remote session frame
+- Join the title and session controls to an LCARS frame. A slim side rail
+  (up to 44 px) occupies existing letterboxing, with a separate swept LINK
+  elbow leading into the shifted toolbar. The video keeps its available
+  width; the toolbar is shorter, at 36 px. Full screen keeps its auto-hide.
+- Flat colored toolbar segments with rounded rectangular corners, narrow
+  seams and scalable vector symbols for chat, files, keys, sound, tools,
+  picture quality, full screen and disconnect. Narrow windows group actions
+  in Console. Tooltips, menus and keyboard shortcuts remain available.
+- Round the actual outer window corners: native window regions on Windows
+  (including the compact fallback), native shapes on X11, and transparent
+  corners on Wayland. Maximized/full-screen windows use square bounds.
+- The demo/test pattern waits for pointer input before drawing a crosshair,
+  avoiding an initial white line along the picture's top and left edges.
+
 ## 0.11.0 — 2026-10-18
 
 ### Network scan improvements

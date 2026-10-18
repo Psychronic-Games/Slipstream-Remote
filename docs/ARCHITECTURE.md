@@ -419,3 +419,21 @@ host-side chat is a separate native window (an egui *deferred* viewport;
 immediate viewports don't map on KDE Wayland).
 
 egui also targets Android, so the same UI can ship on mobile later.
+
+### Desktop session frame
+
+The title strip and remote controls use connected LCARS color segments.
+`theme::session_rails` draws within existing letterbox gutters, clipped away
+from the actual video rectangle; input normalization still uses that video
+rectangle. The rail caps at 44 points and disappears when the picture fills
+the width or is zoomed over that margin. The 36-point toolbar uses vector
+symbols with rounded rectangular controls and groups actions in Console
+when space is tight. Full-screen controls still auto-hide.
+
+`gui/window_shape.rs` gives borderless windows actual rounded bounds rather
+than painting rounded panels on rectangular black surfaces. Windows uses
+cached, DPI-scaled native regions compatible with the VM software renderer.
+X11 uses SHAPE rectangles (the Vulkan surface may only support opaque alpha);
+Wayland uses an alpha surface with a rounded opaque background. Native
+masks are cleared to rectangular bounds while maximized/full screen. Native
+window state/size changes invalidate the mask cache.

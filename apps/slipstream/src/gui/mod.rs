@@ -20,6 +20,7 @@ mod softgl;
 mod settings;
 mod single;
 pub mod theme;
+mod window_shape;
 mod touch;
 mod tray;
 mod video;
@@ -139,6 +140,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_decorations(false)
+            .with_transparent(theme::transparent_window())
             .with_title("Slipstream Remote")
             .with_app_id("slipstream-remote") // must match the .desktop file name (Wayland icons)
             .with_inner_size(opts.window_size.unwrap_or([1180.0, 760.0]))
@@ -1391,6 +1393,8 @@ impl App {
 type ServiceJob = (bool, &'static str, oneshot::Receiver<Result<(), String>>);
 
 impl eframe::App for App {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32;4] { [0.0;4] }
+
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if self.software.is_none()
             && let Some(rs) = frame.wgpu_render_state()
@@ -1540,7 +1544,8 @@ impl eframe::App for App {
         #[cfg(windows)]
         softgl::started();
         let ctx = ui.ctx().clone();
-        let body = theme::native_title_bar(ui, &window_title(self.org.as_deref()));
+        let linked = matches!(self.page,Page::Remote(id) if self.tabs.iter().any(|tab|tab.id==id));
+        let body = theme::native_title_bar_with_rail(ui, &window_title(self.org.as_deref()), linked);
         let ui = &mut ui.new_child(UiBuilder::new().max_rect(body));
         // Clear of the status and navigation bars, the camera cutout and
         // the soft keyboard (the root Ui covers the whole screen).
