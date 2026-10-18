@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.6.2 — 2026-10-17
+
 ### Seeing where video time goes
 - The viewer asks the host how fast its video stages run: screen
   capture (and how: DXGI or GDI), encoding, waiting for a new screen
