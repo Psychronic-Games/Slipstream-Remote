@@ -985,7 +985,7 @@ impl RemoteTab {
             .default_width(680.0)
             .default_height((ctx.content_rect().height() - 150.0).clamp(300.0, 700.0))
             .show(ctx, |ui| {
-                let chrome = theme::window_header(ui, &title, pal::GOLD);
+                let chrome = theme::window_header_with_close(ui, &title, pal::GOLD, pal::RED);
                 if chrome.close {
                     open = false;
                 }

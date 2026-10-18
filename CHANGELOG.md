@@ -13,6 +13,9 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### System Information
+- Use a red Close button to distinguish it from the yellow header rail.
+
 ## 0.14.0 — 2026-10-18
 
 ### Seamless network scanner frame

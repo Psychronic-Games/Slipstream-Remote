@@ -1,7 +1,10 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.14.0. Read this first when
+*Updated 2026-10-18; latest release 0.14.1. Read this first when
 picking the work back up.*
+
+**0.14.1:** System Information uses a contrasting red Close button on its
+yellow title rail.
 
 **0.14.0:** a single cyan scanner title rail with a curved left elbow,
 inset symbolic controls, peach Close and a fixed blue footer. Compact
