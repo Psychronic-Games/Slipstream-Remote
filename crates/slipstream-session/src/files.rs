@@ -30,6 +30,7 @@ pub struct FilePolicy {
     pub receive: bool,
     /// Forward TCP connections (`StreamOpen::Tunnel`).
     pub tunnels: bool,
+    pub network_scan: bool,
 }
 
 /// Serves file requests arriving on `conn` until it closes. `on_saved` is
@@ -40,10 +41,12 @@ pub async fn serve(
     on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>,
     clipboard: Option<slipstream_platform::clipboard::Clipboard>,
 ) {
+    let scans = Arc::new(tokio::sync::Semaphore::new(1));
     while let Ok((send, recv)) = conn.accept_bi().await {
         let (on_saved, clipboard) = (on_saved.clone(), clipboard.clone());
+        let scans = scans.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle(send, recv, policy, on_saved, clipboard).await {
+            if let Err(e) = handle(send, recv, policy, on_saved, clipboard, scans).await {
                 tracing::debug!("file request failed: {e:#}");
             }
         });
@@ -60,10 +63,30 @@ async fn handle(
     policy: FilePolicy,
     on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>,
     clipboard: Option<slipstream_platform::clipboard::Clipboard>,
+    scans: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
     let req: StreamOpen = expect_msg(&mut recv).await?;
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
+        StreamOpen::NetworkInterfaces => {
+            if !policy.network_scan { return reply(&mut send, &denied("Network scanning")).await; }
+            let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
+            reply(&mut send, &StreamReply::NetworkInterfaces(interfaces)).await?;
+        }
+        StreamOpen::NetworkScan(request) => {
+            if !policy.network_scan { return reply(&mut send, &denied("Network scanning")).await; }
+            let Ok(_permit) = scans.try_acquire_owned() else {
+                return reply(&mut send, &StreamReply::Error("A network scan is already running in this session".into())).await;
+            };
+            let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
+            // Resolves on STOP_SENDING or connection close; dropping the
+            // survey drops its JoinSets and cancels outstanding async probes.
+            let stopped = send.stopped();
+            tokio::select! {
+                r = crate::network::serve(&mut send, request, interfaces) => r?,
+                _ = stopped => {},
+            }
+        }
         StreamOpen::ClipboardFiles { batch } => {
             let r = match &clipboard {
                 Some(cb) if policy.receive => {

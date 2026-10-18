@@ -17,6 +17,7 @@ pub struct SettingsForm {
     allow_files: bool,
     allow_audio: bool,
     allow_tunnels: bool,
+    allow_network_scan: bool,
     password_len: usize,
     new_permanent: String,
     has_permanent: bool,
@@ -42,6 +43,7 @@ impl From<&Settings> for SettingsForm {
             allow_files: s.host.allow_file_transfer,
             allow_audio: s.host.allow_audio,
             allow_tunnels: s.host.allow_tunnels,
+            allow_network_scan: s.host.allow_network_scan,
             password_len: s.host.one_time_password_len,
             new_permanent: String::new(),
             has_permanent: s.host.permanent_password_secret.is_some(),
@@ -159,6 +161,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 ui.checkbox(&mut f.allow_clipboard, "Clipboard");
                 ui.checkbox(&mut f.allow_files, "Files");
                 ui.checkbox(&mut f.allow_audio, "Sound");
+                ui.checkbox(&mut f.allow_network_scan, "Network scan").on_hover_text("Let authenticated viewers discover devices and open TCP ports on this computer's connected IPv4 networks");
                 ui.checkbox(&mut f.allow_tunnels, "Port forwarding").on_hover_text(
                     "Let the person connecting reach services on this computer and its network through the link (e.g. Remote Desktop). Off unless you need it.",
                 );
@@ -363,6 +366,7 @@ fn save(app: &mut App) {
         s.host.allow_file_transfer = files;
         s.host.allow_audio = allow_audio;
         s.host.allow_tunnels = allow_tunnels;
+        s.host.allow_network_scan = f.allow_network_scan;
         s.host.one_time_password_len = len;
         if !new_permanent.is_empty() {
             s.host.set_permanent_password(Some(&new_permanent));

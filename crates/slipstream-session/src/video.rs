@@ -311,6 +311,9 @@ fn encode_loop(
         if current != applied {
             applied = current;
             rate = None;
+            // A quality change must restore full size on the very next frame.
+            speed = Speed::new();
+            keyframe.store(true, Ordering::Relaxed);
             encoder.set_settings(EncoderSettings { bitrate_kbps: applied.bitrate_kbps, max_fps: applied.max_fps as f32 });
         }
         let frame_interval = Duration::from_secs_f64(1.0 / applied.max_fps.clamp(1, 240) as f64);
@@ -375,17 +378,19 @@ fn encode_loop(
         encoder.set_frame_skip(applied.bitrate_kbps != 0 || congested);
 
         let force = keyframe.swap(false, Ordering::Relaxed);
-        encoder.set_scale(if sharp { 1.0 } else { speed.scale });
+        let scale = if applied.adaptive_resolution && !sharp { speed.scale } else { 1.0 };
+        encoder.set_scale(scale);
         let t = Instant::now();
         let encoded = match encoder.encode(&frame, force) {
             Ok(Some(e)) => {
                 if let Some(ms) = slow_encode_ms {
-                    let s = if sharp { 1.0 } else { speed.scale };
-                    thread::sleep(Duration::from_secs_f32(ms * s * s / 1000.0));
+                    thread::sleep(Duration::from_secs_f32(ms * scale * scale / 1000.0));
                 }
                 if !sharp {
                     pace.add(t.elapsed());
-                    speed.record(t.elapsed().as_secs_f32() * 1000.0, frame_interval.as_secs_f32() * 1000.0);
+                    if applied.adaptive_resolution {
+                        speed.record(t.elapsed().as_secs_f32() * 1000.0, frame_interval.as_secs_f32() * 1000.0);
+                    }
                 }
                 e
             }
@@ -428,6 +433,63 @@ fn encode_loop(
 mod tests {
     use super::*;
 
+    /// A slow host must keep text at native resolution in the default mode,
+    /// and switching back from a speed preset must undo its previous scale.
+    #[test]
+    fn native_resolution_survives_motion_and_a_preset_change() {
+        use slipstream_codec::PixelFormat;
+        use slipstream_platform::FrameSlot;
+        let (w, h) = (320u32, 180u32);
+        let slot = FrameSlot::new();
+        let producer = slot.clone();
+        let producer_thread = std::thread::spawn(move || {
+            let mut i = 0u8;
+            while !producer.is_closed() {
+                let mut data = producer.buffer((w * h * 4) as usize);
+                for p in 0..w*h { data.extend_from_slice(&[(p as u8).wrapping_add(i), i, 128, 255]); }
+                producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
+                i = i.wrapping_add(1);
+                std::thread::sleep(Duration::from_millis(16));
+            }
+        });
+        let flow = Flow::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        let (etx, _erx) = mpsc::unbounded_channel();
+        let pipeline = Pipeline::start_with(FrameStream::new(slot.clone()), flow.clone(), StreamSettings::default(), tx, etx, Some(30.0));
+        let start = Instant::now();
+        let mut native_frames = 0;
+        while start.elapsed() < Duration::from_secs(2) {
+            if let Ok(frame) = rx.try_recv() {
+                flow.ack(frame.seq);
+                assert_eq!(frame.width, w, "a native-resolution preset shrank a moving frame");
+                native_frames += 1;
+            } else { std::thread::sleep(Duration::from_millis(2)); }
+        }
+        assert!(native_frames > 5);
+        pipeline.set_settings(StreamSettings { adaptive_resolution: true, ..Default::default() });
+        let start = Instant::now();
+        let mut shrank = false;
+        while start.elapsed() < Duration::from_secs(3) {
+            if let Ok(frame) = rx.try_recv() { flow.ack(frame.seq); shrank |= frame.width < w; }
+            else { std::thread::sleep(Duration::from_millis(2)); }
+        }
+        assert!(shrank, "speed preset never reduced resolution on a slow host");
+        pipeline.set_settings(StreamSettings { bitrate_kbps: 20_000, ..Default::default() });
+        let start = Instant::now();
+        let mut restored = false;
+        while start.elapsed() < Duration::from_secs(1) {
+            if let Ok(frame) = rx.try_recv() {
+                flow.ack(frame.seq);
+                if restored { assert_eq!(frame.width, w, "Quality fell back to its old reduced scale"); }
+                restored |= frame.width == w;
+            } else { std::thread::sleep(Duration::from_millis(2)); }
+        }
+        assert!(restored, "Quality failed to restore full size during motion");
+        drop(pipeline);
+        slot.close();
+        producer_thread.join().unwrap();
+    }
+
     /// A processor too slow for full size: moving frames shrink until 60 fps
     /// fits, and once the picture stops a full-size frame follows.
     #[test]
@@ -451,7 +513,7 @@ mod tests {
         let flow = Flow::new();
         let (tx, mut rx) = mpsc::channel(4);
         let (etx, _erx) = mpsc::unbounded_channel();
-        let _p = Pipeline::start_with(FrameStream::new(slot), flow.clone(), StreamSettings::default(), tx, etx, Some(30.0));
+        let _p = Pipeline::start_with(FrameStream::new(slot), flow.clone(), StreamSettings { adaptive_resolution: true, ..Default::default() }, tx, etx, Some(30.0));
         let start = Instant::now();
         let (mut widths, mut late) = (Vec::new(), 0);
         while start.elapsed() < Duration::from_secs(4) {

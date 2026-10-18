@@ -100,7 +100,7 @@ the throttle locked until the attempt is counted, so opening many
 connections at once gains no extra guesses. A viewer that doesn't answer
 the challenge within 10 s is dropped.
 
-## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 5)
+## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 6)
 
 * **Control stream** (bi-directional, length-prefixed `postcard`): auth,
   session info (displays and capabilities), input events, frame acks,
@@ -161,6 +161,27 @@ the challenge within 10 s is dropped.
 `StreamOpen`/`StreamReply`: older peers fail only that one stream. Mismatched peers refuse each other with a "please
 update" message.
 
+### Network discovery
+
+`StreamOpen::NetworkInterfaces` returns structured IPv4 adapter addresses,
+prefixes, MACs and default gateways, collected with the same platform code
+as System information. `StreamOpen::NetworkScan` opens a streamed survey
+(`Started`, `Device`, `Progress`, `Finished`). The host validates the range
+against its current connected adapter; scanning has its own host permission
+and requires session authentication. A scan accepts up to 4096 addresses,
+1024 TCP ports, and 262144 total probes, with one scan per session and 96
+TCP/ICMP probes in flight across viewers. TCP sockets bind to the selected
+adapter address. Probe timeout is 400 ms; native Windows ICMP waits 500 ms.
+Linux/macOS optionally invoke system ping. Neighbor entries supplement
+positive TCP/ICMP responses, explicitly marked unconfirmed when cached only.
+
+The viewer dropping the scan stops its response stream; the host cancels
+its async jobs and subprocesses. Native Windows ICMP calls already running
+finish within their 500 ms timeout. Session disconnection also cancels the
+request. The graph represents the reported gateway and subnet membership,
+not detected physical links. UI: `gui/network.rs`; host and viewer transport:
+`slipstream-session/src/network.rs`; data and validation: `slipstream-core/src/network.rs`.
+
 ### Latency control
 
 The viewer acks every decoded frame. The host only encodes a new frame when
@@ -186,7 +207,8 @@ buffers — the picture is always as fresh as the network allows.
   extra threads, and was no sharper once the picture settles.
   `crates/slipstream-codec/examples/encode_bench.rs` measures modes for
   speed and PSNR.
-* **Adaptive resolution** (`Speed` in `video.rs`): when encoding takes more
+* **Adaptive resolution** (Speed and Low bandwidth presets only; Balanced
+  and Quality keep full resolution): (`Speed` in `video.rs`): when encoding takes more
   than about 90% of the frame budget (1/max fps), moving pictures are
   encoded smaller (down to half size, from the square root of the
   overshoot), and the size climbs back after 3 s with room to spare. About

@@ -7,6 +7,7 @@ mod files;
 #[cfg(target_os = "linux")]
 mod desktop;
 mod home;
+mod network;
 mod keys;
 #[cfg(windows)]
 mod lite;

@@ -56,10 +56,10 @@ pub enum TabAction {
 }
 
 const PRESETS: [(&str, StreamSettings); 4] = [
-    ("Balanced", StreamSettings { bitrate_kbps: 0, max_fps: 60, max_in_flight: 2 }),
-    ("Speed", StreamSettings { bitrate_kbps: 0, max_fps: 30, max_in_flight: 1 }),
-    ("Quality", StreamSettings { bitrate_kbps: 20_000, max_fps: 60, max_in_flight: 3 }),
-    ("Low bandwidth", StreamSettings { bitrate_kbps: 1_200, max_fps: 20, max_in_flight: 1 }),
+    ("Balanced", StreamSettings { bitrate_kbps: 0, max_fps: 60, max_in_flight: 2, adaptive_resolution: false }),
+    ("Speed", StreamSettings { bitrate_kbps: 0, max_fps: 30, max_in_flight: 1, adaptive_resolution: true }),
+    ("Quality", StreamSettings { bitrate_kbps: 20_000, max_fps: 60, max_in_flight: 3, adaptive_resolution: false }),
+    ("Low bandwidth", StreamSettings { bitrate_kbps: 1_200, max_fps: 20, max_in_flight: 1, adaptive_resolution: true }),
 ];
 
 pub struct RemoteTab {
@@ -96,6 +96,7 @@ pub struct RemoteTab {
     forward_repeats: bool,
     notice: Option<(String, Instant)>,
     pub files: FileManager,
+    network: super::network::NetworkScanner,
     /// Playing the remote computer's sound.
     audio: bool,
     /// The remote computer's own screen is blacked out.
@@ -134,6 +135,7 @@ impl RemoteTab {
         frames.set_repaint(move || wake.request_repaint());
         let info = session.info().clone();
         let files = FileManager::new(session.fs(), info.host_name.clone());
+        let network = super::network::NetworkScanner::new(session.fs());
         // Wayland apps repeat held keys themselves; Windows/macOS need repeats sent.
         let forward_repeats = info.os != "Linux";
         let display = info.displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
@@ -183,6 +185,7 @@ impl RemoteTab {
             sysinfo_at: None,
             sysinfo: Arc::default(),
             files,
+            network,
         }
     }
 
@@ -403,6 +406,7 @@ impl RemoteTab {
         self.files.ui(&ctx, rt);
         self.tunnels_window(&ctx, rt);
         self.sysinfo_window(&ctx, rt);
+        self.network.ui(&ctx, rt, self.id, &self.info.host_name, self.closed.is_none());
         self.handle_drops(ui, &ctx, video_area, rt);
 
         if let Some(reason) = self.closed.clone() {
@@ -843,6 +847,13 @@ impl RemoteTab {
 
     /// Privacy mode, port forwarding, system information.
     fn tools_menu(&mut self, ui: &mut Ui) {
+        if ui.add_enabled(self.info.capabilities.network_scan, egui::Button::new("Network scan…"))
+            .on_hover_text("Discover devices and open TCP ports on the remote computer's network")
+            .on_disabled_hover_text("Not allowed on that computer (Config → Permissions → Network scan)")
+            .clicked() {
+            self.network.open = true;
+            ui.close();
+        }
         let (privacy_ok, tunnels_ok) = (self.info.capabilities.privacy, self.info.capabilities.tunnels);
         let mut privacy = self.privacy;
         let r = ui
@@ -876,7 +887,12 @@ impl RemoteTab {
     /// The picture quality presets.
     fn quality_menu(&mut self, ui: &mut Ui) {
         for (i, (name, _)) in PRESETS.iter().enumerate() {
-            if ui.selectable_label(i == self.preset, *name).clicked() {
+            if ui.selectable_label(i == self.preset, *name)
+                .on_hover_text(if PRESETS[i].1.adaptive_resolution {
+                    "May reduce picture size on a slow computer to keep motion responsive; sharpens when still"
+                } else {
+                    "Keeps full picture resolution while moving; frame rate follows the remote computer's encoding speed"
+                }).clicked() {
                 self.preset = i;
                 self.send(ViewerCmd::Settings(PRESETS[i].1));
                 ui.close();
@@ -1110,6 +1126,10 @@ impl RemoteTab {
             if s.relayed { "through a relay" } else { "direct connection" },
             s.decode_ms
         );
+        if s.width > 0 && s.height > 0 {
+            details.push_str(&format!("\nEncoded picture: {}×{} · {}", s.width, s.height,
+                if PRESETS[self.preset].1.adaptive_resolution { "adaptive resolution" } else { "full resolution" }));
+        }
         if !s.host.is_empty() {
             details.push_str("\n\nOn the remote computer:");
             for st in &s.host {

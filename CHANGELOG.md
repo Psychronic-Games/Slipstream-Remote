@@ -13,6 +13,32 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Sharp video on slow hosts
+- Balanced and Quality preserve full picture resolution during movement.
+  Adaptive resolution had applied to every preset, shrinking the desktop
+  on slow encoders (especially server VMs) and sharpening only when still.
+  Speed and Low bandwidth retain adaptive sizing. Changing presets resets
+  the sizing state immediately; the stats tooltip shows the encoded size.
+
+### Remote network scan
+- **Tools → Network scan…** surveys the remote computer's connected IPv4
+  network, using its adapter address, subnet mask and reported gateway.
+  Choose an adapter, narrow the subnet if needed, and scan common or custom
+  TCP ports (comma-separated ports and ranges).
+- LCARS table and logical topology views, cyan active selectors with dark
+  text and lavender outlined inactive selectors, live progress, Stop, filtering,
+  per-device open ports and conventional service names, MAC addresses when
+  available, and copying results as text. Topology shows subnet membership
+  and the reported gateway; it does not claim to discover physical links.
+- TCP and ICMP answers identify devices; neighbor-cache-only entries are
+  marked unconfirmed. Windows uses native ICMP; Linux/macOS use system ping
+  when available. Silent devices and untested ports may not be discovered.
+- Runs on the authenticated host over a separate low-priority QUIC stream.
+  Host permissions include Network scan (enabled by default), with subnet,
+  probe-count and concurrency limits. Closing the tool or ending the
+  session cancels outstanding scanning.
+- Session protocol **6**: update both host and viewer together.
+
 ## 0.9.0 — 2026-10-18
 
 ### The Android app on a phone

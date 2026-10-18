@@ -445,3 +445,33 @@ broken session.
 
 Each app writes a log file, `slipstream.log`, in its settings folder.
 `slipstream info` shows where. Send it along with any bug report.
+
+
+## Scan the remote network
+
+During a session, open **Tools → Network scan…** (on a phone, **Console →
+Tools**). The adapters come from the remote computer. Choose its connected
+IPv4 adapter; the app fills in its subnet and shows its subnet mask and
+gateway. Edit the subnet to narrow a large network, choose common TCP ports
+or enter ports/ranges (e.g. `22,80,443,3389` or `1-1024`), then press
+**Scan network**. Scans support at most 4096 addresses, 1024 ports and
+262144 probes; larger ranges need narrowing.
+
+**Table** lists devices, MAC addresses when available, discovery evidence,
+and open TCP ports. **Topology** charts the reported gateway and devices
+on the subnet. It shows logical membership, not physical switch links.
+Select a device for its ports; filter by address, MAC, port or service, or
+**Copy results** for a ticket. Service names describe conventional ports,
+not verified software. A device listed only by the neighbor cache is marked
+as unconfirmed. Firewalls can hide devices, and only selected TCP ports are
+checked. IPv6 and UDP scans are not included.
+
+**Stop scan**, closing the window, or ending the session stops the scan and
+keeps partial results while the session tab exists. The remote computer's
+**Config → Incoming access → Permissions → Network scan** controls access.
+
+For sharp text during movement, choose **Balanced** or **Quality**. These
+preserve full picture resolution; on a slow VM the frame rate may be lower.
+**Speed** and **Low bandwidth** can reduce resolution while moving and
+sharpen the picture when still. Hover the session statistics to see the
+encoded picture dimensions. Both computers need session protocol 6.

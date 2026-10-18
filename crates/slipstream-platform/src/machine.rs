@@ -232,6 +232,31 @@ fn hypervisor(hw: &Hardware) -> Option<&'static str> {
 }
 
 /// "255.255.255.0" for a /24.
+/// Structured IPv4 adapters for remote network discovery. Shares the same
+/// address and gateway collectors as System information.
+pub fn network_interfaces() -> Vec<slipstream_core::network::NetworkInterface> {
+    use std::net::IpAddr;
+    let networks = Networks::new_with_refreshed_list();
+    let routes = net_extras();
+    let mut out = Vec::new();
+    for (name, data) in &networks {
+        for network in data.ip_networks() {
+            let IpAddr::V4(address) = network.addr else { continue };
+            if address.is_loopback() || address.is_unspecified() || address.is_link_local() { continue; }
+            let gateway = routes.gateways.iter().find_map(|(dev, ip)| {
+                if dev != name { return None; }
+                match ip { IpAddr::V4(ip) => Some(*ip), _ => None }
+            });
+            out.push(slipstream_core::network::NetworkInterface {
+                name: name.clone(), address, prefix: network.prefix.min(32), gateway,
+                mac: data.mac_address().to_string(),
+            });
+        }
+    }
+    out.sort_by_key(|i| (i.gateway.is_none(), i.name.clone(), i.address));
+    out
+}
+
 fn v4_mask(prefix: u8) -> std::net::Ipv4Addr {
     let bits = if prefix == 0 { 0 } else { u32::MAX << (32 - u32::from(prefix.min(32))) };
     std::net::Ipv4Addr::from(bits)

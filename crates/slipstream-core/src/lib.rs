@@ -7,6 +7,7 @@ pub mod config;
 pub mod directory;
 pub mod framing;
 pub mod net;
+pub mod network;
 pub mod proto;
 pub mod provision;
 pub mod release;

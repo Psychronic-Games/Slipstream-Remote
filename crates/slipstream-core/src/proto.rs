@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the session protocol changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Audio travels as QUIC datagrams (a lost one is concealed, never waited
 /// for): `[AUDIO_DATAGRAM][u16 LE sequence][Opus packet]`, 20 ms each.
@@ -93,6 +93,8 @@ pub struct Capabilities {
     pub privacy: bool,
     /// The host allows port forwarding (`StreamOpen::Tunnel`).
     pub tunnels: bool,
+    /// The host allows discovery of devices on its connected IPv4 networks.
+    pub network_scan: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -113,6 +115,8 @@ pub struct StreamSettings {
     pub max_fps: u32,
     /// Maximum frames in flight (sent but not yet acked).
     pub max_in_flight: u32,
+    /// Trade resolution for frame rate on a slow encoder. Off for text work.
+    pub adaptive_resolution: bool,
 }
 
 impl Default for StreamSettings {
@@ -121,6 +125,7 @@ impl Default for StreamSettings {
             bitrate_kbps: 0,
             max_fps: 60,
             max_in_flight: 2,
+            adaptive_resolution: false,
         }
     }
 }
@@ -223,6 +228,8 @@ pub enum StreamOpen {
     SystemInfo,
     /// How fast the host's video stages run: [`StreamReply::Pace`].
     Pace,
+    NetworkInterfaces,
+    NetworkScan(crate::network::ScanRequest),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +243,8 @@ pub enum StreamReply {
     Error(String),
     SystemInfo(Vec<InfoSection>),
     Pace(Vec<PaceStage>),
+    NetworkInterfaces(Vec<crate::network::NetworkInterface>),
+    NetworkScan(crate::network::ScanEvent),
 }
 
 /// One stage of the host's video pipeline ("screen capture (GDI)", "video

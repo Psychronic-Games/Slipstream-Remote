@@ -118,6 +118,8 @@ pub struct HostSettings {
     /// Let viewers forward ports through this computer (reach its own
     /// services and its network). Off by default.
     pub allow_tunnels: bool,
+    /// Let authenticated viewers discover devices on connected IPv4 subnets.
+    pub allow_network_scan: bool,
     /// Last numeric ID the server gave us (display only; the server is authoritative).
     pub last_device_id: Option<DeviceId>,
     /// Wayland portal token so screen-sharing permission survives restarts.
@@ -197,6 +199,7 @@ impl Default for HostSettings {
             allow_file_transfer: true,
             allow_audio: true,
             allow_tunnels: false,
+            allow_network_scan: true,
             last_device_id: None,
             portal_restore_token: None,
         }

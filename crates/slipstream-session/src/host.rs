@@ -149,6 +149,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
         audio: settings.host.allow_audio && (inner.opts.test_pattern || slipstream_audio::capture_supported()),
         privacy,
         tunnels: settings.host.allow_tunnels,
+        network_scan: settings.host.allow_network_scan,
         chat: true,
         cursor_in_video,
     };
@@ -319,7 +320,7 @@ async fn session_loop(
 
     // File browsing and transfer requests from the viewer.
     let files_inner = inner.clone();
-    let policy = files::FilePolicy { browse: caps.file_transfer, receive: caps.file_transfer, tunnels: caps.tunnels };
+    let policy = files::FilePolicy { browse: caps.file_transfer, receive: caps.file_transfer, tunnels: caps.tunnels, network_scan: caps.network_scan };
     let on_saved: Arc<dyn Fn(std::path::PathBuf) + Send + Sync> =
         Arc::new(move |path| files_inner.emit(ClientEvent::FileReceived { session: id, path }));
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();

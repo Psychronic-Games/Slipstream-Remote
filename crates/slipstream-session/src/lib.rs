@@ -6,6 +6,7 @@ mod accounts;
 pub mod files;
 pub mod fsops;
 mod host;
+pub mod network;
 pub mod tunnel;
 pub mod update;
 mod video;
@@ -811,6 +812,52 @@ mod tests {
         drop(session);
         viewer.shutdown().await;
         host.shutdown().await;
+    }
+
+    /// Scan a single address on this test machine through a real authenticated
+    /// QUIC session; no other LAN devices are probed by the test.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn network_scan_end_to_end_and_permissions() {
+        use slipstream_core::network::{ScanEvent, ScanRequest};
+        let (host, _hev, hdir) = client("nhost", true).await;
+        let (viewer, _vev, vdir) = client("nviewer", false).await;
+        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        assert!(session.info().capabilities.network_scan);
+        let interfaces = session.fs().network_interfaces().await.unwrap();
+        if let Some(interface) = interfaces.first() {
+            let listener = tokio::net::TcpListener::bind((interface.address, 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let request = ScanRequest { interface: interface.address, cidr: format!("{}/32", interface.address), ports: vec![port] };
+            let mut scan = session.fs().network_scan(request.clone());
+            let mut got_device = false;
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    match scan.events.recv().await.expect("scan event").unwrap() {
+                        ScanEvent::Device(d) if d.address == interface.address => { assert_eq!(d.open_ports, vec![port]); got_device = true; }
+                        ScanEvent::Finished => break,
+                        _ => {},
+                    }
+                }
+            }).await.unwrap();
+            assert!(got_device);
+            let mut invalid = session.fs().network_scan(ScanRequest { cidr: "0.0.0.0/0".into(), ..request.clone() });
+            assert!(tokio::time::timeout(Duration::from_secs(5), invalid.events.recv()).await.unwrap().unwrap().is_err());
+
+            let (strict, _sev, sdir) = client_with("nstrict", true, Default::default(), |s| s.host.allow_network_scan = false).await;
+            let (restricted, _events) = viewer.connect_direct(strict.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+            assert!(!restricted.info().capabilities.network_scan);
+            assert!(restricted.fs().network_interfaces().await.unwrap_err().to_string().contains("not allowed"));
+            let mut denied = restricted.fs().network_scan(request);
+            assert!(tokio::time::timeout(Duration::from_secs(5), denied.events.recv()).await.unwrap().unwrap().unwrap_err().contains("not allowed"));
+            drop(restricted);
+            strict.shutdown().await;
+            let _ = std::fs::remove_dir_all(sdir);
+        }
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
     /// Port forwarding carries a TCP connection both ways, and is refused

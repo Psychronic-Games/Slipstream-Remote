@@ -1,7 +1,18 @@
 # Project status
 
-*Updated 2026-10-18, at version 0.7.1 (build 48). Read this first when
-picking the work back up.*
+*Updated 2026-10-18; latest release 0.9.0, with current unreleased work
+below. Read this first when picking the work back up.*
+
+**Current work (after 0.9.0, unreleased):** full-resolution Balanced/Quality
+video and remote Network scan with table/topology views (session protocol 6).
+Local tests cover slow-encoder sizing/preset changes and a scan over an
+actual authenticated QUIC session to this machine's own address, including
+open ports, range validation and permission denial. Windows cross-checks
+cover the scanner and native ICMP. The server VM still needs the updated
+host and viewer installed for a real-machine sharpness and LAN-scan check.
+The verification table below records earlier releases; Android progress is
+newer in CHANGELOG.md and issue 09.
+
 
 ## What's verified
 

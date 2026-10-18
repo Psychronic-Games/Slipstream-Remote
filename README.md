@@ -32,6 +32,8 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 - **Privacy mode** blacks out the remote screen while you work, and
   **port forwarding** reaches services on the remote network (its Remote
   Desktop, a router's admin page).
+- **Network scan** discovers devices and open TCP ports on the remote
+  computer's IPv4 network, with LCARS table and logical topology views.
 - **Quality presets** — Balanced, Speed, Quality, Low bandwidth; automatic
   bitrate adaptation.
 - **Runs in the tray**, starts with the system, stays reachable.
