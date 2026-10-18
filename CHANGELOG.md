@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.11.2 — 2026-10-18
+
 ### Remote session frame corrections
 - Keep the slim left rail visible in windowed desktop sessions at every
   video aspect ratio and display scale, including while zoomed or waiting
