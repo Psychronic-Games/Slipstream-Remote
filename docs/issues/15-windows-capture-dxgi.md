@@ -21,31 +21,34 @@ Windows.
 
 ## Progress
 
-- Since 0.6.1 the service's helper uses this same xcap recorder on the
-  normal desktop, so it has the same copies. On the login screen and UAC
-  prompts it uses `win_gdi.rs`: one persistent DIB section, one copy per
-  frame, BGRA kept as is.
-- The host now reports per-stage timings (`screen capture (DXGI)` in the
+- Since 0.6.1 the service's helper uses `win_gdi.rs` on the login screen
+  and UAC prompts: one persistent DIB section, one copy per frame, BGRA
+  kept as is.
+- The host reports per-stage timings (`screen capture (DXGI)` in the
   viewer's stats tooltip and log), which gives the before and after
   numbers this issue asks for. On the Server 2016 VM at 1280×800, DXGI
-  capture took 1.8 ms a frame and encoding was the bottleneck. So this
-  matters most at 1440p and 4K.
+  capture took 1.8 ms a frame and encoding was the bottleneck.
+- 0.7.1 replaced xcap's recorder with `win_dxgi.rs`, in the app and the
+  service. Its recorder kept a thread holding the duplication after a
+  session ended, so every later session fell back to GDI.
 
 ## Tasks
 
-- [ ] Use Desktop Duplication directly (the `windows` crate is already a
-      dependency): one persistent staging texture, `AcquireNextFrame` with
-      a short timeout, and the dirty rectangles.
-- [ ] Hand the mapped rows (`RowPitch` as the stride) to the frame slot's
-      reused buffer with a single copy, keeping BGRA. The encoder converts
-      BGRA directly.
-- [ ] Draw the pointer into that buffer (as now), and release the DXGI
-      frame before encoding.
-- [ ] Measure on the laptop at 1080p/1440p/4K, before and after: fps and
-      CPU in the stats overlay.
+- [x] Use Desktop Duplication directly: one persistent staging texture,
+      `AcquireNextFrame` with a short timeout, created and released by
+      each session.
+- [x] One copy per frame out of the mapped rows (`RowPitch` as the
+      stride), keeping BGRA for the encoder; the frame is released before
+      encoding.
+- [x] Draw the pointer into that buffer, as before.
+- [ ] Copy only the dirty rectangles (`GetFrameDirtyRects`) into the
+      reused buffer, if measurements show the full copy matters at 4K.
+- [ ] Measure on the laptop at 1080p/1440p/4K: fps and capture time in
+      the stats tooltip.
 
 ## Pointers
 
+- `crates/slipstream-platform/src/win_dxgi.rs` (duplication)
 - `crates/slipstream-platform/src/generic.rs` (capture loop)
 - `crates/slipstream-platform/src/win_cursor.rs`
 - `crates/slipstream-platform/src/slot.rs` (`buffer`/`reuse`)

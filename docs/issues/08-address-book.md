@@ -3,6 +3,16 @@ title: Address book with saved devices and passwords
 labels: [feature]
 ---
 
+## Status
+
+Done another way in 0.6.0: **technician accounts** on the station keep
+each technician's saved devices, with passwords sealed in the app
+(`core/src/vault.rs`) so the station can't read them, live presence, a
+shared list kept by the admin, and sign-in to several stations
+(`session/src/accounts.rs`, `gui/saved.rs`). The plan below (OS keychain
+per computer) is kept for reference. Still to do: try it against the live
+station.
+
 ## Background
 
 The Bridge page only lists *Recent links*. Technicians who support the

@@ -14,14 +14,14 @@ track them.
 | 04 | [Windows service for UAC, elevated apps and the login screen](04-windows-service.md) | Windows, feature |
 | 05 | [Code signing, and downloads browsers trust](05-code-signing.md) | Windows, macOS, infra, **high** |
 | 06 | [Hardware video encoding](06-hardware-encoding.md) | performance, feature |
-| 07 | [Stream the host's audio](07-audio.md) | feature |
+| 07 | [Stream the host's audio](07-audio.md) (Windows and Linux done; Mac hosts left) | feature |
 | 08 | [Address book with saved devices](08-address-book.md) (done as technician accounts on stations) | feature |
-| 09 | [Android app](09-android.md) | Android, feature |
+| 09 | [Android app](09-android.md) (in progress) | Android, feature |
 | 10 | [Test the X11 host for real](10-x11-host-testing.md) | Linux, testing |
 | 11 | [Wayland unattended access after reboot](11-wayland-unattended-after-reboot.md) | Linux, testing |
 | 12 | [Resume interrupted file transfers](12-resumable-transfers.md) | feature |
 | 13 | [ARM builds](13-arm-builds.md) | infra |
-| 15 | [Windows: capture straight from DXGI](15-windows-capture-dxgi.md) | Windows, performance |
+| 15 | [Windows: capture straight from DXGI](15-windows-capture-dxgi.md) (done in 0.7.1; to measure) | Windows, performance |
 | 16 | [Try the new session tools on real machines](16-session-tools-real-machines.md) | testing |
 
 **Start with 01.** It's a checklist for testing the 0.5.0 fixes on the

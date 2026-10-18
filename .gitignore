@@ -3,3 +3,5 @@
 *.part
 .DS_Store
 /dist
+# Left by C compiler probes in build scripts
+a.o

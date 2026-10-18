@@ -1,6 +1,6 @@
 # Project status
 
-*Updated 2026-10-17, at version 0.7.0 (build 45). Read this first when
+*Updated 2026-10-18, at version 0.7.1 (build 48). Read this first when
 picking the work back up.*
 
 ## What's verified
@@ -65,9 +65,10 @@ and port forwarding.
   measured before that and are worth re-measuring. Slow processors now
   drop resolution while the picture moves, rather than frame rate.
   Hardware encoding is issue 06.
-- **Windows capture** makes several full-frame copies inside xcap (issue
-  15). The service's GDI path on the login screen and UAC prompts no
-  longer does.
+- **Windows capture** uses its own DXGI duplication since 0.7.1: one
+  copy per frame, BGRA straight to the encoder, released by each session
+  (xcap's recorder blocked later sessions). Not yet measured at 1440p and
+  4K on real hardware (issue 15).
 - **Sound**: Windows and Linux hosts share it; Mac hosts can't yet
   (ScreenCaptureKit audio). Not yet heard on real speakers between two
   machines: end-to-end test with a test tone; real devices open on Linux.
@@ -83,7 +84,12 @@ and port forwarding.
 Each step is written up as an issue with tasks and pointers into the code
 in [issues/](issues/README.md).
 
-1. **Measure 0.7.0 on the Server 2016 VM**: the viewer's 30-second log
+**In progress: Android** (issue 09), in phases: 0 build and run the app
+on Android, 1 control PCs from a phone or tablet, 2 control an Android
+device from a PC, 3 sound, clipboard, files and updates. The steps below
+carry on alongside it.
+
+1. **Measure 0.7.x on the Server 2016 VM**: the viewer's 30-second log
    line shows frame rate, round trip, decode time and the host's capture
    and encode times. Confirm 60 fps, and how often adaptive resolution
    kicks in. Also confirm the pointer on the mouseless VM, and that the
@@ -91,7 +97,7 @@ in [issues/](issues/README.md).
 2. **Confirm 0.5.0 on real machines**: Windows pointer while controlling the
    laptop, the separate chat window on Windows, smooth animations, and the
    Linux app on the Debian server.
-3. **Push to GitHub** (tags `v0.5.0` to `v0.7.0` are local only), get CI
+3. **Push to GitHub** (tags `v0.5.0` to `v0.7.1` are local only), get CI
    green on all three OSes, and attach release builds.
 4. **macOS**: run `scripts/build-macos.sh` on the Mac; test install, Open
    Anyway, permissions, capture, input, setup code and an update (issue 03).
@@ -102,8 +108,6 @@ in [issues/](issues/README.md).
 7. **Code signing**: apply to SignPath once the repo is public (issue 05);
    Apple notarisation when the Developer Program is joined.
 8. **Sound from Mac hosts** (ScreenCaptureKit audio).
-9. **Android**: viewer first, then host (MediaProjection +
-   AccessibilityService). The egui UI already targets Android.
 
 ## Picking the work back up
 

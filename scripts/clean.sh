@@ -12,6 +12,9 @@ if [ "${1:-}" = "--all" ]; then
   cargo clean
 else
   cargo clean --profile dev
+  # That leaves cross-compiled dev builds (target/<triple>/debug: Windows
+  # tests under Wine, macOS type-checks).
+  find target -mindepth 2 -maxdepth 2 -type d -name debug -prune -exec rm -rf {} +
   # Incremental caches of the release builds are never reused.
   find target -maxdepth 3 -type d -name incremental -prune -exec rm -rf {} +
 fi
