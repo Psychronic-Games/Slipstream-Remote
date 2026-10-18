@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.14.0 — 2026-10-18
+
 ### Seamless network scanner frame
 - Replace the stacked scanner headers with one cyan title rail flowing into
   the left frame through a curved elbow. Inset symbolic window controls,
