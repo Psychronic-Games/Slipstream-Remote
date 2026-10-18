@@ -45,6 +45,26 @@ softgl() {
 }
 
 
+# Every station build is a release with its own version: entries still
+# under "Unreleased" mean scripts/release-version.sh hasn't been run.
+# ALLOW_UNRELEASED=1 builds anyway (for local tests, not for stations).
+if [ "${ALLOW_UNRELEASED:-}" != 1 ]; then
+  version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+  if awk '/^## Unreleased/ { on = 1; next } /^## / { on = 0 } on && NF { found = 1 } END { exit !found }' CHANGELOG.md; then
+    echo "error: CHANGELOG.md has unreleased changes. Give them a version first:" >&2
+    echo "  scripts/release-version.sh patch|minor   (now $version), then commit" >&2
+    exit 1
+  fi
+  if ! grep -q "^## $version " CHANGELOG.md; then
+    echo "error: CHANGELOG.md has no section for version $version" >&2
+    exit 1
+  fi
+  if ! git diff --quiet HEAD -- Cargo.toml Cargo.lock CHANGELOG.md; then
+    echo "error: commit the version change first (git commit -am \"Release $version\")" >&2
+    exit 1
+  fi
+fi
+
 FROM=""
 if [ "${1:-}" = "--from-release" ]; then
   FROM="${2:?usage: scripts/build-station.sh --from-release DIR}"

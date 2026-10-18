@@ -1,7 +1,15 @@
 # Changelog
 
-Build numbers are the git commit count. The app shows them as
-`0.5.0 (build N · commit)`.
+Versions follow [semantic versioning](https://semver.org). Until 1.0, a
+minor release (0.6 → 0.7) brings new features and a patch release
+(0.6.0 → 0.6.1) only fixes. 1.0.0 is the feature-complete, stable
+release. After it, the major number goes up for changes that don't work
+with older apps or stations. Every station build is a release.
+`scripts/release-version.sh` raises the version and files the
+"Unreleased" entries under it.
+
+Build numbers are the git commit count. They order builds for updates and
+show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
@@ -81,6 +89,11 @@ Build numbers are the git commit count. The app shows them as
   alone and everything inside is reset to inherit them. The service runs
   that repair whenever it starts, so damaged installs heal. The identity
   is now swapped in as a fresh file instead of copied over the old one.
+- Versions: semantic versioning from here on (see the top of this file).
+  Each station build is a release with its own version.
+  `scripts/release-version.sh` raises it, and the station build refuses
+  unreleased changes. The Windows .exe's version info now comes from
+  Cargo.toml, with the build number as its fourth part.
 - When the service won't install or start, Config (and the Bridge) shows
   Windows' own explanation, selectable and with *Copy*: the service's
   state and exit code, its command line, and the Service Control

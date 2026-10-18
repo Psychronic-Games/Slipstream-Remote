@@ -21,7 +21,6 @@ track them.
 | 11 | [Wayland unattended access after reboot](11-wayland-unattended-after-reboot.md) | Linux, testing |
 | 12 | [Resume interrupted file transfers](12-resumable-transfers.md) | feature |
 | 13 | [ARM builds](13-arm-builds.md) | infra |
-| 14 | [Windows .exe version from Cargo.toml](14-version-in-one-place.md) | infra, good first issue |
 | 15 | [Windows: capture straight from DXGI](15-windows-capture-dxgi.md) | Windows, performance |
 | 16 | [Try the new session tools on real machines](16-session-tools-real-machines.md) | testing |
 

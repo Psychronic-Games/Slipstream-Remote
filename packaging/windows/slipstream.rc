@@ -1,11 +1,12 @@
 // Windows resources for slipstream.exe: icon and version information.
-// Keep the version in step with `version` in the workspace Cargo.toml.
+// SLIP_VER (1,2,3,build) and SLIP_VER_STR ("1.2.3") come from Cargo.toml
+// and git, through apps/slipstream/build.rs.
 1 ICON "slipstream.ico"
 1 24 "slipstream.manifest"
 
 1 VERSIONINFO
-FILEVERSION 0,5,0,0
-PRODUCTVERSION 0,5,0,0
+FILEVERSION SLIP_VER
+PRODUCTVERSION SLIP_VER
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -16,8 +17,8 @@ BEGIN
       VALUE "CompanyName", "Slipstream Remote contributors"
       VALUE "FileDescription", "Slipstream Remote"
       VALUE "ProductName", "Slipstream Remote"
-      VALUE "FileVersion", "0.5.0"
-      VALUE "ProductVersion", "0.5.0"
+      VALUE "FileVersion", SLIP_VER_STR
+      VALUE "ProductVersion", SLIP_VER_STR
       VALUE "LegalCopyright", "MIT License"
       VALUE "OriginalFilename", "slipstream.exe"
     END

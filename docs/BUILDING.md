@@ -95,14 +95,33 @@ into the web host could replace an app and its checksum together.
 - `slipstream info` shows which keys an app trusts. A plain `cargo build`
   has none, so it never installs updates.
 
-### Version and build numbers
+### Versions
 
-- `version` in the workspace `Cargo.toml` is the human version (0.5.0).
-  To change it, also update `packaging/windows/slipstream.rc` (the .exe's
-  version info) and add a section to `CHANGELOG.md`.
-- The **build number** is the git commit count (`git rev-list --count HEAD`),
-  baked into every binary along with the commit hash. Apps update when the
-  station's `(version, build)` is higher than their own.
+Slipstream uses [semantic versioning](https://semver.org):
+
+- **Before 1.0** (`0.MINOR.PATCH`): a **minor** release (0.6 → 0.7) adds
+  features; a **patch** release (0.6.0 → 0.6.1) only fixes things.
+- **1.0.0** is the feature-complete release, with no known bugs in what it
+  offers.
+- **After 1.0**: **major** for changes that don't work with older apps or
+  stations (protocol, station API), **minor** for features, **patch** for
+  fixes.
+
+Every station build is a release with its own version.
+`scripts/release-version.sh patch|minor|major|X.Y.Z` raises `version` in
+the workspace `Cargo.toml` (the one place it's written; the Windows .exe
+gets it through `apps/slipstream/build.rs`) and turns the changelog's
+"Unreleased" entries into that version's section.
+`scripts/build-station.sh` refuses to run while "Unreleased" has entries
+or the version change isn't committed. Use `ALLOW_UNRELEASED=1` for local
+test builds.
+
+### Build numbers
+
+The **build number** is the git commit count (`git rev-list --count HEAD`),
+baked into every binary along with the commit hash (and into the .exe's
+version as the fourth part). Apps update when the station's
+`(version, build)` is higher than their own.
 
 So **commit before you build a release**, or the new apps carry the same
 build number as the old ones and nobody gets offered the update.
@@ -114,16 +133,20 @@ rebuilds every platform it lists.
 
 ### Release checklist
 
-1. Commit your changes (`git commit`). This raises the build number.
-2. `scripts/build-station.sh`
-3. Upload to the station's web root:
+1. Commit your changes, with their entries under "Unreleased" in
+   `CHANGELOG.md`.
+2. `scripts/release-version.sh patch` (fixes only) or `minor` (new
+   features), check the changelog, and commit
+   (`git commit -am "Release X.Y.Z"`). This also raises the build number.
+3. `scripts/build-station.sh`
+4. Upload to the station's web root:
    - `clients/` apps first, `clients/manifest.json` **last**,
    - `bin/` and the PHP files if they changed.
 
    On a shared host, copy each file to a temporary name and rename it into
    place, so nobody downloads a half-written file.
-4. If `bin/` changed, press **Restart relay** on the admin page.
-5. Check the update is offered and carries a `sig`:
+5. If `bin/` changed, press **Restart relay** on the admin page.
+6. Check the update is offered and carries a `sig`:
 
    ```sh
    curl -s -X POST https://support.example.com/api/ -H 'Content-Type: application/json' \

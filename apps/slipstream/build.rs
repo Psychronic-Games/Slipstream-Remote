@@ -6,7 +6,25 @@ fn main() {
     println!("cargo:rerun-if-changed=../../packaging/windows/slipstream.manifest");
     let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
     if windows {
-        embed_resource::compile("../../packaging/windows/slipstream.rc", embed_resource::NONE)
+        // The .exe's version info, from Cargo.toml's version with the build
+        // number (git commit count) as the fourth part.
+        for p in ["../../.git/HEAD", "../../.git/refs/heads", "../../.git/packed-refs"] {
+            if std::path::Path::new(p).exists() {
+                println!("cargo:rerun-if-changed={p}");
+            }
+        }
+        let version = std::env::var("CARGO_PKG_VERSION").unwrap();
+        let build = std::process::Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u16>().ok())
+            .unwrap_or(0);
+        let parts: Vec<String> = version.split(['.', '-', '+']).take(3).map(|p| p.parse::<u16>().unwrap_or(0).to_string()).collect();
+        let numeric = format!("{},{build}", parts.join(","));
+        let macros = [format!("SLIP_VER={numeric}"), format!("SLIP_VER_STR=\"{version}\"")];
+        embed_resource::compile("../../packaging/windows/slipstream.rc", macros.iter())
             .manifest_optional()
             .expect("embedding Windows resources");
         // OpenGL loads on first use instead of at start, so the software
