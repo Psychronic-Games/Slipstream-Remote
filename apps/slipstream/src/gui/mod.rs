@@ -1485,14 +1485,18 @@ impl eframe::App for App {
         desktop_drop::update_pointer(_ctx, raw);
         let root_input = raw.viewport_id == egui::ViewportId::ROOT;
         let focused_now = raw.focused;
-        let lost_focus = !root_input || (self.window_focused && !focused_now);
+        // Detached tools run this hook for background repaints too. Only
+        // their actual focus should release the remote window's control.
+        let lost_focus = if root_input { !focused_now } else { focused_now };
         if root_input { self.window_focused = focused_now; }
         let captured = match self.focused_tab_mut() {
             Some(tab) if lost_focus => {
                 tab.release_keyboard();
                 false
             }
-            Some(tab) => tab.keyboard_captured(),
+            // Tool events always belong to the tool, even while a background
+            // repaint leaves the remote window's keyboard capture intact.
+            Some(tab) => root_input && tab.keyboard_captured(),
             None => false,
         };
         if !captured {

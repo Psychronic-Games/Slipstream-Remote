@@ -15,8 +15,17 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## 0.14.1 — 2026-10-18
 
+### Remote control focus
+- Background repaints of the detached scanner no longer release remote
+  control. Taking focus in a tool still releases held remote input, and
+  tool keyboard events stay local. This prevents control-prompt flicker
+  around remote browser launches and scan/name updates.
+
 ### System Information
 - Use a red Close button to distinguish it from the yellow header rail.
+
+### Scanner frame
+- Smooth the lower-left outer rail/footer join with a full-size corner curve.
 
 ## 0.14.0 — 2026-10-18
 

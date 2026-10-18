@@ -4,7 +4,10 @@
 picking the work back up.*
 
 **0.14.1:** System Information uses a contrasting red Close button on its
-yellow title rail.
+yellow title rail. Background scanner repaints preserve remote control;
+focused tools still release held remote input and keep their keyboard
+events local. This fixes control-prompt flicker during browser/scan updates.
+The scanner's lower-left outer rail/footer join also has a wider curve.
 
 **0.14.0:** a single cyan scanner title rail with a curved left elbow,
 inset symbolic controls, peach Close and a fixed blue footer. Compact

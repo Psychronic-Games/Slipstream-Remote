@@ -843,6 +843,12 @@ pub fn scanner_frame(ui:&mut Ui,title:&str,desktop:bool)->(Rect,bool) {
     p.rect_filled(Rect::from_min_max(pos2(frame.left(),split+2.0),pos2(rail_right,foot_top)),0.0,pal::BLUE);
     let foot=Rect::from_min_max(pos2(frame.left(),foot_top),frame.max);
     p.rect_filled(foot,CornerRadius{sw:12,se:6,..Default::default()},pal::BLUE);
+    // Round the joined side/footer as one shape. A radius confined to the
+    // thin footer otherwise leaves a tight corner below the wider title arc.
+    let outer=Rect::from_min_size(pos2(frame.left(),frame.bottom()-18.0),vec2(18.0,18.0));
+    let corner=p.with_clip_rect(outer.intersect(p.clip_rect()));
+    corner.rect_filled(outer,0.0,pal::BG);
+    corner.circle_filled(outer.right_top(),18.0,pal::BLUE);
     // Restrict each concave cutout to the elbow, clear of all content.
     for (color,corner,center) in [
         (pal::CYAN,Rect::from_min_size(pos2(rail_right,bar.bottom()),vec2(22.0,22.0)),pos2(rail_right+22.0,bar.bottom()+22.0)),
