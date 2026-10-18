@@ -77,8 +77,43 @@ pub fn state() -> Option<ServiceState> {
     service.query_status().ok().map(|s| s.current_state)
 }
 
+/// Running, or on its way: either way it hosts this computer, so the app
+/// mustn't as well (two hosts with one identity push each other off).
 pub fn running() -> bool {
-    state() == Some(ServiceState::Running)
+    matches!(state(), Some(ServiceState::Running | ServiceState::StartPending | ServiceState::ContinuePending))
+}
+
+/// The service's state in words, for the Config page (looked up at most
+/// every two seconds).
+pub fn status_text() -> &'static str {
+    static SEEN: std::sync::Mutex<Option<(Instant, Option<ServiceState>)>> = std::sync::Mutex::new(None);
+    let mut seen = SEEN.lock().unwrap();
+    let state = match *seen {
+        Some((at, s)) if at.elapsed() < Duration::from_secs(2) => s,
+        _ => {
+            let s = state();
+            *seen = Some((Instant::now(), s));
+            s
+        }
+    };
+    match state {
+        None => "Not installed",
+        Some(ServiceState::Running) => "Running",
+        Some(ServiceState::StartPending | ServiceState::ContinuePending) => "Starting…",
+        Some(ServiceState::StopPending | ServiceState::PausePending) => "Stopping…",
+        Some(ServiceState::Stopped | ServiceState::Paused) => "Installed, not running",
+    }
+}
+
+pub fn installed() -> bool {
+    status_text() != "Not installed"
+}
+
+/// The last few lines of the service's log, to explain a failed start.
+fn log_tail(lines: usize) -> String {
+    let log = std::fs::read_to_string(machine_home().join("slipstream.log")).unwrap_or_default();
+    let all: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).collect();
+    all[all.len().saturating_sub(lines)..].join("\n")
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -247,8 +282,21 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     if let Err(e) = failure {
         tracing::warn!("service restart policy (updates then need a manual restart): {e}");
     }
-    service.start::<&str>(&[])?;
+    service.start::<&str>(&[]).context("starting the service")?;
     wait_for(&service, ServiceState::Running, 20);
+    // Check it stays up: one that stops at once would otherwise look
+    // installed, and the app wouldn't say why.
+    std::thread::sleep(Duration::from_secs(3));
+    let now = service.query_status().context("checking on the service")?;
+    if now.current_state != ServiceState::Running {
+        let tail = log_tail(4);
+        bail!(
+            "the service was installed but didn't keep running ({:?}, exit {:?}){}",
+            now.current_state,
+            now.exit_code,
+            if tail.is_empty() { String::new() } else { format!(". Its log ends:\n{tail}") }
+        );
+    }
     println!("Slipstream service installed and running ({}).", installed.display());
     if let Some(id) = settings.host.last_device_id {
         println!("This computer is reachable as ID {id} with its unattended password.");

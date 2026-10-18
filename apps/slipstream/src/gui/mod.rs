@@ -284,7 +284,7 @@ pub struct App {
     /// The Windows service hosts this computer (see `crate::service`).
     pub via_service: bool,
     /// Installing or removing the service: (restart afterwards, result).
-    service_job: Option<(bool, oneshot::Receiver<Result<(), String>>)>,
+    service_job: Option<ServiceJob>,
     /// The Bridge/Config "connect to your station" form.
     pub link_station: String,
     /// Station sign-ins and saved devices.
@@ -582,7 +582,7 @@ impl App {
         };
         let (tx, rx) = oneshot::channel();
         // Adding or removing the service changes who hosts: restart then.
-        self.service_job = Some((install != self.via_service, rx));
+        self.service_job = Some((install != self.via_service, install, rx));
         let wake = ctx.clone();
         std::thread::spawn(move || {
             let result = match crate::service::run_elevated(&args) {
@@ -608,12 +608,12 @@ impl App {
     }
 
     fn poll_service(&mut self, ctx: &egui::Context) {
-        let Some((restart, rx)) = &mut self.service_job else { return };
+        let Some((restart, install, rx)) = &mut self.service_job else { return };
         let Ok(result) = rx.try_recv() else { return };
-        let restart = *restart;
+        let (restart, install) = (*restart, *install);
         self.service_job = None;
         match result {
-            Ok(()) if !restart => self.toast("The service has the new settings", pal::GREEN),
+            Ok(()) if !restart => self.toast(if install { "The service has the new settings" } else { "The service was removed" }, pal::GREEN),
             Ok(()) => {
                 self.toast("Done: restarting Slipstream", pal::GREEN);
                 if let Ok(exe) = std::env::current_exe()
@@ -1235,6 +1235,10 @@ impl App {
         }
     }
 }
+
+/// A service install or removal under way: (restart afterwards, installing
+/// rather than removing, the result).
+type ServiceJob = (bool, bool, oneshot::Receiver<Result<(), String>>);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {

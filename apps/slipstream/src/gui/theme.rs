@@ -288,6 +288,34 @@ pub fn block_button(ui: &mut Ui, rect: Rect, label: &str, code: &str, color: Col
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A console progress bar: a rounded dark track that fills with `color`.
+/// The text reads black over the filled part and light over the rest, so
+/// it stays legible whatever the fill colour and however far along.
+pub fn progress(ui: &mut Ui, fraction: f32, width: f32, color: Color32, text: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(width.max(60.0), 22.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        let r = rect.height() / 2.0;
+        p.rect_filled(rect, r, Color32::from_rgb(16, 20, 34));
+        p.rect_stroke(rect, r, Stroke::new(1.0, color.gamma_multiply(0.5)), egui::StrokeKind::Inside);
+        let split = rect.left() + rect.width() * fraction.clamp(0.0, 1.0);
+        let filled = Rect::from_min_max(rect.min, pos2(split.max(rect.left() + 2.0 * r).min(rect.right()), rect.bottom()));
+        if fraction > 0.0 {
+            p.rect_filled(filled, r, color);
+        }
+        let font = body(14.0);
+        let at = rect.center();
+        let edge = if fraction > 0.0 { filled.right() } else { rect.left() };
+        let light = p.with_clip_rect(Rect::from_min_max(pos2(edge, rect.top()), rect.max).intersect(p.clip_rect()));
+        light.text(at, Align2::CENTER_CENTER, text, font.clone(), pal::TEXT);
+        if fraction > 0.0 {
+            let dark = p.with_clip_rect(filled.intersect(p.clip_rect()));
+            dark.text(at, Align2::CENTER_CENTER, text, font, Color32::BLACK);
+        }
+    }
+    resp
+}
+
 /// A pill button sized to its label.
 pub fn pill(ui: &mut Ui, label: &str, color: Color32) -> Response {
     pill_sized(ui, label, color, vec2(0.0, 32.0))

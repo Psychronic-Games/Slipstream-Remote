@@ -30,6 +30,16 @@ Build numbers are the git commit count. The app shows them as
   QEMU/KVM, Xen, Parallels): its "motherboard" is the hypervisor's
   made-up one (VMware's Intel 440BX), not the host's.
 - Scrollbars are wider and solid (lavender, orange on hover or drag).
+- Progress bars (update download, file transfers) are console bars whose
+  text reads black over the fill and light over the track. Before, it was
+  light orange on bright green. The update bar shows percent and size.
+- Config → Windows service shows the service's real state (Running,
+  Starting…, Installed but not running, Not installed), kept current.
+  Before, a stopped service read "Not installed". A stopped one offers
+  *Start* and *Remove*. Install now checks that the service keeps
+  running, and if it doesn't, says so with the end of the service's
+  log. An app started while the service is still starting no longer
+  hosts beside it, where the two would push each other off the station.
 
 ### Windows, file transfer and the console look
 - With the Slipstream service installed, the app starts hidden in the

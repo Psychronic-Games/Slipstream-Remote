@@ -187,11 +187,20 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                     if theme::pill(ui, "Remove", pal::RED).clicked() {
                         service_clicked = Some(false);
                     }
+                } else if crate::service::installed() {
+                    // Installed but not running (stopped, or failed to start).
+                    if theme::pill(ui, "Start", pal::BLUE).on_hover_text("Install this version of the service again and start it").clicked() {
+                        service_clicked = Some(true);
+                    }
+                    if theme::pill(ui, "Remove", pal::RED).clicked() {
+                        service_clicked = Some(false);
+                    }
                 } else if theme::pill(ui, "Install", pal::BLUE).on_hover_text(tip).clicked() {
                     service_clicked = Some(true);
                 }
             });
-            ui.label(RichText::new(if via_service { "Running" } else { "Not installed" }).color(pal::DIM));
+            let status = crate::service::status_text();
+            ui.label(RichText::new(status).color(if status == "Running" { pal::GREEN } else { pal::DIM }));
         });
         #[cfg(windows)]
         if via_service {

@@ -433,11 +433,12 @@ impl FileManager {
                             }
                             JobState::Running => {
                                 let total = job.total.load(Ordering::Relaxed);
-                                ui.add(
-                                    egui::ProgressBar::new(job.fraction())
-                                        .desired_width(ui.available_width() - 200.0)
-                                        .fill(if job.upload { pal::ORANGE } else { pal::BLUE })
-                                        .text(format!("{} / {}", human_size(job.done.load(Ordering::Relaxed)), human_size(total))),
+                                theme::progress(
+                                    ui,
+                                    job.fraction(),
+                                    ui.available_width() - 200.0,
+                                    if job.upload { pal::ORANGE } else { pal::BLUE },
+                                    &format!("{} / {}", human_size(job.done.load(Ordering::Relaxed)), human_size(total)),
                                 );
                             }
                             JobState::Done(m) => {

@@ -3,7 +3,7 @@
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Ui, vec2};
 use slipstream_session::DirStatus;
 
-use super::{App, Page, theme, theme::pal};
+use super::{App, Page, files, theme, theme::pal};
 
 pub fn ui(app: &mut App, ui: &mut Ui) {
     let t = app.time();
@@ -288,7 +288,12 @@ pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if installing {
                         let frac = if total == 0 { 0.0 } else { done as f32 / total as f32 };
-                        ui.add(egui::ProgressBar::new(frac).desired_width(200.0).fill(pal::GREEN).text("downloading…"));
+                        let text = if total == 0 {
+                            "DOWNLOADING…".to_string()
+                        } else {
+                            format!("DOWNLOADING {:.0}% · {} / {}", frac * 100.0, files::human_size(done), files::human_size(total))
+                        };
+                        theme::progress(ui, frac, 260.0, pal::GREEN, &text);
                     } else {
                         install = theme::pill(ui, "Install & restart", pal::GREEN).clicked();
                         dismiss = ui.small_button("Later").clicked();
