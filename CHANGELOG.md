@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.11.1 — 2026-10-18
+
 ### Remote session frame
 - Join the title and session controls to an LCARS frame. A slim side rail
   (up to 44 px) occupies existing letterboxing, with a separate swept LINK
