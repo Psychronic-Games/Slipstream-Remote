@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.9.0 — 2026-10-18
+
 ### The Android app on a phone
 - A handheld console on phones held upright: the title and a sensor sweep
   at the top, the sections as a row of buttons at the bottom within reach
