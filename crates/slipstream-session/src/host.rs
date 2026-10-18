@@ -320,7 +320,7 @@ async fn session_loop(
 
     // File browsing and transfer requests from the viewer.
     let files_inner = inner.clone();
-    let policy = files::FilePolicy { browse: caps.file_transfer, receive: caps.file_transfer, tunnels: caps.tunnels, network_scan: caps.network_scan };
+    let policy = files::FilePolicy { browse: caps.file_transfer, receive: caps.file_transfer, tunnels: caps.tunnels, network_scan: caps.network_scan, remote_input: caps.input };
     let on_saved: Arc<dyn Fn(std::path::PathBuf) + Send + Sync> =
         Arc::new(move |path| files_inner.emit(ClientEvent::FileReceived { session: id, path }));
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();

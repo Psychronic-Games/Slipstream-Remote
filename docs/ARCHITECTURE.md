@@ -173,6 +173,18 @@ the challenge within 10 s is dropped.
   another folder. Upload plans retain empty directories and stop symlink loops.
   Native Wayland without Xwayland cannot receive desktop drops with this
   window library; remote capture/input still uses the Wayland portal.
+* **Network web actions:** `StreamOpen::OpenNetworkWeb { address, port }`
+  is appended to protocol 6 and answers `Done` or `Error`. The host requires
+  network scanning and remote input, constructs only `http://IPv4/` (80) or
+  `https://IPv4/` (443), and rejects unspecified/multicast/broadcast addresses.
+  Scan names and arbitrary URLs/commands never enter the launcher. The GUI
+  uses buttons rather than local hyperlinks and reports the launch request
+  outcome; it does not claim the page loaded or passed TLS validation.
+  The shared desktop shell module selects the signed-in user's token in the
+  Windows service's controlled session. A bounded user PowerShell process
+  uses that user's URL association; normal Windows hosts use ShellExecute.
+  Linux/macOS hosts use their desktop URL opener. Older hosts fail just this
+  optional stream and show an update hint; other scan functions still work.
 * **System information:** `StreamOpen::SystemInfo` → `StreamReply::SystemInfo`,
   titled sections of (label, value) rows already worded on the host
   (`crates/slipstream-platform/src/machine.rs`), so new facts need no

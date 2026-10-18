@@ -135,7 +135,7 @@ impl RemoteTab {
         frames.set_repaint(move || wake.request_repaint());
         let info = session.info().clone();
         let files = FileManager::new(session.fs(), info.host_name.clone());
-        let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(session.fs())));
+        let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(session.fs(), info.capabilities.input)));
         // Wayland apps repeat held keys themselves; Windows/macOS need repeats sent.
         let forward_repeats = info.os != "Linux";
         let display = info.displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);

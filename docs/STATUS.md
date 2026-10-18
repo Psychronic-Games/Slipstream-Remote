@@ -1,7 +1,15 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.12.0. Read this first when
+*Updated 2026-10-18; latest release 0.13.0. Read this first when
 picking the work back up.*
+
+**0.13.0:** highlighted HTTP/HTTPS port actions in the network table and
+selected-device details. Clicking sends the numeric URL to the remote
+computer's default browser, with request status/errors in the scanner.
+Windows service hosts use the controlled session's signed-in user and their
+browser association. The optional stream preserves existing protocol-6 scans;
+both network-scan and remote-control permissions are required. Windows
+service browser launching still needs confirmation on the real VM.
 
 **0.12.0:** Linux desktop file/folder drops use X11/Xwayland and actual drop
 coordinates; Windows resolves the open Explorer folder or the signed-in
@@ -47,7 +55,7 @@ peripheral/printer/network-drive inventory, restored Windows service chat,
 and LCARS desktop title bars. Protocol remains 6: optional name lookup uses
 appended stream variants, preserving 0.10 scan interoperability.
 
-83 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
+85 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
 confirm the scanner is larger than its main window, finds this machine's
 name/ports, switches views, maximizes/restores, and closes without ending the
 session. Linux and Windows Clippy and Android checks pass. Windows service
@@ -81,6 +89,7 @@ The verification table below also records earlier releases.
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
 | Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. Not yet on the live station |
+| Scanner HTTP/HTTPS actions | ✅ Linux GUI to host launcher; exact URLs, failure reporting and host permission/target checks. Windows service launch needs real-VM confirmation |
 | System information window (live) | ✅ end-to-end test; Linux and Windows (under Wine) collectors checked by hand; macOS type-checks only |
 | Port forwarding | ✅ end-to-end test (echo through the tunnel, unreachable target, refused when not allowed) |
 | Privacy mode | ⚠️ builds for Windows; needs a real Windows 10 2004+ machine (capture exclusion doesn't exist under Wine) |

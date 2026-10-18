@@ -1,7 +1,7 @@
 //! Slipstream sessions: the long-running [`Client`] that keeps this device
 //! reachable by ID, hosts incoming sessions, and opens outgoing ones.
 
-mod cursor_folder;
+mod desktop_shell;
 mod accounts;
 pub mod files;
 pub mod fsops;
@@ -862,6 +862,31 @@ mod tests {
         host.shutdown().await;
         let _ = std::fs::remove_dir_all(hdir);
         let _ = std::fs::remove_dir_all(vdir);
+    }
+
+    /// Invalid requests and view-only sessions never reach a browser launcher.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remote_browser_validates_host_requests_and_permissions() {
+        use slipstream_core::proto::StreamOpen;
+        let (host, _hev, hdir) = client("webhost", true).await;
+        let (viewer, _vev, vdir) = client("webviewer", false).await;
+        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        for (address,port) in [(std::net::Ipv4Addr::LOCALHOST,22),(std::net::Ipv4Addr::BROADCAST,443)] {
+            assert!(session.fs().ask(StreamOpen::OpenNetworkWeb { address,port }).await.is_err());
+        }
+        drop(session);
+        host.shutdown().await;
+        for (name, scan, input) in [("webnoscan",false,true),("webviewonly",true,false)] {
+            let (host, _events, dir) = client_with(name,true,Default::default(),|s| {
+                s.host.allow_network_scan=scan;s.host.allow_input=input;
+            }).await;
+            let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+            let err = session.fs().ask(StreamOpen::OpenNetworkWeb { address:std::net::Ipv4Addr::LOCALHOST,port:80 }).await.unwrap_err();
+            assert!(format!("{err:#}").contains("not allowed"),"{err:#}");
+            drop(session);host.shutdown().await;let _=std::fs::remove_dir_all(dir);
+        }
+        viewer.shutdown().await;
+        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
     }
 
     /// Port forwarding carries a TCP connection both ways, and is refused

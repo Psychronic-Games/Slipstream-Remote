@@ -31,6 +31,7 @@ pub struct FilePolicy {
     /// Forward TCP connections (`StreamOpen::Tunnel`).
     pub tunnels: bool,
     pub network_scan: bool,
+    pub remote_input: bool,
 }
 
 /// Serves file requests arriving on `conn` until it closes. `on_saved` is
@@ -68,9 +69,20 @@ async fn handle(
     let req: StreamOpen = expect_msg(&mut recv).await?;
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
+        StreamOpen::OpenNetworkWeb { address, port } => {
+            if !policy.network_scan || !policy.remote_input {
+                return reply(&mut send, &denied("Opening the remote browser (network scan and remote control)")).await;
+            }
+            let result = tokio::task::spawn_blocking(move || crate::desktop_shell::open_web(address, port)).await?;
+            let response = match result {
+                Ok(()) => StreamReply::Done,
+                Err(e) => StreamReply::Error(format!("Could not open the remote browser: {e:#}")),
+            };
+            reply(&mut send, &response).await?;
+        }
         StreamOpen::DropTarget { x, y } => {
             if !policy.receive { return reply(&mut send, &denied("Receiving files")).await; }
-            let result = tokio::task::spawn_blocking(move || crate::cursor_folder::drop_folder(x, y)).await?;
+            let result = tokio::task::spawn_blocking(move || crate::desktop_shell::drop_folder(x, y)).await?;
             let response = match result {
                 Ok(path) => StreamReply::DropTarget { path: fsops::display(&path) },
                 Err(e) => StreamReply::Error(format!("Cannot choose the drop folder: {e:#}")),
@@ -224,7 +236,7 @@ async fn handle(
                 UploadTarget::Default => fsops::default_upload_dir(),
                 UploadTarget::Folder(f) => PathBuf::from(f),
                 UploadTarget::UnderCursor => {
-                    crate::cursor_folder::folder_under_cursor().unwrap_or_else(fsops::default_upload_dir)
+                    crate::desktop_shell::folder_under_cursor().unwrap_or_else(fsops::default_upload_dir)
                 }
                 UploadTarget::Clipboard { batch } => {
                     let dir = fsops::paste_dir(*batch);
@@ -281,12 +293,18 @@ impl RemoteFs {
     }
 
     pub(crate) async fn ask(&self, req: StreamOpen) -> Result<(SendStream, RecvStream, StreamReply)> {
-        let (mut send, mut recv) = self.conn.open_bi().await.context("connection closed")?;
-        write_msg(&mut send, &req).await?;
-        let reply: StreamReply = expect_msg(&mut recv).await?;
+        let (send, recv, reply) = self.ask_reply(req).await?;
         if let StreamReply::Error(e) = reply {
             bail!("{e}");
         }
+        Ok((send, recv, reply))
+    }
+
+    /// Keep host errors separate from transport/unsupported-stream failures.
+    pub(crate) async fn ask_reply(&self, req: StreamOpen) -> Result<(SendStream, RecvStream, StreamReply)> {
+        let (mut send, mut recv) = self.conn.open_bi().await.context("connection closed")?;
+        write_msg(&mut send, &req).await?;
+        let reply: StreamReply = expect_msg(&mut recv).await?;
         Ok((send, recv, reply))
     }
 

@@ -61,6 +61,20 @@ pub enum ScanEvent {
     Finished,
 }
 
+/// Only web URLs assembled from a typed address can cross the browser action.
+/// No arbitrary URL, executable, path, shell argument or device name is accepted.
+pub fn web_url(address: Ipv4Addr, port: u16) -> Result<String> {
+    if address.is_unspecified() || address.is_multicast() || address.is_broadcast() {
+        bail!("Choose a device's unicast IPv4 address");
+    }
+    let scheme = match port {
+        80 => "http",
+        443 => "https",
+        _ => bail!("Only TCP 80 (HTTP) and 443 (HTTPS) can open in the remote browser"),
+    };
+    Ok(format!("{scheme}://{address}/"))
+}
+
 pub fn mask(prefix: u8) -> u32 {
     if prefix == 0 {
         0
@@ -188,6 +202,17 @@ pub fn service(port: u16) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn browser_targets_only_standard_web_ports_on_unicast_addresses() {
+        let address = Ipv4Addr::new(192,168,1,10);
+        assert_eq!(web_url(address,80).unwrap(), "http://192.168.1.10/");
+        assert_eq!(web_url(address,443).unwrap(), "https://192.168.1.10/");
+        for port in [0,22,445,8080,u16::MAX] { assert!(web_url(address,port).is_err()); }
+        for address in [Ipv4Addr::UNSPECIFIED,Ipv4Addr::BROADCAST,Ipv4Addr::new(224,0,0,1)] {
+            assert!(web_url(address,80).is_err());
+        }
+    }
+
     #[test]
     fn subnet_boundaries_and_limits() {
         assert_eq!(

@@ -235,6 +235,9 @@ pub enum StreamOpen {
     /// Resolve the folder at a physical remote-screen point once per drop.
     /// Optional appended stream: existing protocol-6 sessions stay compatible.
     DropTarget { x: i32, y: i32 },
+    /// Open the discovered HTTP/HTTPS service in the host user's browser.
+    /// Optional stream; no arbitrary URL or command is accepted.
+    OpenNetworkWeb { address: std::net::Ipv4Addr, port: u16 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

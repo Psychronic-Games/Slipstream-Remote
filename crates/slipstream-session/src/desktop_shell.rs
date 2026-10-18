@@ -1,5 +1,6 @@
-//! Freeze a drop's remote destination before sending any files. Physical
-//! coordinates avoid racing the separate input stream or a moving cursor.
+//! Desktop actions run on the host, using the signed-in user's shell when
+//! hosted by the Windows service. Drop coordinates freeze a destination;
+//! browser targets are restricted to typed IPv4 HTTP/HTTPS addresses.
 
 #[cfg(not(windows))]
 pub fn drop_folder(_x: i32, _y: i32) -> anyhow::Result<std::path::PathBuf> {
@@ -12,7 +13,7 @@ pub fn folder_under_cursor() -> Option<std::path::PathBuf> {
 }
 
 #[cfg(windows)]
-pub use native::drop_folder;
+pub use native::{drop_folder, open_web};
 
 #[cfg(windows)]
 pub fn folder_under_cursor() -> Option<std::path::PathBuf> {
@@ -25,6 +26,56 @@ pub fn folder_under_cursor() -> Option<std::path::PathBuf> {
         }
     }
     drop_folder(point.x, point.y).ok()
+}
+
+#[cfg(not(windows))]
+pub fn open_web(address: std::net::Ipv4Addr, port: u16) -> anyhow::Result<()> {
+    let url = slipstream_core::network::web_url(address, port)?;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use anyhow::Context;
+        use std::{
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        let mut child = Command::new(opener)
+            .arg(url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("starting the host's default browser")?;
+        // Some openers stay alive with the browser. Catch immediate errors,
+        // then reap in the background rather than waiting for its window to close.
+        let deadline = Instant::now() + Duration::from_millis(400);
+        loop {
+            if let Some(status) = child.try_wait()? {
+                anyhow::ensure!(
+                    status.success(),
+                    "the host's browser launcher failed ({status}); check its default browser"
+                );
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = url;
+        anyhow::bail!("Opening a browser is unavailable on this host");
+    }
 }
 
 #[cfg(windows)]
@@ -72,6 +123,70 @@ mod native {
         handle.as_raw_handle().cast()
     }
 
+    fn interactive_user() -> Result<Option<OwnedHandle>> {
+        Ok(if slipstream_platform::windesk::following() {
+            unsafe {
+                let mut session = 0;
+                let mut token = std::ptr::null_mut();
+                if ProcessIdToSessionId(GetCurrentProcessId(), &mut session) == 0
+                    || WTSQueryUserToken(session, &mut token) == 0
+                {
+                    return Err(std::io::Error::last_os_error())
+                        .context("no signed-in user in the controlled session");
+                }
+                Some(owned(token))
+            }
+        } else {
+            None
+        })
+    }
+
+    pub fn open_web(address: std::net::Ipv4Addr, port: u16) -> Result<()> {
+        let url = slipstream_core::network::web_url(address, port)?;
+        if let Some(user) = interactive_user()? {
+            // The URL consists only of a scheme, numeric IPv4 and a slash.
+            // ShellExecute under the user's token selects that user's browser.
+            let script = format!(
+                "$ErrorActionPreference='Stop';$p=New-Object System.Diagnostics.ProcessStartInfo;\
+                 $p.FileName='{url}';$p.UseShellExecute=$true;$p.Verb='open';\
+                 [System.Diagnostics.Process]::Start($p) | Out-Null"
+            );
+            user_query(&powershell(), &script, &user, false)?;
+            return Ok(());
+        }
+        use windows_sys::Win32::{
+            System::Com::{
+                COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
+            },
+            UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+        };
+        unsafe {
+            let status = CoInitializeEx(
+                std::ptr::null(),
+                (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
+            );
+            if status < 0 {
+                bail!(
+                    "cannot initialize the host's browser launcher (0x{:08x})",
+                    status as u32
+                );
+            }
+            let result = ShellExecuteW(
+                std::ptr::null_mut(),
+                wide("open").as_ptr(),
+                wide(&url).as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            ) as isize;
+            CoUninitialize();
+            if result <= 32 {
+                bail!("the host's default browser could not open the URL (shell error {result})");
+            }
+        }
+        Ok(())
+    }
+
     pub fn drop_folder(x: i32, y: i32) -> Result<PathBuf> {
         use slipstream_platform::windesk;
         use windows_sys::Win32::UI::HiDpi::{
@@ -100,21 +215,7 @@ mod native {
         // The service host lives in the controlled user's session, as SYSTEM.
         // Its own Desktop is not the user's Desktop, and Shell.Application
         // must run with the user's token to see their Explorer windows.
-        let user = if windesk::following() {
-            unsafe {
-                let mut session = 0;
-                let mut token = std::ptr::null_mut();
-                if ProcessIdToSessionId(GetCurrentProcessId(), &mut session) == 0
-                    || WTSQueryUserToken(session, &mut token) == 0
-                {
-                    return Err(std::io::Error::last_os_error())
-                        .context("no signed-in user for the drop");
-                }
-                Some(owned(token))
-            }
-        } else {
-            None
-        };
+        let user = interactive_user()?;
         let root = unsafe { GetAncestor(WindowFromPoint(POINT { x, y }), GA_ROOT) };
         let mut class = [0u16; 64];
         let len =
@@ -172,12 +273,15 @@ mod native {
         Ok(path)
     }
 
+    fn powershell() -> PathBuf {
+        PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+            .join("System32/WindowsPowerShell/v1.0/powershell.exe")
+    }
+
     fn shell_query(script: &str, user: Option<&OwnedHandle>) -> Result<String> {
-        let exe =
-            PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
-                .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let exe = powershell();
         let output = if let Some(user) = user {
-            user_shell_query(&exe, script, user)?
+            user_query(&exe, script, user, true)?
         } else {
             use std::{
                 os::windows::process::CommandExt,
@@ -218,10 +322,11 @@ mod native {
             .to_owned())
     }
 
-    fn user_shell_query(
+    fn user_query(
         exe: &std::path::Path,
         script: &str,
         user: &OwnedHandle,
+        capture: bool,
     ) -> Result<Vec<u8>> {
         // Bounded output (< 8000 chars) fits the pipe, so waiting before
         // reading cannot deadlock. No result or user path is written to disk.
@@ -243,6 +348,11 @@ mod native {
             if SetHandleInformation(raw(&input), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) == 0 {
                 return Err(std::io::Error::last_os_error().into());
             }
+            let output: OwnedHandle = std::fs::OpenOptions::new().write(true).open("NUL")?.into();
+            if SetHandleInformation(raw(&output), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) == 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            let stdout = if capture { raw(&write) } else { raw(&output) };
             let mut environment = std::ptr::null_mut();
             if CreateEnvironmentBlock(&mut environment, raw(user), 0) == 0 {
                 return Err(std::io::Error::last_os_error().into());
@@ -264,7 +374,7 @@ mod native {
                 DestroyEnvironmentBlock(environment);
                 return Err(std::io::Error::last_os_error().into());
             }
-            let handles = [raw(&write), raw(&input)];
+            let handles = [stdout, raw(&input)];
             if UpdateProcThreadAttribute(
                 list,
                 0,
@@ -285,8 +395,8 @@ mod native {
             startup.StartupInfo.lpDesktop = desktop.as_ptr().cast_mut();
             startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
             startup.StartupInfo.hStdInput = raw(&input);
-            startup.StartupInfo.hStdOutput = raw(&write);
-            startup.StartupInfo.hStdError = raw(&write);
+            startup.StartupInfo.hStdOutput = stdout;
+            startup.StartupInfo.hStdError = stdout;
             startup.lpAttributeList = list;
             let mut process: PROCESS_INFORMATION = std::mem::zeroed();
             let ok = CreateProcessAsUserW(
@@ -306,7 +416,7 @@ mod native {
             DestroyEnvironmentBlock(environment);
             DeleteProcThreadAttributeList(list);
             if ok == 0 {
-                return Err(error).context("starting the user's Explorer folder query");
+                return Err(error).context("starting the user's desktop shell");
             }
             let process_handle = owned(process.hProcess);
             CloseHandle(process.hThread);
@@ -314,11 +424,14 @@ mod native {
             if WaitForSingleObject(raw(&process_handle), 8000) != WAIT_OBJECT_0 {
                 TerminateProcess(raw(&process_handle), 1);
                 WaitForSingleObject(raw(&process_handle), 1000);
-                bail!("Explorer folder query timed out");
+                bail!("The user desktop shell timed out");
             }
             let mut exit = 0;
             if GetExitCodeProcess(raw(&process_handle), &mut exit) == 0 || exit != 0 {
-                bail!("Explorer folder query failed");
+                bail!("The user desktop shell failed");
+            }
+            if !capture {
+                return Ok(Vec::new());
             }
             let mut output = Vec::new();
             std::fs::File::from(read)

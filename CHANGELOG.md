@@ -13,6 +13,17 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Remote web links from network scans
+- Highlight open HTTP (80) and HTTPS (443) services in an outlined LCARS
+  section, with blue HTTP and green HTTPS actions. Select a topology node
+  to use the same links in its device details.
+- Clicking opens that IP's HTTP/HTTPS address in the remote computer's
+  default browser, including the signed-in user's browser for Windows
+  service hosts. Show pending, acknowledged and failed launch requests.
+- Keep browsing and scan traffic remote. The optional protocol-6 browser
+  stream requires an updated host and existing network-scan/remote-control
+  permission; it accepts only typed unicast IPv4 addresses and ports 80/443.
+
 ## 0.12.0 — 2026-10-18
 
 ### Desktop drag and drop

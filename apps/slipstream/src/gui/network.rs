@@ -37,10 +37,15 @@ pub struct NetworkScanner {
     names_rx: Option<tokio::sync::oneshot::Receiver<Result<Vec<DeviceName>, String>>>,
     names_job: Option<tokio::task::JoinHandle<()>>,
     names_notice: Option<String>,
+    can_open_web: bool,
+    web_rx: Option<tokio::sync::oneshot::Receiver<Result<String, String>>>,
+    web_job: Option<tokio::task::JoinHandle<()>>,
+    web_notice: Option<Result<String, String>>,
 }
 
 impl Drop for NetworkScanner {
     fn drop(&mut self) {
+        if let Some(job) = self.web_job.take() { job.abort(); }
         if let Some(job) = self.names_job.take() { job.abort(); }
         if let Some(job) = self.adapter_job.take() {
             job.abort();
@@ -49,7 +54,7 @@ impl Drop for NetworkScanner {
 }
 
 impl NetworkScanner {
-    pub fn new(fs: RemoteFs) -> Self {
+    pub fn new(fs: RemoteFs, can_open_web: bool) -> Self {
         Self {
             open: std::env::var_os("SLIPSTREAM_TEST_NETWORK").is_some(),
             fs,
@@ -75,6 +80,7 @@ impl NetworkScanner {
             selected_device: None,
             names: BTreeMap::new(), names_requested: BTreeSet::new(), names_rx: None,
             names_job: None, names_notice: None,
+            can_open_web, web_rx: None, web_job: None, web_notice: None,
         }
     }
 
@@ -267,8 +273,18 @@ impl NetworkScanner {
         }
         if !self.loaded && self.adapter_rx.is_none() && connected { self.load(ctx,rt); }
         self.poll();
+        if let Some(rx) = &mut self.web_rx {
+            match rx.try_recv() {
+                Ok(result) => { self.web_notice = Some(result); self.web_rx = None; self.web_job = None; },
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    self.web_notice = Some(Err("The remote browser request ended without an answer".into()));
+                    self.web_rx = None; self.web_job = None;
+                },
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {},
+            }
+        }
         self.poll_names(ctx,rt,connected);
-        if self.scan.is_some() || self.adapter_rx.is_some() || self.names_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(100)); }
+        if self.scan.is_some() || self.adapter_rx.is_some() || self.names_rx.is_some() || self.web_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(100)); }
     }
 
     fn contents(&mut self, ui: &mut Ui, ctx: &egui::Context, rt: &tokio::runtime::Runtime, host: &str, connected: bool) {
@@ -300,14 +316,26 @@ impl NetworkScanner {
                 if let Some((interface, cidr)) = &self.surveyed {
                     ui.label(RichText::new(format!("Survey: {cidr} · {} · source {} · gateway {}", interface.name, interface.address, interface.gateway.map(|g| g.to_string()).unwrap_or_else(|| "not reported".into()))).small().color(pal::BLUE));
                 }
+                if self.web_rx.is_some() { ui.label(RichText::new("Opening the remote browser…").color(pal::CYAN)); }
+                if let Some(notice) = &self.web_notice {
+                    let (text,color) = match notice { Ok(text) => (text,pal::GREEN), Err(text) => (text,pal::RED) };
+                    ui.label(RichText::new(text).color(color));
+                }
+                let web_enabled = connected && self.can_open_web && self.web_rx.is_none();
+                let mut open_web = None;
                 if let Some(address) = self.selected_device
                     && let Some(device) = self.devices.get(&address) {
-                    ui.label(RichText::new(format!("{} · {} · {} · {}", self.names.get(&address).map(|n|n.name.as_str()).unwrap_or("Name not reported"), device.address, device.mac.as_deref().unwrap_or("MAC unavailable"), ports_text(&device.open_ports))).color(pal::TAN));
+                    ui.label(RichText::new(format!("{} · {} · {} · {}", self.names.get(&address).map(|n|n.name.as_str()).unwrap_or("Name not reported"), device.address, device.mac.as_deref().unwrap_or("MAC unavailable"), self.role(address))).color(pal::TAN));
+                    open_web = ports_ui(ui, device, web_enabled);
                 }
                 ui.add_space(5.0);
                 egui::ScrollArea::both().id_salt("scan-results").auto_shrink([false, false])
                     .max_height((ui.available_height() - theme::FOOTER_SPACE - 64.0).max(100.0))
-                    .show(ui, |ui| { if self.topology { self.topology(ui, host); } else { self.table(ui); } });
+                    .show(ui, |ui| { if self.topology { self.topology(ui, host); } else if let Some(target) = self.table(ui, web_enabled) { open_web = Some(target); } });
+                if let Some((address,port)) = open_web {
+                    self.open_web(address, port, ctx, rt);
+                }
+                ui.label(RichText::new("80 HTTP / 443 HTTPS open in the REMOTE computer's browser; select a topology node for its port links.").small().color(pal::BLUE));
                 ui.label(RichText::new("Device names are best effort · TCP service names follow port conventions · silent devices may be missed").small().color(pal::DIM));
                 ui.label(RichText::new("Logical scan map: the remote gateway and discovered addresses; physical links are not discovered.").small().color(pal::DIM));
                 ui.add_space(18.0);
@@ -487,11 +515,12 @@ impl NetworkScanner {
         }
     }
 
-    fn table(&mut self, ui: &mut Ui) {
+    fn table(&mut self, ui: &mut Ui, web_enabled: bool) -> Option<(Ipv4Addr,u16)> {
+        let mut open_web = None;
         let devices = self.visible();
         if devices.is_empty() {
             ui.label(RichText::new("No matching devices yet").color(pal::DIM));
-            return;
+            return None;
         }
         egui::Grid::new("network-table").num_columns(6).striped(true).spacing([20.0, 10.0]).show(ui, |ui| {
             for title in ["IP ADDRESS", "DEVICE NAME", "ROLE", "MAC ADDRESS", "DISCOVERY", "OPEN TCP PORTS"] { ui.label(RichText::new(title).font(theme::display(17.0)).color(pal::CYAN)); }
@@ -505,10 +534,25 @@ impl NetworkScanner {
                 ui.label(RichText::new(device.mac.as_deref().unwrap_or("—")).monospace().color(pal::DIM));
                 ui.label(RichText::new(if device.responded { "Responded" } else { "Neighbor entry" }).color(if device.responded { pal::GREEN } else { pal::GOLD }))
                     .on_hover_text(if device.responded { "Answered TCP or ICMP" } else { "In the remote neighbor cache; no TCP or ICMP answer confirmed it during this scan" });
-                ui.vertical(|ui| { ui.set_max_width(330.0); ui.label(RichText::new(ports_text(&device.open_ports)).color(pal::BLUE)); });
+                ui.vertical(|ui| { ui.set_max_width(330.0); if let Some(target) = ports_ui(ui, &device, web_enabled) { open_web = Some(target); } });
                 ui.end_row();
             }
         });
+        open_web
+    }
+
+    fn open_web(&mut self, address: Ipv4Addr, port: u16, ctx: &egui::Context, rt: &tokio::runtime::Runtime) {
+        if self.web_rx.is_some() { return; }
+        let (tx,rx) = tokio::sync::oneshot::channel();
+        let (fs,ctx) = (self.fs.clone(),ctx.clone());
+        self.web_rx = Some(rx);
+        self.web_notice = None;
+        self.web_job = Some(rt.spawn(async move {
+            let result = fs.open_network_web(address,port).await
+                .map(|()| format!("Sent {} to the remote browser", network::web_url(address,port).unwrap_or_default()))
+                .map_err(|e|format!("{e:#}"));
+            let _ = tx.send(result);ctx.request_repaint();
+        }));
     }
 
     fn topology(&mut self, ui: &mut Ui, host: &str) {
@@ -607,6 +651,39 @@ impl NetworkScanner {
         }
         text
     }
+}
+
+/// Web services get an instrument-style inset and explicit remote actions.
+/// Other ports remain informational; no local hyperlink is created.
+fn ports_ui(ui: &mut Ui, device: &NetworkDevice, enabled: bool) -> Option<(Ipv4Addr,u16)> {
+    if device.open_ports.is_empty() {
+        ui.label(RichText::new(ports_text(&[])).color(pal::BLUE));
+        return None;
+    }
+    let web = device.open_ports.iter().any(|p| matches!(p,80|443));
+    let frame = if web {
+        egui::Frame::new().fill(egui::Color32::from_rgb(12,28,40))
+            .stroke(Stroke::new(1.0,pal::BLUE.gamma_multiply(0.7))).corner_radius(6.0).inner_margin(6)
+    } else { egui::Frame::NONE };
+    let mut clicked = None;
+    frame.show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for &port in &device.open_ports {
+                if let Ok(url) = network::web_url(device.address,port) {
+                    let color = if port == 443 {pal::GREEN} else {pal::BLUE};
+                    let button = egui::Button::new(RichText::new(format!("{port} {} ↗",network::service(port))).color(pal::BG))
+                        .fill(color).corner_radius(6.0).min_size(vec2(0.0,28.0));
+                    if ui.add_enabled(enabled,button).on_hover_text(format!("Open {url} in the REMOTE computer's default browser"))
+                        .on_disabled_hover_text("Requires an active session with remote control enabled; wait for any browser request to finish").clicked() {
+                        clicked = Some((device.address,port));
+                    }
+                } else {
+                    ui.label(RichText::new(format!("{port} {}",network::service(port))).color(pal::BLUE));
+                }
+            }
+        });
+    });
+    clicked
 }
 
 /// The gateway already has its own node above the survey; keep one identity.

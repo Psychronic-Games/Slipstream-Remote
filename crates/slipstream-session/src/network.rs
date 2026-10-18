@@ -36,6 +36,19 @@ impl Drop for RemoteScan {
 }
 
 impl RemoteFs {
+    /// Ask the host to launch its own browser, not the viewer's browser.
+    pub async fn open_network_web(&self, address: Ipv4Addr, port: u16) -> Result<()> {
+        slipstream_core::network::web_url(address, port)?;
+        let reply = tokio::time::timeout(Duration::from_secs(12), self.ask_reply(StreamOpen::OpenNetworkWeb { address, port }))
+            .await.map_err(|_| anyhow::anyhow!("The remote browser request timed out"))?
+            .map_err(|e| anyhow::anyhow!("Remote browser request failed (the host may need an update): {e:#}"))?.2;
+        match reply {
+            StreamReply::Done => Ok(()),
+            StreamReply::Error(message) => bail!("{message}"),
+            other => bail!("Unexpected browser reply: {other:?}"),
+        }
+    }
+
     pub async fn network_names(&self, interface: Ipv4Addr, addresses: Vec<Ipv4Addr>) -> Result<Vec<slipstream_core::network::DeviceName>> {
         match self.ask(StreamOpen::NetworkNames { interface, addresses }).await?.2 {
             StreamReply::NetworkNames(names) => Ok(names),
