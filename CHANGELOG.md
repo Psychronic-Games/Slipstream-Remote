@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.7.1 — 2026-10-17
+
 ### Windows capture stays on DXGI
 - Only the first session after the host started got DXGI duplication.
   xcap's recorder kept a background thread, still holding its
