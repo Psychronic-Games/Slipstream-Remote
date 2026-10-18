@@ -13,6 +13,20 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Menus and communications window
+- Align console dropdown frames beneath their toolbar segments, with a
+  narrow gap, matching rounded corners and consistent menu-row padding.
+  Selected choices use blue on a dark blue background instead of brown.
+- Rename Privacy mode to Blank remote screen, align it with the other Tools
+  entries, and explain its purpose and platform requirements in its tooltip.
+  It remains optional and unavailable on systems without capture exclusion.
+- Give incoming Subspace chat a lavender LCARS title strip, contrasting peach channel band,
+  swept left rail and blue footer. Both ends use framed messages and a
+  composer anchored at the bottom with a rectangular Send segment.
+- Remove the one-pixel native shadow strip above borderless Windows content,
+  including the separate chat window, while preserving maximized work-area
+  handling and the app's own resize/title controls.
+
 ## 0.11.2 — 2026-10-18
 
 ### Remote session frame corrections

@@ -693,7 +693,7 @@ impl RemoteTab {
             let mut pick = None;
             if screens_as_menu {
                 let screens=theme::console_button(ui,&format!("Screen {}",self.display+1),pal::VIOLET,Icon::Window,true);
-                egui::Popup::menu(&screens).show(|ui| {
+                theme::console_menu(&screens).show(|ui| {
                     for d in &self.info.displays {
                         if ui.selectable_label(d.index == self.display, tip(d)).clicked() {
                             pick = Some(d.index);
@@ -727,7 +727,7 @@ impl RemoteTab {
         }
 
         let keys=theme::console_button(ui,"Keys",pal::LAVENDER,Icon::Keys,true);
-        egui::Popup::menu(&keys).show(|ui|self.keys_menu(ui));
+        theme::console_menu(&keys).show(|ui|self.keys_menu(ui));
 
         let chat_label = if self.unread { "Chat ◆" } else { "Chat" };
         if theme::console_button(ui,chat_label,pal::LAVENDER,Icon::Chat,false).clicked() {
@@ -754,12 +754,12 @@ impl RemoteTab {
         // Tools: privacy mode, port forwarding. Gold while privacy is on.
         let tools_color = if self.privacy { pal::GOLD } else { pal::LAVENDER };
         let tools=theme::console_button(ui,"Tools",tools_color,Icon::Tools,true);
-        egui::Popup::menu(&tools).show(|ui|self.tools_menu(ui));
+        theme::console_menu(&tools).show(|ui|self.tools_menu(ui));
 
         let preset_label=if ui.available_width()<145.0 {""}else{PRESETS[self.preset].0};
         let quality=theme::console_button(ui,preset_label,pal::BLUE,Icon::Performance,true)
             .on_hover_text(format!("Picture quality · {}",PRESETS[self.preset].0));
-        egui::Popup::menu(&quality).show(|ui|self.quality_menu(ui));
+        theme::console_menu(&quality).show(|ui|self.quality_menu(ui));
         let gap=Rect::from_min_max(pos2(ui.min_rect().right()+4.0,bar.top()),pos2(right_left-4.0,bar.bottom()));
         // The label extends past the controls' clip to meet the stats panel;
         // use the toolbar's painter so its right-hand curves remain visible.
@@ -788,7 +788,7 @@ impl RemoteTab {
             action = TabAction::Bridge;
         }
         let console = theme::console_button(&mut left,"Console",if self.unread {pal::GOLD}else{pal::LAVENDER},Icon::Console,true);
-        egui::Popup::menu(&console).show(|ui| {
+        theme::console_menu(&console).show(|ui| {
             ui.set_min_width(230.0);
             if self.info.displays.len() > 1 {
                 ui.label(RichText::new("SCREEN").font(theme::display(15.0)).color(pal::LAVENDER));
@@ -866,14 +866,14 @@ impl RemoteTab {
             ui.close();
         }
         let (privacy_ok, tunnels_ok) = (self.info.capabilities.privacy, self.info.capabilities.tunnels);
-        let mut privacy = self.privacy;
+        let privacy_label = if self.privacy { "Blank remote screen · ON" } else { "Blank remote screen" };
         let r = ui
-            .add_enabled(privacy_ok, egui::Checkbox::new(&mut privacy, "Privacy mode"))
-            .on_hover_text("Black out the remote computer's own screen while you work: people there can't watch (or, with the Slipstream service, type)")
-            .on_disabled_hover_text("Needs a Windows 10 (2004 or later) or Windows 11 computer on the other end");
-        if r.changed() {
-            self.privacy = privacy;
-            self.send(ViewerCmd::Privacy(privacy));
+            .add_enabled(privacy_ok, egui::Button::selectable(self.privacy, privacy_label))
+            .on_hover_text("Privacy mode: cover the remote computer's physical displays while you continue to see its desktop. Useful when people nearby should not see your work. With the Slipstream service, local keyboard and mouse input is also blocked. Turning it off or ending the session removes the cover.")
+            .on_disabled_hover_text("Blank remote screen (privacy mode) is unavailable on this computer. It needs Windows capture-exclusion support (Windows 10 version 2004 or later); older systems such as Windows Server 2016 cannot hide the cover from your remote picture.");
+        if r.clicked() {
+            self.privacy = !self.privacy;
+            self.send(ViewerCmd::Privacy(self.privacy));
             ui.close();
         }
         let r = ui

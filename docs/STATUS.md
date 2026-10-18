@@ -1,7 +1,14 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.11.2. Read this first when
+*Updated 2026-10-18; latest release 0.11.3. Read this first when
 picking the work back up.*
+
+**0.11.3:** aligned console dropdowns and Tools entries, a blue menu
+selection palette, clearer Blank remote screen wording, and an LCARS
+communications window with framed messages and a bottom composer. Windows
+borderless client areas cover the native shadow strip above chat. Linux
+runtime checks cover both chat directions and the new menus; Windows native
+code is cross-checked, with actual server confirmation still useful.
 
 **0.11.2:** the windowed desktop frame reserves space for its left rail
 at every aspect ratio/display scale. The blue footer spans below the remote

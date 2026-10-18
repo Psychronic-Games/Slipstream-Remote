@@ -441,4 +441,19 @@ cached, DPI-scaled native regions compatible with the VM software renderer.
 X11 uses SHAPE rectangles (the Vulkan surface may only support opaque alpha);
 Wayland uses an alpha surface with a rounded opaque background. Native
 masks are cleared to rectangular bounds while maximized/full screen. Native
-window state/size changes invalidate the mask cache.
+window state/size changes invalidate the mask cache. On Windows, a subclass
+of the app's caption-styled native windows gives non-maximized client areas
+the whole window rectangle. This bypasses egui-winit's one-pixel shadow
+strip; maximized bounds and other messages still go through winit. Native
+compact popup windows do not need this subclass.
+
+`theme::console_menu` anchors dropdown outer frames to the toolbar segments
+with a four-point seam and six-point corners. Menu rows share padding and
+blue selection colors, including inherited submenus. Blank remote screen
+uses a selected button, so its text aligns with the other Tools actions.
+
+Incoming chat uses a separate native viewport with `theme::chat_body` rails
+around its content. The shared chat UI fills a bounded scrolling log with
+framed messages, leaving space for the composer at the bottom. Service-chat
+messages still wait for the service echo; unsuccessful sends retain the
+input. Closing that viewport only closes chat, not the host session.

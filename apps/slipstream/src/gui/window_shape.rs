@@ -4,14 +4,33 @@
 pub(super) fn update() {
     use std::{cell::RefCell, collections::BTreeMap};
     use windows_sys::Win32::{
-        Foundation::{HWND, LPARAM, RECT},
+        Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, SetWindowRgn},
         System::Threading::GetCurrentThreadId,
         UI::{
             HiDpi::GetDpiForWindow,
-            WindowsAndMessaging::{EnumThreadWindows, GetWindowRect, GetWindowTextW, IsWindow, IsWindowVisible, IsZoomed},
+            Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass},
+            WindowsAndMessaging::{EnumThreadWindows, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsWindow, IsWindowVisible, IsZoomed,
+                SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+                WM_NCCALCSIZE, WM_NCDESTROY, WS_CAPTION},
         },
     };
+    const FRAME_SUBCLASS: usize = 0x534c4341;
+    // egui-winit enables winit's undecorated shadow. Its NCCALCSIZE handler
+    // leaves a one-pixel native strip at the top, white on older Windows.
+    // Cover the whole non-maximized window with our client surface instead.
+    // Let winit handle maximized work-area bounds and every other message.
+    unsafe extern "system" fn client_frame(window: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM, id: usize, _data: usize) -> LRESULT {
+        unsafe {
+            if msg == WM_NCCALCSIZE && wparam != 0 && IsZoomed(window) == 0 {
+                return 0;
+            }
+            if msg == WM_NCDESTROY {
+                RemoveWindowSubclass(window, Some(client_frame), id);
+            }
+            DefSubclassProc(window, msg, wparam, lparam)
+        }
+    }
     thread_local! {static LAST:RefCell<BTreeMap<usize,(i32,i32,i32)>>=const { RefCell::new(BTreeMap::new()) };}
     unsafe extern "system" fn visit(window: HWND, _data: LPARAM) -> i32 {
         unsafe {
@@ -22,6 +41,15 @@ pub(super) fn update() {
             let len = GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32);
             if len <= 0 || !String::from_utf16_lossy(&title[..len as usize]).contains("Slipstream Remote") {
                 return 1;
+            }
+            let mut data = 0;
+            if GetWindowLongPtrW(window, GWL_STYLE) as u32 & WS_CAPTION != 0
+                && GetWindowSubclass(window, Some(client_frame), FRAME_SUBCLASS, &mut data) == 0
+                && SetWindowSubclass(window, Some(client_frame), FRAME_SUBCLASS, 0) != 0
+            {
+                // No RefCell borrow is held while Windows recalculates the frame.
+                SetWindowPos(window, std::ptr::null_mut(), 0, 0, 0, 0,
+                    SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
             }
             let mut rect: RECT = std::mem::zeroed();
             if GetWindowRect(window, &mut rect) == 0 {

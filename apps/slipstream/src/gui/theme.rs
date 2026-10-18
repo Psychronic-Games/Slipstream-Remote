@@ -462,6 +462,60 @@ pub fn console_button(ui: &mut Ui, label: &str, color: Color32, icon: ConsoleIco
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Anchor the menu's outer frame to its console segment, with the same
+/// corner radius and a narrow seam. Submenus inherit the row styling.
+pub fn console_menu(response: &Response) -> egui::Popup<'_> {
+    egui::Popup::menu(response)
+        .align(egui::emath::RectAlign::BOTTOM_START)
+        .gap(4.0)
+        .width(response.rect.width().max(180.0))
+        .frame(egui::Frame::new().fill(pal::PANEL)
+            .stroke(Stroke::new(1.0, pal::VIOLET))
+            .corner_radius(6.0).inner_margin(6))
+        .style(|style: &mut egui::Style| {
+            egui::containers::menu::menu_style(style);
+            style.spacing.button_padding = vec2(10.0, 5.0);
+            style.spacing.item_spacing = vec2(4.0, 4.0);
+            style.spacing.interact_size.y = 32.0;
+            style.visuals.override_text_color = Some(pal::BLUE);
+            style.visuals.selection.bg_fill = Color32::from_rgb(24, 44, 64);
+            style.visuals.selection.stroke = Stroke::new(1.0, pal::BLUE);
+            style.visuals.widgets.active.bg_fill = Color32::from_rgb(30, 54, 76);
+            for widget in [&mut style.visuals.widgets.inactive, &mut style.visuals.widgets.hovered,
+                &mut style.visuals.widgets.active, &mut style.visuals.widgets.open] {
+                widget.corner_radius = CornerRadius::same(6);
+            }
+        })
+}
+
+/// The host's independent communications window: a swept left rail, channel
+/// band and blue footer around the log and composer.
+pub fn chat_body(ui: &Ui, area: Rect) -> Rect {
+    let p = ui.painter();
+    let rail = 18.0;
+    let elbow = 14.0;
+    let band = area.with_max_y(area.top() + 30.0);
+    p.rect_filled(band, CornerRadius { nw: 18, ne: 6, ..Default::default() }, pal::PEACH);
+    let symbol = Rect::from_center_size(pos2(area.left() + 19.0, band.center().y), vec2(18.0, 18.0));
+    console_icon(p, symbol, ConsoleIcon::Chat, pal::BG, pal::PEACH);
+    p.with_clip_rect(band.shrink2(vec2(8.0, 0.0))).text(
+        pos2(symbol.right() + 8.0, band.center().y), Align2::LEFT_CENTER,
+        "SUBSPACE COMMS", display_bold(18.0), pal::BG);
+    let top = band.bottom();
+    let foot_top = area.bottom() - 12.0;
+    let middle = top + (foot_top - top) * 0.55;
+    for (y0, y1, color) in [(top, middle - 2.0, pal::PEACH), (middle + 2.0, foot_top, pal::BLUE)] {
+        p.rect_filled(Rect::from_min_max(pos2(area.left(), y0), pos2(area.left() + rail, y1)), 0.0, color);
+    }
+    let x = area.left() + rail;
+    p.rect_filled(Rect::from_min_size(pos2(x, top), vec2(elbow, elbow)), 0.0, pal::PEACH);
+    p.circle_filled(pos2(x + elbow, top + elbow), elbow, pal::BG);
+    p.rect_filled(Rect::from_min_size(pos2(x, foot_top - elbow), vec2(elbow, elbow)), 0.0, pal::BLUE);
+    p.circle_filled(pos2(x + elbow, foot_top - elbow), elbow, pal::BG);
+    p.rect_filled(area.with_min_y(foot_top), CornerRadius { sw: 12, se: 6, ..Default::default() }, pal::BLUE);
+    Rect::from_min_max(pos2(x + elbow + 8.0, top + 10.0), area.max - vec2(10.0, 24.0))
+}
+
 fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color32, fill: Color32) {
     let at = |(x, y): (f32, f32)| rect.min + vec2(x * rect.width(), y * rect.height());
     let stroke = Stroke::new(1.5, ink);

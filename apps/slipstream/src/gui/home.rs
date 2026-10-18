@@ -470,13 +470,14 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
             .with_title(format!("Chat - {} - Slipstream Remote", s.peer))
             .with_app_id("slipstream-remote")
             .with_icon(ICON.get_or_init(|| std::sync::Arc::new(theme::icon(64))).clone())
-            .with_inner_size([380.0, 420.0])
-            .with_min_inner_size([280.0, 200.0]);
+            .with_inner_size([460.0, 520.0])
+            .with_min_inner_size([340.0, 300.0]);
         let (chat, client, session, peer) = (s.chat.clone(), app.client.clone(), s.id, s.peer.clone());
         #[cfg(windows)]
         let service_sender=app.service_chat.as_ref().map(|g|g.sender());
         ctx.show_viewport_deferred(id, builder, move |ui, _class| {
-            let body=theme::native_title_bar(ui,&format!("Chat · {peer}"));
+            let body=theme::native_title_bar_with_rail(ui,&format!("Chat · {peer}"),true);
+            let body=theme::chat_body(ui,body);
             let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
             let mut guard = chat.lock().expect("chat lock");
             let chat = &mut *guard;
@@ -484,8 +485,7 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
                 ui.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
             }
             ui.painter().rect_filled(ui.max_rect(), 0.0, pal::BG);
-            let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect().shrink(12.0)));
-            theme::header(&mut inner, &format!("Subspace chat · {peer}"), pal::LAVENDER);
+            let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect()));
             #[cfg(windows)]
             if let Some(sender)=&service_sender {
                 if !sender.connected() {inner.label(RichText::new("Reconnecting to host service…").color(pal::GOLD));}
@@ -495,6 +495,7 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
             chat_ui(&mut inner, &mut chat.log, &mut chat.input, |text| client.host_chat(session, text));
             if ui.input(|i| i.viewport().close_requested()) {
                 chat.open = false;
+                ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
             }
         });
     }
@@ -506,24 +507,32 @@ pub fn chat_ui(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, s
 }
 
 fn chat_ui_with_echo(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, echo:bool, send: impl FnOnce(String)->bool) {
-    egui::ScrollArea::vertical().stick_to_bottom(true).max_height(ui.available_height() - 48.0).show(ui, |ui| {
+    let log_height = (ui.available_height() - 52.0).max(0.0);
+    egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false])
+        .max_height(log_height).show(ui, |ui| {
         ui.set_width(ui.available_width());
         for (mine, text) in log.iter() {
-            let (who, color) = if *mine { ("YOU", pal::ORANGE) } else { ("THEM", pal::BLUE) };
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(who).font(theme::display(14.0)).color(color));
-                ui.label(text);
-            });
+            let (who, color) = if *mine { ("YOU", pal::ORANGE) } else { ("REMOTE", pal::BLUE) };
+            egui::Frame::new().fill(pal::PANEL).corner_radius(8.0)
+                .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.4)))
+                .inner_margin(10).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(who).font(theme::display_bold(14.0)).color(color));
+                    ui.label(text);
+                });
         }
     });
     ui.horizontal(|ui| {
-        let resp = theme::input_frame()
+        let input_width = (ui.available_width() - 108.0).max(40.0);
+        let resp = egui::Frame::new().fill(pal::PANEL).corner_radius(6.0)
+            .stroke(egui::Stroke::new(1.0, pal::BLUE.gamma_multiply(0.6)))
+            .inner_margin(egui::Margin::symmetric(8, 6))
             .show(ui, |ui| {
-                ui.add(egui::TextEdit::singleline(input).align(egui::Align2::LEFT_CENTER).hint_text("message").frame(egui::Frame::NONE).desired_width(ui.available_width() - 80.0))
-            })
-            .inner;
+                ui.add(egui::TextEdit::singleline(input).align(egui::Align2::LEFT_CENTER)
+                    .hint_text("Transmit a message…").frame(egui::Frame::NONE).desired_width(input_width))
+            }).inner;
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if (theme::pill(ui, "Send", pal::ORANGE).clicked() || enter) && !input.trim().is_empty() {
+        if (theme::console_button(ui, "Send", pal::ORANGE, theme::ConsoleIcon::Chat, false).clicked() || enter) && !input.trim().is_empty() {
             let text = std::mem::take(input);
             if send(text.clone()) {if echo {log.push((true,text));}} else {*input=text;}
             resp.request_focus();
