@@ -46,12 +46,14 @@ ARCHITECTURE.md, "The Android app", and BUILDING.md, "Android").
 - [ ] Session toolbar sized for a phone; landscape full screen.
 - [ ] Device name from the phone's model (it's empty now: Android has no
       host name).
-- [ ] Station: Android on the download page (it treats Android as
-      unknown), the APK in `clients/`, `android` in the update manifest, a
-      QR code of the `slipstream://link` URL (the phone's camera app opens
-      it, so the app needs no scanner).
-- [ ] Release signing key for the APK (Android only updates an app signed
-      with the same key), kept with the update key.
+- [x] Station: Android on the download page (picked for phones), the
+      arm64 APK in `clients/`, served untouched (0.8.0).
+- [ ] A QR code of the `slipstream://link` URL on the page for desktop
+      visitors (the phone's camera app opens it, so the app needs no
+      scanner).
+- [x] Release signing key for the APK, beside the update key (0.8.0).
+- [ ] `android` in the update manifest, once the app can install updates
+      (phase 3).
 - [ ] Try on real phones and tablets (which models and Android versions?).
 
 ## Phase 2: control an Android device from a PC
