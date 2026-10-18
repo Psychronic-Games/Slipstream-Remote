@@ -100,7 +100,7 @@ print(r["version"], r["build"], r["commit"], ",".join(r.get("signed", [])) or "-
   [ "$SIGNED" = "-" ] && SIGNED=""
   echo "==> Release $VERSION build $BUILD ($COMMIT), signed: ${SIGNED:-none}"
   cp "$FROM/slipstream-server-linux-x86_64" "$OUT/bin/"
-  for f in slipstream-linux-x86_64 slipstream-windows-x86_64.exe slipstream-macos.zip; do
+  for f in slipstream-linux-x86_64 slipstream-windows-x86_64.exe slipstream-macos.zip slipstream-android.apk; do
     [ -f "$FROM/$f" ] && cp "$FROM/$f" "$OUT/clients/"
   done
   # The apps must trust this machine's key, or they'd refuse every update.
@@ -177,6 +177,15 @@ else
   fi
 
   VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+  # The Android app for phones and tablets (arm64), signed with the Android
+  # release key. It's not in the update manifest: it can't update itself yet.
+  if [ -d "${ANDROID_HOME:-$HOME/Android/Sdk}/ndk" ] && command -v cargo-ndk >/dev/null; then
+    echo "==> Android app"
+    ABIS=arm64-v8a scripts/build-android.sh
+    cp "dist/android/slipstream-remote-$VERSION.apk" "$OUT/clients/slipstream-android.apk"
+  else
+    echo "==> Skipping the Android app (needs the Android SDK and cargo-ndk: docs/BUILDING.md, Android)"
+  fi
   BUILD=$(git rev-list --count HEAD 2>/dev/null || echo 0)
   COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
   SIGNED=""

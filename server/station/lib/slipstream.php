@@ -948,14 +948,16 @@ function slip_client_builds(): array
         'windows' => ['file' => 'slipstream-windows-x86_64.exe', 'label' => 'Windows', 'note' => 'Windows 10 and 11'],
         'macos' => ['file' => 'slipstream-macos.zip', 'label' => 'macOS', 'note' => 'macOS 12 or newer'],
         'linux' => ['file' => 'slipstream-linux-x86_64', 'label' => 'Linux', 'note' => '64-bit, X11 or Wayland'],
+        'android' => ['file' => 'slipstream-android.apk', 'label' => 'Android', 'note' => 'Android 8 or newer · controls computers (preview)'],
     ];
     $manifest = slip_client_manifest()['platforms'] ?? [];
     foreach ($map as $os => &$b) {
         $path = "$dir/{$b['file']}";
         $b['path'] = is_file($path) ? $path : null;
         $b['size'] = $b['path'] ? filesize($path) : 0;
-        // Signed apps are served untouched (see download.php).
-        $b['signed'] = false;
+        // Signed apps are served untouched (see download.php). An APK is
+        // always signed.
+        $b['signed'] = $os === 'android';
         foreach ($manifest as $entry) {
             if (($entry['file'] ?? '') === $b['file'] && !empty($entry['signed'])) {
                 $b['signed'] = true;

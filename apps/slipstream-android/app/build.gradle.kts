@@ -6,6 +6,9 @@ plugins {
 // like the desktop apps' version and build number.
 val slipstreamVersion = providers.gradleProperty("slipstreamVersion").getOrElse("0.0.0")
 val slipstreamBuild = providers.gradleProperty("slipstreamBuild").getOrElse("1").toInt()
+// The release key (scripts/build-android.sh passes it). Android installs an
+// update only if it's signed with the same key as the installed app.
+val releaseKeystore = providers.environmentVariable("SLIPSTREAM_ANDROID_KEYSTORE").orNull
 
 android {
     namespace = "com.slipstreamremote.app"
@@ -21,14 +24,26 @@ android {
         versionName = slipstreamVersion
     }
 
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storeType = "pkcs12"
+                storePassword = providers.environmentVariable("SLIPSTREAM_ANDROID_KEYSTORE_PASSWORD").get()
+                keyAlias = "slipstream"
+                keyPassword = storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             // Shrinks AppCompat's Java code (most of the APK's classes.dex).
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Until the release key is set up (docs/ANDROID.md), release
-            // builds are signed with this computer's debug key.
-            signingConfig = signingConfigs.getByName("debug")
+            // Without the release key (a plain Gradle build), this
+            // computer's debug key.
+            signingConfig = signingConfigs.getByName(if (releaseKeystore != null) "release" else "debug")
         }
     }
 

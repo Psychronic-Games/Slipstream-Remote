@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.8.0 — 2026-10-18
+
 ### Android, first steps
 - The app builds for Android and runs there: the same console, through a
   small Java activity (`apps/slipstream-android`,
@@ -22,6 +24,14 @@ show in small print: `0.6.0 (build N · commit)`.
   it goes online and holds a session at 60 fps. Not for users yet: the
   layout is still the desktop's, and touch control of the remote screen
   comes next (issue 09).
+- The station's download page offers the Android app (and picks it for
+  phones), with how to install it: Android asks once to let the browser
+  install apps. The APK is served exactly as built, so its signature holds;
+  *Connect this app* on the page links it to the station. It's signed with
+  a release key of its own, made on the first build (kept beside the update
+  key; back it up, since Android only updates an app signed with the same
+  key). The Android app isn't in the update manifest yet: it can't install
+  updates itself.
 - `scripts/clean.sh` also clears cross-compiled development builds
   (Windows tests, macOS checks), which it used to leave behind.
 

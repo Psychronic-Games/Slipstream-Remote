@@ -55,6 +55,7 @@ in `target/` can be rebuilt. Dependencies are built without debug info
 | `bin/slipstream-server-linux-x86_64` | same | The relay the station runs. |
 | `clients/slipstream-windows-x86_64.exe` | `cargo xwin` (MSVC target, cross-compiled from Linux) | Skipped when cargo-xwin isn't installed. Carries Mesa's CPU OpenGL driver for machines whose graphics can't run the full window: [mesa-dist-win](https://github.com/pal1000/mesa-dist-win), pinned in `packaging/windows/softgl.txt`, downloaded once into `~/.cache/slipstream-mesa` (needs `7z`) and handed to `build.rs` as `SLIPSTREAM_SOFTGL_DIR`. Without it the app builds without the renderer, with a warning. |
 | `clients/slipstream-macos.zip` | `scripts/build-macos.sh` on a Mac | Universal (Apple Silicon + Intel), ad-hoc signed. Taken from `dist/slipstream-macos.zip` if it's from the same build. |
+| `clients/slipstream-android.apk` | `scripts/build-android.sh` (arm64 only: phones and tablets) | Skipped without the Android SDK and cargo-ndk (see *Android* below). Signed with the Android release key; not in the update manifest, since the app can't update itself yet. |
 | `clients/manifest.json` | `tools/slipstream-release` | Version, build number, commit, and size, SHA-256 and release signature of each app, for self-update. |
 
 One-time tool setup:

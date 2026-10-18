@@ -192,6 +192,21 @@ Ubuntu 20.04, Fedora, Arch…) and needs no extra packages.
 Until the app is notarised, macOS may ask for these permissions again after
 an update.
 
+### Android (8 or newer): preview
+
+The Android app controls computers; being controlled from a computer comes
+later. Its screen layout is still the desktop's, and touch control of the
+remote screen is being built (issue 09).
+
+1. Open the station's page on the phone and tap **Download** (the page
+   picks Android by itself).
+2. Open the downloaded file. The first time, Android asks to let your
+   browser install apps: choose *Settings*, turn on **Allow from this
+   source**, go back and choose **Install**. No developer options are
+   needed. Play Protect may offer to scan the app; let it.
+3. Back on the station's page, tap **Connect this app**: the app opens and
+   links to the station. (Or type the address and setup code in it.)
+
 ### What your client sees
 
 The **Bridge** page shows:

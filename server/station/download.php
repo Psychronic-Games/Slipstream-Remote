@@ -52,13 +52,15 @@ while (ob_get_level()) {
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
 
-// Signed apps (and the Mac bundle, whose seal any added file breaks) go out
-// byte-for-byte as released. They link to this station with the setup code
-// that the download URL carries (see index.php). Unsigned builds get the
-// station's settings appended, so they need no setup at all.
+// Signed apps (and the Mac bundle and Android's APK, whose seal or
+// signature any added byte breaks) go out byte-for-byte as released. They
+// link to this station with the setup code that the download URL carries
+// (see index.php). Unsigned builds get the station's settings appended, so
+// they need no setup at all.
 if ($b['signed'] || $os === 'macos') {
-    $name = ['windows' => "$base.exe", 'macos' => "$base (macOS).zip"][$os] ?? $base;
-    header('Content-Type: ' . ($os === 'macos' ? 'application/zip' : 'application/octet-stream'));
+    $name = ['windows' => "$base.exe", 'macos' => "$base (macOS).zip", 'android' => "$base.apk"][$os] ?? $base;
+    $type = ['macos' => 'application/zip', 'android' => 'application/vnd.android.package-archive'][$os] ?? 'application/octet-stream';
+    header("Content-Type: $type");
     header(slip_disposition($name));
     header('Content-Length: ' . $b['size']);
     readfile($b['path']);

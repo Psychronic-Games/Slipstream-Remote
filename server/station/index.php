@@ -32,7 +32,13 @@ if ($needPassword && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
 // Guess the visitor's OS to highlight the right download.
 $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
-$guess = stripos($ua, 'Windows') !== false ? 'windows' : (stripos($ua, 'Mac OS') !== false ? 'macos' : (stripos($ua, 'Linux') !== false && stripos($ua, 'Android') === false ? 'linux' : null));
+$guess = match (true) {
+    stripos($ua, 'Android') !== false => 'android',
+    stripos($ua, 'Windows') !== false => 'windows',
+    stripos($ua, 'Mac OS') !== false => 'macos',
+    stripos($ua, 'Linux') !== false => 'linux',
+    default => null,
+};
 $fmt = fn($b) => round($b / 1048576) . ' MB';
 // Today's setup code. Download links carry it too: browsers record the
 // download URL on the file, and the app reads it from there.
@@ -75,12 +81,15 @@ and you've shared your password.</p>
   <h2 class="violet">Getting started</h2>
   <div class="panel">
     <ol class="steps">
-      <li>Download the app for your computer above.</li>
+      <li>Download the app for your computer or phone above.</li>
       <li><b>Windows:</b> open the downloaded file (if SmartScreen appears, choose <i>More info → Run anyway</i>).
         <b>Mac:</b> open the zip and move <i>Slipstream</i> to Applications, then open it. If macOS says it can't
         check the app, go to <i>System Settings → Privacy &amp; Security</i> and choose <i>Open Anyway</i>; allow
         <i>Screen Recording</i> and <i>Accessibility</i> when asked.
-        <b>Linux:</b> make it executable (right-click → Properties → <i>Allow executing</i>, or <code>chmod +x "Slipstream Remote"*</code>) and run it.</li>
+        <b>Linux:</b> make it executable (right-click → Properties → <i>Allow executing</i>, or <code>chmod +x "Slipstream Remote"*</code>) and run it.
+        <b>Android:</b> open the downloaded file. The first time, Android asks to let your browser install apps:
+        choose <i>Settings</i>, turn on <i>Allow from this source</i>, go back and choose <i>Install</i>.
+        Then come back to this page for the next step.</li>
       <li>The app connects to <?= h($org) ?> by itself. If it asks for your station instead, press
         <a class="btn small" href="<?= h(slip_link_url()) ?>">Connect this app</a>
         or enter <b class="mono"><?= h(slip_server_address()) ?></b> and the setup code
