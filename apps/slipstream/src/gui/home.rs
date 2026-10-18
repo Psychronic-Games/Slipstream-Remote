@@ -265,7 +265,7 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
     });
 }
 
-fn update_banner(app: &mut App, ui: &mut Ui) {
+pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let Some(u) = &app.update else { return };
     let (label, installing, error) = (u.info.label(), u.installing, u.error.clone());

@@ -10,6 +10,9 @@ Build numbers are the git commit count. The app shows them as
   tray at every user's sign-in and stays there when its window is closed;
   *Config → Tray icon* turns that off per user. Removing the service
   removes the sign-in entry.
+- About → *Check for updates* shows that it's checking, and a found
+  update right there (with *Install & restart*): before, the banner only
+  appeared on the Bridge, so from About nothing seemed to happen.
 - System information: subnet masks, default gateways and DNS servers
   (Windows adapter table; Linux routing tables and the resolver's real
   upstream servers; macOS `route`/`scutil`).

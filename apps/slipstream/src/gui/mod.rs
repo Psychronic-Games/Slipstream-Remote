@@ -514,8 +514,15 @@ impl App {
         });
     }
 
+    pub fn checking_update(&self) -> bool {
+        self.update_check.is_some()
+    }
+
     /// Asks the station for an update right now (About page).
     pub fn check_update_now(&mut self, ctx: &egui::Context) {
+        if self.update_check.is_some() {
+            return;
+        }
         let (client, wake) = (self.client.clone(), ctx.clone());
         let (tx, rx) = oneshot::channel();
         self.update_check = Some(rx);
@@ -625,7 +632,10 @@ impl App {
         {
             self.update_check = None;
             match r {
-                Ok(Some(info)) => self.update = Some(UpdateState::new(info)),
+                Ok(Some(info)) => {
+                    self.toast(format!("Slipstream {} is available", info.label()), pal::GREEN);
+                    self.update = Some(UpdateState::new(info));
+                }
                 Ok(None) => self.toast("Slipstream is up to date", pal::GREEN),
                 Err(e) => self.toast(format!("Update check failed: {e}"), pal::RED),
             }

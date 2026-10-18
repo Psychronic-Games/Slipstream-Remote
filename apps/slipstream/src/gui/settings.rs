@@ -336,11 +336,18 @@ pub fn about_ui(app: &mut App, ui: &mut Ui) {
         ui.add(egui::Image::new((logo, vec2(120.0, 120.0))));
         ui.label(RichText::new(format!("VERSION {}", slipstream_core::version_string())).font(theme::display(20.0)).color(pal::TAN));
         ui.horizontal(|ui| {
-            if theme::pill(ui, "Check for updates", pal::GREEN).clicked() {
+            let checking = app.checking_update();
+            let label = if checking { "Checking…" } else { "Check for updates" };
+            if ui.add_enabled_ui(!checking, |ui| theme::pill(ui, label, pal::GREEN)).inner.clicked() {
                 app.check_update_now(ui.ctx());
             }
             ui.label(RichText::new("Updates come from your station.").small().color(pal::DIM));
         });
+        // Found one: install it from here (it also shows on the Bridge).
+        if app.update.is_some() {
+            ui.add_space(6.0);
+            super::home::update_banner(app, ui);
+        }
         ui.add_space(6.0);
         ui.label("Fast, free and open-source remote desktop. No accounts, no subscriptions.");
         ui.label("Every session is end-to-end encrypted; servers only ever see ciphertext.");
