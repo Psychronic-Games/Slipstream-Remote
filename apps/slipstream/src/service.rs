@@ -109,6 +109,28 @@ pub fn installed() -> bool {
     status_text() != "Not installed"
 }
 
+/// Starts the installed service and checks that it keeps running. Works
+/// without administrator rights once [`install`] has let users start it.
+pub fn start() -> Result<()> {
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+    let service = manager.open_service(NAME, ServiceAccess::QUERY_STATUS | ServiceAccess::START).context("opening the Slipstream service")?;
+    if service.query_status()?.current_state != ServiceState::Running {
+        service.start::<&str>(&[]).context("starting the service")?;
+    }
+    wait_for(&service, ServiceState::Running, 20);
+    std::thread::sleep(Duration::from_secs(3));
+    let now = service.query_status()?;
+    if now.current_state != ServiceState::Running {
+        bail!("the service started but stopped again ({:?}, exit {:?})", now.current_state, now.exit_code);
+    }
+    Ok(())
+}
+
+/// Windows' default service permissions, plus: signed-in users may start
+/// this one (not stop or change it), so the app can bring it back up
+/// without the administrator prompt.
+const SERVICE_SDDL: &str = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)";
+
 /// The last few lines of the service's log, to explain a failed start.
 fn log_tail(lines: usize) -> String {
     let log = std::fs::read_to_string(machine_home().join("slipstream.log")).unwrap_or_default();
@@ -220,7 +242,11 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     // Same identity, so the computer keeps its ID.
     let key = user.dir().join("identity.key");
     if key.exists() {
-        std::fs::copy(&key, home.join("identity.key"))?;
+        let copy = home.join("identity.key");
+        std::fs::copy(&key, &copy).context("copying this computer's identity to the service")?;
+        if std::fs::read(&key).ok() != std::fs::read(&copy).ok() {
+            bail!("the service's copy of this computer's identity doesn't match (it would get a new ID)");
+        }
     }
 
     // Every user's sign-in starts the app hidden in the tray, to show the
@@ -266,6 +292,11 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
         None => manager.create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START | ServiceAccess::QUERY_STATUS)?,
     };
     // Nice to have, so not fatal (Wine, for one, lacks some of these).
+    match Command::new("sc").args(["sdset", NAME, SERVICE_SDDL]).output() {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => tracing::warn!("letting users start the service: {}", String::from_utf8_lossy(&o.stdout).trim()),
+        Err(e) => tracing::warn!("letting users start the service: {e}"),
+    }
     if let Err(e) = service.set_description("Lets your support provider reach this computer, including the login screen and administrator prompts.") {
         tracing::warn!("service description: {e}");
     }
@@ -413,8 +444,9 @@ fn run_service() -> Result<()> {
         });
     };
     report(ServiceState::Running, 0);
-    tracing::info!("service started");
+    tracing::info!("service started (build {})", slipstream_core::BUILD_NUMBER);
     let exit = supervise(&stop_rx);
+    tracing::info!("service stopped{}", if exit == 0 { ": Windows or an administrator asked it to" } else { ", to restart" });
     report(ServiceState::Stopped, exit);
     Ok(())
 }

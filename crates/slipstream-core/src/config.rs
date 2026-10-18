@@ -313,17 +313,34 @@ impl Store {
         write_private(&self.dir.join("settings.toml"), toml::to_string_pretty(settings)?.as_bytes())
     }
 
-    /// Loads this device's keypair, creating one on first run.
+    /// Loads this device's keypair, creating one on first run. The key is
+    /// the device's ID on its station, so it's only ever made when there is
+    /// none: a key that can't be read right now (Windows antivirus scanning
+    /// a freshly copied one, say) is retried, then an error. Replacing it
+    /// would quietly give the computer a new ID.
     pub fn identity(&self) -> Result<SecretKey> {
         let path = self.dir.join("identity.key");
-        if let Ok(bytes) = fs::read(&path)
-            && let Ok(bytes) = <[u8; 32]>::try_from(bytes.as_slice())
-        {
-            return Ok(SecretKey::from_bytes(&bytes));
+        let mut attempt = 0;
+        let bytes = loop {
+            match fs::read(&path) {
+                Ok(bytes) => break bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    let key = SecretKey::generate();
+                    write_private(&path, &key.to_bytes())?;
+                    tracing::info!("created this device's identity in {}", path.display());
+                    return Ok(key);
+                }
+                Err(_) if attempt < 20 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+                Err(e) => return Err(e).with_context(|| format!("reading this device's identity ({})", path.display())),
+            }
+        };
+        match <[u8; 32]>::try_from(bytes.as_slice()) {
+            Ok(bytes) => Ok(SecretKey::from_bytes(&bytes)),
+            Err(_) => anyhow::bail!("{} is damaged ({} bytes instead of 32): restore it, or delete it to give this device a new ID", path.display(), bytes.len()),
         }
-        let key = SecretKey::generate();
-        write_private(&path, &key.to_bytes())?;
-        Ok(key)
     }
 }
 
@@ -343,6 +360,16 @@ fn write_private(path: &Path, data: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_damaged_identity_is_never_replaced() {
+        let dir = std::env::temp_dir().join(format!("slipstream-test-badkey-{}", std::process::id()));
+        let store = Store::open(&dir).unwrap();
+        std::fs::write(dir.join("identity.key"), b"short").unwrap();
+        assert!(store.identity().is_err());
+        assert_eq!(std::fs::read(dir.join("identity.key")).unwrap(), b"short");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn settings_roundtrip_and_identity() {

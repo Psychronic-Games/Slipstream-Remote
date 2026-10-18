@@ -563,8 +563,10 @@ impl App {
 
     /// Installs (or removes) the Windows service, through the administrator
     /// prompt; the app restarts afterwards so it hosts (or stops hosting).
+    /// `start_first`: an installed, stopped service is just started if
+    /// Windows lets this user, and reinstalled only if not.
     #[cfg(windows)]
-    pub fn service_action(&mut self, ctx: &egui::Context, install: bool) {
+    pub fn service_action(&mut self, ctx: &egui::Context, install: bool, start_first: bool) {
         if install && self.client.settings().host.permanent_password_secret.is_none() {
             self.toast("Set and save an unattended password first: the service has no one-time passwords", pal::RED);
             return;
@@ -585,7 +587,20 @@ impl App {
         self.service_job = Some((install != self.via_service, install, rx));
         let wake = ctx.clone();
         std::thread::spawn(move || {
+            if start_first {
+                match crate::service::start() {
+                    Ok(()) => {
+                        let _ = tx.send(Ok(()));
+                        wake.request_repaint();
+                        return;
+                    }
+                    Err(e) => tracing::info!("starting the service directly: {e:#}; reinstalling it"),
+                }
+            }
             let result = match crate::service::run_elevated(&args) {
+                // Installed: make sure it's running (the install starts it,
+                // but check from here too, and start it if it isn't).
+                Ok(0) if install && !crate::service::running() => crate::service::start().map_err(|e| format!("{e:#}")),
                 Ok(0) => Ok(()),
                 Ok(code) => Err(match std::fs::read_to_string(&report) {
                     Ok(why) if !why.trim().is_empty() => why.trim().to_string(),

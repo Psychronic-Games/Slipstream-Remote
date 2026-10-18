@@ -91,7 +91,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     #[cfg(windows)]
     let (via_service, service_busy) = (app.via_service, app.service_busy());
     #[cfg(windows)]
-    let mut service_clicked: Option<bool> = None;
+    let mut service_clicked: Option<(bool, bool)> = None;
     let network_help = match &app.org {
         Some(org) => format!(
             "Set up by {org}'s station when you downloaded this app. Change these only if {org} asks you to."
@@ -182,21 +182,24 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                     theme::pill(ui, "Working…", pal::BLUE);
                 } else if via_service {
                     if theme::pill(ui, "Update", pal::BLUE).on_hover_text("Give the service this page's saved settings").clicked() {
-                        service_clicked = Some(true);
+                        service_clicked = Some((true, false));
                     }
                     if theme::pill(ui, "Remove", pal::RED).clicked() {
-                        service_clicked = Some(false);
+                        service_clicked = Some((false, false));
                     }
                 } else if crate::service::installed() {
                     // Installed but not running (stopped, or failed to start).
-                    if theme::pill(ui, "Start", pal::BLUE).on_hover_text("Install this version of the service again and start it").clicked() {
-                        service_clicked = Some(true);
+                    if theme::pill(ui, "Start", pal::BLUE).on_hover_text("Start the service (reinstalling it if needed)").clicked() {
+                        service_clicked = Some((true, true));
+                    }
+                    if theme::pill(ui, "Reinstall", pal::VIOLET).on_hover_text("Install this version of the service again and start it").clicked() {
+                        service_clicked = Some((true, false));
                     }
                     if theme::pill(ui, "Remove", pal::RED).clicked() {
-                        service_clicked = Some(false);
+                        service_clicked = Some((false, false));
                     }
                 } else if theme::pill(ui, "Install", pal::BLUE).on_hover_text(tip).clicked() {
-                    service_clicked = Some(true);
+                    service_clicked = Some((true, false));
                 }
             });
             let status = crate::service::status_text();
@@ -216,9 +219,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     });
     ui.add_space(14.0);
     #[cfg(windows)]
-    if let Some(install) = service_clicked {
+    if let Some((install, start_first)) = service_clicked {
         let ctx = ui.ctx().clone();
-        app.service_action(&ctx, install);
+        app.service_action(&ctx, install, start_first);
     }
     if link_now {
         let code = slipstream_core::provision::normalize_code(&app.link_code);

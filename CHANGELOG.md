@@ -40,6 +40,19 @@ Build numbers are the git commit count. The app shows them as
   running, and if it doesn't, says so with the end of the service's
   log. An app started while the service is still starting no longer
   hosts beside it, where the two would push each other off the station.
+- A computer no longer gets a new ID when its identity file can't be read
+  for a moment (Windows antivirus scanning the copy the service install
+  just made). Before, any failed read made a new identity, so the
+  service turned up on the station under a different ID from the app's,
+  and the app's ID read offline. Now only a missing file makes a new one;
+  an unreadable one is retried and then reported. Install also checks
+  its copy matches.
+- The service may be started by signed-in users (not stopped or changed),
+  so *Start* on a stopped service works without the administrator
+  prompt, falling back to reinstalling if needed. After an install the
+  app also checks that the service is running and starts it if not.
+  `slipstream service start` does the same from a command line. The
+  service log records its build when it starts and why it stopped.
 
 ### Windows, file transfer and the console look
 - With the Slipstream service installed, the app starts hidden in the

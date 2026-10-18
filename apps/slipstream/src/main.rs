@@ -183,6 +183,8 @@ enum ServiceCmd {
         #[arg(long, hide = true)]
         report: Option<std::path::PathBuf>,
     },
+    /// Start the installed service (no administrator rights needed).
+    Start,
     /// Show whether the service is installed and running.
     Status,
     /// Run as the service (started by Windows).
@@ -219,6 +221,7 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Service { action }) => match action {
             ServiceCmd::Install { password, from, report } => reported(report, service::install(password.as_deref(), from.as_deref())),
             ServiceCmd::Uninstall { report } => reported(report, service::uninstall()),
+            ServiceCmd::Start => service::start(),
             ServiceCmd::Status => {
                 println!("{}", match service::state() {
                     None => "not installed".to_string(),
