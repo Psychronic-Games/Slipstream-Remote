@@ -435,6 +435,9 @@ fn incoming_banner(app: &mut App, ui: &mut Ui, t: f64) {
             });
         }
         if let Some(id) = end {
+            #[cfg(windows)]
+            if let Some(bridge)=&app.service_chat {bridge.sender().disconnect(id);} else {app.client.disconnect_host_session(id);}
+            #[cfg(not(windows))]
             app.client.disconnect_host_session(id);
         }
         if let Some(id) = chat
@@ -462,13 +465,18 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
             }
         }
         let builder = egui::ViewportBuilder::default()
+            .with_decorations(false)
             .with_title(format!("Chat - {} - Slipstream Remote", s.peer))
             .with_app_id("slipstream-remote")
             .with_icon(ICON.get_or_init(|| std::sync::Arc::new(theme::icon(64))).clone())
             .with_inner_size([380.0, 420.0])
             .with_min_inner_size([280.0, 200.0]);
         let (chat, client, session, peer) = (s.chat.clone(), app.client.clone(), s.id, s.peer.clone());
+        #[cfg(windows)]
+        let service_sender=app.service_chat.as_ref().map(|g|g.sender());
         ctx.show_viewport_deferred(id, builder, move |ui, _class| {
+            let body=theme::native_title_bar(ui,&format!("Chat · {peer}"));
+            let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
             let mut guard = chat.lock().expect("chat lock");
             let chat = &mut *guard;
             if std::mem::take(&mut chat.ping) {
@@ -477,6 +485,12 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
             ui.painter().rect_filled(ui.max_rect(), 0.0, pal::BG);
             let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect().shrink(12.0)));
             theme::header(&mut inner, &format!("Subspace chat · {peer}"), pal::LAVENDER);
+            #[cfg(windows)]
+            if let Some(sender)=&service_sender {
+                if !sender.connected() {inner.label(RichText::new("Reconnecting to host service…").color(pal::GOLD));}
+                chat_ui_with_echo(&mut inner,&mut chat.log,&mut chat.input,false,|text|sender.chat(session,text));
+            } else {chat_ui(&mut inner,&mut chat.log,&mut chat.input,|text|client.host_chat(session,text));}
+            #[cfg(not(windows))]
             chat_ui(&mut inner, &mut chat.log, &mut chat.input, |text| client.host_chat(session, text));
             if ui.input(|i| i.viewport().close_requested()) {
                 chat.open = false;
@@ -487,6 +501,10 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
 
 /// Shared chat log + input. `send` is called with each outgoing message.
 pub fn chat_ui(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, send: impl FnOnce(String)) {
+    chat_ui_with_echo(ui,log,input,true,|text|{send(text);true});
+}
+
+fn chat_ui_with_echo(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, echo:bool, send: impl FnOnce(String)->bool) {
     egui::ScrollArea::vertical().stick_to_bottom(true).max_height(ui.available_height() - 48.0).show(ui, |ui| {
         ui.set_width(ui.available_width());
         for (mine, text) in log.iter() {
@@ -506,8 +524,7 @@ pub fn chat_ui(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, s
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (theme::pill(ui, "Send", pal::ORANGE).clicked() || enter) && !input.trim().is_empty() {
             let text = std::mem::take(input);
-            log.push((true, text.clone()));
-            send(text);
+            if send(text.clone()) {if echo {log.push((true,text));}} else {*input=text;}
             resp.request_focus();
         }
     });

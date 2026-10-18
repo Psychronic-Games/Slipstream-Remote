@@ -103,7 +103,7 @@ fn repair_permissions() {
 
 /// Creates the public folder, readable by all users (the profile around it
 /// is administrators-only).
-fn ensure_public_dir() -> PathBuf {
+pub(crate) fn ensure_public_dir() -> PathBuf {
     let dir = public_dir();
     let _ = std::fs::create_dir_all(&dir);
     let _ = quiet("icacls").arg(&dir).args(["/grant", "*S-1-5-32-545:(OI)(CI)RX", "/Q"]).output();
@@ -849,4 +849,27 @@ fn send_sas() {
             None => tracing::warn!("SendSAS not found"),
         }
     }
+}
+
+/// Open the chat app as the signed-in user, with that user's environment/profile.
+/// The service's SYSTEM profile and privileges must never reach this window.
+pub(crate) fn launch_user_chat(session: u32) -> Result<()> {
+    use windows_sys::Win32::System::{RemoteDesktop::WTSQueryUserToken, Environment::{CreateEnvironmentBlock,DestroyEnvironmentBlock},Threading::CREATE_UNICODE_ENVIRONMENT};
+    let exe=std::env::current_exe()?;
+    let application=wide(&exe.to_string_lossy());
+    let mut command=wide(&format!("\"{}\" --minimized --service-chat",exe.display()));
+    let desktop=wide("winsta0\\default");
+    unsafe {
+        let mut token=std::ptr::null_mut();
+        if WTSQueryUserToken(session,&mut token)==0 {bail!("no signed-in user for chat: {}",std::io::Error::last_os_error());}
+        let mut environment=std::ptr::null_mut();
+        if CreateEnvironmentBlock(&mut environment,token,0)==0 {let error=std::io::Error::last_os_error();CloseHandle(token);return Err(error.into());}
+        let mut startup:STARTUPINFOW=std::mem::zeroed();startup.cb=size_of::<STARTUPINFOW>() as u32;startup.lpDesktop=desktop.as_ptr().cast_mut();
+        let mut process:PROCESS_INFORMATION=std::mem::zeroed();
+        let ok=CreateProcessAsUserW(token,application.as_ptr(),command.as_mut_ptr(),std::ptr::null(),std::ptr::null(),0,CREATE_UNICODE_ENVIRONMENT|CREATE_NO_WINDOW,environment,std::ptr::null(),&startup,&mut process);
+        let error=std::io::Error::last_os_error();DestroyEnvironmentBlock(environment);CloseHandle(token);
+        if ok==0 {return Err(error.into());}
+        CloseHandle(process.hThread);CloseHandle(process.hProcess);
+    }
+    Ok(())
 }

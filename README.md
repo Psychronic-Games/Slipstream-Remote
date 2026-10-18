@@ -25,7 +25,8 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
   encrypted so the station can't read them) on your station, and sign in
   to several stations at once, other organisations' too.
 - **System information** — the remote computer's hardware, drives,
-  temperatures and network, live.
+  temperatures and network, live, plus peripherals, printers/scanners and
+  network drives.
 - **Sound** from the remote computer, when you want it.
 - **Unattended Windows servers** — the Slipstream service reaches UAC
   prompts, administrator windows and the login screen.
@@ -33,7 +34,8 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
   **port forwarding** reaches services on the remote network (its Remote
   Desktop, a router's admin page).
 - **Network scan** discovers devices and open TCP ports on the remote
-  computer's IPv4 network, with LCARS table and logical topology views.
+  computer's IPv4 network or a manually entered subnet/VLAN, with device
+  names, LCARS table/topology views, and its own movable desktop window.
 - **Quality presets** — Balanced, Speed, Quality, Low bandwidth; automatic
   bitrate adaptation.
 - **Runs in the tray**, starts with the system, stays reachable.

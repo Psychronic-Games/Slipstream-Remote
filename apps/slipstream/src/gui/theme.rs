@@ -425,6 +425,56 @@ const ELBOW: f32 = 12.0;
 /// must leave free below it, or the window grows by that much every frame.
 pub const FOOTER_SPACE: f32 = FOOT + 4.0 + 8.0 + 2.0;
 
+/// Desktop window chrome in the console palette. Returns the content area
+/// below the draggable title strip; full screen and mobile use the whole UI.
+pub fn native_title_bar(ui: &mut Ui, title: &str) -> Rect {
+    let area=ui.max_rect();
+    if cfg!(target_os="android") || ui.input(|i|i.viewport().fullscreen==Some(true)) {return area;}
+    let maximized=ui.input(|i|i.viewport().maximized==Some(true));
+    let bar=Rect::from_min_max(area.min+vec2(5.0,4.0),pos2(area.right()-5.0,area.top()+38.0));
+    let p=ui.painter();
+    p.rect_filled(bar,16.0,pal::PANEL);
+    p.rect_stroke(bar,16.0,Stroke::new(1.0,pal::VIOLET),egui::StrokeKind::Inside);
+    p.rect_filled(Rect::from_min_size(bar.min,vec2(14.0,bar.height())),CornerRadius {nw:16,sw:16,..Default::default()},pal::LAVENDER);
+    let mut right=bar.right()-3.0;
+    for (label,hint,color,command) in [
+        ("CLOSE","Close",pal::PEACH,egui::ViewportCommand::Close),
+        (if maximized{"RESTORE"}else{"MAX"},if maximized{"Restore window"}else{"Maximize"},pal::LAVENDER,egui::ViewportCommand::Maximized(!maximized)),
+        ("MIN","Minimize",pal::BLUE,egui::ViewportCommand::Minimized(true)),
+    ] {
+        let width=if label=="RESTORE"{74.0}else{56.0};
+        let rect=Rect::from_min_max(pos2(right-width,bar.top()+3.0),pos2(right,bar.bottom()-3.0));
+        let response=ui.interact(rect,ui.scope_id().with(("native-window",hint)),Sense::click());
+        p.rect_filled(rect,14.0,if response.hovered(){pal::TAN}else{color});
+        p.text(rect.center(),Align2::CENTER_CENTER,label,display_bold(14.0),pal::BG);
+        if response.on_hover_text(hint).clicked(){ui.ctx().send_viewport_cmd(command);}
+        right=rect.left()-4.0;
+    }
+    let title_rect=Rect::from_min_max(bar.min+vec2(22.0,0.0),pos2(right-4.0,bar.bottom()));
+    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title,display_bold(17.0),pal::LAVENDER);
+    let drag=ui.interact(title_rect,ui.scope_id().with("native-title-drag"),Sense::click_and_drag());
+    if drag.double_clicked(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));}
+    else if drag.drag_started(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);}
+    if !maximized {
+        use egui::{ResizeDirection as D,CursorIcon as C};
+        let e=5.0;let corner=12.0;
+        for (rect,direction,cursor) in [
+            (Rect::from_min_size(area.min,vec2(corner,corner)),D::NorthWest,C::ResizeNwSe),
+            (Rect::from_min_size(pos2(area.right()-corner,area.top()),vec2(corner,corner)),D::NorthEast,C::ResizeNeSw),
+            (Rect::from_min_size(pos2(area.left(),area.bottom()-corner),vec2(corner,corner)),D::SouthWest,C::ResizeNeSw),
+            (Rect::from_min_size(area.max-vec2(corner,corner),vec2(corner,corner)),D::SouthEast,C::ResizeNwSe),
+            (Rect::from_min_max(pos2(area.left()+corner,area.top()),pos2(area.right()-corner,area.top()+e)),D::North,C::ResizeVertical),
+            (Rect::from_min_max(pos2(area.left()+corner,area.bottom()-e),pos2(area.right()-corner,area.bottom())),D::South,C::ResizeVertical),
+            (Rect::from_min_max(pos2(area.left(),area.top()+corner),pos2(area.left()+e,area.bottom()-corner)),D::West,C::ResizeHorizontal),
+            (Rect::from_min_max(pos2(area.right()-e,area.top()+corner),pos2(area.right(),area.bottom()-corner)),D::East,C::ResizeHorizontal),
+        ] {
+            let response=ui.interact(rect,ui.scope_id().with(("native-resize",format!("{direction:?}"))),Sense::drag()).on_hover_cursor(cursor);
+            if response.drag_started(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));}
+        }
+    }
+    Rect::from_min_max(pos2(area.left()+5.0,bar.bottom()+3.0),area.max-vec2(5.0,5.0))
+}
+
 /// A floating window in the console style: no grey title bar; start its
 /// contents with [`window_header`] and end them with
 /// [`WindowChrome::footer`]. It's dragged by its background.
@@ -452,6 +502,12 @@ pub struct WindowChrome {
 /// A [`window`]'s header band: the title on the window's colour, and a
 /// Close segment at its end.
 pub fn window_header(ui: &mut Ui, title: &str, color: Color32) -> WindowChrome {
+    window_header_with_close(ui, title, color, color.gamma_multiply(0.8))
+}
+
+/// A console header with a distinct Close colour when that action needs
+/// more contrast than the surrounding frame.
+pub fn window_header_with_close(ui: &mut Ui, title: &str, color: Color32, close_color: Color32) -> WindowChrome {
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), BAND), Sense::hover());
     let x0 = row.left() - RAIL - RAIL_GAP;
     // The frame lies in the window's margin, outside the content's clip.
@@ -462,7 +518,7 @@ pub fn window_header(ui: &mut Ui, title: &str, color: Color32) -> WindowChrome {
     p.rect_filled(band, CornerRadius { nw: 22, ..Default::default() }, color);
     p.text(pos2(row.left() + 2.0, row.center().y), egui::Align2::LEFT_CENTER, title.to_uppercase(), display_bold(21.0), pal::BG);
     let resp = ui.interact(close_rect, ui.scope_id().with(("window-close", title)), Sense::click());
-    let fill = if resp.hovered() { pal::TAN } else { color.gamma_multiply(0.8) };
+    let fill = if resp.hovered() { pal::TAN } else { close_color };
     p.rect_filled(close_rect, CornerRadius { ne: 15, se: 15, ..Default::default() }, fill);
     p.text(close_rect.center(), egui::Align2::CENTER_CENTER, "CLOSE", display(17.0), pal::BG);
     let close = resp.on_hover_text("Close").on_hover_cursor(egui::CursorIcon::PointingHand).clicked();

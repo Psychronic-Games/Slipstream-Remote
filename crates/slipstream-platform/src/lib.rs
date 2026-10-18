@@ -11,6 +11,7 @@
 pub mod clipboard;
 pub mod keymap;
 pub mod machine;
+mod machine_inventory;
 pub mod pace;
 mod slot;
 pub mod test_pattern;

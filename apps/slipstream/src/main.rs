@@ -32,6 +32,10 @@ struct Args {
     #[arg(long)]
     minimized: bool,
 
+    #[cfg(windows)]
+    #[arg(long, hide = true)]
+    service_chat: bool,
+
     /// Save a screenshot of the window to this PNG after a delay, then quit (testing).
     #[arg(long, hide = true)]
     screenshot: Option<std::path::PathBuf>,
@@ -261,6 +265,8 @@ fn main() -> anyhow::Result<()> {
                 screenshot: args.screenshot.map(|p| (p, args.screenshot_delay)),
                 page: args.page,
                 minimized: args.minimized,
+                #[cfg(windows)]
+                service_chat: args.service_chat,
                 open_files: args.open_files,
                 window_size: args.window_size,
                 link: args.link,

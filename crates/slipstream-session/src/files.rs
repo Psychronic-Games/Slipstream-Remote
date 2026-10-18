@@ -68,6 +68,21 @@ async fn handle(
     let req: StreamOpen = expect_msg(&mut recv).await?;
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
+        StreamOpen::NetworkNames { interface, addresses } => {
+            if !policy.network_scan { return reply(&mut send, &denied("Network scanning")).await; }
+            let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
+            let stopped = send.stopped();
+            tokio::select! {
+                result = crate::network_names::lookup_batch(interface, addresses, &interfaces) => {
+                    let response = match result {
+                        Ok(names) => StreamReply::NetworkNames(names),
+                        Err(e) => StreamReply::Error(e.to_string()),
+                    };
+                    reply(&mut send, &response).await?;
+                },
+                _ = stopped => {},
+            }
+        }
         StreamOpen::NetworkInterfaces => {
             if !policy.network_scan { return reply(&mut send, &denied("Network scanning")).await; }
             let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;

@@ -132,6 +132,7 @@ pub fn collect() -> Vec<InfoSection> {
         }
     }
     out.push(storage.done());
+    out.extend(crate::machine_inventory::collect());
 
     let mut temps = Section::new("Temperatures");
     let mut readings: Vec<(u8, String, f32)> = Components::new_with_refreshed_list()
@@ -255,6 +256,22 @@ pub fn network_interfaces() -> Vec<slipstream_core::network::NetworkInterface> {
     }
     out.sort_by_key(|i| (i.gateway.is_none(), i.name.clone(), i.address));
     out
+}
+
+/// Use the remote computer's resolver configuration for LAN names, including
+/// domain DNS. Never substitute public resolvers for private network names.
+pub fn network_name_config() -> (Option<String>, Vec<std::net::IpAddr>) {
+    #[allow(unused_mut)]
+    let mut dns = net_extras().dns;
+    // systemd-resolved may have only a local stub; that stub still knows its
+    // per-link DNS and search domains when no upstream list can be read.
+    #[cfg(target_os = "linux")]
+    if dns.is_empty() {
+        for line in std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default().lines() {
+            if let Some(ip) = line.trim().strip_prefix("nameserver").and_then(|v| v.split_whitespace().next()).and_then(|v| v.parse().ok()) { dns.push(ip); }
+        }
+    }
+    (sysinfo::System::host_name(), dns)
 }
 
 fn v4_mask(prefix: u8) -> std::net::Ipv4Addr {
@@ -633,7 +650,7 @@ fn windows_volumes() -> Vec<(String, u64, u64, String)> {
 }
 
 #[cfg(windows)]
-fn reg_raw(root: windows_sys::Win32::System::Registry::HKEY, key: &str, value: &str, flags: u32) -> Option<Vec<u8>> {
+pub(super) fn reg_raw(root: windows_sys::Win32::System::Registry::HKEY, key: &str, value: &str, flags: u32) -> Option<Vec<u8>> {
     use windows_sys::Win32::System::Registry::RegGetValueW;
     let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
     let (k, v) = (wide(key), wide(value));

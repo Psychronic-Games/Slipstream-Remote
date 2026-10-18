@@ -1,17 +1,22 @@
 # Project status
 
-*Updated 2026-10-18; latest local release 0.10.0. Read this first when
+*Updated 2026-10-18; latest release 0.11.0. Read this first when
 picking the work back up.*
 
-**0.10.0:** full-resolution Balanced/Quality
-video and remote Network scan with table/topology views (session protocol 6).
-Local tests cover slow-encoder sizing/preset changes and a scan over an
-actual authenticated QUIC session to this machine's own address, including
-open ports, range validation and permission denial. Windows cross-checks
-cover the scanner and native ICMP. The server VM still needs the updated
-host and viewer installed for a real-machine sharpness and LAN-scan check.
-The verification table below records earlier releases; Android progress is
-newer in CHANGELOG.md and issue 09.
+**0.11.0:** device names, routed subnet/VLAN scans, a detached scanner,
+peripheral/printer/network-drive inventory, restored Windows service chat,
+and LCARS desktop title bars. Protocol remains 6: optional name lookup uses
+appended stream variants, preserving 0.10 scan interoperability.
+
+79 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
+confirm the scanner is larger than its main window, finds this machine's
+name/ports, switches views, maximizes/restores, and closes without ending the
+session. Linux and Windows Clippy and Android checks pass. Windows service
+chat and the expanded native inventory compile; their behavior on the actual
+Windows VM still needs confirmation. The previous 0.10 sharpness fix also
+needs real-VM confirmation. Latest clients are deployed to the live relay;
+its PHP/server program needs no update for these client-only changes.
+The verification table below also records earlier releases.
 
 
 ## What's verified

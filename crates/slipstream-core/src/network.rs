@@ -44,6 +44,15 @@ pub struct NetworkDevice {
     pub responded: bool,
 }
 
+/// Names are an optional auxiliary request, so existing protocol-6 hosts
+/// and viewers can still scan together when only one side has been updated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceName {
+    pub address: Ipv4Addr,
+    pub name: String,
+    pub source: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScanEvent {
     Started { total: u32 },
@@ -120,7 +129,8 @@ pub fn parse_ports(text: &str) -> Result<Vec<u16>> {
     Ok(ports.into_iter().collect())
 }
 
-/// The host validates this against its own current adapters, never viewer data.
+/// Validate the source adapter and bound the requested range. The range may
+/// be routed through a gateway (another subnet or VLAN).
 pub fn validate(request: &ScanRequest, interfaces: &[NetworkInterface]) -> Result<(u32, u32)> {
     let interface = interfaces
         .iter()
@@ -132,13 +142,6 @@ pub fn validate(request: &ScanRequest, interfaces: &[NetworkInterface]) -> Resul
         bail!("Invalid adapter subnet");
     }
     let (first, last) = subnet(&request.cidr)?;
-    let network = u32::from(interface.address) & mask(interface.prefix);
-    if first & mask(interface.prefix) != network || last & mask(interface.prefix) != network {
-        bail!(
-            "Choose a subnet inside the remote adapter's {}",
-            interface.cidr()
-        );
-    }
     let count = u64::from(last) - u64::from(first) + 1;
     if count > MAX_HOSTS {
         bail!("This range has {count} addresses; narrow it to at most {MAX_HOSTS} (e.g. /24)");
@@ -212,9 +215,12 @@ mod tests {
         };
         assert!(validate(&r, &interfaces).is_ok());
         r.cidr = "10.1.0.0/24".into();
-        assert!(validate(&r, &interfaces).is_err());
+        assert!(validate(&r, &interfaces).is_ok(), "routed subnets and VLANs are allowed");
         r.cidr = "10.0.0.0/16".into();
         assert!(validate(&r, &interfaces).is_err());
+        r.cidr = "172.16.2.1/32".into();
+        r.interface = Ipv4Addr::new(10, 99, 0, 1);
+        assert!(validate(&r, &interfaces).is_err(), "the source must still be a real remote adapter");
     }
     #[test]
     fn ports_are_bounded_and_deduplicated() {

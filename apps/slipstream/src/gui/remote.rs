@@ -96,7 +96,7 @@ pub struct RemoteTab {
     forward_repeats: bool,
     notice: Option<(String, Instant)>,
     pub files: FileManager,
-    network: super::network::NetworkScanner,
+    network: Arc<Mutex<super::network::NetworkScanner>>,
     /// Playing the remote computer's sound.
     audio: bool,
     /// The remote computer's own screen is blacked out.
@@ -135,7 +135,7 @@ impl RemoteTab {
         frames.set_repaint(move || wake.request_repaint());
         let info = session.info().clone();
         let files = FileManager::new(session.fs(), info.host_name.clone());
-        let network = super::network::NetworkScanner::new(session.fs());
+        let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(session.fs())));
         // Wayland apps repeat held keys themselves; Windows/macOS need repeats sent.
         let forward_repeats = info.os != "Linux";
         let display = info.displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
@@ -349,6 +349,10 @@ impl RemoteTab {
         }
     }
 
+    pub fn network_window(&self, ctx: &egui::Context, rt: &Arc<tokio::runtime::Runtime>) {
+        super::network::NetworkScanner::show(&self.network, ctx, rt, self.id, &self.info.host_name, self.closed.is_none());
+    }
+
     pub fn ui(&mut self, ui: &mut Ui, full: Rect, t: f64, rt: &tokio::runtime::Runtime) -> TabAction {
         let mut action = TabAction::None;
         let ctx = ui.ctx().clone();
@@ -406,7 +410,6 @@ impl RemoteTab {
         self.files.ui(&ctx, rt);
         self.tunnels_window(&ctx, rt);
         self.sysinfo_window(&ctx, rt);
-        self.network.ui(&ctx, rt, self.id, &self.info.host_name, self.closed.is_none());
         self.handle_drops(ui, &ctx, video_area, rt);
 
         if let Some(reason) = self.closed.clone() {
@@ -851,7 +854,8 @@ impl RemoteTab {
             .on_hover_text("Discover devices and open TCP ports on the remote computer's network")
             .on_disabled_hover_text("Not allowed on that computer (Config → Permissions → Network scan)")
             .clicked() {
-            self.network.open = true;
+            self.release_keyboard();
+            self.network.lock().expect("network window").open = true;
             ui.close();
         }
         let (privacy_ok, tunnels_ok) = (self.info.capabilities.privacy, self.info.capabilities.tunnels);

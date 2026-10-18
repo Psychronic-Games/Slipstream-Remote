@@ -230,6 +230,8 @@ pub enum StreamOpen {
     Pace,
     NetworkInterfaces,
     NetworkScan(crate::network::ScanRequest),
+    /// Optional name discovery for already-discovered addresses.
+    NetworkNames { interface: std::net::Ipv4Addr, addresses: Vec<std::net::Ipv4Addr> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,6 +247,7 @@ pub enum StreamReply {
     Pace(Vec<PaceStage>),
     NetworkInterfaces(Vec<crate::network::NetworkInterface>),
     NetworkScan(crate::network::ScanEvent),
+    NetworkNames(Vec<crate::network::DeviceName>),
 }
 
 /// One stage of the host's video pipeline ("screen capture (GDI)", "video

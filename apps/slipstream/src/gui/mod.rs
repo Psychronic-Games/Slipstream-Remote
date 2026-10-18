@@ -53,6 +53,8 @@ pub struct GuiOptions {
     pub page: Option<String>,
     /// Start hidden in the tray.
     pub minimized: bool,
+    #[cfg(windows)]
+    pub service_chat: bool,
     /// Open the file transfer window when a session starts (testing).
     pub open_files: bool,
     /// Initial window size (testing, e.g. full-page screenshots).
@@ -100,7 +102,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     // The service starts the app hidden at every sign-in, for its tray
     // icon; this user turned that off.
     #[cfg(windows)]
-    if via_service && opts.minimized && store.load_settings().app.hide_tray_with_service {
+    if via_service && opts.minimized && !opts.service_chat && store.load_settings().app.hide_tray_with_service {
         return Ok(());
     }
     #[cfg(not(windows))]
@@ -121,7 +123,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             Renderer::Full => {}
             Renderer::Compact => {
                 tracing::warn!("no usable graphics: using the compact window");
-                return lite::run(rt, client, events, instance, opts.screenshot);
+                return lite::run(rt, client, events, instance, opts.screenshot, via_service);
             }
             Renderer::Relaunch(exe) => {
                 // The copy waits for this one to let go of the instance port.
@@ -136,6 +138,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_decorations(false)
             .with_title("Slipstream Remote")
             .with_app_id("slipstream-remote") // must match the .desktop file name (Wayland icons)
             .with_inner_size(opts.window_size.unwrap_or([1180.0, 760.0]))
@@ -188,6 +191,8 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             }
             app.screenshot = opts.screenshot;
             app.via_service = via_service;
+            #[cfg(windows)]
+            if via_service { app.service_chat = Some(crate::service_chat::Gui::start(&app.rt,cc.egui_ctx.clone())); }
             let wake = cc.egui_ctx.clone();
             #[cfg(not(target_os = "android"))]
             let requests = instance.listen(move || wake.request_repaint());
@@ -326,6 +331,8 @@ pub struct App {
     link_job: Option<(bool, oneshot::Receiver<Result<StationConfig, String>>)>,
     /// The Windows service hosts this computer (see `crate::service`).
     pub via_service: bool,
+    #[cfg(windows)]
+    pub service_chat: Option<crate::service_chat::Gui>,
     /// Installing or removing the service: (restart afterwards, result).
     service_job: Option<ServiceJob>,
     /// The Bridge/Config "connect to your station" form.
@@ -395,6 +402,8 @@ impl App {
             show_requests: None,
             link_job: None,
             via_service: false,
+            #[cfg(windows)]
+            service_chat: None,
             service_job: None,
             link_station: String::new(),
             saved: saved::Saved::default(),
@@ -428,6 +437,22 @@ impl App {
     }
 
     fn handle_events(&mut self) {
+        #[cfg(windows)]
+        if let Some(bridge)=&mut self.service_chat {
+            use crate::service_chat::Event;
+            while let Ok(event)=bridge.events.try_recv() {
+                match event {
+                    Event::Started{session,peer}=> {
+                        if !self.incoming.iter().any(|s|s.id==session) {self.incoming.push(IncomingSession{id:session,peer,chat:Default::default(),started:Instant::now()});}
+                    },
+                    Event::Ended{session}=>self.incoming.retain(|s|s.id!=session),
+                    Event::Message{session,ours,text}=>if let Some(session)=self.incoming.iter_mut().find(|s|s.id==session){
+                        let mut chat=session.chat.lock().expect("chat lock");chat.log.push((ours,text));if !ours{chat.open=true;chat.ping=true;}
+                    },
+                }
+            }
+        }
+
         while let Ok(ev) = self.events.try_recv() {
             match ev {
                 ClientEvent::Directory(s) => self.dir_status = s,
@@ -1440,9 +1465,10 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         #[cfg(target_os = "android")]
         android::input(_ctx, raw);
+        let root_input = raw.viewport_id == egui::ViewportId::ROOT;
         let focused_now = raw.focused;
-        let lost_focus = self.window_focused && !focused_now;
-        self.window_focused = focused_now;
+        let lost_focus = !root_input || (self.window_focused && !focused_now);
+        if root_input { self.window_focused = focused_now; }
         let captured = match self.focused_tab_mut() {
             Some(tab) if lost_focus => {
                 tab.release_keyboard();
@@ -1514,6 +1540,8 @@ impl eframe::App for App {
         #[cfg(windows)]
         softgl::started();
         let ctx = ui.ctx().clone();
+        let body = theme::native_title_bar(ui, &window_title(self.org.as_deref()));
+        let ui = &mut ui.new_child(UiBuilder::new().max_rect(body));
         // Clear of the status and navigation bars, the camera cutout and
         // the soft keyboard (the root Ui covers the whole screen).
         #[cfg(target_os = "android")]
@@ -1525,6 +1553,7 @@ impl eframe::App for App {
         saved::poll(self, &ctx);
         for tab in &mut self.tabs {
             tab.poll(&ctx);
+            tab.network_window(&ctx, &self.rt);
         }
 
         let keys = std::mem::take(&mut self.captured_keys);

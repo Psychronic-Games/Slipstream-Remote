@@ -167,7 +167,8 @@ update" message.
 prefixes, MACs and default gateways, collected with the same platform code
 as System information. `StreamOpen::NetworkScan` opens a streamed survey
 (`Started`, `Device`, `Progress`, `Finished`). The host validates the range
-against its current connected adapter; scanning has its own host permission
+using its current connected source adapter; manually entered routed subnets
+and VLANs are allowed. Scanning has its own host permission
 and requires session authentication. A scan accepts up to 4096 addresses,
 1024 TCP ports, and 262144 total probes, with one scan per session and 96
 TCP/ICMP probes in flight across viewers. TCP sockets bind to the selected
@@ -181,6 +182,41 @@ finish within their 500 ms timeout. Session disconnection also cancels the
 request. The graph represents the reported gateway and subnet membership,
 not detected physical links. UI: `gui/network.rs`; host and viewer transport:
 `slipstream-session/src/network.rs`; data and validation: `slipstream-core/src/network.rs`.
+
+`StreamOpen::NetworkNames` / `StreamReply::NetworkNames` are appended optional
+variants (protocol 6 remains unchanged), with batches of at most 16 discovered
+addresses. Older hosts reject only this auxiliary stream. Lookups race the
+remote system's configured DNS resolvers against unicast mDNS and NetBIOS
+node status, with 850 ms UDP timeouts and at most 16 device lookups globally.
+No public fallback DNS or broadcast sweep is used. DNS compression is parsed
+by `simple-dns`; NetBIOS node-status parsing bounds each record and ignores
+group names. References: [DNS](https://www.rfc-editor.org/rfc/rfc1035.html),
+[NetBIOS](https://www.rfc-editor.org/rfc/rfc1002.html).
+The scanner owns a deferred native viewport and releases remote keyboard
+capture whenever its input receives focus. Its state belongs to the session;
+closing the tool or session cancels its tasks.
+
+### Windows service chat and device inventory
+
+The SYSTEM helper owns incoming sessions; the user GUI has an ephemeral
+viewer endpoint. `service_chat.rs` bridges their chat over a local-only named
+pipe per console session. SYSTEM/admins own pipe instances; interactive users
+receive data rights, excluding create-instance. The server checks the client's
+session ID. Before commands, the GUI verifies a fresh nonce signature against
+the service's public identity in the protected ProgramData public directory.
+Length-framed JSON is bounded; epoch-stamped commands prevent replies to
+sessions from a prior helper lifetime. Snapshot history is bounded to 128
+messages and never persisted. On incoming chat without a GUI connection,
+WTSQueryUserToken/CreateProcessAsUser launch the GUI using the signed-in
+user's environment, never the helper's SYSTEM identity/profile.
+
+`machine_inventory.rs` adds 30-second cached inventory to System Information's
+existing rows, requiring no protocol change. Windows uses SetupAPI for present
+peripherals, installed printer registry data, loaded users' drive/printer
+mappings (including from the SYSTEM host) and LanmanServer shares. Saved
+mappings and installed queues do not imply current reachability. Linux uses
+USB sysfs, readable CUPS configuration and network mountinfo; macOS collects
+system_profiler and mount output. Device-URI credentials are omitted.
 
 ### Latency control
 

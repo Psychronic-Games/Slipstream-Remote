@@ -7,6 +7,8 @@ pub mod gui;
 pub mod logging;
 #[cfg(windows)]
 pub mod service;
+#[cfg(any(windows, test))]
+pub mod service_chat;
 
 /// If this copy of the app came from a station's download page, adopt that
 /// station's address and access key (see `slipstream_core::provision`).

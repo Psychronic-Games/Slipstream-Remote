@@ -36,6 +36,13 @@ impl Drop for RemoteScan {
 }
 
 impl RemoteFs {
+    pub async fn network_names(&self, interface: Ipv4Addr, addresses: Vec<Ipv4Addr>) -> Result<Vec<slipstream_core::network::DeviceName>> {
+        match self.ask(StreamOpen::NetworkNames { interface, addresses }).await?.2 {
+            StreamReply::NetworkNames(names) => Ok(names),
+            other => bail!("Unexpected device-name reply: {other:?}"),
+        }
+    }
+
     pub async fn network_interfaces(&self) -> Result<Vec<NetworkInterface>> {
         match self.ask(StreamOpen::NetworkInterfaces).await?.2 {
             StreamReply::NetworkInterfaces(i) => Ok(i),

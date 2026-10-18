@@ -7,6 +7,7 @@ pub mod files;
 pub mod fsops;
 mod host;
 pub mod network;
+mod network_names;
 pub mod tunnel;
 pub mod update;
 mod video;
@@ -840,6 +841,8 @@ mod tests {
                 }
             }).await.unwrap();
             assert!(got_device);
+            let names=session.fs().network_names(interface.address,vec![interface.address]).await.unwrap();
+            assert!(names.iter().any(|n|n.address==interface.address&&!n.name.is_empty()));
             let mut invalid = session.fs().network_scan(ScanRequest { cidr: "0.0.0.0/0".into(), ..request.clone() });
             assert!(tokio::time::timeout(Duration::from_secs(5), invalid.events.recv()).await.unwrap().unwrap().is_err());
 
@@ -847,6 +850,7 @@ mod tests {
             let (restricted, _events) = viewer.connect_direct(strict.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
             assert!(!restricted.info().capabilities.network_scan);
             assert!(restricted.fs().network_interfaces().await.unwrap_err().to_string().contains("not allowed"));
+            assert!(restricted.fs().network_names(interface.address,vec![interface.address]).await.unwrap_err().to_string().contains("not allowed"));
             let mut denied = restricted.fs().network_scan(request);
             assert!(tokio::time::timeout(Duration::from_secs(5), denied.events.recv()).await.unwrap().unwrap().unwrap_err().contains("not allowed"));
             drop(restricted);

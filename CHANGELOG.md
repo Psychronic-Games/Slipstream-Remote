@@ -13,6 +13,35 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Network scan improvements
+- Discover device names from the remote computer's DNS, NetBIOS node status
+  and unicast mDNS, with the name and lookup source in the table and export.
+  Names remain best effort; unknown names do not delay port results.
+- Scan any manually entered, reachable IPv4 subnet or VLAN from the selected
+  remote adapter, retaining host/probe limits. Routing/firewalls can prevent
+  replies. The topology displays the gateway once, with its results on that node.
+- The scanner is an independent desktop window: move, resize or maximize it
+  beyond the remote desktop/main window, and keep it open on other app pages.
+  Closing it stops outstanding work. Its Close segment contrasts with the rail.
+
+### Desktop and Windows host improvements
+- Rounded LCARS title strips replace OS decorations on Linux and Windows:
+  drag, double-click maximize/restore, minimize, close and border resizing.
+  The scanner and incoming chat use the same controls; full screen hides the
+  strip. The compact Windows fallback also has LCARS title controls.
+- System Information includes present peripherals with reported model/maker,
+  installed printer queues and scanners, saved network drive mappings in
+  loaded Windows user profiles, and configured shared folders. The SYSTEM
+  host can see signed-in users' saved mappings. Queue/mapping availability
+  is labeled explicitly. Linux adds USB/CUPS inventory and network mounts;
+  inventory is cached for 30 seconds, and URI credentials are omitted.
+- Restore incoming Windows chat when the service hosts the session. A local,
+  session-checked named pipe forwards messages and replies to the user's GUI,
+  recovers bounded history on reconnect, and launches the app as the signed-in
+  user when necessary. The GUI verifies the machine identity before sending
+  commands; chat is not written to disk or the public service log. The compact
+  fallback can display received service-chat messages.
+
 ## 0.10.0 — 2026-10-18
 
 ### Sharp video on slow hosts

@@ -68,19 +68,23 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
         store.save_settings(&s)?;
     }
     let (client, mut events) = Client::start(store, ClientOptions { test_pattern, accept_sessions: true, ..Default::default() }).await?;
+    #[cfg(windows)]
+    let mut chat_bridge=if service {match crate::service_chat::Server::start(client.clone()){Ok(bridge)=>Some(bridge),Err(e)=>{tracing::warn!("host chat unavailable: {e:#}");None}}} else {None};
     println!("hosting; endpoint {}", client.endpoint_id());
     loop {
         tokio::select! {
             _ = shutdown_signal() => break,
             ev = events.recv() => {
                 let Some(ev) = ev else { break };
+                #[cfg(windows)]
+                if let Some(bridge)=&mut chat_bridge {bridge.observe(&ev);}
                 match ev {
                     ClientEvent::Directory(DirStatus::Online { id }) => println!("ID       {id}"),
                     ClientEvent::Directory(other) => println!("server   {other:?}"),
                     ClientEvent::Password(pw) => println!("PASSWORD {pw}"),
                     ClientEvent::HostSessionStarted { session, peer } => println!("session {session} started by {peer}"),
                     ClientEvent::HostSessionEnded { session, reason } => println!("session {session} ended: {reason}"),
-                    ClientEvent::HostChat { text, .. } => println!("chat: {text}"),
+                    ClientEvent::HostChat { text, .. } => if service {println!("chat message received");} else {println!("chat: {text}");}
                     ClientEvent::FileReceived { path, .. } => println!("received file {}", path.display()),
                     ClientEvent::Motd(m) => println!("server says: {m}"),
                     ClientEvent::Org(Some(o)) => println!("station  {o}"),

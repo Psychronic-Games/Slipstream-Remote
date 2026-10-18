@@ -19,12 +19,12 @@ use slipstream_core::{directory::DirectoryClient, provision::StationLink};
 use slipstream_session::{Client, ClientEvent, DirStatus, update::UpdateInfo};
 use tokio::{runtime::Runtime, sync::mpsc};
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM,POINT},
     Graphics::Gdi::{
         AddFontMemResourceEx, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
-        CreateFontW, CreateSolidBrush, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject,
+        CreateFontW, CreateSolidBrush, DIB_RGB_COLORS, DT_CENTER, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject,
         DrawTextW, EndPaint, GetDC, GetDIBits, GetTextExtentPoint32W, HDC, HFONT,
-        InvalidateRect, PAINTSTRUCT, ReleaseDC, SRCCOPY, SelectObject, SetBkColor, SetBkMode, SetDIBitsToDevice, SetTextColor,
+        InvalidateRect, PAINTSTRUCT, ReleaseDC, SRCCOPY, SelectObject, ScreenToClient, SetBkColor, SetBkMode, SetDIBitsToDevice, SetTextColor,
         TRANSPARENT,
     },
     System::{
@@ -38,7 +38,7 @@ use windows_sys::Win32::{
         DestroyWindow, DispatchMessageW, GetClientRect, GetDlgCtrlID, GetMessageW, IDC_ARROW, LoadCursorW, LoadIconW, MSG,
         PostMessageW, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_RESTORE, SW_SHOW, SendMessageW, SetForegroundWindow,
         SetTimer, SetWindowTextW, ShowWindow, TranslateMessage, WM_APP, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY,
-        WM_DRAWITEM, WM_PAINT, WM_SETFONT, WM_TIMER, WNDCLASSEXW, WS_CAPTION, WS_CHILD, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_VISIBLE,
+        WM_NCHITTEST, HTCAPTION, SW_MINIMIZE, WM_DRAWITEM, WM_PAINT, WM_SETFONT, WM_TIMER, WNDCLASSEXW, WS_POPUP, WS_CHILD, WS_MINIMIZEBOX, WS_SYSMENU, WS_VISIBLE,
     },
 };
 
@@ -70,6 +70,8 @@ const BTN_COPY: i32 = 202;
 const BTN_UPDATE: i32 = 203;
 const BTN_QUIT: i32 = 204;
 const BTN_FULL: i32 = 205;
+const BTN_MIN: i32 = 206;
+const BTN_CLOSE: i32 = 207;
 
 /// "Something changed": refresh the texts.
 const WM_REFRESH: u32 = WM_APP + 1;
@@ -96,7 +98,7 @@ const WHITE: u32 = rgb(255, 255, 255);
 
 /// Client area size.
 const WIDTH: i32 = 500;
-const HEIGHT: i32 = 384;
+const HEIGHT: i32 = 422;
 
 /// Everything the window procedure needs (it runs on the UI thread only).
 struct Ui {
@@ -140,6 +142,7 @@ pub fn run(
     mut events: mpsc::UnboundedReceiver<ClientEvent>,
     instance: single::Instance,
     screenshot: Option<(PathBuf, f64)>,
+    via_service: bool,
 ) -> Result<()> {
     let view = Arc::new(Mutex::new(View {
         title: "SLIPSTREAM REMOTE".into(),
@@ -196,6 +199,25 @@ pub fn run(
             }
         });
     }
+    if via_service {
+        let mut bridge=crate::service_chat::Gui::start(&rt,eframe::egui::Context::default());
+        let view=view.clone();
+        rt.spawn(async move {
+            while let Some(event)=bridge.events.recv().await {
+                use crate::service_chat::Event;
+                {
+                    let mut v=view.lock().unwrap();
+                    match event {
+                        Event::Started{peer,..}=>v.status=format!("{} IS CONNECTED",peer.to_uppercase()),
+                        Event::Ended{..}=>v.status="ONLINE · READY FOR LINK".into(),
+                        Event::Message{ours:false,text,..}=>{v.note=format!("Message: {text}");wake(WM_APP+3);},
+                        _=>{},
+                    }
+                }
+                wake(WM_REFRESH);
+            }
+        });
+    }
     let requests = instance.listen(|| wake(WM_REQUEST));
 
     // SAFETY: plain Win32 window creation and message loop on this thread;
@@ -237,7 +259,7 @@ pub fn run(
                 screenshot: screenshot.as_ref().map(|(p, _)| p.clone()),
             })
         });
-        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        let style = WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX;
         let mut r = RECT { left: 0, top: 0, right: WIDTH, bottom: HEIGHT };
         AdjustWindowRect(&mut r, style, 0);
         let title = wide("Slipstream Remote");
@@ -328,7 +350,7 @@ unsafe fn build(hwnd: HWND) -> Vec<(i32, HWND)> {
         let mut out = Vec::new();
         let mut add = |class: &[u16], id: i32, style: u32, (x, y, w, h): (i32, i32, i32, i32), f: HFONT| {
             let empty = wide("");
-            let c = CreateWindowExW(0, class.as_ptr(), empty.as_ptr(), WS_CHILD | WS_VISIBLE | style, x, y, w, h, hwnd, id as _, hinst, std::ptr::null());
+            let c = CreateWindowExW(0, class.as_ptr(), empty.as_ptr(), WS_CHILD | WS_VISIBLE | style, x, y+38, w, h, hwnd, id as _, hinst, std::ptr::null());
             SendMessageW(c, WM_SETFONT, f as WPARAM, 1);
             out.push((id, c));
         };
@@ -366,6 +388,8 @@ unsafe fn build(hwnd: HWND) -> Vec<(i32, HWND)> {
         add(&button, BTN_UPDATE, pill, (262, 318, 128, 34), btn);
         add(&button, BTN_FULL, pill, (262, 318, 128, 34), btn);
         add(&button, BTN_QUIT, pill, (398, 318, 82, 34), btn);
+        add(&button,BTN_MIN,pill,(350,-31,62,28),btn);
+        add(&button,BTN_CLOSE,pill,(418,-31,70,28),btn);
         // Edit boxes pad their text; line it up with the labels.
         const EM_SETMARGINS: u32 = 0xD3;
         for (_, c) in out.iter().filter(|(id, _)| [ID_ID, ID_PW].contains(id)) {
@@ -541,6 +565,8 @@ unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
         BTN_UPDATE => ("INSTALL UPDATE", GREEN),
         BTN_FULL => ("FULL WINDOW", BLUE),
         BTN_QUIT => ("QUIT", RED),
+        BTN_MIN => ("MIN", BLUE),
+        BTN_CLOSE => ("CLOSE", PEACH),
         _ => ("", DIM),
     };
     let (hdc, mut r) = (d.hDC, d.rcItem);
@@ -572,7 +598,12 @@ unsafe fn paint_frame(hwnd: HWND) {
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
         let hdc = BeginPaint(hwnd, &mut ps);
-        for (strip, y) in [(&TOP[..], 10), (&BOTTOM[..], HEIGHT - 22)] {
+        bar(hdc,RECT{left:10,top:6,right:344,bottom:36},LAVENDER,(true,true),&[]);
+        let font=SelectObject(hdc,BUTTON_FONT.load(Ordering::Relaxed) as HFONT);
+        SetTextColor(hdc,BG);SetBkMode(hdc,TRANSPARENT as i32);
+        let text=wide("SLIPSTREAM REMOTE");let mut title=RECT{left:24,top:6,right:336,bottom:36};
+        DrawTextW(hdc,text.as_ptr(),-1,&mut title,DT_LEFT|DT_VCENTER|DT_SINGLELINE);SelectObject(hdc,font);
+        for (strip, y) in [(&TOP[..], 48), (&BOTTOM[..], HEIGHT - 22)] {
             let n = strip.len();
             for (i, &(l, r, color)) in strip.iter().enumerate() {
                 // Rounded at the strip's two outer ends, square between segments.
@@ -584,6 +615,12 @@ unsafe fn paint_frame(hwnd: HWND) {
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if msg==WM_NCHITTEST {
+        let mut point=POINT{x:(lparam as i16) as i32,y:((lparam>>16) as i16) as i32};
+        unsafe{ScreenToClient(hwnd,&mut point);}
+        if point.y>=0&&point.y<40&&point.x<350{return HTCAPTION as LRESULT;}
+    }
+    if msg==WM_APP+3 {unsafe{ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);};return 0;}
     if msg == WM_DRAWITEM {
         // SAFETY: WM_DRAWITEM's lparam is a DRAWITEMSTRUCT.
         let d = unsafe { &*(lparam as *const DRAWITEMSTRUCT) };
@@ -655,6 +692,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             WM_COMMAND => {
                 match (wparam & 0xffff) as i32 {
+                    BTN_MIN=>unsafe{ShowWindow(hwnd,SW_MINIMIZE);},
+                    BTN_CLOSE=>unsafe{DestroyWindow(hwnd);},
                     BTN_NEW => {
                         let pw = ui.client.regenerate_password();
                         ui.view.lock().unwrap().password = pw;
