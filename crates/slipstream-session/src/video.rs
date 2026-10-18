@@ -135,6 +135,20 @@ impl Pipeline {
         out: mpsc::Sender<VideoFrame>,
         errors: mpsc::UnboundedSender<String>,
     ) -> Self {
+        // Tests: pretend encoding a full-size frame takes this long (scaled
+        // by the pixel count), as on a slow virtual machine.
+        let slow = std::env::var("SLIPSTREAM_TEST_SLOW_ENCODE_MS").ok().and_then(|v| v.parse().ok());
+        Self::start_with(capture, flow, settings, out, errors, slow)
+    }
+
+    fn start_with(
+        capture: FrameStream,
+        flow: Arc<Flow>,
+        settings: StreamSettings,
+        out: mpsc::Sender<VideoFrame>,
+        errors: mpsc::UnboundedSender<String>,
+        slow_encode_ms: Option<f32>,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let keyframe = Arc::new(AtomicBool::new(true));
         let settings = Arc::new(Mutex::new(settings));
@@ -142,7 +156,7 @@ impl Pipeline {
             let (stop, keyframe, settings) = (stop.clone(), keyframe.clone(), settings.clone());
             thread::Builder::new()
                 .name("encoder".into())
-                .spawn(move || encode_loop(capture, flow, settings, keyframe, stop, out, errors))
+                .spawn(move || encode_loop(capture, flow, settings, keyframe, stop, out, errors, slow_encode_ms))
                 .expect("spawn encoder thread")
         };
         Self { stop, keyframe, settings, thread: Some(thread) }
@@ -200,6 +214,71 @@ impl RateControl {
     }
 }
 
+/// Keeps encoding inside the frame budget on a slow processor: while the
+/// picture moves it's encoded smaller (down to half size), and once it's
+/// still a full-size frame follows, so text at rest stays sharp.
+struct Speed {
+    scale: f32,
+    /// Encode time at the current scale, smoothed.
+    avg_ms: Option<f32>,
+    changed: Instant,
+    roomy_since: Option<Instant>,
+    /// When the last reduced-size frame went out (cleared by a sharp one).
+    last_small: Option<Instant>,
+}
+
+const MIN_SCALE: f32 = 0.5;
+
+impl Speed {
+    fn new() -> Self {
+        Self { scale: 1.0, avg_ms: None, changed: Instant::now(), roomy_since: None, last_small: None }
+    }
+
+    /// Records a frame that took `ms` to encode at the current scale, and
+    /// adjusts the scale to fit `budget_ms` a frame.
+    fn record(&mut self, ms: f32, budget_ms: f32) {
+        let avg = self.avg_ms.map_or(ms, |a| a * 0.9 + ms * 0.1);
+        self.avg_ms = Some(avg);
+        if self.scale < 1.0 {
+            self.last_small = Some(Instant::now());
+        }
+        if self.changed.elapsed() < Duration::from_millis(1500) {
+            return;
+        }
+        if avg > budget_ms * 0.9 && self.scale > MIN_SCALE {
+            // Encode time follows the pixel count, so the side's square root.
+            let s = self.scale * (budget_ms * 0.7 / avg).sqrt();
+            self.set((s.clamp(MIN_SCALE, 1.0) * 20.0).floor() / 20.0);
+        } else if avg < budget_ms * 0.4 && self.scale < 1.0 {
+            if self.roomy_since.get_or_insert_with(Instant::now).elapsed() >= Duration::from_secs(3) {
+                self.set(((self.scale * 1.25).min(1.0) * 20.0).round() / 20.0);
+            }
+        } else {
+            self.roomy_since = None;
+        }
+    }
+
+    fn set(&mut self, scale: f32) {
+        if scale != self.scale {
+            tracing::info!("video: encoding moving pictures at {:.0}% size to keep the frame rate", scale * 100.0);
+            self.scale = scale;
+            self.avg_ms = None;
+            self.changed = Instant::now();
+            self.roomy_since = None;
+        }
+    }
+
+    /// Reduced-size frames went out and the picture has been still since:
+    /// time for a full-size one.
+    fn wants_sharp(&mut self) -> bool {
+        if self.last_small.is_some_and(|t| t.elapsed() >= Duration::from_millis(300)) {
+            self.last_small = None;
+            return true;
+        }
+        false
+    }
+}
+
 fn encode_loop(
     capture: FrameStream,
     flow: Arc<Flow>,
@@ -208,6 +287,7 @@ fn encode_loop(
     stop: Arc<AtomicBool>,
     out: mpsc::Sender<VideoFrame>,
     errors: mpsc::UnboundedSender<String>,
+    slow_encode_ms: Option<f32>,
 ) {
     let start = Instant::now();
     let mut applied = *settings.lock().unwrap();
@@ -223,6 +303,7 @@ fn encode_loop(
     let mut pace = slipstream_platform::pace::Pace::new("video encoding");
     let mut waited_viewer = slipstream_platform::pace::Pace::new("waiting for the viewer");
     let mut waited_screen = slipstream_platform::pace::Pace::new("waiting for a new screen frame");
+    let mut speed = Speed::new();
 
     while !stop.load(Ordering::Relaxed) {
         let current = *settings.lock().unwrap();
@@ -244,6 +325,8 @@ fn encode_loop(
         }
 
         let t = Instant::now();
+        // A full-size frame of a picture that came out reduced while moving.
+        let mut sharp = false;
         let frame = match capture.next(Duration::from_millis(100)) {
             Ok(Some(f)) => {
                 waited_screen.add(t.elapsed());
@@ -257,6 +340,11 @@ fn encode_loop(
                 } else if keyframe.load(Ordering::Relaxed)
                     && let Some(f) = last_frame.clone()
                 {
+                    f
+                } else if speed.wants_sharp()
+                    && let Some(f) = last_frame.clone()
+                {
+                    sharp = true;
                     f
                 } else {
                     continue;
@@ -286,10 +374,18 @@ fn encode_loop(
         encoder.set_frame_skip(applied.bitrate_kbps != 0 || congested);
 
         let force = keyframe.swap(false, Ordering::Relaxed);
+        encoder.set_scale(if sharp { 1.0 } else { speed.scale });
         let t = Instant::now();
         let encoded = match encoder.encode(&frame, force) {
             Ok(Some(e)) => {
-                pace.add(t.elapsed());
+                if let Some(ms) = slow_encode_ms {
+                    let s = if sharp { 1.0 } else { speed.scale };
+                    thread::sleep(Duration::from_secs_f32(ms * s * s / 1000.0));
+                }
+                if !sharp {
+                    pace.add(t.elapsed());
+                    speed.record(t.elapsed().as_secs_f32() * 1000.0, frame_interval.as_secs_f32() * 1000.0);
+                }
                 e
             }
             Ok(None) => {
@@ -330,6 +426,54 @@ fn encode_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A processor too slow for full size: moving frames shrink until 60 fps
+    /// fits, and once the picture stops a full-size frame follows.
+    #[test]
+    fn slow_encoder_shrinks_then_sharpens() {
+        use slipstream_codec::PixelFormat;
+        use slipstream_platform::{FrameSlot, FrameStream};
+        let (w, h) = (1280u32, 720u32);
+        let slot = FrameSlot::new();
+        let producer = slot.clone();
+        let frames: Vec<Vec<u8>> =
+            (0..8u32).map(|t| (0..w * h).flat_map(|i| [((i % w + t * 7) % 256) as u8, ((i / w) % 256) as u8, 128, 255]).collect()).collect();
+        std::thread::spawn(move || {
+            // 3 s of motion, then a still picture (nothing more captured).
+            for t in 0..180usize {
+                let mut data = producer.buffer((w * h * 4) as usize);
+                data.extend_from_slice(&frames[t % frames.len()]);
+                producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
+                std::thread::sleep(Duration::from_micros(16_667));
+            }
+        });
+        let flow = Flow::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        let (etx, _erx) = mpsc::unbounded_channel();
+        let _p = Pipeline::start_with(FrameStream::new(slot), flow.clone(), StreamSettings::default(), tx, etx, Some(30.0));
+        let start = Instant::now();
+        let (mut widths, mut late) = (Vec::new(), 0);
+        while start.elapsed() < Duration::from_secs(4) {
+            // Nothing comes once the picture is still: poll, don't block.
+            let Ok(f) = rx.try_recv() else {
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            };
+            {
+                flow.ack(f.seq);
+                if start.elapsed() > Duration::from_millis(2500) && start.elapsed() < Duration::from_secs(3) {
+                    late += 1;
+                }
+                widths.push(f.width);
+            }
+        }
+        assert!(widths.iter().any(|&fw| fw < w), "moving frames never shrank: {widths:?}");
+        // Unoptimised builds are too slow to hold any frame rate.
+        if !cfg!(debug_assertions) {
+            assert!(late >= 20, "only {late} frames in half a second once it had adapted");
+        }
+        assert_eq!(widths.last(), Some(&w), "the still picture didn't get a full-size frame: {widths:?}");
+    }
 
     #[test]
     fn flow_limits_in_flight() {

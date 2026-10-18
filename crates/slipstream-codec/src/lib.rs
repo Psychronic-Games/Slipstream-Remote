@@ -142,6 +142,8 @@ pub struct Encoder {
     resizer: fast_image_resize::Resizer,
     scaled: Vec<u8>,
     packed: Vec<u8>,
+    /// Encode at this fraction of the frame's size (see [`Encoder::set_scale`]).
+    scale: f32,
 }
 
 impl Encoder {
@@ -156,7 +158,15 @@ impl Encoder {
             resizer: fast_image_resize::Resizer::new(),
             scaled: Vec::new(),
             packed: Vec::new(),
+            scale: 1.0,
         }
+    }
+
+    /// Encodes frames at `scale` (0.25–1) of their size from the next one
+    /// on, for a processor that can't keep up at full size. A change of
+    /// size starts with a keyframe.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale.clamp(0.25, 1.0);
     }
 
     /// Applies new settings. A bitrate change takes effect in place; other
@@ -219,9 +229,15 @@ impl Encoder {
     fn rebuild(&mut self, width: usize, height: usize) -> Result<()> {
         let fps = self.settings.max_fps.clamp(1.0, 240.0);
         let kbps = self.kbps(width, height);
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 4) as u16;
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 8) as u16;
+        // Camera mode, though this is a screen: OpenH264's screen-content
+        // mode is about 3x slower, ignores extra threads, and is no
+        // sharper. Measured at 1280x800 on 2 cores, scrolling text: 3.25 vs
+        // 1.17 ms a frame, 32.3 vs 29.8 dB while it moves, and 35.6 vs 49.0
+        // dB once it's still (examples/encode_bench.rs). On a slow virtual
+        // machine that's the difference between ~35 and 60 frames a second.
         let config = EncoderConfig::new()
-            .usage_type(UsageType::ScreenContentRealTime)
+            .usage_type(UsageType::CameraVideoRealTime)
             .rate_control_mode(RateControlMode::Bitrate)
             .bitrate(BitRate::from_bps(kbps * 1000))
             .max_frame_rate(FrameRate::from_hz(fps))
@@ -277,6 +293,11 @@ impl Encoder {
         // H.264 4:2:0 needs even dimensions (a trailing odd row/column is
         // dropped), and OpenH264 a picture no bigger than 4K.
         let (ew, eh) = encode_size(frame.width, frame.height);
+        let (ew, eh) = if self.scale < 1.0 {
+            (((ew as f32 * self.scale) as u32 & !1).max(2), ((eh as f32 * self.scale) as u32 & !1).max(2))
+        } else {
+            (ew, eh)
+        };
         let (w, h) = (ew as usize, eh as usize);
         if w < 2 || h < 2 {
             bail!("frame too small");

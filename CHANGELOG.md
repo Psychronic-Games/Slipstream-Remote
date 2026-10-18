@@ -13,6 +13,23 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### 60 frames a second on slow computers
+- The video encoder now uses OpenH264's camera mode rather than its
+  screen-content mode. Measured on 2 cores at 1280x800 with scrolling
+  text, it takes 1.2 ms a frame instead of 3.2, and it uses extra cores,
+  which screen mode ignored. It's a little softer while text scrolls
+  (29.8 vs 32.3 dB) and much sharper once it's still (49 vs 36 dB). On
+  the slow virtual machine that prompted this, encoding (23 ms a frame)
+  was what held video at about 35 frames a second.
+- Adaptive resolution: if encoding still can't keep up with the frame
+  rate, moving pictures are encoded smaller (down to half size), and the
+  size climbs back as soon as there's room. A third of a second after the
+  picture stops, a full-size frame follows, so text at rest is always
+  sharp. The host logs each change ("encoding moving pictures at 60%
+  size").
+- `crates/slipstream-codec/examples/encode_bench.rs` compares encoder
+  settings for speed and quality.
+
 ## 0.6.2 — 2026-10-17
 
 ### Seeing where video time goes
