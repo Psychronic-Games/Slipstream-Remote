@@ -1,7 +1,8 @@
 //! Single-instance guard: the first Slipstream (per settings profile)
 //! listens on a loopback port derived from its profile path; later launches
 //! connect to it, ask it to show its window (or pass on a `slipstream://`
-//! link they were opened with), and exit.
+//! link they were opened with), and exit. Android has its own [`inbox`].
+#![cfg_attr(target_os = "android", allow(dead_code, unused_imports))]
 
 use std::{
     hash::{Hash, Hasher},
@@ -107,6 +108,51 @@ impl Instance {
                 wake();
             }
         });
+        rx
+    }
+}
+
+/// Android: the activity is the one instance, so there are no later
+/// launches to listen for, and loopback ports are open to every app on the
+/// device. Links from the activity's intents come straight in here instead.
+#[cfg(target_os = "android")]
+pub mod inbox {
+    use std::sync::{Mutex, mpsc};
+
+    use super::Request;
+
+    type Wake = Box<dyn Fn() + Send>;
+
+    struct Inbox {
+        /// Links that came before the app was ready for them.
+        pending: Vec<String>,
+        open: Option<(mpsc::Sender<Request>, Wake)>,
+    }
+
+    static INBOX: Mutex<Inbox> = Mutex::new(Inbox { pending: Vec::new(), open: None });
+
+    /// Hands a `slipstream://` link to the app, now or once it's running.
+    pub fn deliver(url: String) {
+        tracing::info!("opened with a station link");
+        let mut inbox = INBOX.lock().unwrap_or_else(|e| e.into_inner());
+        match &inbox.open {
+            Some((tx, wake)) => {
+                let _ = tx.send(Request::Link(url));
+                wake();
+            }
+            None => inbox.pending.push(url),
+        }
+    }
+
+    /// Where the app reads links from, starting with any that are waiting;
+    /// `wake` is called after each new one.
+    pub fn open(wake: impl Fn() + Send + 'static) -> mpsc::Receiver<Request> {
+        let (tx, rx) = mpsc::channel();
+        let mut inbox = INBOX.lock().unwrap_or_else(|e| e.into_inner());
+        for url in inbox.pending.drain(..) {
+            let _ = tx.send(Request::Link(url));
+        }
+        inbox.open = Some((tx, Box::new(wake)));
         rx
     }
 }

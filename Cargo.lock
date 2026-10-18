@@ -233,6 +233,7 @@ dependencies = [
  "ndk-context",
  "ndk-sys",
  "num_enum",
+ "simd_cesu8",
  "thiserror 2.0.21",
 ]
 
@@ -6752,6 +6753,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 name = "slipstream"
 version = "0.7.1"
 dependencies = [
+ "android-activity",
  "anyhow",
  "clap",
  "directories",
@@ -6771,6 +6773,16 @@ dependencies = [
  "wgpu-hal",
  "windows-service",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "slipstream-android"
+version = "0.7.1"
+dependencies = [
+ "android-activity",
+ "jni 0.21.1",
+ "slipstream",
+ "tracing",
 ]
 
 [[package]]

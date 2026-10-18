@@ -13,6 +13,18 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Android, first steps
+- The app builds for Android and runs there: the same console, through a
+  small Java activity (`apps/slipstream-android`,
+  `scripts/build-android.sh`). It keeps clear of the status bar, the
+  camera cutout and the keyboard, types through the soft keyboard, opens
+  `slipstream://` station links and plays remote sound. On the emulator
+  it goes online and holds a session at 60 fps. Not for users yet: the
+  layout is still the desktop's, and touch control of the remote screen
+  comes next (issue 09).
+- `scripts/clean.sh` also clears cross-compiled development builds
+  (Windows tests, macOS checks), which it used to leave behind.
+
 ## 0.7.1 — 2026-10-17
 
 ### Windows capture stays on DXGI

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- allowBackup: never restore this device's identity onto another
+         (two devices with one key push each other off the station). -->
+    <application
+        android:label="Slipstream Remote"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.Slipstream"
+        android:allowBackup="false">
+
+        <!-- configChanges: rotating or folding the screen resizes the
+             running app instead of restarting the activity (and with it the
+             connection). singleTask: a link opens the running app. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|density|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data android:name="android.app.lib_name" android:value="slipstream_android" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- slipstream://link?s=…&c=… from a station's download page. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="slipstream" android:host="link" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

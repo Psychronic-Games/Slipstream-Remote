@@ -1,0 +1,16 @@
+[package]
+name = "slipstream-android"
+description = "Slipstream Remote for Android: the app as a library for its GameActivity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# Loaded by the activity as libslipstream_android.so (app/src/main/AndroidManifest.xml).
+crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+slipstream = { path = "../slipstream" }
+android-activity = { version = "0.6.1", features = ["game-activity"] }
+jni = "0.21.1"
+tracing.workspace = true

@@ -3,13 +3,10 @@
 // A GUI app on Windows: no console window when double-clicked.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-mod cli;
-mod gui;
-#[cfg(windows)]
-mod service;
-
 use clap::{Parser, Subcommand};
-use tracing_subscriber::Layer as _;
+use slipstream::{cli, gui};
+#[cfg(windows)]
+use slipstream::service;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -213,9 +210,9 @@ fn main() -> anyhow::Result<()> {
             std::env::set_var("SLIPSTREAM_LOG_DIR", service::log_path().parent().expect("in a folder"));
         }
     }
-    init_logging();
+    slipstream::logging::init();
     if !matches!(args.command, Some(Command::ExportIcon { .. })) {
-        apply_station_config();
+        slipstream::apply_station_config();
     }
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     match args.command {
@@ -338,18 +335,6 @@ fn parse_size(s: &str) -> Result<[f32; 2], String> {
     Ok([n(w)?, n(h)?])
 }
 
-/// If this copy of the app came from a station's download page, adopt that
-/// station's address and access key (see `slipstream_core::provision`).
-fn apply_station_config() {
-    let Some(cfg) = slipstream_core::provision::embedded() else { return };
-    let Ok(store) = slipstream_core::config::Store::open_default() else { return };
-    let mut settings = store.load_settings();
-    if slipstream_core::provision::apply(&mut settings, &cfg) {
-        tracing::info!(server = %cfg.server, "configured from station download");
-        let _ = store.save_settings(&settings);
-    }
-}
-
 /// GUI-subsystem apps have no console; when started from a terminal (e.g.
 /// `slipstream.exe info`), reattach so CLI output is visible.
 #[cfg(windows)]
@@ -358,49 +343,6 @@ fn attach_parent_console() {
     // SAFETY: plain Win32 call; failure (no parent console) is harmless.
     unsafe {
         AttachConsole(ATTACH_PARENT_PROCESS);
-    }
-}
-
-/// Logs to stderr and to `slipstream.log` in the settings folder, so
-/// problems can be diagnosed even when there's no console (Windows, or an
-/// app started from a desktop icon).
-fn init_logging() {
-    use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
-    // enigo logs every input event Windows refuses (each mouse move into an
-    // administrator window); the input thread reports those itself, once.
-    let filter = || {
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            "info,iroh=warn,noq=warn,noq_proto=warn,noq_udp=error,iroh_relay=warn,wgpu=warn,wgpu_hal=error,netwatch=error,enigo=off".into()
-        })
-    };
-    // Local time, no module paths: the log is for people.
-    let timer = || fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%S".into());
-    // The Windows service logs where every user can read it (its profile
-    // is administrators-only); see main().
-    let dir = std::env::var_os("SLIPSTREAM_LOG_DIR")
-        .map(std::path::PathBuf::from)
-        .or_else(|| slipstream_core::config::Store::open_default().ok().map(|s| s.dir().to_path_buf()));
-    let file = dir.and_then(|dir| {
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("slipstream.log");
-        // Keep the log small: start fresh once it passes 2 MB.
-        let append = std::fs::metadata(&path).map(|m| m.len() < 2 * 1024 * 1024).unwrap_or(false);
-        std::fs::OpenOptions::new().create(true).append(append).write(true).truncate(!append).open(path).ok()
-    });
-    let registry = tracing_subscriber::registry()
-        .with(fmt::layer().with_timer(timer()).with_target(false).with_writer(std::io::stderr).with_filter(filter()));
-    match file {
-        Some(f) => registry
-            .with(
-                fmt::layer()
-                    .with_ansi(false)
-                    .with_timer(timer())
-                    .with_target(false)
-                    .with_writer(LogFile(std::sync::Mutex::new(Repeats { file: f, last: String::new(), count: 0 })))
-                    .with_filter(filter()),
-            )
-            .init(),
-        None => registry.init(),
     }
 }
 
@@ -415,54 +357,4 @@ fn reported(report: Option<std::path::PathBuf>, result: anyhow::Result<()>) -> a
         }
     }
     result
-}
-
-/// The log file. A line that comes again and again (apart from its time) is
-/// written once, then "… repeated N more times".
-struct LogFile(std::sync::Mutex<Repeats>);
-
-struct Repeats {
-    file: std::fs::File,
-    last: String,
-    count: u64,
-}
-
-/// One formatted line, handed to [`LogFile`] when complete.
-struct LogLine<'a>(Vec<u8>, &'a LogFile);
-
-impl std::io::Write for LogLine<'_> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Drop for LogLine<'_> {
-    fn drop(&mut self) {
-        use std::io::Write;
-        let line = String::from_utf8_lossy(&self.0);
-        // "2026-10-18 00:40:23 " is the time; the rest decides "the same".
-        let key = line.get(20..).unwrap_or(&line).to_string();
-        let Ok(mut r) = self.1.0.lock() else { return };
-        if key == r.last {
-            r.count += 1;
-            return;
-        }
-        if r.count > 0 {
-            let n = std::mem::take(&mut r.count);
-            let _ = writeln!(r.file, "                    … repeated {n} more time{}", if n == 1 { "" } else { "s" });
-        }
-        let _ = r.file.write_all(&self.0);
-        r.last = key;
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogFile {
-    type Writer = LogLine<'a>;
-    fn make_writer(&'a self) -> Self::Writer {
-        LogLine(Vec::new(), self)
-    }
 }

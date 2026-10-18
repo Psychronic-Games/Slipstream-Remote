@@ -244,6 +244,7 @@ struct NetExtras {
     dns: Vec<std::net::IpAddr>,
 }
 
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 impl NetExtras {
     fn add_gateway(&mut self, dev: String, gw: std::net::IpAddr) {
         if !gw.is_unspecified() && !self.gateways.iter().any(|(_, g)| *g == gw) {

@@ -14,7 +14,8 @@ tracing.workspace = true
 # audio libraries to start.
 libc = "0.2"
 
-[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+# Android: playback only (AAudio).
+[target.'cfg(any(windows, target_os = "macos", target_os = "android"))'.dependencies]
 cpal = "0.18"
 
 [build-dependencies]

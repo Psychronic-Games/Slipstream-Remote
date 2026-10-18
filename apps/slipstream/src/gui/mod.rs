@@ -1,5 +1,7 @@
 //! The desktop GUI.
 
+#[cfg(target_os = "android")]
+mod android;
 mod autostart;
 mod files;
 #[cfg(target_os = "linux")]
@@ -55,12 +57,22 @@ pub struct GuiOptions {
     pub window_size: Option<[f32; 2]>,
     /// A `slipstream://link?…` URL the app was opened with.
     pub link: Option<String>,
+    /// The Android activity the app runs in.
+    #[cfg(target_os = "android")]
+    pub android_app: Option<android_activity::AndroidApp>,
 }
+
+/// Android: a `slipstream://` link the activity was opened with.
+#[cfg(target_os = "android")]
+pub use single::inbox::deliver as open_link;
+#[cfg(target_os = "android")]
+pub use android::{editor_action, set_insets};
 
 pub fn run(opts: GuiOptions) -> Result<()> {
     let store = Store::open_default()?;
     // Only one Slipstream per profile: a second launch just brings the
     // running one to the front.
+    #[cfg(not(target_os = "android"))]
     let Some(instance) = single::Instance::acquire(store.dir(), opts.link.as_deref(), opts.minimized) else {
         tracing::info!("Slipstream is already running; showing its window");
         return Ok(());
@@ -141,6 +153,8 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             }),
             ..Default::default()
         },
+        #[cfg(target_os = "android")]
+        android_app: opts.android_app.clone(),
         ..Default::default()
     };
     let rt2 = rt.clone();
@@ -150,6 +164,10 @@ pub fn run(opts: GuiOptions) -> Result<()> {
         options,
         Box::new(move |cc| {
             theme::install(&cc.egui_ctx);
+            #[cfg(target_os = "android")]
+            if let Some(app) = &opts.android_app {
+                android::install(app.clone(), &cc.egui_ctx);
+            }
             let render_state = cc.wgpu_render_state.clone().ok_or("the wgpu renderer is required")?;
             video::install(&render_state);
             let mut app = App::new(cc.egui_ctx.clone(), rt2, client2, events, render_state);
@@ -167,7 +185,11 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             app.screenshot = opts.screenshot;
             app.via_service = via_service;
             let wake = cc.egui_ctx.clone();
-            app.show_requests = Some(instance.listen(move || wake.request_repaint()));
+            #[cfg(not(target_os = "android"))]
+            let requests = instance.listen(move || wake.request_repaint());
+            #[cfg(target_os = "android")]
+            let requests = single::inbox::open(move || wake.request_repaint());
+            app.show_requests = Some(requests);
             // Link to a station: as asked, or (no station yet) from where the
             // browser says this download came from.
             let link = opts.link.as_deref().and_then(StationLink::parse).map(|l| (l, true)).or_else(|| {
@@ -1347,6 +1369,8 @@ impl eframe::App for App {
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        #[cfg(target_os = "android")]
+        android::input(_ctx, raw);
         let focused_now = raw.focused;
         let lost_focus = self.window_focused && !focused_now;
         self.window_focused = focused_now;
@@ -1421,6 +1445,10 @@ impl eframe::App for App {
         #[cfg(windows)]
         softgl::started();
         let ctx = ui.ctx().clone();
+        // Clear of the status and navigation bars, the camera cutout and
+        // the soft keyboard (the root Ui covers the whole screen).
+        #[cfg(target_os = "android")]
+        let ui = &mut ui.new_child(UiBuilder::new().max_rect(ctx.content_rect()));
         self.poll_attempt(&ctx);
         self.poll_update(&ctx);
         self.poll_link();
@@ -1464,12 +1492,16 @@ impl eframe::App for App {
             }
             let content = self.draw_frame(ui);
             let mut child = ui.new_child(UiBuilder::new().max_rect(content));
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| match self.page {
-                Page::Home => home::ui(self, ui),
-                Page::Links => home::links_ui(self, ui),
-                Page::Settings => settings::ui(self, ui),
-                Page::About => settings::about_ui(self, ui),
-                Page::Remote(_) => {}
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {
+                #[cfg(target_os = "android")]
+                android::keep_focus_in_view(ui);
+                match self.page {
+                    Page::Home => home::ui(self, ui),
+                    Page::Links => home::links_ui(self, ui),
+                    Page::Settings => settings::ui(self, ui),
+                    Page::About => settings::about_ui(self, ui),
+                    Page::Remote(_) => {}
+                }
             });
         }
 

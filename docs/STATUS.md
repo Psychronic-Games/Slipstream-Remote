@@ -35,6 +35,7 @@ picking the work back up.*
 | Host pace in the viewer (stats tooltip, 30 s log line) | ✅ local sessions and the live Server 2016 VM |
 | X11 host | ⚠️ implemented, lightly tested |
 | macOS | ⚠️ type-checks for Apple Silicon (cross-checked from Linux); `scripts/build-macos.sh` packages it; not yet run on a Mac |
+| Android app (phase 0) | ⚠️ emulator only (Android 16): starts, goes online, soft-keyboard typing, `slipstream://` links (refused bad code from the live station), a 60 fps session to a test-pattern host. Desktop layout, no touch control yet; not on a real phone |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
 `cargo test --workspace` passes: unit tests plus in-process sessions

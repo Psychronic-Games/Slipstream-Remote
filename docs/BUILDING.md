@@ -219,10 +219,73 @@ CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER=wine \
 Real DXGI capture, SmartScreen and input on the secure desktop need a real
 Windows machine.
 
+## Android
+
+The Android app is the same Rust GUI as the desktop app, built as a
+library (`apps/slipstream-android`) that a small Java activity loads. The
+activity is a GameActivity, which has proper soft-keyboard support. The
+Gradle project that packages it into an APK lives in the same folder.
+
+One-time setup (the SDK lives outside Dropbox, in `~/Android/Sdk`):
+
+```sh
+# Android command-line tools from developer.android.com/studio#command-tools,
+# unpacked to ~/Android/Sdk/cmdline-tools/latest, then:
+export ANDROID_HOME=~/Android/Sdk
+sdkmanager "ndk;29.0.14206865" "platforms;android-36" "platform-tools"
+rustup target add aarch64-linux-android x86_64-linux-android
+cargo install cargo-ndk
+# JDK 17 or later; Gradle downloads itself (apps/slipstream-android/gradlew).
+```
+
+```sh
+scripts/build-android.sh                   # dist/android/slipstream-remote-VERSION.apk (arm64 + x86_64)
+ABIS=x86_64 scripts/build-android.sh       # emulator only, quicker
+scripts/build-android.sh --install         # and install it with adb
+scripts/build-android.sh --debuggable      # an APK adb can look inside
+```
+
+The NDK version is pinned in `app/build.gradle.kts`; the script reads it
+from there. The APK's version is the workspace version and its version
+code is the build number, as on the desktop.
+
+**Testing on the emulator.** Create one with an x86_64 image (`sdkmanager
+"emulator" "system-images;android-36;google_apis;x86_64"`, then `avdmanager
+create avd -n slipstream-test -k "system-images;android-36;google_apis;x86_64"
+-d pixel_7`) and run it headless:
+
+```sh
+emulator -avd slipstream-test -no-window -no-audio -gpu swiftshader_indirect &
+adb exec-out screencap -p > shot.png       # see the screen
+adb logcat -s Slipstream                   # the app's log
+```
+
+`-gpu host` is much faster but crashed after a few app restarts without a
+window; `swiftshader_indirect` is slow but stable. The emulator reaches
+this computer as `10.0.2.2`: run a local `slipstream-server --listen
+127.0.0.1:21217` and a `slipstream host --test-pattern`, then point the app
+at `http://10.0.2.2:21217`. With a `--debuggable` APK that can be written
+straight into its settings:
+
+```sh
+printf '[server]\nurl = "http://10.0.2.2:21217"\n' > /tmp/s.toml
+adb shell "run-as com.slipstreamremote.app sh -c 'cat > files/settings.toml'" < /tmp/s.toml
+```
+
+Escape `&` when opening a link through `adb shell am start -d '…'`: the
+device's shell splits the command there otherwise.
+
+**Signing.** Until a release key is set up, the APK is signed with this
+computer's debug key (`~/.android/debug.keystore`). Android only installs
+an update signed with the same key as the installed app, so the release
+key has to exist (and be backed up, like the update key) before the first
+APK goes to users.
+
 ## Repository layout
 
 ```
-apps/slipstream/           desktop app (egui) + CLI
+apps/slipstream/           desktop app (egui) + CLI, also a library for Android
+apps/slipstream-android/   Android: the app's library for the activity, and the Gradle project
 apps/slipstream-server/    standalone directory + relay server
 crates/slipstream-core/    protocol, auth, directory client, config, clock
 crates/slipstream-codec/   H.264 encode/decode
@@ -232,6 +295,6 @@ crates/slipstream-session/ host/viewer sessions, files, updates
 tools/slipstream-release/  release key and signed update manifest (build-station.sh uses it)
 server/station/            the PHP station (download page, API, admin)
 packaging/                 desktop entry, icons, Windows resources, server configs
-scripts/                   build-station.sh, try-local.sh, install-linux.sh, file-issues.sh
+scripts/                   build-station.sh, build-android.sh, try-local.sh, install-linux.sh, file-issues.sh
 docs/                      these documents; docs/issues/ holds the open issues
 ```

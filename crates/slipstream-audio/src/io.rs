@@ -160,11 +160,8 @@ impl Player {
                 }
             })?
         };
-        #[cfg(any(windows, target_os = "macos"))]
+        #[cfg(any(windows, target_os = "macos", target_os = "android"))]
         let worker = cpal_io::playback(jitter.clone())?;
-        #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
-        bail!("playing sound isn't supported on this system yet");
-        #[allow(unreachable_code)]
         Ok(Self { jitter, _worker: Some(worker), memory: None })
     }
 
@@ -177,7 +174,7 @@ impl Player {
     }
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "android"))]
 mod cpal_io {
     use std::sync::{Arc, atomic::Ordering};
 

@@ -209,9 +209,9 @@ buffers — the picture is always as fresh as the network allows.
 |---|---|---|
 | Linux (Wayland) | xdg-desktop-portal ScreenCast + PipeWire, pointer embedded by the compositor | RemoteDesktop portal |
 | Linux (X11) | MIT-SHM (GetImage fallback) via pure-Rust `x11rb`, RandR monitors, pointer composited from XFixes | XTest via `enigo` |
-| Windows | DXGI Desktop Duplication via `xcap`; under the service, DXGI on the normal desktop and a reusable GDI capturer (`win_gdi.rs`) on the login screen and UAC's secure desktop. Pointer composited by us (`win_cursor.rs`) | `SendInput` via `enigo` |
+| Windows | DXGI Desktop Duplication of our own (`win_dxgi.rs`, one copy per frame, created per session); under the service, DXGI on the normal desktop and a reusable GDI capturer (`win_gdi.rs`) on the login screen and UAC's secure desktop. Pointer composited by us (`win_cursor.rs`) | `SendInput` via `enigo` |
 | macOS | ScreenCaptureKit via `xcap` | CGEvent via `enigo` |
-| Android (later) | MediaProjection | AccessibilityService |
+| Android (planned, issue 09) | MediaProjection | AccessibilityService |
 
 Keyboard events travel as physical key codes (W3C `code` names) and are
 mapped to evdev / Windows scancodes / macOS keycodes on the host.
@@ -232,6 +232,41 @@ plugged in (a server or VM reached only remotely), Windows reports no
 visible pointer unless some program provides a mouse (another remote
 tool's virtual one, say). The host then draws the standard arrow, so the
 person controlling it still sees where they are.
+
+## The Android app
+
+The desktop app's GUI runs unchanged on Android: `apps/slipstream` is a
+library as well as the desktop program, and `apps/slipstream-android` is
+the shared library (`libslipstream_android.so`) a GameActivity loads. Its
+`android_main` points `SLIPSTREAM_HOME` at the app's private storage and
+starts `gui::run`. The Java side (`MainActivity.java`) is kept small and
+calls into Rust over JNI:
+
+* **Insets.** Android 15 and later draw every app edge to edge, and winit
+  doesn't report what covers the screen. The activity reports the status
+  and navigation bars, the camera cutout and the soft keyboard
+  (`onInsets`). The GUI hands them to egui as its safe area and lays out
+  in `Context::content_rect`. The surface stays full screen: resizing it
+  instead made winit scale the old frame, since its window size on Android
+  is the display's.
+* **Typing.** With GameActivity the keyboard edits a copy of the text and
+  hands over the whole state, which winit drops. `gui/android.rs` compares
+  it with what it passed on and sends egui the difference as text and
+  backspaces (suggestions rewrite the end, so it erases back to where the
+  two still agree). Enter or Done arrives through `onEditorAction`. The app
+  asks for the keyboard outright when a text field takes focus (winit's
+  implicit request can be ignored), and scrolls the field into view above
+  it.
+* **Links.** `slipstream://link` opens the app (an intent filter;
+  `singleTask` hands it to the running app). Links reach the GUI through
+  an in-process inbox (`single::inbox`), not the desktop's loopback port,
+  which any other app on the device could connect to.
+* **Logging** goes to logcat (tag `Slipstream`) as well as the log file.
+* **Sound** plays through cpal's AAudio backend.
+
+The Android build needs `libc++_shared.so` beside the app's library, since
+OpenH264 is C++. Backups are off: restoring the device identity onto
+another phone would put two devices on the station with one key.
 
 ## The Windows service
 

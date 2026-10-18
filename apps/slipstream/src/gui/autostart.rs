@@ -1,7 +1,10 @@
 //! "Start with the system" for unattended access.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+use anyhow::Context;
 
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 fn exe() -> Result<String> {
     Ok(std::env::current_exe().context("locating executable")?.display().to_string())
 }

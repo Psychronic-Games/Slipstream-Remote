@@ -1,0 +1,7 @@
+# Gradle's caches and outputs, and the Rust library scripts/build-android.sh puts in
+.gradle/
+.kotlin/
+build/
+app/build/
+app/src/main/jniLibs/
+local.properties
