@@ -93,7 +93,11 @@ async fn poll_host_pace(fs: RemoteFs, out: Arc<Mutex<Vec<slipstream_core::proto:
 
 /// "screen capture (GDI) 21 fps 44.0 ms, video encoding 21 fps 30.1 ms"
 fn host_pace_text(stages: &[slipstream_core::proto::PaceStage]) -> String {
-    stages.iter().map(|s| format!("{} {:.0} fps {:.1} ms", s.name, s.fps, s.ms)).collect::<Vec<_>>().join(", ")
+    stages
+        .iter()
+        .map(|s| if s.fps == 0.0 && s.ms == 0.0 { s.name.clone() } else { format!("{} {:.0} fps {:.1} ms", s.name, s.fps, s.ms) })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Latest decoded frame, shared with the renderer.

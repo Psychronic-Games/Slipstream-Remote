@@ -995,7 +995,11 @@ impl RemoteTab {
         if !s.host.is_empty() {
             details.push_str("\n\nOn the remote computer:");
             for st in &s.host {
-                details.push_str(&format!("\n  {}: {:.0} a second, {:.1} ms each", st.name, st.fps, st.ms));
+                if st.fps == 0.0 && st.ms == 0.0 {
+                    details.push_str(&format!("\n  {}", st.name));
+                } else {
+                    details.push_str(&format!("\n  {}: {:.0} a second, {:.1} ms each", st.name, st.fps, st.ms));
+                }
             }
         }
         if !compact {

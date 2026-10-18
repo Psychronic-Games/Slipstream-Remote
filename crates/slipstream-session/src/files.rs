@@ -103,9 +103,11 @@ async fn handle(
             reply(&mut send, &StreamReply::SystemInfo(info)).await?;
         }
         StreamOpen::Pace => {
-            let stages = slipstream_platform::pace::live()
-                .into_iter()
-                .map(|(name, fps, ms)| slipstream_core::proto::PaceStage { name, fps, ms })
+            // The host's version first (no figures), so the viewer's log
+            // says which build these figures come from.
+            let version = slipstream_core::proto::PaceStage { name: format!("Slipstream {}", slipstream_core::VERSION_STRING), fps: 0.0, ms: 0.0 };
+            let stages = std::iter::once(version)
+                .chain(slipstream_platform::pace::live().into_iter().map(|(name, fps, ms)| slipstream_core::proto::PaceStage { name, fps, ms }))
                 .collect();
             reply(&mut send, &StreamReply::Pace(stages)).await?;
         }

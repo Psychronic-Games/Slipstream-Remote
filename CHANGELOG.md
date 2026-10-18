@@ -13,6 +13,23 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Windows capture stays on DXGI
+- Only the first session after the host started got DXGI duplication.
+  xcap's recorder kept a background thread, still holding its
+  duplication, after a session ended, so later sessions couldn't
+  duplicate the screen and fell back to GDI. On the Server 2016 VM that
+  was 35–50 ms a frame, about 20 fps. Windows now captures with its own
+  DXGI duplication (`win_dxgi.rs`), created and released by each session.
+  It keeps one staging texture, copies once out of it, and hands BGRA
+  straight to the encoder: xcap made about four copies plus a
+  colour-swap pass per frame. That's part of issue 15.
+- Without the service too: if duplication isn't available, GDI fills
+  in, and duplication is tried again after 2 s (after five failures, once
+  a minute).
+- The host's figures in the viewer start with its version
+  ("Slipstream 0.7.1 (build …)"), so the log shows which build they come
+  from.
+
 ## 0.7.0 — 2026-10-17
 
 ### 60 frames a second on slow computers

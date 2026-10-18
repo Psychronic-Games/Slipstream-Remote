@@ -139,16 +139,14 @@ impl Backend for GenericBackend {
         // Monitor handles and the recorder (an AVCaptureSession on macOS)
         // aren't Send: create them on the capture thread.
         thread::Builder::new().name("capture".into()).spawn(move || {
+            #[cfg(target_os = "windows")]
+            windows_capture(&producer, min_interval, origin, size);
+            #[cfg(target_os = "macos")]
             let Some(monitor) = Monitor::all().ok().and_then(|m| m.into_iter().nth(index)) else {
                 producer.fail("display disappeared");
                 return;
             };
-            // Service mode follows the input desktop (login screen, UAC).
-            #[cfg(target_os = "windows")]
-            if crate::windesk::following() {
-                follow_desktops(&producer, &monitor, min_interval, origin, size);
-                return;
-            }
+            #[cfg(target_os = "macos")]
             match monitor.video_recorder() {
                 Ok((recorder, frames)) => match recorder.start() {
                     Ok(()) => {
@@ -183,7 +181,7 @@ impl Backend for GenericBackend {
 /// throttled) still go out. Returns true if the recorder stopped (on
 /// Windows, a desktop switch ends DXGI duplication), false once the
 /// session closed the stream.
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interval: Duration, origin: (i32, i32)) -> bool {
     let poll = (min_interval / 2).max(Duration::from_millis(4));
     let mut last = Instant::now() - min_interval;
@@ -219,42 +217,86 @@ fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interv
     false
 }
 
-/// Service mode: DXGI duplication (fast, and free while nothing changes)
-/// while the normal desktop has input; GDI screenshots on the login screen
-/// and UAC's secure desktop, which duplication can't follow. A desktop
-/// switch ends duplication, and the loop picks again.
+/// Windows capture: DXGI duplication (fast, and free while nothing changes)
+/// whenever it works; in service mode that's the normal desktop. GDI
+/// screenshots on the login screen and UAC's secure desktop (which the
+/// service follows and duplication can't), and while duplication is
+/// unavailable. A desktop switch ends duplication, and the loop picks again.
 #[cfg(target_os = "windows")]
-fn follow_desktops(producer: &FrameSlot, monitor: &Monitor, min_interval: Duration, origin: (i32, i32), size: (u32, u32)) {
-    // When duplication isn't available on the normal desktop either (no
-    // display driver that supports it), stay on GDI and retry now and then.
-    let mut try_dxgi_at = Instant::now();
+fn windows_capture(producer: &FrameSlot, min_interval: Duration, origin: (i32, i32), size: (u32, u32)) {
+    let normal_desktop = || !crate::windesk::following() || crate::windesk::on_default_desktop();
+    let (mut failures, mut try_dxgi_at) = (0u32, Instant::now());
     while !producer.is_closed() {
         crate::windesk::follow();
-        if Instant::now() >= try_dxgi_at && crate::windesk::on_default_desktop() {
-            // Duplication only delivers a frame once something changes:
-            // show the screen as it is meanwhile.
-            gdi_once(producer, origin, size);
-            match monitor.video_recorder().map_err(|e| e.to_string()).and_then(|(r, f)| r.start().map(|()| (r, f)).map_err(|e| e.to_string())) {
-                Ok((recorder, frames)) => {
+        if Instant::now() >= try_dxgi_at && normal_desktop() {
+            match crate::win_dxgi::Duplication::new(origin.0, origin.1) {
+                Ok(mut dup) => {
+                    failures = 0;
                     tracing::info!("screen capture: DXGI duplication");
-                    let ended = record(producer, &frames, min_interval, origin);
-                    let _ = recorder.stop();
-                    if !ended {
+                    // After a desktop switch the viewer still shows the old
+                    // desktop until something changes: send it as it is.
+                    if crate::windesk::following() {
+                        gdi_once(producer, origin, size);
+                    }
+                    if !dxgi_frames(producer, &mut dup, min_interval, origin) {
                         return;
                     }
-                    tracing::info!("screen capture: duplication ended (desktop switch?)");
+                    tracing::info!("screen capture: duplication ended (desktop switch or display change)");
                     continue;
                 }
                 Err(e) => {
-                    tracing::info!("screen capture: DXGI duplication unavailable ({e}), using GDI");
-                    try_dxgi_at = Instant::now() + Duration::from_secs(60);
+                    failures += 1;
+                    let wait = if failures < 5 { Duration::from_secs(2) } else { Duration::from_secs(60) };
+                    tracing::info!("screen capture: DXGI duplication unavailable ({e:#}), using GDI");
+                    try_dxgi_at = Instant::now() + wait;
                 }
             }
         }
-        if !gdi_until(producer, min_interval, origin, size, || Instant::now() >= try_dxgi_at && crate::windesk::on_default_desktop()) {
+        if !gdi_until(producer, min_interval, origin, size, || Instant::now() >= try_dxgi_at && normal_desktop()) {
             return;
         }
     }
+}
+
+/// Streams duplicated frames. Duplication delivers a picture only when it
+/// changes, without the pointer: the latest clean picture is kept, and
+/// pointer moves on a still screen go out too. True once duplication ended,
+/// false when the session closed the stream.
+#[cfg(target_os = "windows")]
+fn dxgi_frames(producer: &FrameSlot, dup: &mut crate::win_dxgi::Duplication, min_interval: Duration, origin: (i32, i32)) -> bool {
+    let poll = (min_interval / 2).max(Duration::from_millis(4)).as_millis() as u32;
+    let mut last = Instant::now() - min_interval;
+    let mut clean = Vec::new();
+    let mut size = None;
+    let mut dirty = false;
+    let mut shown = None;
+    let mut pace = crate::pace::Pace::new("screen capture (DXGI)");
+    while !producer.is_closed() {
+        match dup.next(poll, &mut clean) {
+            Ok(Some(s)) => {
+                size = Some(s);
+                dirty = true;
+            }
+            Ok(None) => {}
+            Err(_) => return true,
+        }
+        let Some((w, h)) = size else { continue };
+        let pointer = pointer_now();
+        if !(dirty || pointer != shown) || last.elapsed() < min_interval.mul_f32(0.8) {
+            continue;
+        }
+        last = Instant::now();
+        dirty = false;
+        shown = pointer;
+        let mut data = producer.buffer(clean.len());
+        data.extend_from_slice(&clean);
+        if let Some(p) = pointer {
+            draw_pointer(&mut data, w, h, w * 4, origin, p, true);
+        }
+        producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
+        pace.add(dup.last_copy + last.elapsed());
+    }
+    false
 }
 
 /// One GDI frame of the screen as it is now.
@@ -319,23 +361,13 @@ fn gdi_until(producer: &FrameSlot, min_interval: Duration, origin: (i32, i32), s
     false
 }
 
-#[cfg(target_os = "windows")]
-fn following_desktops() -> bool {
-    crate::windesk::following()
-}
-#[cfg(target_os = "macos")]
-fn following_desktops() -> bool {
-    false
-}
 
 /// Fallback: polls screenshots at the frame rate.
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn poll_screenshots(producer: &FrameSlot, monitor: &Monitor, min_interval: Duration, origin: (i32, i32)) {
     let mut failures = 0;
     while !producer.is_closed() {
         let t = Instant::now();
-        #[cfg(target_os = "windows")]
-        crate::windesk::follow();
         match monitor.capture_image() {
             Ok(img) => {
                 let (w, h) = img.dimensions();
@@ -349,7 +381,7 @@ fn poll_screenshots(producer: &FrameSlot, monitor: &Monitor, min_interval: Durat
                 // A desktop switch (UAC prompt, login screen) can fail a
                 // few captures; keep trying for a while in service mode.
                 failures += 1;
-                if !following_desktops() || failures > 50 {
+                if failures > 50 {
                     producer.fail(format!("screenshot failed: {e}"));
                     return;
                 }
