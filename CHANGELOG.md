@@ -47,6 +47,12 @@ Build numbers are the git commit count. The app shows them as
   and the app's ID read offline. Now only a missing file makes a new one;
   an unreadable one is retried and then reported. Install also checks
   its copy matches.
+- While the service hosts, the Bridge shows the ID the *service* is
+  registered under (it publishes it, readable by every user, in
+  `ProgramData\Slipstream Remote\public`). If that differs from the
+  app's own ID, the Bridge says so and how to make them match. Before,
+  it showed the app's ID, which partners then found offline.
+- A failed link is written to the log, with its reason.
 - The service may be started by signed-in users (not stopped or changed),
   so *Start* on a stopped service works without the administrator
   prompt, falling back to reinstalling if needed. After an install the

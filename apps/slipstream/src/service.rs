@@ -64,6 +64,42 @@ pub fn machine_home() -> PathBuf {
     base.join("Slipstream Remote")
 }
 
+/// Where the service tells signed-in users which ID it hosts this computer
+/// as: readable by everyone, unlike the rest of the profile.
+fn public_dir() -> PathBuf {
+    machine_home().join("public")
+}
+
+/// The ID the service hosts this computer as (it's usually the app's own,
+/// but needn't be: then partners need this one). Looked up at most every
+/// two seconds.
+pub fn hosted_id() -> Option<slipstream_core::directory::DeviceId> {
+    static SEEN: std::sync::Mutex<Option<(Instant, Option<slipstream_core::directory::DeviceId>)>> = std::sync::Mutex::new(None);
+    let mut seen = SEEN.lock().unwrap();
+    if let Some((at, id)) = *seen
+        && at.elapsed() < Duration::from_secs(2)
+    {
+        return id;
+    }
+    let id = std::fs::read_to_string(public_dir().join("device-id.txt")).ok().and_then(|s| s.trim().parse().ok());
+    *seen = Some((Instant::now(), id));
+    id
+}
+
+/// Run by the service: publishes the ID its host registered as, when it
+/// changes.
+fn publish_id(last: &mut Option<slipstream_core::directory::DeviceId>) {
+    let Ok(store) = Store::open(machine_home()) else { return };
+    let id = store.load_settings().host.last_device_id;
+    if id.is_some() && id != *last {
+        let dir = public_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        if std::fs::write(dir.join("device-id.txt"), id.map(|i| i.0.to_string()).unwrap_or_default()).is_ok() {
+            *last = id;
+        }
+    }
+}
+
 fn install_dir() -> PathBuf {
     let base = std::env::var_os("ProgramFiles").map(PathBuf::from).unwrap_or_else(|| r"C:\Program Files".into());
     base.join("Slipstream Remote")
@@ -237,6 +273,12 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     if !acl.success() {
         bail!("couldn't restrict access to {}", home.display());
     }
+    // Everyone may read the ID the service hosts as (see hosted_id); the
+    // old one is gone until the service has registered again.
+    let public = public_dir();
+    std::fs::create_dir_all(&public)?;
+    let _ = std::fs::remove_file(public.join("device-id.txt"));
+    let _ = Command::new("icacls").arg(&public).args(["/grant", "*S-1-5-32-545:(OI)(CI)RX", "/Q"]).status();
     let machine = Store::open(&home)?;
     machine.save_settings(&settings)?;
     // Same identity, so the computer keeps its ID.
@@ -490,6 +532,7 @@ fn supervise(stop: &std::sync::mpsc::Receiver<()>) -> u32 {
     // leave one running beside the next.
     let job = kill_on_close_job();
     let mut child: Option<Child> = None;
+    let (mut published, mut next_publish) = (None, Instant::now());
     let mut backoff = Duration::from_secs(1);
     let mut next_spawn = Instant::now();
     loop {
@@ -505,6 +548,10 @@ fn supervise(stop: &std::sync::mpsc::Receiver<()>) -> u32 {
                 c.stop();
             }
             return 1;
+        }
+        if Instant::now() >= next_publish {
+            publish_id(&mut published);
+            next_publish = Instant::now() + Duration::from_secs(5);
         }
         // SAFETY: plain query.
         let session = unsafe { WTSGetActiveConsoleSessionId() };

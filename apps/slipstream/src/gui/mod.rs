@@ -496,7 +496,10 @@ impl App {
                 self.connect_pw.clear();
                 self.settings_form.refresh_recent(&self.client.settings());
             }
-            Err(e) => self.toast(format!("Link failed: {e}"), pal::RED),
+            Err(e) => {
+                tracing::warn!("link to {} failed: {e}", attempt.id);
+                self.toast(format!("Link failed: {e}"), pal::RED);
+            }
         }
     }
 

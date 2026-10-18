@@ -5,6 +5,16 @@ use slipstream_session::DirStatus;
 
 use super::{App, Page, files, theme, theme::pal};
 
+/// The ID the Windows service hosts this computer as, while it does.
+fn service_id(app: &App) -> Option<slipstream_core::directory::DeviceId> {
+    #[cfg(windows)]
+    if app.via_service {
+        return crate::service::hosted_id();
+    }
+    let _ = app;
+    None
+}
+
 pub fn ui(app: &mut App, ui: &mut Ui) {
     let t = app.time();
     if let Some(motd) = app.motd.clone() {
@@ -47,10 +57,13 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             DirStatus::NotConfigured => ("NO SERVER — SEE CONFIG", pal::RED),
             DirStatus::Error(_) => ("SERVER CONNECTION FAILED", pal::RED),
         };
-        let id_text = match &app.dir_status {
-            DirStatus::Online { id } => id.to_string(),
-            _ => app.client.settings().host.last_device_id.map(|i| i.to_string()).unwrap_or_else(|| "--- --- ---".into()),
+        let own_id = match &app.dir_status {
+            DirStatus::Online { id } => Some(*id),
+            _ => app.client.settings().host.last_device_id,
         };
+        // With the service hosting, partners need the ID it registered as.
+        let hosted = service_id(app);
+        let id_text = hosted.or(own_id).map(|i| i.to_string()).unwrap_or_else(|| "--- --- ---".into());
 
         ui.label(RichText::new("YOUR ID").font(theme::display(15.0)).color(pal::LAVENDER));
         ui.horizontal(|ui| {
@@ -69,6 +82,16 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
                 RichText::new("Use this computer's unattended password. The service also reaches the login screen and administrator prompts.")
                     .color(pal::DIM),
             );
+            if let (Some(h), Some(own)) = (hosted, own_id)
+                && h != own
+            {
+                ui.label(
+                    RichText::new(format!(
+                        "The service has its own ID, shown above; this app's is {own}. Config → Windows service → Reinstall gives the service this app's ID."
+                    ))
+                    .color(pal::PEACH),
+                );
+            }
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
