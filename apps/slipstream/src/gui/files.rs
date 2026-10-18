@@ -328,19 +328,33 @@ impl FileManager {
             .resizable(true)
             .collapsible(false)
             .show(ctx, |ui| {
-                if theme::window_header(ui, "File transfer", pal::ORANGE) {
+                let chrome = theme::window_header(ui, "File transfer", pal::ORANGE);
+                if chrome.close {
                     open = false;
                 }
-                self.contents(ui, rt)
+                self.contents(ui, rt, &chrome)
             });
         self.open = open;
     }
 
-    fn contents(&mut self, ui: &mut Ui, rt: &tokio::runtime::Runtime) {
+    fn contents(&mut self, ui: &mut Ui, rt: &tokio::runtime::Runtime, chrome: &theme::WindowChrome) {
+        // Panels take the window's space as it is, whatever their contents
+        // measure: sizing these from estimates made the window grow a little
+        // every frame, back to the bottom of the screen after any resize.
+        egui::Panel::bottom("file-footer").frame(egui::Frame::NONE).show(ui, |ui| chrome.footer(ui));
+        if !self.jobs.is_empty() {
+            egui::Panel::bottom("file-jobs").frame(egui::Frame::NONE).show(ui, |ui| self.jobs_ui(ui));
+        }
+        egui::CentralPanel::no_frame().show(ui, |ui| self.panes(ui, rt));
+    }
+
+    fn panes(&mut self, ui: &mut Ui, rt: &tokio::runtime::Runtime) {
         let ctx = ui.ctx().clone();
-        let jobs_h = if self.jobs.is_empty() { 0.0 } else { (self.jobs.len().min(4) as f32) * 30.0 + 44.0 };
         let avail = ui.available_size();
-        let pane_h = (avail.y - jobs_h).clamp(200.0, 2000.0);
+        // A little under the space given: text heights round up by a
+        // fraction of a pixel, and any overshoot grows the window by that
+        // much every frame.
+        let pane_h = (avail.y - 2.0).max(160.0);
         let mid_w = 120.0;
         let pane_w = ((avail.x - mid_w - 16.0) / 2.0).max(220.0);
 
@@ -393,8 +407,11 @@ impl FileManager {
         if receive {
             self.download_selected(rt, &ctx);
         }
+    }
 
-        if !self.jobs.is_empty() {
+    /// The transfers list under the panes.
+    fn jobs_ui(&mut self, ui: &mut Ui) {
+        {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("TRANSFERS").font(theme::display(16.0)).color(pal::LAVENDER));
@@ -404,7 +421,8 @@ impl FileManager {
                     }
                 });
             });
-            egui::ScrollArea::vertical().id_salt("jobs").max_height(jobs_h - 30.0).show(ui, |ui| {
+            // Four rows, then it scrolls.
+            egui::ScrollArea::vertical().id_salt("jobs").max_height(4.0 * 30.0).show(ui, |ui| {
                 for job in self.jobs.iter().rev() {
                     ui.horizontal(|ui| {
                         let state = job.state.lock().unwrap().clone();
@@ -477,7 +495,10 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
         ui.label(RichText::new(e).color(pal::RED));
     }
     let frame = egui::Frame::new().fill(Color32::from_rgb(4, 6, 12)).corner_radius(6.0).inner_margin(4.0);
-    let list_h = (ui.available_height() - 24.0).max(80.0);
+    // Room for the "N items" line below, measured: a guess that came out
+    // short made the window grow by the difference every frame.
+    let footer = ui.text_style_height(&egui::TextStyle::Small) + 2.0 * ui.spacing().item_spacing.y;
+    let list_h = (ui.available_height() - footer).max(80.0);
     let out = frame.show(ui, |ui| {
         ui.set_min_size(vec2(ui.available_width(), list_h));
         ui.set_max_height(list_h);

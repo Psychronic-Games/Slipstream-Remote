@@ -24,6 +24,7 @@ pub struct SettingsForm {
     sync_clipboard: bool,
     play_audio: bool,
     run_in_tray: bool,
+    service_tray: bool,
     autostart: bool,
     error: Option<String>,
 }
@@ -48,6 +49,7 @@ impl From<&Settings> for SettingsForm {
             sync_clipboard: s.viewer.sync_clipboard,
             play_audio: s.viewer.play_audio,
             run_in_tray: s.app.run_in_tray,
+            service_tray: !s.app.hide_tray_with_service,
             autostart: super::autostart::is_enabled(),
             error: None,
         }
@@ -193,6 +195,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         });
         #[cfg(windows)]
         if via_service {
+            row(ui, "Tray icon", |ui| {
+                ui.checkbox(&mut f.service_tray, "Show Slipstream in the tray while the service runs (from sign-in)");
+            });
             ui.label(
                 RichText::new("The service keeps its own copy of these settings: after saving, press Update to give it the new ones.")
                     .small()
@@ -280,6 +285,7 @@ fn save(app: &mut App) {
     }
     let f = &app.settings_form;
     let run_in_tray = f.run_in_tray;
+    let service_tray = f.service_tray;
     let key = Some(f.key.trim().to_string()).filter(|k| !k.is_empty());
     let (name, public, accept, input, clip, files, len, fps, sync) = (
         f.device_name.trim().to_string(),
@@ -319,6 +325,7 @@ fn save(app: &mut App) {
         s.viewer.sync_clipboard = sync;
         s.viewer.play_audio = play_audio;
         s.app.run_in_tray = run_in_tray;
+        s.app.hide_tray_with_service = !service_tray;
     });
     app.toast("Configuration saved", pal::GREEN);
 }

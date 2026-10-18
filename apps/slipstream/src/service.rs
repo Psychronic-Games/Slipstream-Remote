@@ -123,6 +123,11 @@ fn wait_for(service: &windows_service::service::Service, want: ServiceState, sec
     }
 }
 
+/// Starts the app (hidden, in the tray) at every user's sign-in while the
+/// service is installed.
+const RUN_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE: &str = "Slipstream Remote tray";
+
 /// `slipstream service install`: needs administrator rights.
 pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)
@@ -182,6 +187,14 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     if key.exists() {
         std::fs::copy(&key, home.join("identity.key"))?;
     }
+
+    // Every user's sign-in starts the app hidden in the tray, to show the
+    // service is there (each user can turn it off under Config).
+    let _ = Command::new("reg")
+        .args(["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d"])
+        .arg(format!("\"{}\" --minimized", installed.display()))
+        .arg("/f")
+        .status();
 
     // Let a service generate Ctrl+Alt+Del (SoftwareSASGeneration = services).
     let _ = Command::new("reg")
@@ -266,6 +279,7 @@ pub fn uninstall() -> Result<()> {
     let _ = Command::new("reg")
         .args(["delete", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "/v", "SoftwareSASGeneration", "/f"])
         .status();
+    let _ = Command::new("reg").args(["delete", RUN_KEY, "/v", RUN_VALUE, "/f"]).status();
     println!("Slipstream service removed.");
     Ok(())
 }

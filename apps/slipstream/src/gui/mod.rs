@@ -61,7 +61,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     let store = Store::open_default()?;
     // Only one Slipstream per profile: a second launch just brings the
     // running one to the front.
-    let Some(instance) = single::Instance::acquire(store.dir(), opts.link.as_deref()) else {
+    let Some(instance) = single::Instance::acquire(store.dir(), opts.link.as_deref(), opts.minimized) else {
         tracing::info!("Slipstream is already running; showing its window");
         return Ok(());
     };
@@ -78,6 +78,12 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     // identity): the app then only controls others.
     #[cfg(windows)]
     let via_service = crate::service::running();
+    // The service starts the app hidden at every sign-in, for its tray
+    // icon; this user turned that off.
+    #[cfg(windows)]
+    if via_service && opts.minimized && store.load_settings().app.hide_tray_with_service {
+        return Ok(());
+    }
     #[cfg(not(windows))]
     let via_service = false;
     let (client, events) =
@@ -1236,11 +1242,14 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
-        // Closing quits, unless the user chose to keep running in the tray.
+        // Closing quits, unless the user chose to keep running in the tray
+        // (or the service hosts this computer: the app then sits in the
+        // tray, unless they turned that off).
+        let app = self.client.settings().app;
         if ctx.input(|i| i.viewport().close_requested())
             && !self.quitting
             && self.tray.is_some()
-            && self.client.settings().app.run_in_tray
+            && (app.run_in_tray || (self.via_service && !app.hide_tray_with_service))
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if self.client.settings().app.tray_hint_shown {

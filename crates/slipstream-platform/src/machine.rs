@@ -154,7 +154,10 @@ pub fn collect() -> Vec<InfoSection> {
             .ip_networks()
             .iter()
             .filter(|n| !n.addr.is_loopback() && !matches!(n.addr, std::net::IpAddr::V6(v6) if v6.segments()[0] == 0xfe80))
-            .map(|n| n.addr.to_string())
+            .map(|n| match n.addr {
+                std::net::IpAddr::V4(a) => format!("{a} (mask {})", v4_mask(n.prefix)),
+                a => format!("{a}/{}", n.prefix),
+            })
             .collect();
         if ips.is_empty() {
             continue;
@@ -163,10 +166,174 @@ pub fn collect() -> Vec<InfoSection> {
         let mac = if mac == "00:00:00:00:00:00" { String::new() } else { format!(" · {mac}") };
         net.row(name.clone(), Some(format!("{}{mac}", ips.join(", "))));
     }
+    let routes = net_extras();
+    let gateways: Vec<String> = routes.gateways.iter().map(|(dev, gw)| if dev.is_empty() { gw.to_string() } else { format!("{gw} on {dev}") }).collect();
+    net.row(if gateways.len() > 1 { "Gateways" } else { "Gateway" }, Some(gateways.join(", ")).filter(|g| !g.is_empty()));
+    let dns: Vec<String> = routes.dns.iter().map(ToString::to_string).collect();
+    net.row("DNS servers", Some(dns.join(", ")).filter(|d| !d.is_empty()));
     out.push(net.done());
 
     out.retain(|s| !s.rows.is_empty());
     out
+}
+
+/// "255.255.255.0" for a /24.
+fn v4_mask(prefix: u8) -> std::net::Ipv4Addr {
+    let bits = if prefix == 0 { 0 } else { u32::MAX << (32 - u32::from(prefix.min(32))) };
+    std::net::Ipv4Addr::from(bits)
+}
+
+/// Default gateways (with their interface) and DNS servers.
+#[derive(Default)]
+struct NetExtras {
+    gateways: Vec<(String, std::net::IpAddr)>,
+    dns: Vec<std::net::IpAddr>,
+}
+
+impl NetExtras {
+    fn add_gateway(&mut self, dev: String, gw: std::net::IpAddr) {
+        if !gw.is_unspecified() && !self.gateways.iter().any(|(_, g)| *g == gw) {
+            self.gateways.push((dev, gw));
+        }
+    }
+    fn add_dns(&mut self, ip: std::net::IpAddr) {
+        if !self.dns.contains(&ip) {
+            self.dns.push(ip);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn net_extras() -> NetExtras {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use windows_sys::Win32::{
+        NetworkManagement::IpHelper::{
+            GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, GetAdaptersAddresses, IP_ADAPTER_ADDRESSES_LH,
+        },
+        Networking::WinSock::{AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6},
+    };
+    const ERROR_BUFFER_OVERFLOW: u32 = 111;
+    const IF_OPER_STATUS_UP: i32 = 1;
+    const IF_TYPE_SOFTWARE_LOOPBACK: u32 = 24;
+    // SAFETY: a sockaddr from GetAdaptersAddresses, read by its family.
+    let ip = |sa: *const SOCKADDR| unsafe {
+        if sa.is_null() {
+            return None;
+        }
+        match (*sa).sa_family {
+            AF_INET => Some(IpAddr::V4(Ipv4Addr::from((*(sa as *const SOCKADDR_IN)).sin_addr.S_un.S_addr.to_ne_bytes()))),
+            AF_INET6 => Some(IpAddr::V6(Ipv6Addr::from((*(sa as *const SOCKADDR_IN6)).sin6_addr.u.Byte))),
+            _ => None,
+        }
+    };
+    let mut out = NetExtras::default();
+    let flags = GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST;
+    // u64s: the adapter structs need 8-byte alignment.
+    let mut buf = vec![0u64; 4096];
+    // SAFETY: GetAdaptersAddresses fills `buf` (asking again with the size it
+    // wants if too small); the lists inside it are walked read-only.
+    unsafe {
+        for _ in 0..3 {
+            let mut len = (buf.len() * 8) as u32;
+            match GetAdaptersAddresses(AF_UNSPEC as u32, flags, std::ptr::null(), buf.as_mut_ptr().cast(), &mut len) {
+                0 => break,
+                ERROR_BUFFER_OVERFLOW => buf = vec![0u64; len as usize / 8 + 1],
+                _ => return out,
+            }
+        }
+        let mut a = buf.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
+        while !a.is_null() {
+            let ad = &*a;
+            if ad.OperStatus == IF_OPER_STATUS_UP && ad.IfType != IF_TYPE_SOFTWARE_LOOPBACK {
+                let name = if ad.FriendlyName.is_null() {
+                    String::new()
+                } else {
+                    let n = (0..).take_while(|&i| *ad.FriendlyName.add(i) != 0).count();
+                    String::from_utf16_lossy(std::slice::from_raw_parts(ad.FriendlyName, n))
+                };
+                let mut g = ad.FirstGatewayAddress;
+                while !g.is_null() {
+                    if let Some(addr) = ip((*g).Address.lpSockaddr) {
+                        out.add_gateway(name.clone(), addr);
+                    }
+                    g = (*g).Next;
+                }
+                let mut d = ad.FirstDnsServerAddress;
+                while !d.is_null() {
+                    // Site-local fec0:0:0:ffff::* are placeholders Windows lists when there's no IPv6 DNS.
+                    if let Some(addr) = ip((*d).Address.lpSockaddr).filter(|a| !matches!(a, IpAddr::V6(v6) if v6.segments()[0] == 0xfec0)) {
+                        out.add_dns(addr);
+                    }
+                    d = (*d).Next;
+                }
+            }
+            a = ad.Next;
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn net_extras() -> NetExtras {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    let mut out = NetExtras::default();
+    // Default routes: Destination 00000000 with RTF_GATEWAY; addresses are
+    // little-endian hex.
+    for line in std::fs::read_to_string("/proc/net/route").unwrap_or_default().lines().skip(1) {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() > 3
+            && f[1] == "00000000"
+            && let (Ok(gw), Ok(flags)) = (u32::from_str_radix(f[2], 16), u32::from_str_radix(f[3], 16))
+            && flags & 2 != 0
+        {
+            out.add_gateway(f[0].to_string(), IpAddr::V4(Ipv4Addr::from(gw.to_le_bytes())));
+        }
+    }
+    // dest(32 hex) dest_len src src_len next_hop metric refcnt use flags iface
+    for line in std::fs::read_to_string("/proc/net/ipv6_route").unwrap_or_default().lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() >= 10
+            && f[0].chars().all(|c| c == '0')
+            && f[1] == "00"
+            && !f[4].chars().all(|c| c == '0')
+            && f[9] != "lo"
+            && let Ok(v) = u128::from_str_radix(f[4], 16)
+        {
+            out.add_gateway(f[9].to_string(), IpAddr::V6(Ipv6Addr::from(v)));
+        }
+    }
+    // systemd-resolved's real upstream servers, not its 127.0.0.53 stub.
+    let conf = std::fs::read_to_string("/run/systemd/resolve/resolv.conf").or_else(|_| std::fs::read_to_string("/etc/resolv.conf")).unwrap_or_default();
+    for line in conf.lines() {
+        if let Some(ip) = line.trim().strip_prefix("nameserver").and_then(|r| r.trim().split('%').next()?.parse().ok()) {
+            out.add_dns(ip);
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "macos")]
+fn net_extras() -> NetExtras {
+    let run = |cmd: &str, args: &[&str]| {
+        std::process::Command::new(cmd).args(args).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    };
+    let mut out = NetExtras::default();
+    let route = run("route", &["-n", "get", "default"]);
+    let field = |k: &str| route.lines().find_map(|l| l.trim().strip_prefix(k).map(|v| v.trim().to_string()));
+    if let Some(gw) = field("gateway:").and_then(|g| g.parse().ok()) {
+        out.add_gateway(field("interface:").unwrap_or_default(), gw);
+    }
+    for line in run("scutil", &["--dns"]).lines() {
+        if let Some(ip) = line.trim().strip_prefix("nameserver[").and_then(|r| r.split_once(':')).and_then(|(_, v)| v.trim().parse().ok()) {
+            out.add_dns(ip);
+        }
+    }
+    out
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn net_extras() -> NetExtras {
+    NetExtras::default()
 }
 
 /// Builds one section, leaving out facts this computer doesn't report.

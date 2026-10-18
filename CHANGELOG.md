@@ -5,6 +5,23 @@ Build numbers are the git commit count. The app shows them as
 
 ## Unreleased
 
+### Windows, file transfer and the console look
+- With the Slipstream service installed, the app starts hidden in the
+  tray at every user's sign-in and stays there when its window is closed;
+  *Config → Tray icon* turns that off per user. Removing the service
+  removes the sign-in entry.
+- System information: subnet masks, default gateways and DNS servers
+  (Windows adapter table; Linux routing tables and the resolver's real
+  upstream servers; macOS `route`/`scutil`).
+- The file transfer window no longer grows back to the bottom of the
+  screen: a fraction of a pixel of overshoot each frame (the panes'
+  footer and text heights) fed back into its size. It's laid out with
+  panels and keeps slack now.
+- Dialogs have a console frame: header band with the title and a Close
+  segment, a rail down the left joined by elbows, and a footer band.
+  Scrollbars are a solid lavender bar on a dark track (orange while
+  dragged).
+
 ### Technician accounts, saved devices, several stations
 - Stations have technician accounts (admin page → **Technicians**). In the
   app, *Config → Stations* signs in to any number of stations, also other

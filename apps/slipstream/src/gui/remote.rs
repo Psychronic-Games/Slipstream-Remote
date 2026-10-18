@@ -818,9 +818,10 @@ impl RemoteTab {
             .collapsible(false)
             .default_pos(ctx.content_rect().min + vec2(24.0, 60.0))
             .default_width(680.0)
-            .default_height((ctx.content_rect().height() - 90.0).clamp(300.0, 720.0))
+            .default_height((ctx.content_rect().height() - 150.0).clamp(300.0, 700.0))
             .show(ctx, |ui| {
-                if theme::window_header(ui, &title, pal::GOLD) {
+                let chrome = theme::window_header(ui, &title, pal::GOLD);
+                if chrome.close {
                     open = false;
                 }
                 match &state {
@@ -847,7 +848,11 @@ impl RemoteTab {
                         ui.add_space(6.0);
                         // A new scroll area per answer, so it starts at the top
                         // (egui remembers scroll positions by id, across runs too).
-                        egui::ScrollArea::vertical().id_salt(("sysinfo", self.id, self.sysinfo_serial)).auto_shrink([false, false]).show(
+                        egui::ScrollArea::vertical()
+                            .id_salt(("sysinfo", self.id, self.sysinfo_serial))
+                            .auto_shrink([false, false])
+                            .max_height(ui.available_height() - theme::FOOTER_SPACE)
+                            .show(
                             ui,
                             |ui| {
                                 // One grid for every section: the label column fits the
@@ -867,6 +872,7 @@ impl RemoteTab {
                         );
                     }
                 }
+                chrome.footer(ui);
             });
         if refresh {
             self.fetch_sysinfo(ctx, rt, false);
@@ -888,7 +894,8 @@ impl RemoteTab {
             .resizable(false)
             .default_width(460.0)
             .show(ctx, |ui| {
-                if theme::window_header(ui, "Port forwarding", pal::GOLD) {
+                let chrome = theme::window_header(ui, "Port forwarding", pal::GOLD);
+                if chrome.close {
                     open = false;
                 }
                 ui.label(
@@ -936,6 +943,7 @@ impl RemoteTab {
                         .small()
                         .color(pal::DIM),
                 );
+                chrome.footer(ui);
             });
         if let Some(i) = close {
             self.tunnels.remove(i);

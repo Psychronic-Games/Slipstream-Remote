@@ -316,7 +316,8 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
         .default_width(460.0)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
         .show(ctx, |ui| {
-            if theme::window_header(ui, title, pal::VIOLET) {
+            let chrome = theme::window_header(ui, title, pal::VIOLET);
+            if chrome.close {
                 open = false;
             }
             egui::Grid::new("saved-editor-grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
@@ -374,6 +375,7 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                     delete = theme::pill(ui, "Remove", pal::RED).clicked();
                 }
             });
+            chrome.footer(ui);
         });
     if save {
         let id: DeviceId = match e.id.parse() {
@@ -433,7 +435,8 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
         .default_width(380.0)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
         .show(ctx, |ui| {
-            if theme::window_header(ui, &title, pal::ORANGE) {
+            let chrome = theme::window_header(ui, &title, pal::ORANGE);
+            if chrome.close {
                 open = false;
             }
             ui.label(RichText::new(format!("{} · its one-time or unattended password", p.id)).color(pal::DIM));
@@ -445,6 +448,7 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
             }
             ui.add_space(6.0);
             go |= theme::pill(ui, "Engage", pal::ORANGE).clicked();
+            chrome.footer(ui);
         });
     if go && !p.password.is_empty() {
         if p.remember {

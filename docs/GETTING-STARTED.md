@@ -329,7 +329,9 @@ With the service:
 - it runs from boot, before anyone logs in, and survives logging off;
 - it installs updates by itself;
 - the app on that computer stops hosting (the Bridge says *Service
-  running*) but can still control others.
+  running*) but can still control others;
+- the app starts hidden in the tray at every sign-in, so the service's
+  presence shows there (*Config → Tray icon* turns that off).
 
 The service keeps its own copy of the settings: after changing the
 unattended password or permissions, press **Update** next to it. From an

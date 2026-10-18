@@ -35,9 +35,10 @@ fn port_for(profile: &Path) -> u16 {
 
 impl Instance {
     /// Returns `None` if another instance is running (it has been asked to
-    /// show itself, and handed `link`). If the port is taken by something
-    /// else, carries on.
-    pub fn acquire(profile: &Path, link: Option<&str>) -> Option<Self> {
+    /// show itself, and handed `link`; `quiet`: left alone, for a launch
+    /// that starts hidden). If the port is taken by something else, carries
+    /// on.
+    pub fn acquire(profile: &Path, link: Option<&str>, quiet: bool) -> Option<Self> {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port_for(profile)));
         // Relaunched after an update: the old copy is still exiting, so wait
         // for it to release the instance port instead of handing off to it.
@@ -51,6 +52,9 @@ impl Instance {
         }
         match TcpListener::bind(addr) {
             Ok(listener) => Some(Self { listener }),
+            // Started hidden (at sign-in, possibly twice: the user's own
+            // autostart and the service's): nothing to bring up.
+            Err(_) if quiet && link.is_none() => None,
             Err(_) => {
                 if let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
                     let _ = s.set_read_timeout(Some(Duration::from_millis(800)));

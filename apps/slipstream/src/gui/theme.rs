@@ -135,6 +135,21 @@ pub fn install(ctx: &egui::Context) {
         v.widgets.active.bg_fill = pal::ORANGE.gamma_multiply(0.6);
         v.widgets.active.bg_stroke = Stroke::new(2.0, pal::ORANGE);
         v.widgets.open.bg_fill = Color32::from_rgb(28, 30, 52);
+        // Console scrollbars: a solid rounded bar (lavender, orange while
+        // dragged) on a dark track, instead of egui's thin grey one. The
+        // handle takes the widgets' foreground colour, as do check marks
+        // and arrows.
+        style.spacing.scroll = egui::style::ScrollStyle {
+            bar_width: 10.0,
+            handle_min_length: 32.0,
+            bar_inner_margin: 6.0,
+            bar_outer_margin: 2.0,
+            foreground_color: true,
+            ..egui::style::ScrollStyle::solid()
+        };
+        v.widgets.inactive.fg_stroke = Stroke::new(1.5, pal::LAVENDER.gamma_multiply(0.8));
+        v.widgets.hovered.fg_stroke = Stroke::new(1.5, pal::LAVENDER);
+        v.widgets.active.fg_stroke = Stroke::new(2.0, pal::ORANGE);
     });
 }
 
@@ -356,32 +371,92 @@ pub fn header(ui: &mut Ui, title: &str, color: Color32) {
     }
 }
 
-/// A floating window in the console style: no grey title bar (start its
-/// contents with [`window_header`]), the panel fill and a coloured edge.
-/// It's dragged by its background.
+// A floating window's console frame: a header band with the title and a
+// Close segment, a rail down the left joined to it by an elbow, and a
+// footer band joined by another (see `window_header`, `WindowChrome::footer`).
+const RAIL: f32 = 20.0;
+const RAIL_GAP: f32 = 14.0;
+const BAND: f32 = 30.0;
+const FOOT: f32 = 12.0;
+const ELBOW: f32 = 12.0;
+
+/// Height [`WindowChrome::footer`] takes: what a window's scrolling body
+/// must leave free below it, or the window grows by that much every frame.
+pub const FOOTER_SPACE: f32 = FOOT + 4.0 + 8.0 + 2.0;
+
+/// A floating window in the console style: no grey title bar; start its
+/// contents with [`window_header`] and end them with
+/// [`WindowChrome::footer`]. It's dragged by its background.
 pub fn window(id: &str, color: Color32) -> egui::Window<'static> {
     egui::Window::new(id.to_string()).title_bar(false).frame(
         egui::Frame::new()
             .fill(pal::PANEL)
-            .stroke(Stroke::new(1.5, color.gamma_multiply(0.75)))
-            .corner_radius(CornerRadius::same(16))
-            .inner_margin(egui::Margin::same(16))
+            .stroke(Stroke::new(1.0, color.gamma_multiply(0.35)))
+            .corner_radius(CornerRadius::same(20))
+            .inner_margin(egui::Margin { left: (12.0 + RAIL + RAIL_GAP) as i8, right: 14, top: 12, bottom: 12 })
             .shadow(egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(170) }),
     )
 }
 
-/// A [`window`]'s header: the panel header, its rule ending in a Close
-/// pill. True when that's pressed.
-pub fn window_header(ui: &mut Ui, title: &str, color: Color32) -> bool {
-    let mut close = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let w = (ui.available_width() - 86.0).max(80.0);
-        ui.allocate_ui(vec2(w, 26.0), |ui| header(ui, title, color));
-        close = pill_sized(ui, "Close", color, vec2(78.0, 26.0)).clicked();
-    });
-    ui.add_space(6.0);
-    close
+/// Where a window's frame goes, from its header to its footer.
+pub struct WindowChrome {
+    /// The Close segment was pressed.
+    pub close: bool,
+    top: f32,
+    left: f32,
+    right: f32,
+    color: Color32,
+}
+
+/// A [`window`]'s header band: the title on the window's colour, and a
+/// Close segment at its end.
+pub fn window_header(ui: &mut Ui, title: &str, color: Color32) -> WindowChrome {
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), BAND), Sense::hover());
+    let x0 = row.left() - RAIL - RAIL_GAP;
+    // The frame lies in the window's margin, outside the content's clip.
+    let p = ui.ctx().layer_painter(ui.layer_id());
+    let close_w = 86.0;
+    let close_rect = Rect::from_min_max(pos2(row.right() - close_w, row.top()), row.max);
+    let band = Rect::from_min_max(pos2(x0, row.top()), pos2(close_rect.left() - 4.0, row.bottom()));
+    p.rect_filled(band, CornerRadius { nw: 22, ..Default::default() }, color);
+    p.text(pos2(row.left() + 2.0, row.center().y), egui::Align2::LEFT_CENTER, title.to_uppercase(), display_bold(21.0), pal::BG);
+    let resp = ui.interact(close_rect, ui.scope_id().with(("window-close", title)), Sense::click());
+    let fill = if resp.hovered() { pal::TAN } else { color.gamma_multiply(0.8) };
+    p.rect_filled(close_rect, CornerRadius { ne: 15, se: 15, ..Default::default() }, fill);
+    p.text(close_rect.center(), egui::Align2::CENTER_CENTER, "CLOSE", display(17.0), pal::BG);
+    let close = resp.on_hover_text("Close").on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
+    ui.add_space(10.0);
+    WindowChrome { close, top: row.top(), left: row.left(), right: row.right(), color }
+}
+
+impl WindowChrome {
+    /// The footer band, and the rail and elbows joining it to the header.
+    /// Call it last, below the window's contents.
+    pub fn footer(&self, ui: &mut Ui) {
+        ui.add_space(4.0);
+        let (row, _) = ui.allocate_exact_size(vec2(ui.available_width().min(self.right - self.left).max(1.0), FOOT), Sense::hover());
+        let p = ui.ctx().layer_painter(ui.layer_id());
+        let (x0, c) = (self.left - RAIL - RAIL_GAP, self.color);
+        let rail_r = x0 + RAIL;
+        let (head_bottom, foot_top) = (self.top + BAND, row.top());
+        // Rail, in two segments with a break, like the main frame's.
+        let split = head_bottom + (foot_top - head_bottom) * 0.62;
+        p.rect_filled(Rect::from_min_max(pos2(x0, head_bottom - 1.0), pos2(rail_r, split - 2.0)), 0.0, c);
+        p.rect_filled(Rect::from_min_max(pos2(x0, split + 2.0), pos2(rail_r, foot_top + 1.0)), 0.0, c.gamma_multiply(0.7));
+        // Footer band, broken near its end.
+        let foot = Rect::from_min_max(pos2(x0, foot_top), pos2(self.right, row.bottom()));
+        let brk = foot.left() + foot.width() * 0.78;
+        p.rect_filled(Rect::from_min_max(foot.min, pos2(brk - 2.0, foot.bottom())), CornerRadius { sw: 14, ..Default::default() }, c.gamma_multiply(0.7));
+        p.rect_filled(Rect::from_min_max(pos2(brk + 2.0, foot.top()), foot.max), CornerRadius { ne: 6, se: 6, ..Default::default() }, c);
+        // The elbows' inner corners curve in.
+        for (fill, corner, center) in [
+            (c, Rect::from_min_size(pos2(rail_r, head_bottom), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, head_bottom + ELBOW)),
+            (c.gamma_multiply(0.7), Rect::from_min_size(pos2(rail_r, foot_top - ELBOW), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, foot_top - ELBOW)),
+        ] {
+            p.rect_filled(corner, 0.0, fill);
+            p.circle_filled(center, ELBOW, pal::PANEL);
+        }
+    }
 }
 
 /// A content panel with a header and HUD corner brackets.

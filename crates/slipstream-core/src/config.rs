@@ -144,6 +144,9 @@ pub struct AppSettings {
     pub run_in_tray: bool,
     /// The "still running in the tray" explanation was shown.
     pub tray_hint_shown: bool,
+    /// Windows: no tray icon while the Slipstream service hosts this
+    /// computer (by default the app sits in the tray then, from sign-in).
+    pub hide_tray_with_service: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
