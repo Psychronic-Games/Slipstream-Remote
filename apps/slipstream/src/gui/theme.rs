@@ -437,16 +437,32 @@ pub fn native_title_bar(ui: &mut Ui, title: &str) -> Rect {
     p.rect_stroke(bar,16.0,Stroke::new(1.0,pal::VIOLET),egui::StrokeKind::Inside);
     p.rect_filled(Rect::from_min_size(bar.min,vec2(14.0,bar.height())),CornerRadius {nw:16,sw:16,..Default::default()},pal::LAVENDER);
     let mut right=bar.right()-3.0;
-    for (label,hint,color,command) in [
-        ("CLOSE","Close",pal::PEACH,egui::ViewportCommand::Close),
-        (if maximized{"RESTORE"}else{"MAX"},if maximized{"Restore window"}else{"Maximize"},pal::LAVENDER,egui::ViewportCommand::Maximized(!maximized)),
-        ("MIN","Minimize",pal::BLUE,egui::ViewportCommand::Minimized(true)),
+    for (symbol,hint,color,command) in [
+        (0,"Close",pal::PEACH,egui::ViewportCommand::Close),
+        (if maximized{3}else{1},if maximized{"Restore window"}else{"Maximize"},pal::LAVENDER,egui::ViewportCommand::Maximized(!maximized)),
+        (2,"Minimize",pal::BLUE,egui::ViewportCommand::Minimized(true)),
     ] {
-        let width=if label=="RESTORE"{74.0}else{56.0};
+        let width=44.0;
         let rect=Rect::from_min_max(pos2(right-width,bar.top()+3.0),pos2(right,bar.bottom()-3.0));
         let response=ui.interact(rect,ui.scope_id().with(("native-window",hint)),Sense::click());
-        p.rect_filled(rect,14.0,if response.hovered(){pal::TAN}else{color});
-        p.text(rect.center(),Align2::CENTER_CENTER,label,display_bold(14.0),pal::BG);
+        let fill=if response.hovered(){pal::TAN}else{color};
+        p.rect_filled(rect,14.0,fill);
+        let icon=Rect::from_center_size(rect.center(),vec2(18.0,19.0));
+        let stroke=Stroke::new(2.0,pal::BG);
+        match symbol {
+            0=>{p.line_segment([icon.left_top()+vec2(2.0,2.0),icon.right_bottom()-vec2(2.0,2.0)],stroke);p.line_segment([icon.right_top()+vec2(-2.0,2.0),icon.left_bottom()+vec2(2.0,-2.0)],stroke);},
+            1|2=>{
+                let at=|(x,y):(f32,f32)|{let(x,y)=if symbol==2{(1.0-x,1.0-y)}else{(x,y)};icon.min+vec2(x*icon.width(),y*icon.height())};
+                for half in [&LOGO_LEFT,&LOGO_RIGHT]{p.add(Shape::convex_polygon(half.iter().copied().map(at).collect(),pal::BG,Stroke::NONE));}
+                let(a,b,half)=LOGO_SLASH;p.line_segment([at(a),at(b)],Stroke::new(half*2.0*icon.width(),fill));
+            },
+            _=>{
+                p.rect_stroke(Rect::from_min_max(icon.min+vec2(5.0,0.0),icon.max-vec2(0.0,5.0)),2.0,stroke,egui::StrokeKind::Inside);
+                let front=Rect::from_min_max(icon.min+vec2(0.0,5.0),icon.max-vec2(5.0,0.0));
+                p.rect_filled(front,2.0,fill);p.rect_stroke(front,2.0,stroke,egui::StrokeKind::Inside);
+            },
+        }
+        response.widget_info(||egui::WidgetInfo::labeled(egui::Role::Button,true,hint));
         if response.on_hover_text(hint).clicked(){ui.ctx().send_viewport_cmd(command);}
         right=rect.left()-4.0;
     }

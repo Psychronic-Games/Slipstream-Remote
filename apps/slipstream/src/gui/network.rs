@@ -309,6 +309,7 @@ impl NetworkScanner {
                     .show(ui, |ui| { if self.topology { self.topology(ui, host); } else { self.table(ui); } });
                 ui.label(RichText::new("Device names are best effort · TCP service names follow port conventions · silent devices may be missed").small().color(pal::DIM));
                 ui.label(RichText::new("Logical scan map: the remote gateway and discovered addresses; physical links are not discovered.").small().color(pal::DIM));
+                ui.add_space(18.0);
                 chrome.footer(ui);
                 close |= ui.input(|i| i.viewport().close_requested());
                 if close {

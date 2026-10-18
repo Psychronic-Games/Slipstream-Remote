@@ -438,6 +438,8 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     set_text(ui, BTN_UPDATE, "Install update");
     set_text(ui, BTN_FULL, "Try full window");
     set_text(ui, BTN_QUIT, "Quit");
+    set_text(ui,BTN_MIN,"Minimize");
+    set_text(ui,BTN_CLOSE,"Close");
     // SAFETY: live controls of our window.
     unsafe {
         ShowWindow(control(ui, BTN_UPDATE), if update { SW_SHOW } else { SW_HIDE });
@@ -565,8 +567,8 @@ unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
         BTN_UPDATE => ("INSTALL UPDATE", GREEN),
         BTN_FULL => ("FULL WINDOW", BLUE),
         BTN_QUIT => ("QUIT", RED),
-        BTN_MIN => ("MIN", BLUE),
-        BTN_CLOSE => ("CLOSE", PEACH),
+        BTN_MIN => ("", BLUE),
+        BTN_CLOSE => ("", PEACH),
         _ => ("", DIM),
     };
     let (hdc, mut r) = (d.hDC, d.rcItem);
@@ -584,8 +586,37 @@ unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
         bar(hdc, r, fill, (true, true), seams);
         SetBkMode(hdc, TRANSPARENT as i32);
         SetTextColor(hdc, 0);
-        DrawTextW(hdc, text.as_ptr(), -1, &mut r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if [BTN_MIN,BTN_CLOSE].contains(&(d.CtlID as i32)) {draw_window_symbol(hdc,r,d.CtlID as i32,fill);} else {
+            DrawTextW(hdc, text.as_ptr(), -1, &mut r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
         SelectObject(hdc, old_font);
+    }
+}
+
+/// Rasterize the shared delta mark or close cross on a compact title button.
+unsafe fn draw_window_symbol(hdc:HDC,button:RECT,kind:i32,fill:u32) {
+    const N:usize=20;
+    let mut pixels=vec![0u32;N*N];
+    let channels=|color:u32|[(color&255) as f32,((color>>8)&255) as f32,((color>>16)&255) as f32];
+    let (fg,bg)=(channels(BG),channels(fill));
+    for y in 0..N {for x in 0..N {
+        let mut coverage=0.0;
+        for sy in 0..4 {for sx in 0..4 {
+            let u=(x as f32+(sx as f32+0.5)/4.0)/N as f32;
+            let v=(y as f32+(sy as f32+0.5)/4.0)/N as f32;
+            let ink=if kind==BTN_MIN {theme::logo_shade(1.0-u,1.0-v).is_some()} else {
+                (0.15..0.85).contains(&u)&&(0.15..0.85).contains(&v)&&((u-v).abs()<0.07||(u+v-1.0).abs()<0.07)
+            };
+            if ink {coverage+=1.0/16.0;}
+        }}
+        let c=|i:usize|(bg[i]+(fg[i]-bg[i])*coverage) as u32;
+        pixels[y*N+x]=c(0)<<16|c(1)<<8|c(2);
+    }}
+    unsafe {
+        let mut info:BITMAPINFO=std::mem::zeroed();
+        info.bmiHeader=BITMAPINFOHEADER{biSize:size_of::<BITMAPINFOHEADER>() as u32,biWidth:N as i32,biHeight:-(N as i32),biPlanes:1,biBitCount:32,..std::mem::zeroed()};
+        let x=(button.left+button.right-N as i32)/2;let y=(button.top+button.bottom-N as i32)/2;
+        SetDIBitsToDevice(hdc,x,y,N as u32,N as u32,0,0,0,N as u32,pixels.as_ptr().cast(),&info,DIB_RGB_COLORS);
     }
 }
 

@@ -29,7 +29,9 @@ show in small print: `0.6.0 (build N · commit)`.
 ### Desktop and Windows host improvements
 - Rounded LCARS title strips replace OS decorations on Linux and Windows:
   drag, double-click maximize/restore, minimize, close and border resizing.
-  The scanner and incoming chat use the same controls; full screen hides the
+  Controls use down/up delta symbols, overlapping restore panels and a close
+  cross, with descriptive tooltips. The scanner and incoming chat use the same
+  controls; full screen hides the
   strip. The compact Windows fallback also has LCARS title controls.
 - System Information includes present peripherals with reported model/maker,
   installed printer queues and scanners, saved network drive mappings in
