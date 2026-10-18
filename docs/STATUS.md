@@ -7,7 +7,9 @@ picking the work back up.*
 yellow title rail. Background scanner repaints preserve remote control;
 focused tools still release held remote input and keep their keyboard
 events local. This fixes control-prompt flicker during browser/scan updates.
-The scanner's lower-left outer rail/footer join also has a wider curve.
+Lower-left outer rail/footer joins also have wider curves in the scanner,
+shared dialogs and the main session frame.
+Native window controls also have a small gap between their outlines.
 
 **0.14.0:** a single cyan scanner title rail with a curved left elbow,
 inset symbolic controls, peach Close and a fixed blue footer. Compact

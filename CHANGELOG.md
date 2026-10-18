@@ -24,8 +24,11 @@ show in small print: `0.6.0 (build N · commit)`.
 ### System Information
 - Use a red Close button to distinguish it from the yellow header rail.
 
-### Scanner frame
-- Smooth the lower-left outer rail/footer join with a full-size corner curve.
+### LCARS frame corners
+- Smooth the lower-left outer rail/footer joins with full-size corner curves
+  in Network Scan, System Information/shared dialogs and the main session.
+- Give native Minimize, Maximize/Restore and Close controls more separation
+  so their surrounding outlines do not touch.
 
 ## 0.14.0 — 2026-10-18
 

@@ -526,7 +526,7 @@ impl RemoteTab {
         // Claim the area so egui widgets underneath don't react.
         let resp = ui.interact(area, ui.scope_id().with(("video", self.id)), Sense::click_and_drag());
         let Some(rect) = self.video_rect else { return };
-        if self.closed.is_some() {
+        if self.closed.is_some() || !ctx.input(|i|i.focused) {
             return;
         }
         let hovered = resp.hovered() && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l == ui.layer_id()));

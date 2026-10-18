@@ -1489,6 +1489,7 @@ impl eframe::App for App {
         // their actual focus should release the remote window's control.
         let lost_focus = if root_input { !focused_now } else { focused_now };
         if root_input { self.window_focused = focused_now; }
+        if lost_focus { self.captured_keys.clear(); }
         let captured = match self.focused_tab_mut() {
             Some(tab) if lost_focus => {
                 tab.release_keyboard();

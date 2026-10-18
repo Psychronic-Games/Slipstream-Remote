@@ -683,6 +683,7 @@ pub fn session_rails(p: &egui::Painter, full: Rect, body: Rect) -> f32 {
         CornerRadius { sw: 12, se: 6, ..Default::default() },
         pal::BLUE,
     );
+    rail_outer_corner(p,pos2(left,bottom),18.0,pal::BLUE,Color32::BLACK);
 
     // A black break separates the right edge from the End Link control.
     let x = full.right() - 8.0;
@@ -728,6 +729,16 @@ const ELBOW: f32 = 12.0;
 /// Height [`WindowChrome::footer`] takes: what a window's scrolling body
 /// must leave free below it, or the window grows by that much every frame.
 pub const FOOTER_SPACE: f32 = FOOT + 4.0 + 8.0 + 2.0;
+
+// A side rail and thin footer overlap at this corner. Round their union,
+// rather than limiting the outer radius to the footer's height. Keep the
+// cutout inside the frame gutter, clear of scrolling content and controls.
+fn rail_outer_corner(p:&egui::Painter,bottom_left:Pos2,radius:f32,color:Color32,background:Color32) {
+    let rect=Rect::from_min_size(bottom_left-vec2(0.0,radius),vec2(radius,radius));
+    let p=p.with_clip_rect(rect.intersect(p.clip_rect()));
+    p.rect_filled(rect,0.0,background);
+    p.circle_filled(rect.right_top(),radius,color);
+}
 
 /// Desktop window chrome in the console palette. Returns the content area
 /// below the draggable title strip; full screen and mobile use the whole UI.
@@ -795,7 +806,7 @@ fn native_window_controls(ui:&Ui,bar:Rect,linked:bool,maximized:bool,desktop:boo
         if response.on_hover_text(hint).clicked(){
             if symbol==0 {close=true;} else {ui.ctx().send_viewport_cmd(command);}
         }
-        right=rect.left()-4.0;
+        right=rect.left()-8.0;
     }
     (right,close)
 }
@@ -843,12 +854,7 @@ pub fn scanner_frame(ui:&mut Ui,title:&str,desktop:bool)->(Rect,bool) {
     p.rect_filled(Rect::from_min_max(pos2(frame.left(),split+2.0),pos2(rail_right,foot_top)),0.0,pal::BLUE);
     let foot=Rect::from_min_max(pos2(frame.left(),foot_top),frame.max);
     p.rect_filled(foot,CornerRadius{sw:12,se:6,..Default::default()},pal::BLUE);
-    // Round the joined side/footer as one shape. A radius confined to the
-    // thin footer otherwise leaves a tight corner below the wider title arc.
-    let outer=Rect::from_min_size(pos2(frame.left(),frame.bottom()-18.0),vec2(18.0,18.0));
-    let corner=p.with_clip_rect(outer.intersect(p.clip_rect()));
-    corner.rect_filled(outer,0.0,pal::BG);
-    corner.circle_filled(outer.right_top(),18.0,pal::BLUE);
+    rail_outer_corner(p,frame.left_bottom(),18.0,pal::BLUE,pal::BG);
     // Restrict each concave cutout to the elbow, clear of all content.
     for (color,corner,center) in [
         (pal::CYAN,Rect::from_min_size(pos2(rail_right,bar.bottom()),vec2(22.0,22.0)),pos2(rail_right+22.0,bar.bottom()+22.0)),
@@ -935,6 +941,7 @@ impl WindowChrome {
         let brk = foot.left() + foot.width() * 0.78;
         p.rect_filled(Rect::from_min_max(foot.min, pos2(brk - 2.0, foot.bottom())), CornerRadius { sw: 14, ..Default::default() }, c.gamma_multiply(0.7));
         p.rect_filled(Rect::from_min_max(pos2(brk + 2.0, foot.top()), foot.max), CornerRadius { ne: 6, se: 6, ..Default::default() }, c);
+        rail_outer_corner(&p,foot.left_bottom(),22.0,c.gamma_multiply(0.7),pal::PANEL);
         // The elbows' inner corners curve in.
         for (fill, corner, center) in [
             (c, Rect::from_min_size(pos2(rail_r, head_bottom), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, head_bottom + ELBOW)),
