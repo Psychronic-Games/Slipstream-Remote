@@ -1,7 +1,12 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.11.3. Read this first when
+*Updated 2026-10-18; latest release 0.11.4. Read this first when
 picking the work back up.*
+
+**0.11.4:** clip floating-dialog elbow cutouts to their own rail geometry,
+so the frame no longer erases the Save button's lower-left corner in the
+Save a device / Edit device modal. The shared frame fix protects other
+dialog controls too.
 
 **0.11.3:** aligned console dropdowns and Tools entries, a blue menu
 selection palette, clearer Blank remote screen wording, and an LCARS

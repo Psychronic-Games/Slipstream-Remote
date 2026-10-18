@@ -13,6 +13,11 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Modal frame correction
+- Keep LCARS elbow cutouts inside their decorative rail area. The footer
+  curve could paint over the lower-left corner of Save in the device
+  editor, and over nearby controls in other floating dialogs.
+
 ## 0.11.3 — 2026-10-18
 
 ### Menus and communications window

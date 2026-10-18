@@ -879,6 +879,9 @@ impl WindowChrome {
             (c, Rect::from_min_size(pos2(rail_r, head_bottom), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, head_bottom + ELBOW)),
             (c.gamma_multiply(0.7), Rect::from_min_size(pos2(rail_r, foot_top - ELBOW), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, foot_top - ELBOW)),
         ] {
+            // Carve only this elbow: the rest of the circle can reach into
+            // the content and erase a button's lower-left corner.
+            let p = p.with_clip_rect(corner.intersect(p.clip_rect()));
             p.rect_filled(corner, 0.0, fill);
             p.circle_filled(center, ELBOW, pal::PANEL);
         }
