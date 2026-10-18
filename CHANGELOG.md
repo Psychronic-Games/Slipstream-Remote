@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.6.1 — 2026-10-17
+
 ### Faster video from the Windows service
 - With the service, the host captured the screen as a full GDI screenshot
   every frame, through a library call that made a new screen-sized bitmap
