@@ -5,6 +5,17 @@ use slipstream_session::DirStatus;
 
 use super::{App, Page, files, theme, theme::pal};
 
+/// Whether the Windows service is running, and its state in words.
+fn service_state() -> (bool, &'static str) {
+    #[cfg(windows)]
+    {
+        let s = crate::service::status_text();
+        (s == "Running", s)
+    }
+    #[cfg(not(windows))]
+    (true, "Running")
+}
+
 /// The ID the Windows service hosts this computer as, while it does.
 fn service_id(app: &App) -> Option<slipstream_core::directory::DeviceId> {
     #[cfg(windows)]
@@ -93,11 +104,27 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
                 );
             }
             ui.add_space(10.0);
+            let (running, state) = service_state();
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
-                theme::lamp(ui.painter(), rect.center(), pal::GREEN, t);
-                ui.label(RichText::new("SERVICE RUNNING · READY FOR LINK").font(theme::display(17.0)).color(pal::GREEN));
+                let color = if running { pal::GREEN } else { pal::RED };
+                theme::lamp(ui.painter(), rect.center(), color, t);
+                let text = if running { "SERVICE RUNNING · READY FOR LINK".to_string() } else { format!("SERVICE {} · NOT REACHABLE", state.to_uppercase()) };
+                ui.label(RichText::new(text).font(theme::display(17.0)).color(color));
             });
+            #[cfg(windows)]
+            if !running {
+                ui.add_space(6.0);
+                if let Some(why) = crate::service::start_problem() {
+                    ui.label(RichText::new(why).color(pal::PEACH));
+                }
+                ui.add_enabled_ui(!app.service_busy(), |ui| {
+                    if theme::pill(ui, if app.service_busy() { "Starting…" } else { "Start the service" }, pal::GREEN).clicked() {
+                        let ctx = ui.ctx().clone();
+                        app.service_action(&ctx, true, true);
+                    }
+                });
+            }
             return;
         }
         ui.label(RichText::new("ONE-TIME PASSWORD").font(theme::display(15.0)).color(pal::LAVENDER));

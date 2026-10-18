@@ -74,10 +74,15 @@ pub fn run(opts: GuiOptions) -> Result<()> {
         tracing::debug!("link handler not registered: {e:#}");
     }
     let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().enable_all().build()?);
-    // With the Windows service running, it hosts this computer (same
-    // identity): the app then only controls others.
+    // With the Windows service installed, it is this computer's host (one
+    // host per computer, one ID): the app then only controls others, and
+    // keeps the service running.
     #[cfg(windows)]
-    let via_service = crate::service::running();
+    let via_service = crate::service::installed();
+    #[cfg(windows)]
+    if via_service {
+        crate::service::keep_running();
+    }
     // The service starts the app hidden at every sign-in, for its tray
     // icon; this user turned that off.
     #[cfg(windows)]
@@ -587,7 +592,12 @@ impl App {
         };
         let (tx, rx) = oneshot::channel();
         // Adding or removing the service changes who hosts: restart then.
-        self.service_job = Some((install != self.via_service, install, rx));
+        let done = match (install, start_first) {
+            (true, true) => "The service is running",
+            (true, false) => "The service is installed and running",
+            (false, _) => "The service was removed",
+        };
+        self.service_job = Some((install != self.via_service, done, rx));
         let wake = ctx.clone();
         std::thread::spawn(move || {
             if start_first {
@@ -626,12 +636,12 @@ impl App {
     }
 
     fn poll_service(&mut self, ctx: &egui::Context) {
-        let Some((restart, install, rx)) = &mut self.service_job else { return };
+        let Some((restart, done, rx)) = &mut self.service_job else { return };
         let Ok(result) = rx.try_recv() else { return };
-        let (restart, install) = (*restart, *install);
+        let (restart, done) = (*restart, *done);
         self.service_job = None;
         match result {
-            Ok(()) if !restart => self.toast(if install { "The service has the new settings" } else { "The service was removed" }, pal::GREEN),
+            Ok(()) if !restart => self.toast(done, pal::GREEN),
             Ok(()) => {
                 self.toast("Done: restarting Slipstream", pal::GREEN);
                 if let Ok(exe) = std::env::current_exe()
@@ -1254,9 +1264,9 @@ impl App {
     }
 }
 
-/// A service install or removal under way: (restart afterwards, installing
-/// rather than removing, the result).
-type ServiceJob = (bool, bool, oneshot::Receiver<Result<(), String>>);
+/// A service install, start or removal under way: (restart afterwards,
+/// what to say when it worked, the result).
+type ServiceJob = (bool, &'static str, oneshot::Receiver<Result<(), String>>);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {

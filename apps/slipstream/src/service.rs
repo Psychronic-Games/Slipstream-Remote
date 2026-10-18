@@ -70,6 +70,12 @@ fn public_dir() -> PathBuf {
     machine_home().join("public")
 }
 
+/// The service's log (in the public folder: it holds no secrets, and
+/// whoever looks after this computer should be able to read it).
+pub fn log_path() -> PathBuf {
+    public_dir().join("slipstream.log")
+}
+
 /// The ID the service hosts this computer as (it's usually the app's own,
 /// but needn't be: then partners need this one). Looked up at most every
 /// two seconds.
@@ -84,6 +90,15 @@ pub fn hosted_id() -> Option<slipstream_core::directory::DeviceId> {
     let id = std::fs::read_to_string(public_dir().join("device-id.txt")).ok().and_then(|s| s.trim().parse().ok());
     *seen = Some((Instant::now(), id));
     id
+}
+
+/// Creates the public folder, readable by all users (the profile around it
+/// is administrators-only).
+fn ensure_public_dir() -> PathBuf {
+    let dir = public_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = Command::new("icacls").arg(&dir).args(["/grant", "*S-1-5-32-545:(OI)(CI)RX", "/Q"]).output();
+    dir
 }
 
 /// Run by the service: publishes the ID its host registered as, when it
@@ -145,6 +160,46 @@ pub fn installed() -> bool {
     status_text() != "Not installed"
 }
 
+pub fn is_running() -> bool {
+    status_text() == "Running"
+}
+
+/// Keeps an installed service running while the app is open: the service
+/// is this computer's host, so when it's stopped nobody can reach it.
+/// Started without the administrator prompt (see SERVICE_SDDL); gives up
+/// after a few failures in a row, which then show on the Config page.
+pub fn keep_running() {
+    std::thread::spawn(|| {
+        let mut failures = 0;
+        loop {
+            if state() == Some(ServiceState::Stopped) && failures < 3 {
+                match start() {
+                    Ok(()) => {
+                        tracing::info!("started the Slipstream service, which wasn't running");
+                        failures = 0;
+                    }
+                    Err(e) => {
+                        failures += 1;
+                        tracing::warn!("the Slipstream service isn't running and didn't start: {e:#}");
+                        *START_PROBLEM.lock().unwrap() = Some(format!("{e:#}"));
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_secs(20));
+        }
+    });
+}
+
+static START_PROBLEM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Why the app couldn't start the service, if it couldn't.
+pub fn start_problem() -> Option<String> {
+    if is_running() {
+        return None;
+    }
+    START_PROBLEM.lock().unwrap().clone()
+}
+
 /// Starts the installed service and checks that it keeps running. Works
 /// without administrator rights once [`install`] has let users start it.
 pub fn start() -> Result<()> {
@@ -169,7 +224,7 @@ const SERVICE_SDDL: &str = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCR
 
 /// The last few lines of the service's log, to explain a failed start.
 fn log_tail(lines: usize) -> String {
-    let log = std::fs::read_to_string(machine_home().join("slipstream.log")).unwrap_or_default();
+    let log = std::fs::read_to_string(log_path()).unwrap_or_default();
     let all: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).collect();
     all[all.len().saturating_sub(lines)..].join("\n")
 }
@@ -275,10 +330,8 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     }
     // Everyone may read the ID the service hosts as (see hosted_id); the
     // old one is gone until the service has registered again.
-    let public = public_dir();
-    std::fs::create_dir_all(&public)?;
+    let public = ensure_public_dir();
     let _ = std::fs::remove_file(public.join("device-id.txt"));
-    let _ = Command::new("icacls").arg(&public).args(["/grant", "*S-1-5-32-545:(OI)(CI)RX", "/Q"]).status();
     let machine = Store::open(&home)?;
     machine.save_settings(&settings)?;
     // Same identity, so the computer keeps its ID.
@@ -486,6 +539,7 @@ fn run_service() -> Result<()> {
         });
     };
     report(ServiceState::Running, 0);
+    ensure_public_dir();
     tracing::info!("service started (build {})", slipstream_core::BUILD_NUMBER);
     let exit = supervise(&stop_rx);
     tracing::info!("service stopped{}", if exit == 0 { ": Windows or an administrator asked it to" } else { ", to restart" });

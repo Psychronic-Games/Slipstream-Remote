@@ -134,7 +134,12 @@ impl Client {
     /// and starts background tasks. Must be called inside a tokio runtime.
     pub async fn start(store: Store, opts: ClientOptions) -> Result<(Self, mpsc::UnboundedReceiver<ClientEvent>)> {
         let settings = store.load_settings();
-        let secret = store.identity()?;
+        // The stored identity is this computer's ID, and only the one
+        // process that hosts it may use it: two endpoints with one key push
+        // each other off the relay. A client that only connects out (the
+        // app while the Windows service hosts, command-line tools) gets a
+        // throwaway key; nothing relies on a viewer's key staying the same.
+        let secret = if opts.accept_sessions { store.identity()? } else { iroh::SecretKey::generate() };
         let endpoint = net::bind_client(secret, &settings.server, opts.accept_sessions).await?;
         info!(endpoint = %endpoint.id(), "endpoint bound");
         let (events, rx) = mpsc::unbounded_channel();

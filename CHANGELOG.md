@@ -53,6 +53,20 @@ Build numbers are the git commit count. The app shows them as
   app's own ID, the Bridge says so and how to make them match. Before,
   it showed the app's ID, which partners then found offline.
 - A failed link is written to the log, with its reason.
+- One host per computer: once the service is installed it is the host,
+  whether or not it's running at that moment. Before, an app started
+  while the service was stopped hosted too, under the same key. The two
+  pushed each other off the relay, and links failed with both saying
+  they were connected. Quitting such an app also marked the computer
+  offline. Apps that only connect out (the app while the service
+  hosts, `slipstream connect` and other command-line tools) use a
+  throwaway key, so they never collide with the computer's host.
+- The app keeps an installed service running: if it's stopped, the app
+  starts it (no administrator prompt) and logs that. The Bridge shows
+  the service's live state with *Start the service* when it's down, and
+  Config's buttons follow the live state too.
+- The service logs to `ProgramData\Slipstream Remote\public`, readable
+  by every user. *Config → Service log* opens it.
 - The service may be started by signed-in users (not stopped or changed),
   so *Start* on a stopped service works without the administrator
   prompt, falling back to reinstalling if needed. After an install the

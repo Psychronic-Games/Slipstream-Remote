@@ -328,15 +328,20 @@ With the service:
   at the login screen; *Keys → Ctrl + Alt + Del* sends the real thing;
 - it runs from boot, before anyone logs in, and survives logging off;
 - it installs updates by itself;
-- the app on that computer stops hosting (the Bridge says *Service
-  running*) but can still control others;
+- the service is the computer's one host, under the app's ID (install
+  hands the ID over). The app on that computer stops hosting but can
+  still control others. Its Bridge shows the ID and whether the service
+  is running. If the service is stopped, the app starts it (no
+  administrator prompt needed) and offers *Start the service*;
 - the app starts hidden in the tray at every sign-in, so the service's
   presence shows there (*Config → Tray icon* turns that off).
 
 The service keeps its own copy of the settings: after changing the
 unattended password or permissions, press **Update** next to it. From an
 administrator command prompt: `slipstream service install [--password …]`,
-`slipstream service uninstall`, `slipstream service status`.
+`slipstream service uninstall`, `slipstream service status`, and (as any
+user) `slipstream service start`. The service's log is under *Config →
+Service log* (`C:\ProgramData\Slipstream Remote\public\slipstream.log`).
 
 For headless Linux machines, `slipstream host --password …` runs a host
 from the command line (it needs a logged-in graphical session to

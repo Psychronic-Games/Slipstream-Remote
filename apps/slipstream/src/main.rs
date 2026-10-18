@@ -208,7 +208,10 @@ fn main() -> anyhow::Result<()> {
     #[cfg(windows)]
     if let Some(Command::Service { action: ServiceCmd::Run | ServiceCmd::Host }) = &args.command {
         // SAFETY: still single-threaded here.
-        unsafe { std::env::set_var("SLIPSTREAM_HOME", service::machine_home()) };
+        unsafe {
+            std::env::set_var("SLIPSTREAM_HOME", service::machine_home());
+            std::env::set_var("SLIPSTREAM_LOG_DIR", service::log_path().parent().expect("in a folder"));
+        }
     }
     init_logging();
     if !matches!(args.command, Some(Command::ExportIcon { .. })) {
@@ -372,8 +375,14 @@ fn init_logging() {
     };
     // Local time, no module paths: the log is for people.
     let timer = || fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%S".into());
-    let file = slipstream_core::config::Store::open_default().ok().and_then(|store| {
-        let path = store.dir().join("slipstream.log");
+    // The Windows service logs where every user can read it (its profile
+    // is administrators-only); see main().
+    let dir = std::env::var_os("SLIPSTREAM_LOG_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| slipstream_core::config::Store::open_default().ok().map(|s| s.dir().to_path_buf()));
+    let file = dir.and_then(|dir| {
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("slipstream.log");
         // Keep the log small: start fresh once it passes 2 MB.
         let append = std::fs::metadata(&path).map(|m| m.len() < 2 * 1024 * 1024).unwrap_or(false);
         std::fs::OpenOptions::new().create(true).append(append).write(true).truncate(!append).open(path).ok()

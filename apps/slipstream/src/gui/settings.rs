@@ -180,7 +180,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             ui.add_enabled_ui(!service_busy, |ui| {
                 if service_busy {
                     theme::pill(ui, "Working…", pal::BLUE);
-                } else if via_service {
+                } else if crate::service::is_running() {
                     if theme::pill(ui, "Update", pal::BLUE).on_hover_text("Give the service this page's saved settings").clicked() {
                         service_clicked = Some((true, false));
                     }
@@ -204,6 +204,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             });
             let status = crate::service::status_text();
             ui.label(RichText::new(status).color(if status == "Running" { pal::GREEN } else { pal::DIM }));
+            if crate::service::installed() && ui.link(RichText::new("Service log").small()).on_hover_text(crate::service::log_path().display().to_string()).clicked() {
+                let _ = std::process::Command::new("notepad").arg(crate::service::log_path()).spawn();
+            }
         });
         #[cfg(windows)]
         if via_service {
