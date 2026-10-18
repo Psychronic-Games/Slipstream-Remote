@@ -97,7 +97,7 @@ pub fn hosted_id() -> Option<slipstream_core::directory::DeviceId> {
 fn ensure_public_dir() -> PathBuf {
     let dir = public_dir();
     let _ = std::fs::create_dir_all(&dir);
-    let _ = Command::new("icacls").arg(&dir).args(["/grant", "*S-1-5-32-545:(OI)(CI)RX", "/Q"]).output();
+    let _ = quiet("icacls").arg(&dir).args(["/grant", "*S-1-5-32-545:(OI)(CI)RX", "/Q"]).output();
     dir
 }
 
@@ -171,8 +171,13 @@ pub fn is_running() -> bool {
 pub fn keep_running() {
     std::thread::spawn(|| {
         let mut failures = 0;
+        let mut was_busy = false;
         loop {
-            if state() == Some(ServiceState::Stopped) && failures < 3 {
+            // Never while the app installs, starts or removes it (an
+            // install stops the service to replace the program: starting
+            // it then would run the old one), nor just after.
+            let busy = BUSY.load(std::sync::atomic::Ordering::Relaxed);
+            if !busy && !was_busy && state() == Some(ServiceState::Stopped) && failures < 3 {
                 match start() {
                     Ok(()) => {
                         tracing::info!("started the Slipstream service, which wasn't running");
@@ -181,23 +186,44 @@ pub fn keep_running() {
                     Err(e) => {
                         failures += 1;
                         tracing::warn!("the Slipstream service isn't running and didn't start: {e:#}");
-                        *START_PROBLEM.lock().unwrap() = Some(format!("{e:#}"));
+                        set_problem(Some(format!("{e:#}")));
                     }
                 }
             }
+            was_busy = busy;
             std::thread::sleep(Duration::from_secs(20));
         }
     });
 }
 
-static START_PROBLEM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Set while the app installs, starts or removes the service.
+static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Why the app couldn't start the service, if it couldn't.
+pub fn set_busy(on: bool) {
+    BUSY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+static PROBLEM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Remembers why the service couldn't be installed or started (`None`
+/// once it worked), for the Bridge and Config to show.
+pub fn set_problem(why: Option<String>) {
+    *PROBLEM.lock().unwrap() = why;
+}
+
+/// Why the service isn't running, if the app found out.
 pub fn start_problem() -> Option<String> {
     if is_running() {
         return None;
     }
-    START_PROBLEM.lock().unwrap().clone()
+    PROBLEM.lock().unwrap().clone()
+}
+
+/// The service's log: where this build writes it, or where builds before
+/// 34 did (administrators only).
+pub fn log_to_show() -> PathBuf {
+    let new = log_path();
+    if new.exists() { new } else { machine_home().join("slipstream.log") }
 }
 
 /// Starts the installed service and checks that it keeps running. Works
@@ -205,14 +231,16 @@ pub fn start_problem() -> Option<String> {
 pub fn start() -> Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
     let service = manager.open_service(NAME, ServiceAccess::QUERY_STATUS | ServiceAccess::START).context("opening the Slipstream service")?;
-    if service.query_status()?.current_state != ServiceState::Running {
-        service.start::<&str>(&[]).context("starting the service")?;
+    if service.query_status()?.current_state != ServiceState::Running
+        && let Err(e) = service.start::<&str>(&[])
+    {
+        bail!("Windows didn't start the service: {:#}\n{}", anyhow::Error::from(e), diagnose());
     }
     wait_for(&service, ServiceState::Running, 20);
     std::thread::sleep(Duration::from_secs(3));
     let now = service.query_status()?;
     if now.current_state != ServiceState::Running {
-        bail!("the service started but stopped again ({:?}, exit {:?})", now.current_state, now.exit_code);
+        bail!("the service started but stopped again ({:?}, exit {:?})\n{}", now.current_state, now.exit_code, diagnose());
     }
     Ok(())
 }
@@ -227,6 +255,51 @@ fn log_tail(lines: usize) -> String {
     let log = std::fs::read_to_string(log_path()).unwrap_or_default();
     let all: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).collect();
     all[all.len().saturating_sub(lines)..].join("\n")
+}
+
+/// A console tool (reg, icacls, sc…), without a console window flashing up.
+fn quiet(program: &str) -> Command {
+    use std::os::windows::process::CommandExt;
+    let mut c = Command::new(program);
+    c.creation_flags(CREATE_NO_WINDOW);
+    c
+}
+
+/// What Windows says about the service, for when it won't run: its state
+/// and exit code, the command it starts, and the Service Control Manager's
+/// messages about it in the last hour (the System event log).
+pub fn diagnose() -> String {
+    let run = |args: &[&str]| {
+        quiet(args[0]).args(&args[1..]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    };
+    let pick = |text: &str, keys: &[&str]| {
+        text.lines()
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|l| keys.iter().any(|k| l.starts_with(k)))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+    let mut out = vec![
+        pick(&run(&["sc", "queryex", NAME]), &["STATE", "WIN32_EXIT_CODE", "SERVICE_EXIT_CODE"]),
+        pick(&run(&["sc", "qc", NAME]), &["START_TYPE", "BINARY_PATH_NAME"]),
+    ];
+    let events = run(&[
+        "wevtutil",
+        "qe",
+        "System",
+        "/q:*[System[Provider[@Name='Service Control Manager'] and TimeCreated[timediff(@SystemTime) <= 3600000]]]",
+        "/c:40",
+        "/rd:true",
+        "/f:text",
+    ]);
+    for e in events.split("Event[").filter(|e| e.contains("Slipstream")).take(3) {
+        let date = e.lines().find_map(|l| l.trim().strip_prefix("Date:")).unwrap_or("").trim().to_string();
+        if let Some(d) = e.split("Description:").nth(1) {
+            out.push(format!("Windows ({date}): {}", d.split_whitespace().collect::<Vec<_>>().join(" ")));
+        }
+    }
+    out.retain(|l| !l.is_empty());
+    out.join("\n")
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -321,7 +394,7 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     std::fs::create_dir_all(&home)?;
     // SYSTEM and administrators only: the profile holds the device key and
     // the password digest.
-    let acl = Command::new("icacls")
+    let acl = quiet("icacls")
         .arg(&home)
         .args(["/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "/grant:r", "*S-1-5-32-544:(OI)(CI)F", "/T", "/Q"])
         .status()?;
@@ -346,14 +419,14 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
 
     // Every user's sign-in starts the app hidden in the tray, to show the
     // service is there (each user can turn it off under Config).
-    let _ = Command::new("reg")
+    let _ = quiet("reg")
         .args(["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d"])
         .arg(format!("\"{}\" --minimized", installed.display()))
         .arg("/f")
         .status();
 
     // Let a service generate Ctrl+Alt+Del (SoftwareSASGeneration = services).
-    let _ = Command::new("reg")
+    let _ = quiet("reg")
         .args([
             "add",
             r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
@@ -387,13 +460,13 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
         None => manager.create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START | ServiceAccess::QUERY_STATUS)?,
     };
     // Nice to have, so not fatal (Wine, for one, lacks some of these).
-    match Command::new("sc").args(["sdset", NAME, SERVICE_SDDL]).output() {
+    match quiet("sc").args(["sdset", NAME, SERVICE_SDDL]).output() {
         Ok(o) if o.status.success() => {}
         Ok(o) => tracing::warn!("letting users start the service: {}", String::from_utf8_lossy(&o.stdout).trim()),
         Err(e) => tracing::warn!("letting users start the service: {e}"),
     }
     if let Err(e) = service.set_description("Lets your support provider reach this computer, including the login screen and administrator prompts.") {
-        tracing::warn!("service description: {e}");
+        tracing::warn!("service description: {:#}", anyhow::Error::from(e));
     }
     // Restart after crashes, and after it exits to load an updated program.
     let restart = ServiceAction { action_type: ServiceActionType::Restart, delay: Duration::from_secs(3) };
@@ -406,9 +479,11 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
         })
         .and_then(|()| service.set_failure_actions_on_non_crash_failures(true));
     if let Err(e) = failure {
-        tracing::warn!("service restart policy (updates then need a manual restart): {e}");
+        tracing::warn!("service restart policy (updates then need a manual restart): {:#}", anyhow::Error::from(e));
     }
-    service.start::<&str>(&[]).context("starting the service")?;
+    if let Err(e) = service.start::<&str>(&[]) {
+        bail!("Windows didn't start the service: {:#}\n{}", anyhow::Error::from(e), diagnose());
+    }
     wait_for(&service, ServiceState::Running, 20);
     // Check it stays up: one that stops at once would otherwise look
     // installed, and the app wouldn't say why.
@@ -417,10 +492,11 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     if now.current_state != ServiceState::Running {
         let tail = log_tail(4);
         bail!(
-            "the service was installed but didn't keep running ({:?}, exit {:?}){}",
+            "the service was installed but didn't keep running ({:?}, exit {:?})\n{}{}",
             now.current_state,
             now.exit_code,
-            if tail.is_empty() { String::new() } else { format!(". Its log ends:\n{tail}") }
+            diagnose(),
+            if tail.is_empty() { String::new() } else { format!("\nIts log ends:\n{tail}") }
         );
     }
     println!("Slipstream service installed and running ({}).", installed.display());
@@ -488,10 +564,10 @@ pub fn uninstall() -> Result<()> {
         }
         let _ = std::fs::remove_dir(install_dir());
     }
-    let _ = Command::new("reg")
+    let _ = quiet("reg")
         .args(["delete", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "/v", "SoftwareSASGeneration", "/f"])
         .status();
-    let _ = Command::new("reg").args(["delete", RUN_KEY, "/v", RUN_VALUE, "/f"]).status();
+    let _ = quiet("reg").args(["delete", RUN_KEY, "/v", RUN_VALUE, "/f"]).status();
     println!("Slipstream service removed.");
     Ok(())
 }

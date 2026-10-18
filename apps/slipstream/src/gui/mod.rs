@@ -599,10 +599,13 @@ impl App {
         };
         self.service_job = Some((install != self.via_service, done, rx));
         let wake = ctx.clone();
+        crate::service::set_busy(true);
         std::thread::spawn(move || {
             if start_first {
                 match crate::service::start() {
                     Ok(()) => {
+                        crate::service::set_problem(None);
+                        crate::service::set_busy(false);
                         let _ = tx.send(Ok(()));
                         wake.request_repaint();
                         return;
@@ -625,6 +628,8 @@ impl App {
             if let Err(e) = &result {
                 tracing::warn!("service {}: {e}", if install { "install" } else { "removal" });
             }
+            crate::service::set_problem(result.as_ref().err().cloned());
+            crate::service::set_busy(false);
             let _ = tx.send(result);
             wake.request_repaint();
         });
@@ -651,7 +656,8 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
-            Err(e) => self.toast(format!("The service: {e}"), pal::RED),
+            // The details stay on the Config page (and the Bridge).
+            Err(e) => self.toast(format!("The service: {}", e.lines().next().unwrap_or("")), pal::RED),
         }
     }
 

@@ -204,10 +204,25 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             });
             let status = crate::service::status_text();
             ui.label(RichText::new(status).color(if status == "Running" { pal::GREEN } else { pal::DIM }));
-            if crate::service::installed() && ui.link(RichText::new("Service log").small()).on_hover_text(crate::service::log_path().display().to_string()).clicked() {
-                let _ = std::process::Command::new("notepad").arg(crate::service::log_path()).spawn();
+            if crate::service::installed() {
+                let log = crate::service::log_to_show();
+                if ui.link(RichText::new("Service log").small()).on_hover_text(log.display().to_string()).clicked() {
+                    let _ = std::process::Command::new("notepad").arg(log).spawn();
+                }
             }
         });
+        #[cfg(windows)]
+        if let Some(why) = crate::service::start_problem() {
+            // Windows' own explanation, to read or paste into a ticket.
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("WHY THE SERVICE ISN'T RUNNING").font(theme::display(14.0)).color(pal::PEACH));
+                if ui.small_button("Copy").clicked() {
+                    ui.ctx().copy_text(why.clone());
+                }
+            });
+            let mut text = why.as_str();
+            ui.add(egui::TextEdit::multiline(&mut text).desired_width(f32::INFINITY).desired_rows(3).font(egui::TextStyle::Small));
+        }
         #[cfg(windows)]
         if via_service {
             row(ui, "Tray icon", |ui| {

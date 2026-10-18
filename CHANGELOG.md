@@ -66,7 +66,17 @@ Build numbers are the git commit count. The app shows them as
   the service's live state with *Start the service* when it's down, and
   Config's buttons follow the live state too.
 - The service logs to `ProgramData\Slipstream Remote\public`, readable
-  by every user. *Config → Service log* opens it.
+  by every user. *Config → Service log* opens it (or the old,
+  administrators-only log from before build 34).
+- The app no longer starts the service while it's being installed,
+  started or removed. An install stops the service to replace the
+  program, and starting it in between ran the old program and failed the
+  install's own start.
+- When the service won't install or start, Config (and the Bridge) shows
+  Windows' own explanation, selectable and with *Copy*: the service's
+  state and exit code, its command line, and the Service Control
+  Manager's messages about it from the System event log. Console tools
+  the service code runs no longer flash a window.
 - The service may be started by signed-in users (not stopped or changed),
   so *Start* on a stopped service works without the administrator
   prompt, falling back to reinstalling if needed. After an install the
