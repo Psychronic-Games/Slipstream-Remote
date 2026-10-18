@@ -279,6 +279,7 @@ impl Speed {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_loop(
     capture: FrameStream,
     flow: Arc<Flow>,
