@@ -195,8 +195,10 @@ an update.
 ### Android (8 or newer): preview
 
 The Android app controls computers; being controlled from a computer comes
-later. Its screen layout is still the desktop's, and touch control of the
-remote screen is being built (issue 09).
+later (issue 09). In a session, tap to click, long-press to right-click,
+drag with one finger, pinch to zoom and drag two fingers to look around
+(or to scroll, when not zoomed in). Everything else is under **Console**.
+Typing on the remote computer from the phone's keyboard is next.
 
 1. Open the station's page on the phone and tap **Download** (the page
    picks Android by itself).

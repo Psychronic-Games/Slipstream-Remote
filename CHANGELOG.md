@@ -13,6 +13,29 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### The Android app on a phone
+- A handheld console on phones held upright: the title and a sensor sweep
+  at the top, the sections as a row of buttons at the bottom within reach
+  of a thumb, and pages whose forms stack instead of running off the
+  right edge. Short windows (a phone on its side) get slimmer elbows, so
+  every section button still fits.
+- Touch on the remote screen: tap to click, long-press to right-click,
+  drag with one finger, pinch to zoom around your fingers and drag two
+  fingers to look around the zoomed picture (or, not zoomed, to scroll).
+  Before, the first finger of a pinch already clicked on the remote
+  computer, and there was no zoom. Touchscreen laptops get the same.
+- In a session on a phone, the bar is the back button, a **Console** menu
+  (screens, fit to screen, full screen, keys, chat, files, sound, tools,
+  quality), the frame rate and End. Before, most buttons were cut off,
+  and the screen menu's "▾" was all that showed of it. Chat opens under
+  the picture.
+- The soft keyboard no longer flickers open and shut: as it slid up it
+  covered the field for a moment, and the app took that as the field
+  letting go of it.
+- The Android app no longer offers an ID and password: it can't be
+  controlled from a computer yet, so trying only failed. Its Bridge says
+  so, and Config leaves out the incoming access settings.
+
 ## 0.8.0 — 2026-10-18
 
 ### Android, first steps

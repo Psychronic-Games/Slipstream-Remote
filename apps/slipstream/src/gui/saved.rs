@@ -508,16 +508,26 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
         ui.add_space(6.0);
         ui.label(RichText::new("SIGN IN TO A STATION").font(theme::display(15.0)).color(pal::VIOLET));
         let mut go = false;
-        ui.horizontal_wrapped(|ui| {
+        // On a phone, one field under another.
+        let narrow = ui.available_width() < 600.0;
+        let mut form = |ui: &mut Ui| {
+            let full = ui.available_width() - 24.0;
+            let w = |wide: f32| if narrow { full } else { wide };
             let own = app.client.settings().server.url.unwrap_or_default();
-            let a = field(ui, &mut app.saved.station, if own.is_empty() { "support.example.com" } else { own.as_str() }, false, 210.0);
-            let b = field(ui, &mut app.saved.username, "username", false, 140.0);
-            let c = field(ui, &mut app.saved.password, "password", true, 160.0);
-            go = (a.lost_focus() || b.lost_focus() || c.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let a = field(ui, &mut app.saved.station, if own.is_empty() { "support.example.com" } else { own.as_str() }, false, w(210.0));
+            let b = field(ui, &mut app.saved.username, "username", false, w(140.0));
+            let c = field(ui, &mut app.saved.password, "password", true, w(160.0));
+            let mut go = (a.lost_focus() || b.lost_focus() || c.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let busy = app.saved.job.is_some();
             let label = if busy { "Signing in…" } else { "Sign in" };
             go |= ui.add_enabled_ui(!busy, |ui| theme::pill(ui, label, pal::VIOLET)).inner.clicked();
-        });
+            go
+        };
+        if narrow {
+            go = ui.vertical(form).inner;
+        } else {
+            ui.horizontal_wrapped(|ui| go = form(ui));
+        }
         if go {
             // An empty address means this app's own station.
             let station = Some(app.saved.station.trim().to_string())

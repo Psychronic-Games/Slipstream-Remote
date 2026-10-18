@@ -6,6 +6,7 @@ use slipstream_session::DirStatus;
 use super::{App, Page, files, theme, theme::pal};
 
 /// Whether the Windows service is running, and its state in words.
+#[cfg(not(target_os = "android"))]
 fn service_state() -> (bool, &'static str) {
     #[cfg(windows)]
     {
@@ -17,6 +18,7 @@ fn service_state() -> (bool, &'static str) {
 }
 
 /// The ID the Windows service hosts this computer as, while it does.
+#[cfg(not(target_os = "android"))]
 fn service_id(app: &App) -> Option<slipstream_core::directory::DeviceId> {
     #[cfg(windows)]
     if app.via_service {
@@ -57,6 +59,37 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     recent_panel(app, ui);
 }
 
+/// Android: the phone controls others, but can't be controlled yet (no
+/// screen capture or input there; issue 09), so it has no ID to give out.
+#[cfg(target_os = "android")]
+fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
+    theme::panel(ui, "This device", pal::LAVENDER, |ui| {
+        ui.label(
+            RichText::new("This phone controls other devices. Being controlled from a computer comes in a later version.")
+                .color(pal::DIM),
+        );
+        ui.add_space(8.0);
+        let (status, color) = match &app.dir_status {
+            DirStatus::NotConfigured => {
+                link_form(app, ui, t);
+                return;
+            }
+            DirStatus::Online { .. } | DirStatus::Ready => ("STATION LINK READY", pal::GREEN),
+            DirStatus::Connecting => ("CONTACTING SERVER…", pal::GOLD),
+            DirStatus::Error(_) => ("SERVER CONNECTION FAILED", pal::RED),
+        };
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+            theme::lamp(ui.painter(), rect.center(), color, t);
+            ui.label(RichText::new(status).font(theme::display(17.0)).color(color));
+        });
+        if let DirStatus::Error(e) = &app.dir_status {
+            ui.label(RichText::new(e).font(theme::body(16.0)).color(pal::PEACH));
+        }
+    });
+}
+
+#[cfg(not(target_os = "android"))]
 fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
     theme::panel(ui, "This device", pal::LAVENDER, |ui| {
         ui.label(RichText::new("Give your partner this ID and password to let them in.").color(pal::DIM));
@@ -194,8 +227,15 @@ fn link_form(app: &mut App, ui: &mut Ui, t: f64) {
             .inner
     };
     let mut go = false;
+    // On a phone the address gets a line of its own.
+    let narrow = ui.available_width() < 440.0;
+    let mut station = None;
+    if narrow {
+        station = Some(field(ui, &mut app.link_station, "support.example.com", ui.available_width() - 24.0));
+        ui.add_space(4.0);
+    }
     ui.horizontal(|ui| {
-        let a = field(ui, &mut app.link_station, "support.example.com", 190.0);
+        let a = station.take().unwrap_or_else(|| field(ui, &mut app.link_station, "support.example.com", 190.0));
         let c = field(ui, &mut app.link_code, "SETUP CODE", 110.0);
         go = (a.lost_focus() || c.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let label = if app.linking() { "Connecting…" } else { "Connect" };

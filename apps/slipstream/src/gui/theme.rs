@@ -254,6 +254,12 @@ fn fillet(painter: &egui::Painter, at: Pos2, r: f32, dx: f32, dy: f32, color: Co
 /// The active one is lit, outlined and points into the page; the rest are
 /// slightly dimmed so the selection is unmistakable.
 pub fn block_button(ui: &mut Ui, rect: Rect, label: &str, code: &str, color: Color32, active: bool) -> Response {
+    block_button_pointing(ui, rect, label, code, color, active, false)
+}
+
+/// A [`block_button`] whose active arrow points up (`up`: a row of them
+/// below the content, on a phone) instead of right.
+pub fn block_button_pointing(ui: &mut Ui, rect: Rect, label: &str, code: &str, color: Color32, active: bool, up: bool) -> Response {
     let resp = ui.interact(rect, ui.scope_id().with(label), Sense::click());
     let painter = ui.painter();
     let mut fill = if active { lighten(color, 0.15) } else { mix(color, Color32::BLACK, 0.28) };
@@ -271,8 +277,9 @@ pub fn block_button(ui: &mut Ui, rect: Rect, label: &str, code: &str, color: Col
     if active {
         painter.rect_stroke(rect.shrink(1.0), 2.0, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
         // Pointer into the content area.
-        let tip = pos2(rect.right() + 14.0, rect.center().y);
-        let arrow = vec![pos2(rect.right() + 2.0, rect.center().y - 10.0), tip, pos2(rect.right() + 2.0, rect.center().y + 10.0)];
+        let (c, side) = if up { (rect.center().x, rect.top()) } else { (rect.center().y, rect.right()) };
+        let at = |along: f32, out: f32| if up { pos2(along, side - out) } else { pos2(side + out, along) };
+        let arrow = vec![at(c - 10.0, 2.0), at(c, 14.0), at(c + 10.0, 2.0)];
         painter.add(Shape::convex_polygon(arrow, lighten(color, 0.15), Stroke::NONE));
     }
     painter.text(
@@ -586,6 +593,28 @@ pub fn input_frame() -> egui::Frame {
 /// instead of jumping.
 pub fn glide(ui: &egui::Ui, name: &'static str, value: f32) -> f32 {
     ui.ctx().animate_value_with_time(ui.scope_id().with(name), value, 0.35)
+}
+
+/// A sensor sweep: a busy trace with a scan line running across it (the
+/// handheld frame's header).
+pub fn sweep(painter: &egui::Painter, rect: Rect, t: f64, color: Color32) {
+    painter.rect_stroke(rect, 2.0, Stroke::new(1.0, color.gamma_multiply(0.35)), egui::StrokeKind::Inside);
+    let n = 64;
+    let scan = ((t * 0.45).fract() as f32) * rect.width();
+    let pts: Vec<Pos2> = (0..=n)
+        .map(|i| {
+            let f = i as f32 / n as f32;
+            let x = rect.left() + f * rect.width();
+            let k = t as f32;
+            // A few drifting waves, louder near the scan line.
+            let near = 1.0 - ((x - rect.left() - scan).abs() / (rect.width() * 0.35)).min(1.0);
+            let wave = (f * 23.0 + k * 3.1).sin() * 0.5 + (f * 57.0 - k * 5.3).sin() * 0.3 + (f * 131.0 + k * 1.7).sin() * 0.2;
+            pos2(x, rect.center().y - wave * rect.height() * (0.18 + 0.3 * near))
+        })
+        .collect();
+    painter.add(Shape::line(pts, Stroke::new(1.2, color)));
+    let x = rect.left() + scan;
+    painter.line_segment([pos2(x, rect.top() + 1.0), pos2(x, rect.bottom() - 1.0)], Stroke::new(2.0, color.gamma_multiply(0.9)));
 }
 
 pub fn spinner(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32, t: f64) {

@@ -19,6 +19,7 @@ mod softgl;
 mod settings;
 mod single;
 pub mod theme;
+mod touch;
 mod tray;
 mod video;
 
@@ -103,8 +104,10 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     }
     #[cfg(not(windows))]
     let via_service = false;
-    let (client, events) =
-        rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions: !via_service, ..Default::default() }))?;
+    // Android can't be controlled yet (no screen capture or input there,
+    // issue 09), so it only connects out.
+    let accept_sessions = !via_service && cfg!(not(target_os = "android"));
+    let (client, events) = rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions, ..Default::default() }))?;
 
     // Graphics wgpu can't use (Windows Server 2016's Direct3D 12 can't run
     // the shaders it needs, for one) get the built-in software renderer,
@@ -209,6 +212,18 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     rt.block_on(client.shutdown());
     Ok(())
 }
+
+/// Narrower than this (a phone held upright), the console is the handheld
+/// layout (sections in a row along the bottom) and pages stack their parts.
+pub const NARROW: f32 = 600.0;
+
+/// The console's sections: label, page, colour.
+const NAV: [(&str, Page, Color32); 4] = [
+    ("Bridge", Page::Home, pal::PEACH),
+    ("Links", Page::Links, pal::BLUE),
+    ("Config", Page::Settings, pal::VIOLET),
+    ("About", Page::About, pal::GOLD),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -769,28 +784,34 @@ impl App {
         let t = self.time();
         let painter = ui.painter().clone();
         theme::backdrop(&painter, full, t);
+        if full.width() < NARROW {
+            return self.draw_frame_narrow(ui, full, t);
+        }
 
         let m = 10.0;
         let (l, top, r, b) = (full.left() + m, full.top() + m, full.right() - m, full.bottom() - m);
         let arm_w = 150.0;
         let bar_h = 26.0;
         let gap = 6.0;
+        // Short windows (a phone on its side) get slimmer elbows, so the
+        // section buttons still fit between them.
+        let short = full.height() < 600.0;
         let elbow_w = ((r - l) * 0.34).max(arm_w + 120.0);
-        let top_elbow = Rect::from_min_max(pos2(l, top), pos2(l + elbow_w, top + 92.0));
-        let bot_elbow = Rect::from_min_max(pos2(l, b - 70.0), pos2(l + elbow_w, b));
+        let top_elbow = Rect::from_min_max(pos2(l, top), pos2(l + elbow_w, top + if short { 64.0 } else { 92.0 }));
+        let bot_elbow = Rect::from_min_max(pos2(l, b - if short { 48.0 } else { 70.0 }), pos2(l + elbow_w, b));
         theme::elbow(&painter, top_elbow, arm_w, bar_h, Corner::TopLeft, pal::ORANGE);
         theme::elbow(&painter, bot_elbow, arm_w, bar_h, Corner::BottomLeft, pal::LAVENDER);
 
         // Elbow labels.
         painter.text(
-            pos2(l + arm_w - 10.0, top + 86.0),
+            pos2(l + arm_w - 10.0, top_elbow.bottom() - 6.0),
             Align2::RIGHT_BOTTOM,
             theme::readout(7, t, 6),
             theme::mono(13.0),
             Color32::BLACK,
         );
         painter.text(
-            pos2(l + arm_w - 10.0, b - 60.0),
+            pos2(l + arm_w - 10.0, bot_elbow.top() + 10.0),
             Align2::RIGHT_TOP,
             format!("v{}", slipstream_core::APP_VERSION),
             theme::mono(13.0),
@@ -847,27 +868,13 @@ impl App {
         // Sidebar navigation between the elbows.
         let nav_top = top_elbow.bottom() + gap;
         let nav_bottom = bot_elbow.top() - gap;
-        let items: [(&str, Page, Color32); 4] = [
-            ("Bridge", Page::Home, pal::PEACH),
-            ("Links", Page::Links, pal::BLUE),
-            ("Config", Page::Settings, pal::VIOLET),
-            ("About", Page::About, pal::GOLD),
-        ];
-        let item_h = 54.0;
+        let item_h = if short { 44.0 } else { 54.0 };
         let mut y = nav_top;
-        for (i, (label, page, color)) in items.into_iter().enumerate() {
+        for i in 0..NAV.len() {
             if y + item_h > nav_bottom {
                 break;
             }
-            let rect = Rect::from_min_size(pos2(l, y), vec2(arm_w, item_h));
-            let active = self.page == page || (page == Page::Links && matches!(self.page, Page::Remote(_)));
-            let mut text = label.to_string();
-            if page == Page::Links && !self.tabs.is_empty() {
-                text = format!("{label} · {}", self.tabs.len());
-            }
-            if theme::block_button(ui, rect, &text, &format!("{:02}-{}", i + 1, 40 + i * 13), color, active).clicked() {
-                self.page = if page == Page::Links && self.tabs.len() == 1 { Page::Remote(self.tabs[0].id) } else { page };
-            }
+            self.nav_button(ui, i, Rect::from_min_size(pos2(l, y), vec2(arm_w, item_h)), false);
             y += item_h + gap;
         }
         // Filler block with ticking readouts.
@@ -892,6 +899,67 @@ impl App {
         // Content area: inside the frame (below the organisation name, if shown).
         let content_top = top + bar_h + if self.org.is_some() { 44.0 } else { 22.0 };
         Rect::from_min_max(pos2(l + arm_w + 22.0, content_top), pos2(r, b - bar_h - 16.0))
+    }
+
+    /// Section button `i` of [`NAV`]; `up`: in a row below the content.
+    fn nav_button(&mut self, ui: &mut Ui, i: usize, rect: Rect, up: bool) {
+        let (label, page, color) = NAV[i];
+        let active = self.page == page || (page == Page::Links && matches!(self.page, Page::Remote(_)));
+        let mut text = label.to_string();
+        if page == Page::Links && !self.tabs.is_empty() {
+            text = format!("{label} · {}", self.tabs.len());
+        }
+        if theme::block_button_pointing(ui, rect, &text, &format!("{:02}-{}", i + 1, 40 + i * 13), color, active, up).clicked() {
+            self.page = if page == Page::Links && self.tabs.len() == 1 { Page::Remote(self.tabs[0].id) } else { page };
+        }
+    }
+
+    /// The frame on a phone held upright, laid out like a handheld
+    /// scanner: the title and a sensor sweep at the top, the sections as a
+    /// row of buttons at the bottom (within reach of a thumb), the status
+    /// along the bottom edge.
+    fn draw_frame_narrow(&mut self, ui: &mut Ui, full: Rect, t: f64) -> Rect {
+        let painter = ui.painter().clone();
+        let m = 8.0;
+        let (l, top, r, b) = (full.left() + m, full.top() + m, full.right() - m, full.bottom() - m);
+        let (arm_w, bar_h, gap) = (48.0, 22.0, 5.0);
+
+        // Header: an elbow, the title on its bar, a sweep and the
+        // organisation under it.
+        let elbow = Rect::from_min_max(pos2(l, top), pos2(l + arm_w + 36.0, top + 58.0));
+        theme::elbow(&painter, elbow, arm_w, bar_h, Corner::TopLeft, pal::ORANGE);
+        let title = painter.layout_no_wrap("SLIPSTREAM REMOTE".into(), theme::display_bold(26.0), pal::ORANGE);
+        let title_pos = pos2(r - title.size().x, top + bar_h / 2.0 - title.size().y / 2.0);
+        let logo = Rect::from_min_size(pos2(title_pos.x - 30.0, top - 2.0), vec2(26.0, 26.0));
+        painter.galley(title_pos, title, pal::ORANGE);
+        let tex = self.logo_texture(ui.ctx());
+        painter.image(tex, logo, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        bar_segments(&painter, elbow.right() + gap, logo.left() - 8.0, top, bar_h, gap, &[(0.6, pal::PEACH), (0.4, pal::TAN)], t, true);
+        let band = Rect::from_min_max(pos2(l + arm_w + 10.0, top + bar_h + 8.0), pos2(r, elbow.bottom()));
+        let mut sweep_right = band.right();
+        if let Some(org) = &self.org {
+            let g = painter.layout_no_wrap(org.to_uppercase(), theme::display(15.0), pal::LAVENDER);
+            sweep_right -= g.size().x + 10.0;
+            painter.galley(pos2(r - g.size().x, band.center().y - g.size().y / 2.0), g, pal::LAVENDER);
+        }
+        if sweep_right - band.left() > 40.0 {
+            theme::sweep(&painter, Rect::from_min_max(band.min, pos2(sweep_right, band.bottom())), t, pal::CYAN);
+        }
+
+        // Footer: the status bar, and the section buttons above it.
+        let (status_text, status_color) = self.status_line();
+        let status = painter.layout_no_wrap(status_text, theme::display(15.0), status_color);
+        let status_x = r - status.size().x;
+        bar_segments(&painter, l, status_x - 10.0, b - bar_h, bar_h, gap, &[(0.3, pal::LAVENDER), (0.4, pal::BLUE), (0.3, pal::GOLD)], t, false);
+        painter.galley(pos2(status_x, b - bar_h / 2.0 - status.size().y / 2.0), status, status_color);
+        let pad_h = 52.0;
+        let pad_y = b - bar_h - gap - pad_h;
+        let w = (r - l - gap * (NAV.len() - 1) as f32) / NAV.len() as f32;
+        for i in 0..NAV.len() {
+            self.nav_button(ui, i, Rect::from_min_size(pos2(l + i as f32 * (w + gap), pad_y), vec2(w, pad_h)), true);
+        }
+
+        Rect::from_min_max(pos2(l + 2.0, elbow.bottom() + 12.0), pos2(r, pad_y - 20.0))
     }
 
     /// The Slipstream mark as a texture (rendered once).
@@ -1523,6 +1591,8 @@ impl eframe::App for App {
         self.draw_tray_hint(&ctx);
         self.draw_attempt_overlay(&ctx);
         self.draw_toasts(&ctx);
+        #[cfg(target_os = "android")]
+        android::hold_keyboard(&ctx);
         self.maybe_screenshot(&ctx);
     }
 }

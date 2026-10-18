@@ -22,6 +22,8 @@ static APP: OnceLock<(AndroidApp, egui::Context)> = OnceLock::new();
 /// The keyboard's Enter/Done presses not yet passed on.
 static ENTERS: AtomicU32 = AtomicU32::new(0);
 static TYPED: Mutex<Typed> = Mutex::new(Typed { sent: String::new(), focus: None });
+/// The keyboard request the focused text field last made ([`hold_keyboard`]).
+static LAST_IME: Mutex<Option<egui::output::IMEOutput>> = Mutex::new(None);
 /// What [`keep_focus_in_view`] last saw: the focused widget, the visible area.
 static IN_VIEW: Mutex<Option<(Option<egui::Id>, egui::Rect)>> = Mutex::new(None);
 
@@ -122,4 +124,19 @@ pub fn keep_focus_in_view(ui: &egui::Ui) {
     {
         field.scroll_to_me(Some(egui::Align::Center));
     }
+}
+
+/// egui asks for the keyboard only while the focused field is on screen.
+/// As the keyboard slides up it covers the field for a moment (until it's
+/// scrolled into view), and winit closed the keyboard again: on phones it
+/// flickered open and shut. So the request stands while a text field has
+/// focus. Call after drawing.
+pub fn hold_keyboard(ctx: &egui::Context) {
+    let focused = ctx.text_edit_focused();
+    let mut last = LAST_IME.lock().unwrap_or_else(|e| e.into_inner());
+    ctx.output_mut(|o| match (o.ime, focused) {
+        (Some(ime), _) => *last = Some(ime),
+        (None, true) => o.ime = *last,
+        (None, false) => *last = None,
+    });
 }

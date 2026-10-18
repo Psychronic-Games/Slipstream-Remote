@@ -61,6 +61,14 @@ impl SettingsForm {
 }
 
 fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
+    // On a phone the label goes above what it labels.
+    if ui.available_width() < 480.0 {
+        ui.add_space(2.0);
+        ui.label(RichText::new(label.to_uppercase()).font(theme::display(16.0)).color(pal::LAVENDER));
+        ui.vertical(add);
+        ui.add_space(4.0);
+        return;
+    }
     ui.horizontal(|ui| {
         ui.allocate_ui(vec2(210.0, 30.0), |ui| {
             ui.set_width(210.0);
@@ -71,6 +79,11 @@ fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
 }
 
 fn text_field(ui: &mut Ui, value: &mut String, hint: &str, password: bool) -> egui::Response {
+    let width = ui.available_width().min(520.0);
+    text_field_sized(ui, value, hint, password, width)
+}
+
+fn text_field_sized(ui: &mut Ui, value: &mut String, hint: &str, password: bool, width: f32) -> egui::Response {
     theme::input_frame()
         .show(ui, |ui| {
             ui.add(
@@ -78,7 +91,7 @@ fn text_field(ui: &mut Ui, value: &mut String, hint: &str, password: bool) -> eg
                     .hint_text(hint)
                     .password(password)
                     .frame(egui::Frame::NONE)
-                    .desired_width(ui.available_width().min(520.0)),
+                    .desired_width(width),
             )
         })
         .inner
@@ -121,7 +134,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         });
         row(ui, "Setup code", |ui| {
             ui.horizontal(|ui| {
-                let r = text_field(ui, &mut app.link_code, "from the station's download page (fills in the key)", false);
+                // Leave room for the button.
+                let width = (ui.available_width() - 130.0).min(520.0);
+                let r = text_field_sized(ui, &mut app.link_code, "from the station's download page (fills in the key)", false, width);
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let label = if linking { "Connecting…" } else { "Connect" };
                 link_now = ui.add_enabled_ui(!linking, |ui| theme::pill(ui, label, pal::BLUE)).inner.clicked() || enter;
@@ -133,109 +148,112 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     });
     ui.add_space(14.0);
 
-    theme::panel(ui, "Incoming access", pal::ORANGE, |ui| {
-        row(ui, "Accept connections", |ui| {
-            ui.checkbox(&mut f.accept, "Allow others to connect to this device");
-        });
-        row(ui, "Permissions", |ui| {
-            ui.checkbox(&mut f.allow_input, "Control");
-            ui.checkbox(&mut f.allow_clipboard, "Clipboard");
-            ui.checkbox(&mut f.allow_files, "Files");
-            ui.checkbox(&mut f.allow_audio, "Sound");
-            ui.checkbox(&mut f.allow_tunnels, "Port forwarding").on_hover_text(
-                "Let the person connecting reach services on this computer and its network through the link (e.g. Remote Desktop). Off unless you need it.",
-            );
-        });
-        row(ui, "One-time password length", |ui| {
-            ui.add(egui::Slider::new(&mut f.password_len, 4..=12));
-        });
-        row(ui, "Unattended password", |ui| {
-            text_field(ui, &mut f.new_permanent, if f.has_permanent { "•••••••• (set — type to replace)" } else { "not set" }, true);
-            if f.has_permanent && theme::pill(ui, "Remove", pal::RED).clicked() {
-                f.has_permanent = false;
-                f.new_permanent.clear();
-            }
-        });
-        ui.label(
-            RichText::new("A permanent password lets you reach this device when nobody is at it. Use a long one — it is never stored in plain text.")
-                .small()
-                .color(pal::DIM),
-        );
-        row(ui, "Start with system", |ui| {
-            if ui.checkbox(&mut f.autostart, "Launch hidden in the tray when you log in").changed() && f.autostart {
-                f.run_in_tray = true; // autostart only makes sense if it keeps running
-            }
-        });
-        row(ui, "Close button", |ui| {
-            ui.checkbox(&mut f.run_in_tray, "Keep running in the tray when the window is closed (stay reachable)");
-        });
-        row(ui, "Screen permission", |ui| {
-            if theme::pill(ui, "Reset", pal::VIOLET).clicked() {
-                reset_permission = true;
-            }
-        });
-        #[cfg(windows)]
-        row(ui, "Windows service", |ui| {
-            let tip = "Unattended access including UAC prompts, elevated windows and the login screen. Needs administrator rights and an unattended password.";
-            ui.add_enabled_ui(!service_busy, |ui| {
-                if service_busy {
-                    theme::pill(ui, "Working…", pal::BLUE);
-                } else if crate::service::is_running() {
-                    if theme::pill(ui, "Update", pal::BLUE).on_hover_text("Give the service this page's saved settings").clicked() {
-                        service_clicked = Some((true, false));
-                    }
-                    if theme::pill(ui, "Remove", pal::RED).clicked() {
-                        service_clicked = Some((false, false));
-                    }
-                } else if crate::service::installed() {
-                    // Installed but not running (stopped, or failed to start).
-                    if theme::pill(ui, "Start", pal::BLUE).on_hover_text("Start the service (reinstalling it if needed)").clicked() {
-                        service_clicked = Some((true, true));
-                    }
-                    if theme::pill(ui, "Reinstall", pal::VIOLET).on_hover_text("Install this version of the service again and start it").clicked() {
-                        service_clicked = Some((true, false));
-                    }
-                    if theme::pill(ui, "Remove", pal::RED).clicked() {
-                        service_clicked = Some((false, false));
-                    }
-                } else if theme::pill(ui, "Install", pal::BLUE).on_hover_text(tip).clicked() {
-                    service_clicked = Some((true, false));
-                }
+    // Android can't be controlled yet (issue 09): nothing to set up here.
+    if cfg!(not(target_os = "android")) {
+        theme::panel(ui, "Incoming access", pal::ORANGE, |ui| {
+            row(ui, "Accept connections", |ui| {
+                ui.checkbox(&mut f.accept, "Allow others to connect to this device");
             });
-            let status = crate::service::status_text();
-            ui.label(RichText::new(status).color(if status == "Running" { pal::GREEN } else { pal::DIM }));
-            if crate::service::installed() {
-                let log = crate::service::log_to_show();
-                if ui.link(RichText::new("Service log").small()).on_hover_text(log.display().to_string()).clicked() {
-                    let _ = std::process::Command::new("notepad").arg(log).spawn();
-                }
-            }
-        });
-        #[cfg(windows)]
-        if let Some(why) = crate::service::start_problem() {
-            // Windows' own explanation, to read or paste into a ticket.
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("WHY THE SERVICE ISN'T RUNNING").font(theme::display(14.0)).color(pal::PEACH));
-                if ui.small_button("Copy").clicked() {
-                    ui.ctx().copy_text(why.clone());
-                }
+            row(ui, "Permissions", |ui| {
+                ui.checkbox(&mut f.allow_input, "Control");
+                ui.checkbox(&mut f.allow_clipboard, "Clipboard");
+                ui.checkbox(&mut f.allow_files, "Files");
+                ui.checkbox(&mut f.allow_audio, "Sound");
+                ui.checkbox(&mut f.allow_tunnels, "Port forwarding").on_hover_text(
+                    "Let the person connecting reach services on this computer and its network through the link (e.g. Remote Desktop). Off unless you need it.",
+                );
             });
-            let mut text = why.as_str();
-            ui.add(egui::TextEdit::multiline(&mut text).desired_width(f32::INFINITY).desired_rows(3).font(egui::TextStyle::Small));
-        }
-        #[cfg(windows)]
-        if via_service {
-            row(ui, "Tray icon", |ui| {
-                ui.checkbox(&mut f.service_tray, "Show Slipstream in the tray while the service runs (from sign-in)");
+            row(ui, "One-time password length", |ui| {
+                ui.add(egui::Slider::new(&mut f.password_len, 4..=12));
+            });
+            row(ui, "Unattended password", |ui| {
+                text_field(ui, &mut f.new_permanent, if f.has_permanent { "•••••••• (set — type to replace)" } else { "not set" }, true);
+                if f.has_permanent && theme::pill(ui, "Remove", pal::RED).clicked() {
+                    f.has_permanent = false;
+                    f.new_permanent.clear();
+                }
             });
             ui.label(
-                RichText::new("The service keeps its own copy of these settings: after saving, press Update to give it the new ones.")
+                RichText::new("A permanent password lets you reach this device when nobody is at it. Use a long one — it is never stored in plain text.")
                     .small()
                     .color(pal::DIM),
             );
-        }
-    });
-    ui.add_space(14.0);
+            row(ui, "Start with system", |ui| {
+                if ui.checkbox(&mut f.autostart, "Launch hidden in the tray when you log in").changed() && f.autostart {
+                    f.run_in_tray = true; // autostart only makes sense if it keeps running
+                }
+            });
+            row(ui, "Close button", |ui| {
+                ui.checkbox(&mut f.run_in_tray, "Keep running in the tray when the window is closed (stay reachable)");
+            });
+            row(ui, "Screen permission", |ui| {
+                if theme::pill(ui, "Reset", pal::VIOLET).clicked() {
+                    reset_permission = true;
+                }
+            });
+            #[cfg(windows)]
+            row(ui, "Windows service", |ui| {
+                let tip = "Unattended access including UAC prompts, elevated windows and the login screen. Needs administrator rights and an unattended password.";
+                ui.add_enabled_ui(!service_busy, |ui| {
+                    if service_busy {
+                        theme::pill(ui, "Working…", pal::BLUE);
+                    } else if crate::service::is_running() {
+                        if theme::pill(ui, "Update", pal::BLUE).on_hover_text("Give the service this page's saved settings").clicked() {
+                            service_clicked = Some((true, false));
+                        }
+                        if theme::pill(ui, "Remove", pal::RED).clicked() {
+                            service_clicked = Some((false, false));
+                        }
+                    } else if crate::service::installed() {
+                        // Installed but not running (stopped, or failed to start).
+                        if theme::pill(ui, "Start", pal::BLUE).on_hover_text("Start the service (reinstalling it if needed)").clicked() {
+                            service_clicked = Some((true, true));
+                        }
+                        if theme::pill(ui, "Reinstall", pal::VIOLET).on_hover_text("Install this version of the service again and start it").clicked() {
+                            service_clicked = Some((true, false));
+                        }
+                        if theme::pill(ui, "Remove", pal::RED).clicked() {
+                            service_clicked = Some((false, false));
+                        }
+                    } else if theme::pill(ui, "Install", pal::BLUE).on_hover_text(tip).clicked() {
+                        service_clicked = Some((true, false));
+                    }
+                });
+                let status = crate::service::status_text();
+                ui.label(RichText::new(status).color(if status == "Running" { pal::GREEN } else { pal::DIM }));
+                if crate::service::installed() {
+                    let log = crate::service::log_to_show();
+                    if ui.link(RichText::new("Service log").small()).on_hover_text(log.display().to_string()).clicked() {
+                        let _ = std::process::Command::new("notepad").arg(log).spawn();
+                    }
+                }
+            });
+            #[cfg(windows)]
+            if let Some(why) = crate::service::start_problem() {
+                // Windows' own explanation, to read or paste into a ticket.
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("WHY THE SERVICE ISN'T RUNNING").font(theme::display(14.0)).color(pal::PEACH));
+                    if ui.small_button("Copy").clicked() {
+                        ui.ctx().copy_text(why.clone());
+                    }
+                });
+                let mut text = why.as_str();
+                ui.add(egui::TextEdit::multiline(&mut text).desired_width(f32::INFINITY).desired_rows(3).font(egui::TextStyle::Small));
+            }
+            #[cfg(windows)]
+            if via_service {
+                row(ui, "Tray icon", |ui| {
+                    ui.checkbox(&mut f.service_tray, "Show Slipstream in the tray while the service runs (from sign-in)");
+                });
+                ui.label(
+                    RichText::new("The service keeps its own copy of these settings: after saving, press Update to give it the new ones.")
+                        .small()
+                        .color(pal::DIM),
+                );
+            }
+        });
+        ui.add_space(14.0);
+    }
     #[cfg(windows)]
     if let Some((install, start_first)) = service_clicked {
         let ctx = ui.ctx().clone();

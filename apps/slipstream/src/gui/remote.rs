@@ -18,7 +18,7 @@ use slipstream_core::{
 use slipstream_session::{FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 use tokio::sync::mpsc;
 
-use super::{files::FileManager, home, keys, theme, theme::pal, video};
+use super::{files::FileManager, home, keys, theme, theme::pal, touch, video};
 
 pub enum CapturedKey {
     Key {
@@ -86,6 +86,10 @@ pub struct RemoteTab {
     /// Full screen: when the pointer last brought the toolbar up.
     toolbar_seen: Option<Instant>,
     video_rect: Option<Rect>,
+    /// The whole picture fitted into the video area (the view zooms from it).
+    video_fit: Option<Rect>,
+    view: touch::View,
+    touch: touch::Touch,
     last_pointer: Option<(f32, f32)>,
     held_buttons: HashSet<usize>,
     held_keys: HashSet<&'static str>,
@@ -156,6 +160,9 @@ impl RemoteTab {
             fullscreen: false,
             toolbar_seen: None,
             video_rect: None,
+            video_fit: None,
+            view: touch::View::default(),
+            touch: touch::Touch::default(),
             last_pointer: None,
             held_buttons: HashSet::new(),
             held_keys: HashSet::new(),
@@ -359,17 +366,24 @@ impl RemoteTab {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
         let show_toolbar = !self.fullscreen || lingering || self.closed.is_some();
-        let chat_w = if self.show_chat { 330.0 } else { 0.0 };
+        // Chat goes beside the picture, or under it on a phone.
+        let narrow = full.width() < super::NARROW;
+        let chat_w = if self.show_chat && !narrow { 330.0 } else { 0.0 };
+        let chat_h = if self.show_chat && narrow { (full.height() * 0.42).max(220.0) } else { 0.0 };
         let video_area = Rect::from_min_max(
             pos2(full.left(), full.top() + if self.fullscreen { 0.0 } else { toolbar_h }),
-            pos2(full.right() - chat_w, full.bottom()),
+            pos2(full.right() - chat_w, full.bottom() - chat_h),
         );
 
         self.draw_video(ui, video_area, t);
         self.handle_pointer(ui, video_area);
 
         if self.show_chat {
-            let chat_rect = Rect::from_min_max(pos2(full.right() - chat_w, full.top() + toolbar_h), full.max);
+            let chat_rect = if narrow {
+                Rect::from_min_max(pos2(full.left(), full.bottom() - chat_h), full.max)
+            } else {
+                Rect::from_min_max(pos2(full.right() - chat_w, full.top() + toolbar_h), full.max)
+            };
             ui.painter().rect_filled(chat_rect, 0.0, pal::PANEL);
             let mut child = ui.new_child(UiBuilder::new().max_rect(chat_rect.shrink(12.0)));
             theme::header(&mut child, "Subspace chat", pal::LAVENDER);
@@ -466,18 +480,22 @@ impl RemoteTab {
         let (serial, frame) = self.frames.latest();
         match frame {
             Some(frame) => {
-                let rect = video::fit_rect(area, (frame.width, frame.height));
+                let fit = video::fit_rect(area, (frame.width, frame.height));
+                let rect = self.view.rect(fit, area);
+                self.video_fit = Some(fit);
                 self.video_rect = Some(rect);
-                painter.add(egui_wgpu::Callback::new_paint_callback(
+                // Zoomed in, the picture runs past the area.
+                painter.with_clip_rect(area).add(egui_wgpu::Callback::new_paint_callback(
                     rect,
                     video::VideoCallback { stream: self.id, serial, frame },
                 ));
                 if self.captured && !self.fullscreen {
-                    theme::brackets(painter, rect.shrink(4.0), pal::ORANGE.gamma_multiply(0.8), 22.0);
+                    theme::brackets(painter, rect.intersect(area).shrink(4.0), pal::ORANGE.gamma_multiply(0.8), 22.0);
                 }
             }
             None => {
                 self.video_rect = None;
+                self.video_fit = None;
                 theme::backdrop(painter, area, t);
                 theme::spinner(painter, area.center() - vec2(0.0, 40.0), 26.0, pal::CYAN, t);
                 painter.text(
@@ -521,10 +539,37 @@ impl RemoteTab {
         // Only the part of the screen not covered by our own windows (file
         // transfer, chat…) belongs to the remote computer.
         let my_layer = ui.layer_id();
-        let on_video = |pos: egui::Pos2| rect.contains(pos) && ctx.layer_id_at(pos).is_none_or(|l| l == my_layer);
+        let on_video = |pos: egui::Pos2| rect.contains(pos) && area.contains(pos) && ctx.layer_id_at(pos).is_none_or(|l| l == my_layer);
         let events = ctx.input(|i| i.events.clone());
+
+        // Fingers: see touch.rs. While they're down, the pointer events egui
+        // makes from the first one are ignored.
+        let fit = self.video_fit.unwrap_or(rect);
+        let gesture = ctx.input(|i| i.multi_touch()).map(|m| touch::Gesture::from_egui(&m));
+        let view_before = self.view;
+        let (actions, touching) = self.touch.handle(&events, gesture, Instant::now(), on_video, &mut self.view, (fit, area));
+        if self.view != view_before {
+            ctx.request_repaint();
+        }
+        if self.touch.waiting() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        for action in actions {
+            self.captured = true;
+            match action {
+                touch::Action::Move(pos) => {
+                    let n = normalize(pos);
+                    self.last_pointer = Some(n);
+                    self.input(InputEvent::MouseMove { x: n.0, y: n.1 });
+                }
+                touch::Action::Button(button, down) => self.input(InputEvent::MouseButton { button, down }),
+                touch::Action::Scroll(points) => self.input(InputEvent::Wheel { dx: points.x / 40.0, dy: points.y / 40.0 }),
+            }
+        }
+
         for ev in events {
             match ev {
+                egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } if touching => {}
                 egui::Event::PointerMoved(pos) => {
                     if (on_video(pos) || !self.held_buttons.is_empty()) && self.captured {
                         let n = normalize(pos);
@@ -598,6 +643,9 @@ impl RemoteTab {
         let inner = bar.shrink2(vec2(8.0, 6.0)).with_min_x(bar.left() + 50.0);
         // Narrower windows get a tighter bar rather than overlapping buttons.
         let w = bar.width();
+        if w < super::NARROW {
+            return self.toolbar_narrow(ui, inner, &ctx, t);
+        }
         let compact_stats = w < 1460.0;
         let tight = w < 1320.0;
         let show_host_name = w >= 1240.0;
@@ -611,7 +659,7 @@ impl RemoteTab {
             self.send(ViewerCmd::Disconnect);
             action = TabAction::Close;
         }
-        self.stats_readout(&mut right, compact_stats, t);
+        self.stats_readout(&mut right, if compact_stats { Detail::Compact } else { Detail::Full }, t);
         let right_left = right.min_rect().left();
 
         let left_rect = inner.with_max_x(right_left - 12.0);
@@ -672,25 +720,7 @@ impl RemoteTab {
             self.toggle_fullscreen(&ctx);
         }
 
-        let mut combo: Option<&'static [&'static str]> = None;
-        ui.menu_button(RichText::new("KEYS").font(theme::display(17.0)).color(pal::LAVENDER), |ui| {
-            for (label, keys) in [
-                ("Ctrl + Alt + Del", &["ControlLeft", "AltLeft", "Delete"][..]),
-                ("Alt + Tab", &["AltLeft", "Tab"][..]),
-                ("Super / Windows key", &["MetaLeft"][..]),
-                ("Alt + F4", &["AltLeft", "F4"][..]),
-                ("Print Screen", &["PrintScreen"][..]),
-                ("Ctrl + Esc", &["ControlLeft", "Escape"][..]),
-            ] {
-                if ui.button(label).clicked() {
-                    combo = Some(keys);
-                    ui.close();
-                }
-            }
-        });
-        if let Some(keys) = combo {
-            self.send_combo(keys);
-        }
+        ui.menu_button(RichText::new("KEYS").font(theme::display(17.0)).color(pal::LAVENDER), |ui| self.keys_menu(ui));
 
         let chat_label = if self.unread { "Chat ◆" } else { "Chat" };
         if theme::pill(ui, chat_label, pal::LAVENDER).clicked() {
@@ -715,56 +745,143 @@ impl RemoteTab {
         }
 
         // Tools: privacy mode, port forwarding. Gold while privacy is on.
-        let (privacy_ok, tunnels_ok) = (self.info.capabilities.privacy, self.info.capabilities.tunnels);
         let tools_color = if self.privacy { pal::GOLD } else { pal::LAVENDER };
-        ui.menu_button(RichText::new("TOOLS ▾").font(theme::display(17.0)).color(tools_color), |ui| {
-            let mut privacy = self.privacy;
-            let r = ui
-                .add_enabled(privacy_ok, egui::Checkbox::new(&mut privacy, "Privacy mode"))
-                .on_hover_text("Black out the remote computer's own screen while you work: people there can't watch (or, with the Slipstream service, type)")
-                .on_disabled_hover_text("Needs a Windows 10 (2004 or later) or Windows 11 computer on the other end");
-            if r.changed() {
-                self.privacy = privacy;
-                self.send(ViewerCmd::Privacy(privacy));
-                ui.close();
-            }
-            let r = ui
-                .add_enabled(tunnels_ok, egui::Button::new("Port forwarding…"))
-                .on_hover_text("Reach a service on the remote computer or its network, e.g. its Remote Desktop")
-                .on_disabled_hover_text("Not allowed on that computer (its Config → Permissions → Port forwarding)");
-            if r.clicked() {
-                self.show_tunnels = true;
-                ui.close();
-            }
-            if ui
-                .button("System information…")
-                .on_hover_text("Its processor, memory, graphics, drives, temperatures, network and Windows/macOS/Linux version")
-                .clicked()
-            {
-                self.show_sysinfo = true;
-                self.sysinfo_fetch = true;
-                ui.close();
-            }
-        });
+        ui.menu_button(RichText::new("TOOLS ▾").font(theme::display(17.0)).color(tools_color), |ui| self.tools_menu(ui));
 
-        let mut new_preset = None;
         // Only the arrow when there's no room for the preset's name.
         let preset_label = if ui.available_width() < 120.0 { "▾".to_string() } else { format!("{} ▾", PRESETS[self.preset].0.to_uppercase()) };
-        ui.menu_button(RichText::new(preset_label).font(theme::display(17.0)).color(pal::BLUE), |ui| {
-            for (i, (name, _)) in PRESETS.iter().enumerate() {
-                if ui.selectable_label(i == self.preset, *name).clicked() {
-                    new_preset = Some(i);
-                    ui.close();
-                }
-            }
-        })
-        .response
-        .on_hover_text("Picture quality");
-        if let Some(i) = new_preset {
-            self.preset = i;
-            self.send(ViewerCmd::Settings(PRESETS[i].1));
-        }
+        ui.menu_button(RichText::new(preset_label).font(theme::display(17.0)).color(pal::BLUE), |ui| self.quality_menu(ui))
+            .response
+            .on_hover_text("Picture quality");
         action
+    }
+
+    /// The bar on a phone: back, a Console menu with everything else, the
+    /// link's figures and End.
+    fn toolbar_narrow(&mut self, ui: &mut Ui, inner: Rect, ctx: &egui::Context, t: f64) -> TabAction {
+        let mut action = TabAction::None;
+        let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
+        right.spacing_mut().item_spacing.x = 6.0;
+        if theme::pill(&mut right, "End", pal::RED).clicked() {
+            self.send(ViewerCmd::Disconnect);
+            action = TabAction::Close;
+        }
+        self.stats_readout(&mut right, Detail::Fps, t);
+        let left_rect = inner.with_max_x(right.min_rect().left() - 8.0);
+        let mut left = ui.new_child(UiBuilder::new().max_rect(left_rect).layout(Layout::left_to_right(Align::Center)));
+        left.set_clip_rect(left_rect.expand2(vec2(0.0, 8.0)));
+        left.spacing_mut().item_spacing.x = 6.0;
+        if theme::back_pill(&mut left, "", pal::PEACH).clicked() {
+            self.release_keyboard();
+            action = TabAction::Bridge;
+        }
+        let console = theme::pill(&mut left, "Console", if self.unread { pal::GOLD } else { pal::LAVENDER });
+        egui::Popup::menu(&console).show(|ui| {
+            ui.set_min_width(230.0);
+            if self.info.displays.len() > 1 {
+                ui.label(RichText::new("SCREEN").font(theme::display(15.0)).color(pal::LAVENDER));
+                let mut pick = None;
+                ui.horizontal(|ui| {
+                    for d in &self.info.displays {
+                        let color = if d.index == self.display { pal::GOLD } else { pal::VIOLET };
+                        if theme::pill(ui, &format!("{}", d.index + 1), color).clicked() {
+                            pick = Some(d.index);
+                        }
+                    }
+                });
+                if let Some(i) = pick.filter(|&i| i != self.display) {
+                    self.display = i;
+                    self.send(ViewerCmd::SelectDisplay(i));
+                }
+                ui.separator();
+            }
+            if self.view.zoomed() && ui.button("Fit to screen").clicked() {
+                self.view = touch::View::default();
+                ui.close();
+            }
+            if ui.button(if self.fullscreen { "Leave full screen" } else { "Full screen" }).clicked() {
+                self.toggle_fullscreen(ctx);
+                ui.close();
+            }
+            ui.menu_button("Keys", |ui| self.keys_menu(ui));
+            if ui.button(if self.show_chat { "Hide chat" } else if self.unread { "Chat ◆" } else { "Chat" }).clicked() {
+                self.show_chat = !self.show_chat;
+                ui.close();
+            }
+            if self.info.capabilities.file_transfer && ui.button("Files").clicked() {
+                self.files.open = !self.files.open;
+                self.release_keyboard();
+                ui.close();
+            }
+            if self.info.capabilities.audio && ui.button(if self.audio { "Mute sound" } else { "Play sound" }).clicked() {
+                self.audio = !self.audio;
+                self.send(ViewerCmd::Audio(self.audio));
+                ui.close();
+            }
+            ui.menu_button("Tools", |ui| self.tools_menu(ui));
+            ui.menu_button(format!("Quality: {}", PRESETS[self.preset].0), |ui| self.quality_menu(ui));
+        });
+        action
+    }
+
+    /// Key combinations to send.
+    fn keys_menu(&mut self, ui: &mut Ui) {
+        for (label, keys) in [
+            ("Ctrl + Alt + Del", &["ControlLeft", "AltLeft", "Delete"][..]),
+            ("Alt + Tab", &["AltLeft", "Tab"][..]),
+            ("Super / Windows key", &["MetaLeft"][..]),
+            ("Alt + F4", &["AltLeft", "F4"][..]),
+            ("Print Screen", &["PrintScreen"][..]),
+            ("Ctrl + Esc", &["ControlLeft", "Escape"][..]),
+        ] {
+            if ui.button(label).clicked() {
+                self.send_combo(keys);
+                ui.close();
+            }
+        }
+    }
+
+    /// Privacy mode, port forwarding, system information.
+    fn tools_menu(&mut self, ui: &mut Ui) {
+        let (privacy_ok, tunnels_ok) = (self.info.capabilities.privacy, self.info.capabilities.tunnels);
+        let mut privacy = self.privacy;
+        let r = ui
+            .add_enabled(privacy_ok, egui::Checkbox::new(&mut privacy, "Privacy mode"))
+            .on_hover_text("Black out the remote computer's own screen while you work: people there can't watch (or, with the Slipstream service, type)")
+            .on_disabled_hover_text("Needs a Windows 10 (2004 or later) or Windows 11 computer on the other end");
+        if r.changed() {
+            self.privacy = privacy;
+            self.send(ViewerCmd::Privacy(privacy));
+            ui.close();
+        }
+        let r = ui
+            .add_enabled(tunnels_ok, egui::Button::new("Port forwarding…"))
+            .on_hover_text("Reach a service on the remote computer or its network, e.g. its Remote Desktop")
+            .on_disabled_hover_text("Not allowed on that computer (its Config → Permissions → Port forwarding)");
+        if r.clicked() {
+            self.show_tunnels = true;
+            ui.close();
+        }
+        if ui
+            .button("System information…")
+            .on_hover_text("Its processor, memory, graphics, drives, temperatures, network and Windows/macOS/Linux version")
+            .clicked()
+        {
+            self.show_sysinfo = true;
+            self.sysinfo_fetch = true;
+            ui.close();
+        }
+    }
+
+    /// The picture quality presets.
+    fn quality_menu(&mut self, ui: &mut Ui) {
+        for (i, (name, _)) in PRESETS.iter().enumerate() {
+            if ui.selectable_label(i == self.preset, *name).clicked() {
+                self.preset = i;
+                self.send(ViewerCmd::Settings(PRESETS[i].1));
+                ui.close();
+            }
+        }
     }
 
     /// The port forwarding window: open tunnels and a form to add one.
@@ -975,7 +1092,8 @@ impl RemoteTab {
 
     /// Frame rate, bandwidth, round trip and path, right to left; the full
     /// details are in the tooltip when `compact`.
-    fn stats_readout(&mut self, ui: &mut Ui, compact: bool, t: f64) {
+    fn stats_readout(&mut self, ui: &mut Ui, detail: Detail, t: f64) {
+        let compact = detail != Detail::Full;
         let s = &self.stats;
         let (fps, mbps, rtt) = (
             theme::glide(ui, "fps", s.fps),
@@ -1005,10 +1123,10 @@ impl RemoteTab {
         if !compact {
             ui.label(RichText::new(path.0).font(theme::display(16.0)).color(path.1));
         }
-        let text = if compact {
-            format!("{fps:>3.0} FPS · {rtt:>3.0} MS")
-        } else {
-            format!("{fps:>3.0} FPS · {rate:>4} {rate_unit} · {rtt:>3.0} MS")
+        let text = match detail {
+            Detail::Fps => format!("{fps:.0} FPS"),
+            Detail::Compact => format!("{fps:>3.0} FPS · {rtt:>3.0} MS"),
+            Detail::Full => format!("{fps:>3.0} FPS · {rate:>4} {rate_unit} · {rtt:>3.0} MS"),
         };
         ui.label(RichText::new(text).font(theme::mono(15.0)).color(pal::BLUE)).on_hover_text(&details);
         if let Some((n, frac)) = self.files.activity() {
@@ -1049,6 +1167,16 @@ impl RemoteTab {
         });
         out
     }
+}
+
+/// How much of the link's figures the session bar shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Detail {
+    Full,
+    /// Frame rate and round trip; the lamp shows the path.
+    Compact,
+    /// Frame rate only (a phone).
+    Fps,
 }
 
 fn map_button(b: PointerButton) -> Option<MouseButton> {

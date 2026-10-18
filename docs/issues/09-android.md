@@ -24,7 +24,8 @@ ARCHITECTURE.md, "The Android app", and BUILDING.md, "Android").
 - [x] Clear of the status and navigation bars, camera cutout and
       keyboard (edge to edge since Android 15).
 - [x] Soft-keyboard typing, Enter/Done, the keyboard opening on the first
-      tap, the focused field kept in view above it.
+      tap, the focused field kept in view above it, no flicker while it
+      slides up (it flickered on a real phone).
 - [x] `slipstream://link` opens the app and links it to a station (tried
       against the live station with a bad code: refused, as it should be).
 - [x] Sound plays through AAudio (cpal).
@@ -33,17 +34,20 @@ ARCHITECTURE.md, "The Android app", and BUILDING.md, "Android").
 
 ## Phase 1: control a PC from Android
 
-- [ ] Phone layout: the console is the desktop's (a 350 px side bar; the
-      Config page's values run off the right edge). A narrow layout below
-      about 600 points, and toasts that fit.
-- [ ] Touch in a session, in two modes as TeamViewer has: trackpad (a
-      pointer moved by dragging, tap to click) and direct (tap where you
-      point). Long-press for right click, two-finger scroll, pinch to
-      zoom and pan the remote screen.
+- [x] Phone layout: a handheld console below 600 points (sections along
+      the bottom, stacked forms), slimmer elbows on short windows.
+- [ ] Toasts that fit a phone; the Files and System information windows
+      on a phone.
+- [x] Touch in a session (`gui/touch.rs`): tap, long-press for right
+      click, one-finger drag, pinch to zoom, two fingers to pan (or scroll
+      when not zoomed). Tried with a scripted pinch on the emulator.
+- [ ] A trackpad mode (a pointer moved by dragging), for precise work on
+      small screens.
 - [ ] Keyboard in a session: the soft keyboard's text typed on the remote
       computer (text to key presses), and a bar of special keys (Ctrl,
       Alt, Win, Esc, Tab, arrows, F-keys, Ctrl+Alt+Del).
-- [ ] Session toolbar sized for a phone; landscape full screen.
+- [x] Session toolbar sized for a phone (Console menu).
+- [ ] Landscape full screen without the system bars.
 - [ ] Device name from the phone's model (it's empty now: Android has no
       host name).
 - [x] Station: Android on the download page (picked for phones), the
