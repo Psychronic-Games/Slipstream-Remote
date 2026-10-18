@@ -16,6 +16,8 @@ show in small print: `0.6.0 (build N · commit)`.
 ## 0.11.2 — 2026-10-18
 
 ### Remote session frame corrections
+- Show the computer-name section's rounded right corners; the control-row
+  clip previously cut them off on the full toolbar.
 - Keep the slim left rail visible in windowed desktop sessions at every
   video aspect ratio and display scale, including while zoomed or waiting
   for a picture. Reserve frame space outside the video and its input area.

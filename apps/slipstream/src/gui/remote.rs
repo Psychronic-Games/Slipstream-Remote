@@ -641,7 +641,7 @@ impl RemoteTab {
 
     fn toolbar(&mut self, ui: &mut Ui, bar: Rect, t: f64, rail_width:Option<f32>) -> TabAction {
         let mut action = TabAction::None;
-        let painter = ui.painter();
+        let painter = ui.painter().clone();
         painter.rect_filled(bar, 0.0, pal::BG);
         let rail=rail_width.unwrap_or(0.0);
         if rail_width.is_some() {
@@ -761,7 +761,9 @@ impl RemoteTab {
             .on_hover_text(format!("Picture quality · {}",PRESETS[self.preset].0));
         egui::Popup::menu(&quality).show(|ui|self.quality_menu(ui));
         let gap=Rect::from_min_max(pos2(ui.min_rect().right()+4.0,bar.top()),pos2(right_left-4.0,bar.bottom()));
-        theme::session_rail_label(ui.painter(),gap,&self.info.host_name.to_uppercase());
+        // The label extends past the controls' clip to meet the stats panel;
+        // use the toolbar's painter so its right-hand curves remain visible.
+        theme::session_rail_label(&painter,gap,&self.info.host_name.to_uppercase());
         action
     }
 
