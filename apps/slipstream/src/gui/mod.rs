@@ -88,9 +88,23 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     // and if even that can't draw, the compact native window: the computer
     // can still be controlled.
     #[cfg(windows)]
-    if std::env::var_os("SLIPSTREAM_LITE").is_some() || !pick_renderer(&rt) {
-        tracing::warn!("no usable graphics: using the compact window");
-        return lite::run(rt, client, events, instance, opts.screenshot);
+    {
+        let renderer = if std::env::var_os("SLIPSTREAM_LITE").is_some() { Renderer::Compact } else { pick_renderer(&rt) };
+        match renderer {
+            Renderer::Full => {}
+            Renderer::Compact => {
+                tracing::warn!("no usable graphics: using the compact window");
+                return lite::run(rt, client, events, instance, opts.screenshot);
+            }
+            Renderer::Relaunch(exe) => {
+                // The copy waits for this one to let go of the instance port.
+                tracing::info!(exe = %exe.display(), "relaunching beside the software renderer");
+                std::process::Command::new(&exe).args(std::env::args_os().skip(1)).env("SLIPSTREAM_RESTARTED", "1").spawn()?;
+                drop(instance);
+                rt.block_on(client.shutdown());
+                return Ok(());
+            }
+        }
     }
 
     let options = eframe::NativeOptions {
@@ -909,12 +923,43 @@ impl App {
     }
 }
 
-/// Decides how the full window draws; false = use the compact window.
-/// Direct3D 12 or Vulkan if wgpu can use them, else the system's OpenGL
-/// (checked in a separate process, so its opengl32.dll never loads into
-/// this one), else the built-in software renderer.
 #[cfg(windows)]
-fn pick_renderer(rt: &tokio::runtime::Runtime) -> bool {
+enum Renderer {
+    Full,
+    Compact,
+    /// Run this copy of the app instead (see `softgl::prepare_beside`).
+    Relaunch(std::path::PathBuf),
+}
+
+/// Decides how the full window draws: Direct3D 12 or Vulkan if wgpu can use
+/// them, else the system's OpenGL (checked in a separate process, so its
+/// opengl32.dll never loads into this one), else the built-in software
+/// renderer: loaded here, or failing that from a copy of the app beside it.
+#[cfg(windows)]
+fn pick_renderer(rt: &tokio::runtime::Runtime) -> Renderer {
+    softgl::note_build();
+    if pick_hardware_or_software(rt) {
+        return Renderer::Full;
+    }
+    // The software renderer didn't draw from here: try the copy beside it
+    // (once: the copy itself goes to the compact window).
+    if softgl::running_beside() || softgl::problem().is_none() || softgl::failed_before() {
+        return Renderer::Compact;
+    }
+    match softgl::prepare_beside() {
+        Ok(exe) => {
+            softgl::retry();
+            Renderer::Relaunch(exe)
+        }
+        Err(e) => {
+            softgl::set_problem(format!("{e:#}"));
+            Renderer::Compact
+        }
+    }
+}
+
+#[cfg(windows)]
+fn pick_hardware_or_software(rt: &tokio::runtime::Runtime) -> bool {
     use eframe::egui_wgpu::wgpu::Backends;
     // SLIPSTREAM_SOFTWARE_RENDERER=1 goes straight to it (troubleshooting).
     let forced = std::env::var_os("SLIPSTREAM_SOFTWARE_RENDERER").is_some();
@@ -929,6 +974,12 @@ fn pick_renderer(rt: &tokio::runtime::Runtime) -> bool {
         softgl::set_problem(format!("{e:#}"));
         return false;
     }
+    // SLIPSTREAM_TEST_BESIDE=1: fail here, to test the copy beside Mesa.
+    if std::env::var_os("SLIPSTREAM_TEST_BESIDE").is_some() && !softgl::running_beside() {
+        softgl::set_problem("test: not from here".into());
+        softgl::retry();
+        return false;
+    }
     if !use_software_gl() {
         softgl::retry();
         return false;
@@ -936,9 +987,32 @@ fn pick_renderer(rt: &tokio::runtime::Runtime) -> bool {
     if count_adapters(rt, Backends::GL) > 0 {
         return true;
     }
-    softgl::set_problem("the software renderer found no OpenGL to draw with".into());
+    softgl::set_problem(gl_problem());
     softgl::retry(); // couldn't even start: not a crash, try again next time
     false
+}
+
+/// Why OpenGL (here: the software renderer) offers wgpu nothing, from the
+/// OpenGL backend itself.
+#[cfg(windows)]
+fn gl_problem() -> String {
+    use wgpu_hal::Instance as _;
+    let desc = wgpu_hal::InstanceDescriptor {
+        name: "slipstream",
+        flags: eframe::egui_wgpu::wgpu::InstanceFlags::empty(),
+        memory_budget_thresholds: Default::default(),
+        backend_options: Default::default(),
+        telemetry: None,
+        display: None,
+    };
+    // SAFETY: creating and dropping a throwaway OpenGL instance.
+    match unsafe { wgpu_hal::gles::Instance::init(&desc) } {
+        Err(e) => format!("the software renderer's OpenGL didn't start ({e})"),
+        Ok(instance) => match unsafe { instance.enumerate_adapters(None) }.len() {
+            0 => "the software renderer's OpenGL started but offered no usable adapter".into(),
+            n => format!("the software renderer has {n} OpenGL adapter(s), but they weren't listed"),
+        },
+    }
 }
 
 /// Runs `slipstream` again with SLIPSTREAM_PROBE_GL set ([`probe_gl`]) and

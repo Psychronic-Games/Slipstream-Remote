@@ -57,6 +57,11 @@ Build numbers are the git commit count. The app shows them as
   loop running (the "destroyed" message arrived while its handler was
   busy), and exiting could hang in a DLL's cleanup or while the async
   runtime waited for blocking work.
+- When the software renderer can't draw from the app where it's installed
+  (seen on a real Windows Server 2016: Windows then takes System32's
+  OpenGL for the window's pixel format), the app copies itself next to
+  the Mesa files, Mesa's supported layout, and restarts from there. If
+  even that fails, the compact window shows OpenGL's own error.
 - Restarting after an update from the compact window no longer depends on
   the old copy finishing its shutdown, which could leave a windowless
   process behind; shutdown itself now gives up after 3 s.

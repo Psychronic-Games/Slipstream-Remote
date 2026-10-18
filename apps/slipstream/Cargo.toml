@@ -29,6 +29,8 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphic
 windows-service = "0.8.1"
 flate2 = "1.1"
 sha2 = "0.10"
+# Only to ask OpenGL directly why it won't start (same version as eframe's wgpu).
+wgpu-hal = { version = "30.0.1", default-features = false, features = ["gles"] }
 
 [build-dependencies]
 embed-resource = "3"

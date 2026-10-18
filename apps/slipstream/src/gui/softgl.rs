@@ -96,6 +96,49 @@ pub fn problem() -> Option<String> {
     PROBLEM.lock().unwrap().clone()
 }
 
+/// Mesa's supported layout is `opengl32.dll` beside the program. Loading it
+/// from its folder into the app as installed can fail on real Windows
+/// (Windows then goes to System32's OpenGL for the window's pixel format),
+/// so then a copy of the app runs from the renderer folder itself.
+pub fn beside_exe() -> PathBuf {
+    dir().join("slipstream.exe")
+}
+
+pub fn running_beside() -> bool {
+    let same = |a: &std::path::Path, b: &std::path::Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy()),
+        _ => false,
+    };
+    std::env::current_exe().is_ok_and(|e| same(&e, &beside_exe()))
+}
+
+/// The build of the copy beside Mesa (it can update itself).
+fn beside_build() -> u64 {
+    std::fs::read_to_string(dir().join("build.txt")).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
+}
+
+/// Run by the copy: notes its build, so an older original doesn't
+/// overwrite it.
+pub fn note_build() {
+    if running_beside() {
+        let _ = std::fs::write(dir().join("build.txt"), slipstream_core::BUILD_NUMBER.to_string());
+    }
+}
+
+/// Puts this app beside Mesa (unless a copy at least as new is there) and
+/// returns that copy.
+pub fn prepare_beside() -> Result<PathBuf> {
+    let dest = beside_exe();
+    if !dest.is_file() || beside_build() < slipstream_core::BUILD_NUMBER {
+        let exe = std::env::current_exe()?;
+        let part = dest.with_extension("part");
+        std::fs::copy(&exe, &part).context("copying the app beside the software renderer")?;
+        std::fs::rename(&part, &dest)?;
+        std::fs::write(dir().join("build.txt"), slipstream_core::BUILD_NUMBER.to_string())?;
+    }
+    Ok(dest)
+}
+
 /// Starting on the software renderer, first frame not drawn yet.
 static PENDING: AtomicBool = AtomicBool::new(false);
 
