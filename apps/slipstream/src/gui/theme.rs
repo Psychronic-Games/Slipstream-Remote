@@ -135,20 +135,26 @@ pub fn install(ctx: &egui::Context) {
         v.widgets.active.bg_fill = pal::ORANGE.gamma_multiply(0.6);
         v.widgets.active.bg_stroke = Stroke::new(2.0, pal::ORANGE);
         v.widgets.open.bg_fill = Color32::from_rgb(28, 30, 52);
-        // Console scrollbars: a solid rounded bar (lavender, orange while
-        // dragged) on a dark track, instead of egui's thin grey one. The
-        // handle takes the widgets' foreground colour, as do check marks
-        // and arrows.
+        // Console scrollbars: a wide rounded bar like the frames' rails
+        // (lavender, orange while hovered or dragged) on a dark track,
+        // instead of egui's thin grey strip. The handle takes the widgets'
+        // foreground colour, as do check marks and arrows.
         style.spacing.scroll = egui::style::ScrollStyle {
-            bar_width: 10.0,
-            handle_min_length: 32.0,
+            bar_width: 14.0,
+            handle_min_length: 40.0,
             bar_inner_margin: 6.0,
             bar_outer_margin: 2.0,
             foreground_color: true,
+            dormant_handle_opacity: 1.0,
+            active_handle_opacity: 1.0,
+            interact_handle_opacity: 1.0,
+            dormant_background_opacity: 1.0,
+            active_background_opacity: 1.0,
+            interact_background_opacity: 1.0,
             ..egui::style::ScrollStyle::solid()
         };
-        v.widgets.inactive.fg_stroke = Stroke::new(1.5, pal::LAVENDER.gamma_multiply(0.8));
-        v.widgets.hovered.fg_stroke = Stroke::new(1.5, pal::LAVENDER);
+        v.widgets.inactive.fg_stroke = Stroke::new(1.5, pal::LAVENDER);
+        v.widgets.hovered.fg_stroke = Stroke::new(1.5, pal::ORANGE);
         v.widgets.active.fg_stroke = Stroke::new(2.0, pal::ORANGE);
     });
 }

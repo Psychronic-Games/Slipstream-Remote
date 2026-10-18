@@ -150,7 +150,7 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let installed = dir.join("slipstream.exe");
     if exe != installed {
-        std::fs::copy(&exe, &installed).with_context(|| format!("copying the app to {}", installed.display()))?;
+        replace_exe(&exe, &installed)?;
     }
 
     // The machine profile, from this computer's settings.
@@ -256,6 +256,37 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
+/// Copies the app over the installed one. That one is usually still running
+/// (the tray icon, or the old service's host finishing up), and Windows
+/// won't overwrite a running program but will rename it: so it's moved
+/// aside, and removed at the next install once it has exited.
+fn replace_exe(exe: &Path, installed: &Path) -> Result<()> {
+    let dir = installed.parent().unwrap_or(Path::new("."));
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().ends_with(".old") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let mut last = None;
+    for attempt in 0..10 {
+        match std::fs::copy(exe, installed) {
+            Ok(_) => return Ok(()),
+            Err(e) => last = Some(e),
+        }
+        if installed.exists() {
+            let aside = dir.join(format!("slipstream-{}-{attempt}.exe.old", std::process::id()));
+            if std::fs::rename(installed, &aside).is_ok() {
+                continue;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let e = last.map(anyhow::Error::from).unwrap_or_else(|| anyhow::anyhow!("unknown error"));
+    Err(e.context(format!("replacing {} (close any Slipstream windows and try again)", installed.display())))
+}
+
 /// `slipstream service uninstall`: needs administrator rights.
 pub fn uninstall() -> Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
@@ -274,6 +305,13 @@ pub fn uninstall() -> Result<()> {
     let installed = install_dir().join("slipstream.exe");
     if std::env::current_exe().ok().as_deref() != Some(&installed) {
         let _ = std::fs::remove_file(&installed);
+        if let Ok(entries) = std::fs::read_dir(install_dir()) {
+            for e in entries.flatten() {
+                if e.file_name().to_string_lossy().ends_with(".old") {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
         let _ = std::fs::remove_dir(install_dir());
     }
     let _ = Command::new("reg")

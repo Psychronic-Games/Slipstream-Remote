@@ -173,9 +173,16 @@ enum ServiceCmd {
         /// Settings folder to copy from (default: this user's).
         #[arg(long)]
         from: Option<std::path::PathBuf>,
+        /// File to write an error to (for the app, which can't see this
+        /// elevated process's output).
+        #[arg(long, hide = true)]
+        report: Option<std::path::PathBuf>,
     },
     /// Stop and remove the service (as administrator).
-    Uninstall,
+    Uninstall {
+        #[arg(long, hide = true)]
+        report: Option<std::path::PathBuf>,
+    },
     /// Show whether the service is installed and running.
     Status,
     /// Run as the service (started by Windows).
@@ -210,8 +217,8 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Host { password }) => rt.block_on(cli::host(args.test_pattern, password, false)),
         #[cfg(windows)]
         Some(Command::Service { action }) => match action {
-            ServiceCmd::Install { password, from } => service::install(password.as_deref(), from.as_deref()),
-            ServiceCmd::Uninstall => service::uninstall(),
+            ServiceCmd::Install { password, from, report } => reported(report, service::install(password.as_deref(), from.as_deref())),
+            ServiceCmd::Uninstall { report } => reported(report, service::uninstall()),
             ServiceCmd::Status => {
                 println!("{}", match service::state() {
                     None => "not installed".to_string(),
@@ -353,21 +360,97 @@ fn attach_parent_console() {
 /// app started from a desktop icon).
 fn init_logging() {
     use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+    // enigo logs every input event Windows refuses (each mouse move into an
+    // administrator window); the input thread reports those itself, once.
     let filter = || {
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| "info,iroh=warn,noq=warn,noq_proto=warn,noq_udp=error,iroh_relay=warn,wgpu=warn,wgpu_hal=error,netwatch=error".into())
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            "info,iroh=warn,noq=warn,noq_proto=warn,noq_udp=error,iroh_relay=warn,wgpu=warn,wgpu_hal=error,netwatch=error,enigo=off".into()
+        })
     };
+    // Local time, no module paths: the log is for people.
+    let timer = || fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%S".into());
     let file = slipstream_core::config::Store::open_default().ok().and_then(|store| {
         let path = store.dir().join("slipstream.log");
         // Keep the log small: start fresh once it passes 2 MB.
         let append = std::fs::metadata(&path).map(|m| m.len() < 2 * 1024 * 1024).unwrap_or(false);
         std::fs::OpenOptions::new().create(true).append(append).write(true).truncate(!append).open(path).ok()
     });
-    let registry = tracing_subscriber::registry().with(fmt::layer().with_writer(std::io::stderr).with_filter(filter()));
+    let registry = tracing_subscriber::registry()
+        .with(fmt::layer().with_timer(timer()).with_target(false).with_writer(std::io::stderr).with_filter(filter()));
     match file {
         Some(f) => registry
-            .with(fmt::layer().with_ansi(false).with_writer(std::sync::Mutex::new(f)).with_filter(filter()))
+            .with(
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_timer(timer())
+                    .with_target(false)
+                    .with_writer(LogFile(std::sync::Mutex::new(Repeats { file: f, last: String::new(), count: 0 })))
+                    .with_filter(filter()),
+            )
             .init(),
         None => registry.init(),
+    }
+}
+
+/// Logs a failed service install or removal, and writes it to `report` for
+/// the app that asked for it.
+#[cfg(windows)]
+fn reported(report: Option<std::path::PathBuf>, result: anyhow::Result<()>) -> anyhow::Result<()> {
+    if let Err(e) = &result {
+        tracing::error!("{e:#}");
+        if let Some(path) = report {
+            let _ = std::fs::write(path, format!("{e:#}"));
+        }
+    }
+    result
+}
+
+/// The log file. A line that comes again and again (apart from its time) is
+/// written once, then "… repeated N more times".
+struct LogFile(std::sync::Mutex<Repeats>);
+
+struct Repeats {
+    file: std::fs::File,
+    last: String,
+    count: u64,
+}
+
+/// One formatted line, handed to [`LogFile`] when complete.
+struct LogLine<'a>(Vec<u8>, &'a LogFile);
+
+impl std::io::Write for LogLine<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for LogLine<'_> {
+    fn drop(&mut self) {
+        use std::io::Write;
+        let line = String::from_utf8_lossy(&self.0);
+        // "2026-10-18 00:40:23 " is the time; the rest decides "the same".
+        let key = line.get(20..).unwrap_or(&line).to_string();
+        let Ok(mut r) = self.1.0.lock() else { return };
+        if key == r.last {
+            r.count += 1;
+            return;
+        }
+        if r.count > 0 {
+            let n = std::mem::take(&mut r.count);
+            let _ = writeln!(r.file, "                    … repeated {n} more time{}", if n == 1 { "" } else { "s" });
+        }
+        let _ = r.file.write_all(&self.0);
+        r.last = key;
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogFile {
+    type Writer = LogLine<'a>;
+    fn make_writer(&'a self) -> Self::Writer {
+        LogLine(Vec::new(), self)
     }
 }

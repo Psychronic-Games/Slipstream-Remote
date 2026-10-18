@@ -269,6 +269,7 @@ fn input_worker(rx: mpsc::Receiver<InputCmd>) {
     };
     let mut held = HeldInputs::default();
     let mut wheel = (0.0f32, 0.0f32);
+    let mut refused = false;
     let mut last_display = None;
     while let Ok(cmd) = rx.recv() {
         let (display, event) = match cmd {
@@ -303,8 +304,16 @@ fn input_worker(rx: mpsc::Receiver<InputCmd>) {
             }
         }
         for ev in held.process(event) {
-            if let Err(e) = apply(&mut enigo, &display, ev, &mut wheel) {
-                tracing::debug!("input event failed: {e}");
+            match apply(&mut enigo, &display, ev, &mut wheel) {
+                // Once per run of refusals, not per mouse move.
+                Err(e) if !refused => {
+                    refused = true;
+                    tracing::warn!(
+                        "Windows refused the remote input ({e}): the window in front is probably running as administrator, which only the Slipstream service can control"
+                    );
+                }
+                Err(_) => {}
+                Ok(()) => refused = false,
             }
         }
         last_display = Some(display);

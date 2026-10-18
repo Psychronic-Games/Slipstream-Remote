@@ -11,7 +11,8 @@ use windows_sys::Win32::{
         ReleaseDC,
     },
     UI::WindowsAndMessaging::{
-        CURSOR_SHOWING, CURSORINFO, GetCursorInfo, GetIconInfo, GetPhysicalCursorPos, HCURSOR, ICONINFO,
+        CURSOR_SHOWING, CURSORINFO, GetCursorInfo, GetIconInfo, GetPhysicalCursorPos, HCURSOR, ICONINFO, IDC_ARROW,
+        LoadCursorW,
     },
 };
 
@@ -118,14 +119,27 @@ pub struct Pointer {
     pos: (i32, i32),
 }
 
-/// The visible pointer right now, if any.
+/// The standard arrow (a shared system cursor).
+fn arrow() -> HCURSOR {
+    // SAFETY: loads a predefined cursor; no instance, nothing to free.
+    unsafe { LoadCursorW(std::ptr::null_mut(), IDC_ARROW) }
+}
+
+/// The pointer right now. Windows hides it on a computer with no mouse
+/// plugged in (a server or VM reached only remotely: it shows while another
+/// remote tool's virtual mouse is there and vanishes when that one leaves),
+/// and while a touch screen is in use. The person controlling it remotely
+/// still needs to see where they are, so it's then drawn as the arrow.
 pub fn current() -> Option<Pointer> {
     // SAFETY: both calls fill properly sized structs.
     unsafe {
         let mut ci: CURSORINFO = std::mem::zeroed();
         ci.cbSize = std::mem::size_of::<CURSORINFO>() as u32;
-        if GetCursorInfo(&mut ci) == 0 || ci.flags & CURSOR_SHOWING == 0 || ci.hCursor.is_null() {
+        if GetCursorInfo(&mut ci) == 0 {
             return None;
+        }
+        if ci.flags & CURSOR_SHOWING == 0 || ci.hCursor.is_null() {
+            ci.hCursor = arrow();
         }
         // Physical coordinates whatever this process's DPI awareness, to
         // match the monitor positions (which are physical too).
@@ -147,7 +161,9 @@ pub fn draw(frame: &mut [u8], fw: u32, fh: u32, stride: u32, origin: (i32, i32),
         if cache.as_ref().is_none_or(|c| c.handle != handle) {
             // SAFETY: cursor handles are shared system objects; a stale one
             // just makes GetIconInfo fail.
-            *cache = unsafe { load(handle) };
+            // A cursor that can't be read (another session's, say) is
+            // drawn as the arrow rather than not at all.
+            *cache = unsafe { load(handle).or_else(|| load(arrow()).map(|c| Cursor { handle, ..c })) };
         }
         let Some(c) = cache.as_ref() else { return };
         let (x0, y0) = (pos.0 - c.hot.0 - origin.0, pos.1 - c.hot.1 - origin.1);

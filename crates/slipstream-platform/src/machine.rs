@@ -21,8 +21,25 @@ pub fn collect() -> Vec<InfoSection> {
 
     let mut computer = Section::new("Computer");
     computer.row("Name", System::host_name());
-    computer.row("Model", hw.system.clone());
-    computer.row("Motherboard", hw.board.clone());
+    match hypervisor(hw) {
+        // A virtual machine's firmware describes a board its hypervisor
+        // makes up (VMware's is a 1998 Intel 440BX); the real one is the
+        // host's, which can't be seen from inside.
+        Some(vm) => {
+            computer.row("Model", Some(format!("{vm} virtual machine")));
+            computer.row(
+                "Motherboard",
+                Some(format!(
+                    "virtual{} (the physical computer's board can't be seen from inside a virtual machine)",
+                    hw.board.as_ref().map(|b| format!(": {b}")).unwrap_or_default()
+                )),
+            );
+        }
+        None => {
+            computer.row("Model", hw.system.clone());
+            computer.row("Motherboard", hw.board.clone());
+        }
+    }
     computer.row("BIOS / firmware", hw.bios.clone());
     computer.row("Up for", Some(duration(System::uptime())));
     computer.row("User", std::env::var("USERNAME").or_else(|_| std::env::var("USER")).ok());
@@ -144,30 +161,49 @@ pub fn collect() -> Vec<InfoSection> {
     }
     out.push(temps.done());
 
+    // Each adapter with an address, then its details indented under it
+    // (labels starting with spaces).
     let mut net = Section::new("Network");
     let networks = Networks::new_with_refreshed_list();
+    let routes = net_extras();
     let mut names: Vec<_> = networks.keys().collect();
     names.sort();
+    let mut gateways_shown = Vec::new();
     for name in names {
         let data = &networks[name];
-        let ips: Vec<String> = data
-            .ip_networks()
-            .iter()
-            .filter(|n| !n.addr.is_loopback() && !matches!(n.addr, std::net::IpAddr::V6(v6) if v6.segments()[0] == 0xfe80))
-            .map(|n| match n.addr {
-                std::net::IpAddr::V4(a) => format!("{a} (mask {})", v4_mask(n.prefix)),
-                a => format!("{a}/{}", n.prefix),
-            })
-            .collect();
-        if ips.is_empty() {
+        let addrs: Vec<_> = data.ip_networks().iter().filter(|n| !n.addr.is_loopback()).collect();
+        let link_local = |a: &std::net::IpAddr| matches!(a, std::net::IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80);
+        // An adapter with only a link-local address isn't connected to anything.
+        if addrs.iter().all(|n| link_local(&n.addr)) {
             continue;
         }
         let mac = data.mac_address().to_string();
-        let mac = if mac == "00:00:00:00:00:00" { String::new() } else { format!(" · {mac}") };
-        net.row(name.clone(), Some(format!("{}{mac}", ips.join(", "))));
+        net.row(name.clone(), Some(if mac == "00:00:00:00:00:00" { "connected".into() } else { format!("MAC {mac}") }));
+        for n in &addrs {
+            if let std::net::IpAddr::V4(a) = n.addr {
+                net.row("    IPv4 address", Some(a.to_string()));
+                net.row("    Subnet mask", Some(format!("{} (/{})", v4_mask(n.prefix), n.prefix)));
+            }
+        }
+        for n in &addrs {
+            if let std::net::IpAddr::V6(a) = n.addr {
+                let kind = if link_local(&n.addr) { " (link-local)" } else { "" };
+                net.row("    IPv6 address", Some(format!("{a}/{}{kind}", n.prefix)));
+            }
+        }
+        for (dev, gw) in &routes.gateways {
+            if dev == name {
+                net.row("    Gateway", Some(gw.to_string()));
+                gateways_shown.push(*gw);
+            }
+        }
     }
-    let routes = net_extras();
-    let gateways: Vec<String> = routes.gateways.iter().map(|(dev, gw)| if dev.is_empty() { gw.to_string() } else { format!("{gw} on {dev}") }).collect();
+    let gateways: Vec<String> = routes
+        .gateways
+        .iter()
+        .filter(|(_, gw)| !gateways_shown.contains(gw))
+        .map(|(dev, gw)| if dev.is_empty() { gw.to_string() } else { format!("{gw} on {dev}") })
+        .collect();
     net.row(if gateways.len() > 1 { "Gateways" } else { "Gateway" }, Some(gateways.join(", ")).filter(|g| !g.is_empty()));
     let dns: Vec<String> = routes.dns.iter().map(ToString::to_string).collect();
     net.row("DNS servers", Some(dns.join(", ")).filter(|d| !d.is_empty()));
@@ -175,6 +211,24 @@ pub fn collect() -> Vec<InfoSection> {
 
     out.retain(|s| !s.rows.is_empty());
     out
+}
+
+/// The hypervisor's name, if this computer is a virtual machine (going by
+/// what its firmware calls the system and board).
+fn hypervisor(hw: &Hardware) -> Option<&'static str> {
+    let says = format!("{} {}", hw.system.as_deref().unwrap_or(""), hw.board.as_deref().unwrap_or("")).to_lowercase();
+    const KNOWN: [(&str, &str); 9] = [
+        ("vmware", "VMware"),
+        ("440bx desktop reference platform", "VMware"),
+        ("virtualbox", "VirtualBox"),
+        ("innotek", "VirtualBox"),
+        ("microsoft corporation virtual machine", "Hyper-V"),
+        ("qemu", "QEMU/KVM"),
+        ("kvm", "QEMU/KVM"),
+        ("xen", "Xen"),
+        ("parallels", "Parallels"),
+    ];
+    KNOWN.iter().find(|(k, _)| says.contains(k)).map(|(_, name)| *name)
 }
 
 /// "255.255.255.0" for a /24.
@@ -704,6 +758,14 @@ mod tests {
                 println!("  {k}: {v}");
             }
         }
+    }
+
+    #[test]
+    fn spots_virtual_machines() {
+        let hw = |system: &str, board: &str| super::Hardware { system: Some(system.into()), board: Some(board.into()), ..Default::default() };
+        assert_eq!(super::hypervisor(&hw("VMware, Inc. VMware Virtual Platform", "Intel Corporation 440BX Desktop Reference Platform")), Some("VMware"));
+        assert_eq!(super::hypervisor(&hw("Microsoft Corporation Virtual Machine", "Microsoft Corporation Virtual Machine")), Some("Hyper-V"));
+        assert_eq!(super::hypervisor(&hw("Supermicro SYS-5019C-M", "Supermicro X11SCM-F")), None);
     }
 
     #[test]

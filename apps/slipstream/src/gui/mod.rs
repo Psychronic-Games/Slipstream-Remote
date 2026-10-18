@@ -266,6 +266,10 @@ pub struct App {
     /// Keyboard events captured for the focused remote tab this frame.
     captured_keys: Vec<remote::CapturedKey>,
     window_focused: bool,
+    /// Drawing on the processor (Mesa's llvmpipe, a VM without graphics):
+    /// every frame costs real CPU time, so animations run slowly. `None`
+    /// until the first frame has looked.
+    software: Option<bool>,
     screenshot: Option<(std::path::PathBuf, f64)>,
     pub tray: Option<tray::Tray>,
     tray_status: String,
@@ -280,7 +284,7 @@ pub struct App {
     /// The Windows service hosts this computer (see `crate::service`).
     pub via_service: bool,
     /// Installing or removing the service: (restart afterwards, result).
-    service_job: Option<(bool, oneshot::Receiver<Result<u32, String>>)>,
+    service_job: Option<(bool, oneshot::Receiver<Result<(), String>>)>,
     /// The Bridge/Config "connect to your station" form.
     pub link_station: String,
     /// Station sign-ins and saved devices.
@@ -338,6 +342,7 @@ impl App {
             org,
             captured_keys: Vec::new(),
             window_focused: true,
+            software: None,
             screenshot: None,
             tray,
             tray_status: String::new(),
@@ -363,6 +368,12 @@ impl App {
     fn set_visible(&mut self, ctx: &egui::Context, visible: bool) {
         self.hidden = !visible;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(visible));
+    }
+
+    /// How often to redraw for animations alone: the display's rate on a
+    /// graphics card, a few times a second when the processor draws.
+    pub fn frame_interval(&self) -> Duration {
+        if self.software == Some(true) { Duration::from_millis(125) } else { Duration::from_millis(16) }
     }
 
     pub fn time(&self) -> f64 {
@@ -558,20 +569,35 @@ impl App {
             self.toast("Set and save an unattended password first: the service has no one-time passwords", pal::RED);
             return;
         }
+        // The elevated process writes what went wrong here.
+        let report = std::env::temp_dir().join(format!("slipstream-service-{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&report);
         let args = if install {
             match Store::open_default() {
-                Ok(store) => format!("service install --from \"{}\"", store.dir().display()),
+                Ok(store) => format!("service install --from \"{}\" --report \"{}\"", store.dir().display(), report.display()),
                 Err(e) => return self.toast(format!("{e:#}"), pal::RED),
             }
         } else {
-            "service uninstall".to_string()
+            format!("service uninstall --report \"{}\"", report.display())
         };
         let (tx, rx) = oneshot::channel();
         // Adding or removing the service changes who hosts: restart then.
         self.service_job = Some((install != self.via_service, rx));
         let wake = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(crate::service::run_elevated(&args).map_err(|e| format!("{e:#}")));
+            let result = match crate::service::run_elevated(&args) {
+                Ok(0) => Ok(()),
+                Ok(code) => Err(match std::fs::read_to_string(&report) {
+                    Ok(why) if !why.trim().is_empty() => why.trim().to_string(),
+                    _ => format!("that didn't work (code {code})"),
+                }),
+                Err(e) => Err(format!("{e:#}")),
+            };
+            let _ = std::fs::remove_file(&report);
+            if let Err(e) = &result {
+                tracing::warn!("service {}: {e}", if install { "install" } else { "removal" });
+            }
+            let _ = tx.send(result);
             wake.request_repaint();
         });
     }
@@ -587,8 +613,8 @@ impl App {
         let restart = *restart;
         self.service_job = None;
         match result {
-            Ok(0) if !restart => self.toast("The service has the new settings", pal::GREEN),
-            Ok(0) => {
+            Ok(()) if !restart => self.toast("The service has the new settings", pal::GREEN),
+            Ok(()) => {
                 self.toast("Done: restarting Slipstream", pal::GREEN);
                 if let Ok(exe) = std::env::current_exe()
                     && std::process::Command::new(exe).env("SLIPSTREAM_RESTARTED", "1").spawn().is_ok()
@@ -597,8 +623,7 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
-            Ok(code) => self.toast(format!("That didn't work (code {code}): details are in the log file"), pal::RED),
-            Err(e) => self.toast(e, pal::RED),
+            Err(e) => self.toast(format!("The service: {e}"), pal::RED),
         }
     }
 
@@ -914,7 +939,7 @@ impl App {
         if cancel {
             self.cancel_attempt();
         }
-        ctx.request_repaint_after(Duration::from_millis(33));
+        ctx.request_repaint_after(self.frame_interval().max(Duration::from_millis(33)));
     }
 }
 
@@ -1212,7 +1237,18 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.software.is_none()
+            && let Some(rs) = frame.wgpu_render_state()
+        {
+            let info = rs.adapter.get_info();
+            let software = info.device_type == eframe::egui_wgpu::wgpu::DeviceType::Cpu
+                || ["llvmpipe", "softpipe", "swiftshader", "microsoft basic render"].iter().any(|n| info.name.to_lowercase().contains(n));
+            if software {
+                tracing::info!("{} draws on the processor: animations run slowly to spare it", info.name);
+            }
+            self.software = Some(software);
+        }
         // Runs even while the window is hidden in the tray.
         self.handle_events();
         let title = window_title(self.org.as_deref());
@@ -1400,10 +1436,14 @@ impl eframe::App for App {
         }
 
         // Animate at the display's refresh rate whenever the window can be
-        // seen (vsync paces it; compositors pause windows that are covered).
-        // Hidden or minimized, a slow tick keeps the state fresh.
+        // seen (vsync paces it; compositors pause windows that are covered),
+        // or a few times a second when the processor draws (input and new
+        // video still redraw at once). Hidden or minimized, a slow tick
+        // keeps the state fresh.
         if self.hidden || ctx.input(|i| i.viewport().minimized == Some(true)) {
             ctx.request_repaint_after(Duration::from_secs(1));
+        } else if self.software == Some(true) {
+            ctx.request_repaint_after(if self.window_focused { self.frame_interval() } else { Duration::from_millis(500) });
         } else if self.window_focused {
             ctx.request_repaint();
         } else {

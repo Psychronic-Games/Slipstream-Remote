@@ -5,6 +5,32 @@ Build numbers are the git commit count. The app shows them as
 
 ## Unreleased
 
+### Service install, the remote pointer, lighter software drawing
+- Installing the service over an older one no longer fails when the
+  installed program is still running (the tray icon at sign-in, or the
+  old service's host): it's moved aside and replaced, and the leftover
+  is removed next time. When an install or removal does fail, the app
+  now shows the actual reason instead of an exit code.
+- The remote pointer no longer vanishes on a computer with no mouse
+  plugged in (a server or VM reached only remotely). Windows hides the
+  pointer there unless another remote tool's virtual mouse is present,
+  so it disappeared once TeamViewer had left. It's now drawn as the arrow.
+- On the software renderer (Mesa llvmpipe), the console animates at 8
+  frames a second (2 when not focused) instead of the display's rate.
+  Clicks, typing and remote video still redraw at once. Before, even
+  an idle window kept the processor busy.
+- The log reads better: local time, no module paths, an identical
+  repeating line written once with "… repeated N more times". Windows
+  refusing remote input (an administrator window in front, which only
+  the service can control) is reported once, with that explanation,
+  instead of an error per mouse move.
+- System information: each adapter's IPv4 address, subnet mask, IPv6
+  addresses (link-local marked) and gateway on lines of their own under
+  it. A virtual machine shows as one (VMware, Hyper-V, VirtualBox,
+  QEMU/KVM, Xen, Parallels): its "motherboard" is the hypervisor's
+  made-up one (VMware's Intel 440BX), not the host's.
+- Scrollbars are wider and solid (lavender, orange on hover or drag).
+
 ### Windows, file transfer and the console look
 - With the Slipstream service installed, the app starts hidden in the
   tray at every user's sign-in and stays there when its window is closed;
