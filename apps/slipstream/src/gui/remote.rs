@@ -983,17 +983,28 @@ impl RemoteTab {
             theme::glide(ui, "rtt", s.rtt_ms),
         );
         let path = if s.relayed { ("RELAY", pal::GOLD) } else { ("DIRECT", pal::GREEN) };
-        let details = format!(
-            "{fps:.0} frames a second · {mbps:.1} Mbit/s · {rtt:.0} ms round trip · {}",
-            if s.relayed { "through the station's relay" } else { "direct connection" }
+        // A still screen streams at a few dozen kbit/s: "0.0 MBPS" told
+        // nothing, so below 1 Mbit/s it's kbit/s.
+        let (rate, rate_unit) = if mbps < 1.0 { (format!("{:.0}", mbps * 1000.0), "KBPS") } else { (format!("{mbps:.1}"), "MBPS") };
+        let mut details = format!(
+            "{fps:.0} frames a second · {rate} {} · {rtt:.0} ms round trip · {} · decoding {:.1} ms a frame",
+            if rate_unit == "KBPS" { "kbit/s" } else { "Mbit/s" },
+            if s.relayed { "through a relay" } else { "direct connection" },
+            s.decode_ms
         );
+        if !s.host.is_empty() {
+            details.push_str("\n\nOn the remote computer:");
+            for st in &s.host {
+                details.push_str(&format!("\n  {}: {:.0} a second, {:.1} ms each", st.name, st.fps, st.ms));
+            }
+        }
         if !compact {
             ui.label(RichText::new(path.0).font(theme::display(16.0)).color(path.1));
         }
         let text = if compact {
             format!("{fps:>3.0} FPS · {rtt:>3.0} MS")
         } else {
-            format!("{fps:>3.0} FPS · {mbps:>4.1} MBPS · {rtt:>3.0} MS")
+            format!("{fps:>3.0} FPS · {rate:>4} {rate_unit} · {rtt:>3.0} MS")
         };
         ui.label(RichText::new(text).font(theme::mono(15.0)).color(pal::BLUE)).on_hover_text(&details);
         if let Some((n, frac)) = self.files.activity() {

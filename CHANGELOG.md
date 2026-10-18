@@ -13,6 +13,17 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Seeing where video time goes
+- The viewer asks the host how fast its video stages run: screen
+  capture (and how: DXGI or GDI), encoding, waiting for a new screen
+  frame, and waiting for the viewer. The stats tooltip shows them, and
+  every 30 seconds the viewer's log gets one line with the link's frame
+  rate, bitrate, round trip, path and decode time plus the host's
+  figures. `slipstream connect` prints them too. Older hosts just don't
+  answer.
+- The toolbar shows the bitrate in kbit/s below 1 Mbit/s. A still screen
+  streams at a few dozen kbit/s, which read as "0.0 MBPS".
+
 ## 0.6.1 — 2026-10-17
 
 ### Faster video from the Windows service

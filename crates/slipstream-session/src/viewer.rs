@@ -75,6 +75,25 @@ pub struct ViewerStats {
     /// Host capture → displayed on this machine is not measurable without
     /// synced clocks; this is decode time per frame instead.
     pub decode_ms: f32,
+    /// The host's video stages (empty for hosts from before 0.6.2).
+    pub host: Vec<slipstream_core::proto::PaceStage>,
+}
+
+/// Asks the host how fast its video stages run, every few seconds, until
+/// it says it can't (older hosts).
+async fn poll_host_pace(fs: RemoteFs, out: Arc<Mutex<Vec<slipstream_core::proto::PaceStage>>>) {
+    loop {
+        match fs.ask(slipstream_core::proto::StreamOpen::Pace).await {
+            Ok((_, _, slipstream_core::proto::StreamReply::Pace(stages))) => *out.lock().unwrap() = stages,
+            _ => return,
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+}
+
+/// "screen capture (GDI) 21 fps 44.0 ms, video encoding 21 fps 30.1 ms"
+fn host_pace_text(stages: &[slipstream_core::proto::PaceStage]) -> String {
+    stages.iter().map(|s| format!("{} {:.0} fps {:.1} ms", s.name, s.fps, s.ms)).collect::<Vec<_>>().join(", ")
 }
 
 /// Latest decoded frame, shared with the renderer.
@@ -482,6 +501,10 @@ async fn session(
 
     let mut stats_tick = tokio::time::interval(Duration::from_secs(1));
     let mut last_stats = (Instant::now(), 0u64, 0u64);
+    // Every 30 s the link's figures go to the log, with the host's.
+    let mut last_log = (Instant::now(), 0u64, 0u64);
+    let host_pace = Arc::new(Mutex::new(Vec::new()));
+    let _pace_task = Abort(tokio::spawn(poll_host_pace(RemoteFs::new(conn.clone()), host_pace.clone())));
 
     loop {
         tokio::select! {
@@ -567,14 +590,29 @@ async fn session(
                     .unwrap_or_default();
                 let (width, height) = *dims.lock().unwrap();
                 let frames = (f1 - f0).max(1);
+                let host = host_pace.lock().unwrap().clone();
+                let decode_ms = decode_us.swap(0, Ordering::Relaxed) as f32 / 1000.0 / frames as f32;
+                let rtt_ms = rtt.as_secs_f32() * 1000.0;
+                if last_log.0.elapsed() >= Duration::from_secs(30) {
+                    let secs = last_log.0.elapsed().as_secs_f32();
+                    tracing::info!(
+                        "link: {width}x{height}, {:.1} fps, {:.0} kbps, round trip {rtt_ms:.0} ms {}, decode {decode_ms:.1} ms; host: {}",
+                        (f1 - last_log.2) as f32 / secs,
+                        (b1 - last_log.1) as f32 * 8.0 / 1000.0 / secs,
+                        if relayed { "relayed" } else { "direct" },
+                        if host.is_empty() { "no figures (older version)".to_string() } else { host_pace_text(&host) }
+                    );
+                    last_log = (Instant::now(), b1, f1);
+                }
                 let _ = events.send(ViewerEvent::Stats(ViewerStats {
                     fps: (f1 - f0) as f32 / secs,
                     kbps: (b1 - b0) as f32 * 8.0 / 1000.0 / secs,
-                    rtt_ms: rtt.as_secs_f32() * 1000.0,
+                    rtt_ms,
                     relayed,
                     width,
                     height,
-                    decode_ms: decode_us.swap(0, Ordering::Relaxed) as f32 / 1000.0 / frames as f32,
+                    decode_ms,
+                    host,
                 }));
                 last_stats = (Instant::now(), b1, f1);
             }

@@ -221,6 +221,8 @@ fn encode_loop(
     // stretch the frame interval.
     let mut last_taken = Instant::now() - Duration::from_secs(1);
     let mut pace = slipstream_platform::pace::Pace::new("video encoding");
+    let mut waited_viewer = slipstream_platform::pace::Pace::new("waiting for the viewer");
+    let mut waited_screen = slipstream_platform::pace::Pace::new("waiting for a new screen frame");
 
     while !stop.load(Ordering::Relaxed) {
         let current = *settings.lock().unwrap();
@@ -231,16 +233,22 @@ fn encode_loop(
         }
         let frame_interval = Duration::from_secs_f64(1.0 / applied.max_fps.clamp(1, 240) as f64);
 
+        let t = Instant::now();
         if !flow.wait_for_credit(applied.max_in_flight, frame_interval, Duration::from_millis(100)) {
             continue;
         }
+        waited_viewer.add(t.elapsed());
         // Pace to max_fps (with slack for capture jitter).
         if let Some(rest) = frame_interval.mul_f32(0.9).checked_sub(last_taken.elapsed()) {
             thread::sleep(rest);
         }
 
+        let t = Instant::now();
         let frame = match capture.next(Duration::from_millis(100)) {
-            Ok(Some(f)) => f,
+            Ok(Some(f)) => {
+                waited_screen.add(t.elapsed());
+                f
+            }
             Ok(None) => {
                 // Screen is static: send a skipped frame, or re-encode the
                 // last one if a keyframe is owed.

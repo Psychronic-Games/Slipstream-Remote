@@ -221,6 +221,8 @@ pub enum StreamOpen {
     /// The host's hardware and system: [`StreamReply::SystemInfo`]. (New
     /// variants go last: older hosts then just fail that one stream.)
     SystemInfo,
+    /// How fast the host's video stages run: [`StreamReply::Pace`].
+    Pace,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +235,17 @@ pub enum StreamReply {
     Done,
     Error(String),
     SystemInfo(Vec<InfoSection>),
+    Pace(Vec<PaceStage>),
+}
+
+/// One stage of the host's video pipeline ("screen capture (GDI)", "video
+/// encoding", "waiting for the viewer"…) over the last couple of seconds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PaceStage {
+    pub name: String,
+    pub fps: f32,
+    /// Milliseconds per frame spent in this stage.
+    pub ms: f32,
 }
 
 /// One group of facts about a computer ("Processor", "Storage"…), already

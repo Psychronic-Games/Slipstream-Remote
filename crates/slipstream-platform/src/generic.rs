@@ -190,6 +190,7 @@ fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interv
     let mut clean = None;
     let mut dirty = false;
     let mut shown = None;
+    let mut pace = crate::pace::Pace::new(if cfg!(windows) { "screen capture (DXGI)" } else { "screen capture" });
     while !producer.is_closed() {
         match frames.recv_timeout(poll) {
             Ok(f) => {
@@ -213,6 +214,7 @@ fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interv
             draw_pointer(&mut data, f.width, f.height, f.width * 4, origin, p, false);
         }
         producer.put(RawFrame { width: f.width, height: f.height, stride: f.width * 4, format: PixelFormat::Rgba, data });
+        pace.add(last.elapsed());
     }
     false
 }

@@ -102,6 +102,13 @@ async fn handle(
             let info = tokio::task::spawn_blocking(slipstream_platform::machine::collect).await?;
             reply(&mut send, &StreamReply::SystemInfo(info)).await?;
         }
+        StreamOpen::Pace => {
+            let stages = slipstream_platform::pace::live()
+                .into_iter()
+                .map(|(name, fps, ms)| slipstream_core::proto::PaceStage { name, fps, ms })
+                .collect();
+            reply(&mut send, &StreamReply::Pace(stages)).await?;
+        }
         StreamOpen::Places => {
             let r = if policy.browse { StreamReply::Places(fsops::places()) } else { denied("Browsing files") };
             reply(&mut send, &r).await?;

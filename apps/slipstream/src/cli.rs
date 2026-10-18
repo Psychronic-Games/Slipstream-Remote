@@ -232,9 +232,10 @@ pub async fn connect(
                 Some(ViewerEvent::Stats(s)) => {
                     total_frames += s.fps;
                     println!(
-                        "{:>4}x{:<4} {:>5.1} fps {:>7.0} kbps  rtt {:>5.1} ms  decode {:>4.1} ms  {}",
+                        "{:>4}x{:<4} {:>5.1} fps {:>7.0} kbps  rtt {:>5.1} ms  decode {:>4.1} ms  {}{}",
                         s.width, s.height, s.fps, s.kbps, s.rtt_ms, s.decode_ms,
-                        if s.relayed { "RELAY" } else { "DIRECT" }
+                        if s.relayed { "RELAY" } else { "DIRECT" },
+                        s.host.iter().map(|h| format!("  | {} {:.0} fps {:.1} ms", h.name, h.fps, h.ms)).collect::<String>()
                     );
                 }
                 Some(ViewerEvent::Disconnected { reason }) => { println!("disconnected: {reason}"); break; }
