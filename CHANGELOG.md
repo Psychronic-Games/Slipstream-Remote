@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.11.3 — 2026-10-18
+
 ### Menus and communications window
 - Align console dropdown frames beneath their toolbar segments, with a
   narrow gap, matching rounded corners and consistent menu-row padding.
