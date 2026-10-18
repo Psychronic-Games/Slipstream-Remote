@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.12.0 — 2026-10-18
+
 ### Desktop drag and drop
 - Receive Linux desktop file/folder drops using X11/Xwayland when available,
   including the actual pointer location during a drag. The remote capture
