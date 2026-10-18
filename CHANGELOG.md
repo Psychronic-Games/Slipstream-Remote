@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.11.0 — 2026-10-18
+
 ### Network scan improvements
 - Discover device names from the remote computer's DNS, NetBIOS node status
   and unicast mDNS, with the name and lookup source in the table and export.
