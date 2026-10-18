@@ -2,6 +2,7 @@
 //! reachable by ID, hosts incoming sessions, and opens outgoing ones.
 
 mod cursor_folder;
+mod accounts;
 pub mod files;
 pub mod fsops;
 mod host;
@@ -33,6 +34,7 @@ pub use slipstream_codec::YuvFrame;
 use slipstream_platform::Backend;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
+pub use accounts::{AccountRef, Presence};
 pub use files::RemoteFs;
 pub use viewer::{AudioOut, FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 
@@ -245,7 +247,20 @@ impl Client {
         on_progress: impl Fn(String) + Send + Sync + 'static,
     ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
         on_progress(format!("Locating {id}…"));
-        let addr = match self.lookup(id).await? {
+        let found = self.lookup(id).await?;
+        self.connect_found(id, found, password, on_progress).await
+    }
+
+    /// The rest of [`connect`](Self::connect), once `id` is looked up (on
+    /// this app's station or any other, see `accounts`).
+    pub(crate) async fn connect_found(
+        &self,
+        id: DeviceId,
+        found: Lookup,
+        password: &str,
+        on_progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
+        let addr = match found {
             Lookup::Online { addr, .. } => addr,
             Lookup::Offline { info } => bail!("{} ({id}) is offline", info.name),
             Lookup::NotFound => bail!("no device has the ID {id}"),

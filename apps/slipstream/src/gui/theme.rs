@@ -356,6 +356,34 @@ pub fn header(ui: &mut Ui, title: &str, color: Color32) {
     }
 }
 
+/// A floating window in the console style: no grey title bar (start its
+/// contents with [`window_header`]), the panel fill and a coloured edge.
+/// It's dragged by its background.
+pub fn window(id: &str, color: Color32) -> egui::Window<'static> {
+    egui::Window::new(id.to_string()).title_bar(false).frame(
+        egui::Frame::new()
+            .fill(pal::PANEL)
+            .stroke(Stroke::new(1.5, color.gamma_multiply(0.75)))
+            .corner_radius(CornerRadius::same(16))
+            .inner_margin(egui::Margin::same(16))
+            .shadow(egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(170) }),
+    )
+}
+
+/// A [`window`]'s header: the panel header, its rule ending in a Close
+/// pill. True when that's pressed.
+pub fn window_header(ui: &mut Ui, title: &str, color: Color32) -> bool {
+    let mut close = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let w = (ui.available_width() - 86.0).max(80.0);
+        ui.allocate_ui(vec2(w, 26.0), |ui| header(ui, title, color));
+        close = pill_sized(ui, "Close", color, vec2(78.0, 26.0)).clicked();
+    });
+    ui.add_space(6.0);
+    close
+}
+
 /// A content panel with a header and HUD corner brackets.
 pub fn panel<R>(ui: &mut Ui, title: &str, color: Color32, add: impl FnOnce(&mut Ui) -> R) -> R {
     let frame = egui::Frame::new()

@@ -46,7 +46,7 @@ h2.lav { color: var(--lav); } h2.blue { color: var(--blue); } h2.violet { color:
 .btn, button { display: inline-block; border: 0; cursor: pointer; text-decoration: none; text-transform: uppercase; letter-spacing: .05em;
   font: 18px var(--display); color: #000; background: var(--orange); padding: 8px 28px; border-radius: 22px; margin-top: 10px; }
 .btn:hover, button:hover { filter: brightness(1.15); box-shadow: 0 0 18px rgba(255,153,0,.45); }
-.btn.lav, button.lav { background: var(--lav); } .btn.blue, button.blue { background: var(--blue); } .btn.red, button.red { background: var(--red); }
+.btn.lav, button.lav { background: var(--lav); } .btn.blue, button.blue { background: var(--blue); } .btn.red, button.red { background: var(--red); } .btn.gold, button.gold { background: var(--gold); }
 .btn.small, button.small { font-size: 15px; padding: 4px 16px; margin-top: 0; }
 .btn[disabled], .btn.off { background: #333; color: #777; pointer-events: none; }
 input[type=checkbox], input[type=radio] { accent-color: var(--orange); width: 18px; height: 18px; vertical-align: -3px; margin-right: 6px; }

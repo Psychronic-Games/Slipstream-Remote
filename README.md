@@ -21,6 +21,11 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 - **Clipboard sync, chat, and a two-pane file manager** — copy and paste
   text and files between the computers, browse both, send and receive
   folders, or drag files from your desktop straight onto the remote screen.
+- **Technician sign-in** — keep your list of devices (with their passwords,
+  encrypted so the station can't read them) on your station, and sign in
+  to several stations at once, other organisations' too.
+- **System information** — the remote computer's hardware, drives,
+  temperatures and network, live.
 - **Sound** from the remote computer, when you want it.
 - **Unattended Windows servers** — the Slipstream service reaches UAC
   prompts, administrator windows and the login screen.
@@ -129,7 +134,6 @@ protocol, the latency control loop and the platform backends.
 
 - Hardware video encoding (NVENC, VA-API, VideoToolbox, Media Foundation)
 - Android app (viewer first, then host)
-- Address book with saved credentials (OS keychain)
 
 ## License
 

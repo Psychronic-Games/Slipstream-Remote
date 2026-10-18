@@ -319,16 +319,20 @@ impl FileManager {
         let mut open = self.open;
         let screen = ctx.content_rect();
         let size = vec2((screen.width() - 60.0).min(1000.0), (screen.height() - 90.0).min(620.0));
-        egui::Window::new(RichText::new("FILE TRANSFER").font(theme::display_bold(20.0)).color(pal::ORANGE))
+        theme::window("file-transfer", pal::ORANGE)
             .id(egui::Id::unique("file-transfer"))
-            .open(&mut open)
             .default_pos(egui::pos2(screen.center().x - size.x / 2.0, screen.top() + 56.0))
             .default_size(size)
             .max_size(vec2(screen.width() - 30.0, screen.height() - 66.0))
             .min_size([640.0, 380.0])
             .resizable(true)
             .collapsible(false)
-            .show(ctx, |ui| self.contents(ui, rt));
+            .show(ctx, |ui| {
+                if theme::window_header(ui, "File transfer", pal::ORANGE) {
+                    open = false;
+                }
+                self.contents(ui, rt)
+            });
         self.open = open;
     }
 
@@ -464,7 +468,7 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
         if ui.button("⟳").on_hover_text("Refresh").clicked() {
             nav = Some(pane.listing.as_ref().map(|l| l.path.clone()));
         }
-        let r = ui.add(egui::TextEdit::singleline(&mut pane.path_edit).desired_width(ui.available_width()).font(theme::mono(14.0)));
+        let r = ui.add(egui::TextEdit::singleline(&mut pane.path_edit).align(egui::Align2::LEFT_CENTER).desired_width(ui.available_width()).font(theme::mono(14.0)));
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             nav = Some(Some(pane.path_edit.clone()));
         }

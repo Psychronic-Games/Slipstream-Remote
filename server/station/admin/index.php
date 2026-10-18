@@ -148,6 +148,57 @@ switch ($action) {
         slip_relay_ensure(true);
         flash('New access key created. Existing apps stop working until they are downloaded again.', true);
         back('settings');
+    case 'tech_add':
+        try {
+            slip_user_create((string)($_POST['username'] ?? ''), trim((string)($_POST['name'] ?? '')), (string)($_POST['password'] ?? ''), !empty($_POST['admin']));
+            flash('Technician added. They sign in from the app under Config → Stations with ' . slip_server_address() . ', their username and password.');
+        } catch (InvalidArgumentException $e) {
+            flash($e->getMessage(), true);
+        }
+        back('techs');
+    case 'tech_password':
+        try {
+            slip_user_set_password(slip_user_norm($_POST['username'] ?? ''), (string)($_POST['password'] ?? ''));
+            flash('Password changed. They are signed out everywhere, and passwords they had saved for devices are cleared.');
+        } catch (InvalidArgumentException $e) {
+            flash($e->getMessage(), true);
+        }
+        back('techs');
+    case 'tech_admin':
+        $u = slip_user_norm($_POST['username'] ?? '');
+        $on = !empty($_POST['admin']);
+        slip_user_update($u, function (array $a) use ($on) {
+            $a['admin'] = $on;
+            return $a;
+        });
+        flash($on ? "$u can now change the shared devices." : "$u is no longer a station admin.");
+        back('techs');
+    case 'tech_signout':
+        slip_user_signout_all(slip_user_norm($_POST['username'] ?? ''));
+        flash('Signed out on every computer.');
+        back('techs');
+    case 'tech_delete':
+        slip_user_delete(slip_user_norm($_POST['username'] ?? ''));
+        flash('Technician removed, with their saved devices.');
+        back('techs');
+    case 'shared_add':
+        $d = slip_clean_device(['id' => (int)preg_replace('/\D/', '', (string)($_POST['id'] ?? '')), 'name' => $_POST['name'] ?? '', 'notes' => $_POST['notes'] ?? ''], false);
+        if (!$d) {
+            flash('Enter the device\'s 9-digit ID.', true);
+        } else {
+            slip_shared_update(function (array $list) use ($d) {
+                $list = array_filter($list, fn($x) => ($x['id'] ?? 0) !== $d['id']);
+                $list[] = $d + ['added_by' => 'admin page', 'added' => time()];
+                return $list;
+            });
+            flash('Shared with every technician.');
+        }
+        back('techs');
+    case 'shared_delete':
+        $id = (int)($_POST['id'] ?? 0);
+        slip_shared_update(fn(array $list) => array_filter($list, fn($x) => ($x['id'] ?? 0) !== $id));
+        flash('Removed from the shared list.');
+        back('techs');
     case 'admin_password':
         $pw = (string)($_POST['password'] ?? '');
         if (strlen($pw) < 10) {
@@ -170,6 +221,7 @@ slip_page_start('Station admin', '../');
 <nav class="tabs">
   <a href="./" class="<?= $tab === 'status' ? 'on' : '' ?>">Status</a>
   <a href="?tab=devices" class="<?= $tab === 'devices' ? 'on' : '' ?>">Devices</a>
+  <a href="?tab=techs" class="<?= $tab === 'techs' ? 'on' : '' ?>">Technicians</a>
   <a href="?tab=settings" class="<?= $tab === 'settings' ? 'on' : '' ?>">Settings</a>
   <a href="../" target="_blank">Download page ↗</a>
   <form method="post" style="margin-left:auto"><?= $form() ?><input type="hidden" name="action" value="logout"><button class="small lav">Sign out</button></form>
@@ -282,6 +334,81 @@ slip_page_start('Station admin', '../');
       <?php endforeach ?>
     </table>
     <?php endif ?>
+  </div>
+
+<?php elseif ($tab === 'techs'):
+    $users = slip_users();
+    $shared = slip_shared();
+    $when = fn($t) => $t ? date('Y-m-d H:i', (int)$t) : '—';
+    ?>
+  <h2>Technicians</h2>
+  <div class="panel">
+    <p>Technicians sign in from the app under <b>Config → Stations</b> with this station's address
+    (<span class="mono"><?= h(slip_server_address()) ?></span>), their username and password. They can then
+    reach your devices and keep their own list of them, here, from any computer, even an app from another
+    organisation's station. Devices they save a password for keep it encrypted with a key only their app can
+    make from their password: this station can't read it.</p>
+    <?php if (!$users): ?><p class="dim">No technicians yet.</p><?php else: ?>
+    <table>
+      <tr><th>Username</th><th>Name</th><th>Role</th><th>Devices</th><th>Signed in</th><th></th></tr>
+      <?php foreach ($users as $u => $a): $sessions = (array)($a['sessions'] ?? []); $last = $sessions ? max(array_column($sessions, 'used')) : 0; ?>
+        <tr>
+          <td class="mono"><?= h($u) ?></td>
+          <td><?= h($a['name'] ?? '') ?></td>
+          <td><?= !empty($a['admin']) ? '<span class="ok">admin</span>' : 'technician' ?></td>
+          <td><?= count($a['devices'] ?? []) ?></td>
+          <td class="dim"><?= count($sessions) ?> app<?= count($sessions) === 1 ? '' : 's' ?><?= $last ? ' · ' . h($when($last)) : '' ?></td>
+          <td style="white-space:nowrap">
+            <form method="post" style="display:inline"><?= $form() ?><input type="hidden" name="action" value="tech_admin">
+              <input type="hidden" name="username" value="<?= h($u) ?>"><input type="hidden" name="admin" value="<?= empty($a['admin']) ? '1' : '' ?>">
+              <button class="small lav"><?= empty($a['admin']) ? 'Make admin' : 'Remove admin' ?></button></form>
+            <form method="post" style="display:inline"><?= $form() ?><input type="hidden" name="action" value="tech_signout">
+              <input type="hidden" name="username" value="<?= h($u) ?>"><button class="small blue">Sign out everywhere</button></form>
+            <form method="post" style="display:inline" onsubmit="return confirm('Remove <?= h($u) ?> and their saved devices?')"><?= $form() ?>
+              <input type="hidden" name="action" value="tech_delete"><input type="hidden" name="username" value="<?= h($u) ?>">
+              <button class="small red">Remove</button></form>
+            <form method="post" style="display:inline"><?= $form() ?><input type="hidden" name="action" value="tech_password">
+              <input type="hidden" name="username" value="<?= h($u) ?>">
+              <input type="password" name="password" minlength="10" placeholder="new password" style="width:11em;display:inline">
+              <button class="small">Set</button></form>
+          </td>
+        </tr>
+      <?php endforeach ?>
+    </table>
+    <?php endif ?>
+  </div>
+
+  <h2 class="blue">Add a technician</h2>
+  <div class="panel">
+    <form method="post"><?= $form() ?><input type="hidden" name="action" value="tech_add">
+      <label class="k">Username</label><input type="text" name="username" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]{1,31}" placeholder="jsmith">
+      <label class="k">Name</label><input type="text" name="name" placeholder="Jane Smith">
+      <label class="k">Password (at least 10 characters)</label><input type="password" name="password" required minlength="10">
+      <label><input type="checkbox" name="admin" value="1"> Station admin: may change the shared devices from the app</label>
+      <br><button>Add technician</button>
+    </form>
+  </div>
+
+  <h2 class="gold">Shared devices</h2>
+  <div class="panel">
+    <p>Every technician sees these in their app, next to their own list. Passwords aren't stored for shared devices.</p>
+    <?php if ($shared): ?>
+    <table>
+      <tr><th>ID</th><th>Name</th><th>Notes</th><th>Added by</th><th></th></tr>
+      <?php foreach ($shared as $d): $id = (string)$d['id']; ?>
+        <tr><td class="mono"><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?></td>
+          <td><?= h($d['name'] ?? '') ?></td><td class="dim"><?= h($d['notes'] ?? '') ?></td><td class="dim"><?= h($d['added_by'] ?? '') ?></td>
+          <td><form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_delete"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+            <button class="small red">Remove</button></form></td></tr>
+      <?php endforeach ?>
+    </table>
+    <?php endif ?>
+    <form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_add">
+      <label class="k">Device ID</label><input type="text" name="id" required placeholder="482 913 077">
+      <label class="k">Name</label><input type="text" name="name" placeholder="Front desk PC">
+      <label class="k">Notes (optional)</label><input type="text" name="notes">
+      <br><button class="gold">Share device</button>
+    </form>
   </div>
 
 <?php else: ?>

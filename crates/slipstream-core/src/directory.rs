@@ -201,7 +201,7 @@ impl DirectoryClient {
         &self.base
     }
 
-    async fn call<T: DeserializeOwned>(&self, mut body: serde_json::Value) -> Result<T> {
+    pub(crate) async fn call<T: DeserializeOwned>(&self, mut body: serde_json::Value) -> Result<T> {
         if let (Some(key), Some(obj)) = (&self.key, body.as_object_mut()) {
             obj.insert("key".into(), key.clone().into());
         }

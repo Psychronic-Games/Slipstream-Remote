@@ -15,7 +15,11 @@ them a private remote-support service:
 - **Relay** — when two computers can't reach each other directly (strict
   firewalls), traffic goes through your station instead of someone else's.
   It's end-to-end encrypted; the station can't see screens or passwords.
-- **Admin page** — setup, health checks, devices, settings, access key.
+- **Technician accounts** — your technicians sign in from the app (any
+  app, even one from another organisation's station) and keep their own
+  list of devices here, plus a shared list you manage.
+- **Admin page** — setup, health checks, devices, technicians, settings,
+  access key.
 
 Move it to another server any time: copy the folder and the data folder,
 repoint DNS, done. Apps only know your domain.
@@ -90,7 +94,8 @@ isn't writable, `./data` inside the site is used, protected by `.htaccess`.
 Copy `config.sample.php` to `config.php` to choose another folder or to use
 MariaDB/MySQL instead of files.
 
-Back up `slipstream-data/`: it holds the access key and the device IDs.
+Back up `slipstream-data/`: it holds the access key, the device IDs, and the
+technicians (`accounts/`, `tokens/`, `shared.json`).
 
 ## The relay
 
@@ -107,6 +112,28 @@ access key, which is built into the apps from its download page. If an app
 gets into the wrong hands, make a new key on the Settings tab — everyone then
 needs to download the app again. You can also put a password on the
 download page.
+
+## Technicians
+
+The **Technicians** tab of the admin page adds technician accounts
+(username, name, password of 10+ characters) and makes some of them station
+admins. A technician signs in from the app under *Config → Stations* with
+the station's address, username and password. That gives their app the
+station's access key, so it works even from an app downloaded from another
+station, and a sign-in token (kept on the station only as a hash).
+
+Each technician keeps a list of devices on the station. Passwords they save
+for devices arrive encrypted by the app with a key made from their sign-in
+password (Argon2id, then XChaCha20-Poly1305, bound to the device's ID): the
+data folder alone can't reveal them. Setting a new password for a technician
+signs them out everywhere and clears the passwords they had saved, which
+can't be opened any more. *Sign out everywhere* ends every sign-in at once.
+
+The **Shared devices** list on the same tab is seen by every technician,
+without passwords. Station admins can also change it from the app.
+
+Sign-ins are rate-limited per address and per account. The standalone
+`slipstream-server` station doesn't have accounts.
 
 ## Other web servers
 

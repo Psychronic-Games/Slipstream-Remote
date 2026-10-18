@@ -22,6 +22,57 @@ pub struct Settings {
     pub app: AppSettings,
     /// Recently used connections, most recent first.
     pub recent: Vec<RecentConnection>,
+    /// Stations a technician signed in to (see `account`), each with its
+    /// lists of devices.
+    pub accounts: Vec<StationAccount>,
+}
+
+/// A sign-in to a station: any station, not only this app's own.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct StationAccount {
+    /// Station address as it gives it, e.g. `relay.example.com`.
+    pub server: String,
+    /// Its access key, handed over at sign-in.
+    pub key: Option<String>,
+    pub org: Option<String>,
+    pub user: crate::account::AccountUser,
+    pub token: String,
+    /// Opens the passwords saved in this account (hex; made from the
+    /// sign-in password, which isn't kept).
+    pub vault_key: Option<String>,
+    /// The lists as last fetched, shown before the station answers.
+    pub devices: Vec<crate::account::SavedDevice>,
+    pub shared: Vec<crate::account::SavedDevice>,
+    /// The station ended this sign-in (password reset, signed out on the
+    /// admin page): sign in again.
+    pub signed_out: bool,
+}
+
+impl std::fmt::Debug for StationAccount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // No token or key in logs.
+        f.debug_struct("StationAccount")
+            .field("server", &self.server)
+            .field("user", &self.user.username)
+            .field("devices", &self.devices.len())
+            .field("shared", &self.shared.len())
+            .field("signed_out", &self.signed_out)
+            .finish_non_exhaustive()
+    }
+}
+
+impl StationAccount {
+    /// "Acme IT" or the address.
+    pub fn label(&self) -> String {
+        self.org.clone().filter(|o| !o.trim().is_empty()).unwrap_or_else(|| self.server.clone())
+    }
+
+    /// Same station? (addresses compared as the apps normalise them)
+    pub fn is_station(&self, server: &str) -> bool {
+        let norm = |s: &str| crate::directory::normalize_server_url(s).map(|u| u.to_string()).unwrap_or_else(|_| s.to_lowercase());
+        norm(&self.server) == norm(server)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +164,7 @@ impl Default for Settings {
             viewer: ViewerSettings::default(),
             app: AppSettings::default(),
             recent: Vec::new(),
+            accounts: Vec::new(),
         }
     }
 }

@@ -75,8 +75,13 @@ enum Command {
     Connect {
         /// The 9-digit ID of the remote device.
         id: String,
+        /// Its password (with --station, the one saved for it is used if left out).
         #[arg(long)]
-        password: String,
+        password: Option<String>,
+        /// Find it on this station you're signed in to (see sign-in), not
+        /// this app's own.
+        #[arg(long)]
+        station: Option<String>,
         /// How long to stay connected.
         #[arg(long, default_value_t = 10)]
         seconds: u64,
@@ -109,6 +114,39 @@ enum Command {
     SetPassword { password: Option<String> },
     /// Print this device's ID and settings location.
     Info,
+    /// Sign in to a station as a technician (any station, not only this
+    /// app's own), to reach its devices and keep your list of them there.
+    SignIn {
+        /// The station's address, e.g. `relay.example.com`.
+        station: String,
+        username: String,
+        /// Read from the terminal if left out.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Sign out of a station.
+    SignOut { station: String },
+    /// List the devices saved on the stations you're signed in to.
+    Saved,
+    /// Save a device in your list on a station you're signed in to.
+    Save {
+        id: String,
+        #[arg(long)]
+        station: String,
+        #[arg(long, default_value = "")]
+        name: String,
+        #[arg(long, default_value = "")]
+        notes: String,
+        /// Its unattended password, kept sealed (only your sign-in opens it).
+        #[arg(long)]
+        password: Option<String>,
+        /// Into the station's shared list instead (station admins).
+        #[arg(long)]
+        shared: bool,
+        /// Remove it from the list instead.
+        #[arg(long)]
+        remove: bool,
+    },
     /// Update to the newest build your station offers.
     Update,
     /// Windows: run as a service, for unattended access including the login
@@ -190,8 +228,14 @@ fn main() -> anyhow::Result<()> {
                 rt.block_on(cli::host(false, None, true))
             }
         },
-        Some(Command::Connect { id, password, seconds, ls, put, to, get, forward }) => {
-            rt.block_on(cli::connect(&id, &password, seconds, cli::FileOps { ls, put, to, get }, forward))
+        Some(Command::Connect { id, password, station, seconds, ls, put, to, get, forward }) => {
+            rt.block_on(cli::connect(&id, password, station, seconds, cli::FileOps { ls, put, to, get }, forward))
+        }
+        Some(Command::SignIn { station, username, password }) => rt.block_on(cli::sign_in(&station, &username, password)),
+        Some(Command::SignOut { station }) => rt.block_on(cli::sign_out(&station)),
+        Some(Command::Saved) => rt.block_on(cli::saved()),
+        Some(Command::Save { id, station, name, notes, password, shared, remove }) => {
+            rt.block_on(cli::save(&id, &station, name, notes, password, shared, remove))
         }
         Some(Command::SetServer { address, key }) => cli::set_server(&address, key),
         Some(Command::SetPassword { password }) => cli::set_password(password.as_deref()),

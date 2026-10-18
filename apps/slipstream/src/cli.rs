@@ -161,12 +161,29 @@ pub fn parse_forward(spec: &str) -> Result<(u16, String, u16)> {
     }
 }
 
-pub async fn connect(id: &str, password: &str, seconds: u64, ops: FileOps, forward: Vec<String>) -> Result<()> {
+pub async fn connect(
+    id: &str,
+    password: Option<String>,
+    station: Option<String>,
+    seconds: u64,
+    ops: FileOps,
+    forward: Vec<String>,
+) -> Result<()> {
     let forward = forward.iter().map(|f| parse_forward(f)).collect::<Result<Vec<_>>>()?;
     let id: DeviceId = id.parse()?;
     let store = Store::open_default()?;
     let (client, _events) = Client::start(store, ClientOptions::default()).await?;
-    let (session, mut events) = match client.connect(id, password, |p| println!("… {p}")).await {
+    let attempt = match &station {
+        Some(st) => match account_for(&client, st) {
+            Ok(r) => client.connect_via(&r, id, password, |p| println!("… {p}")).await,
+            Err(e) => Err(e),
+        },
+        None => match &password {
+            Some(pw) => client.connect(id, pw, |p| println!("… {p}")).await,
+            None => Err(anyhow::anyhow!("--password is needed (or --station, for a saved one)")),
+        },
+    };
+    let (session, mut events) = match attempt {
         Ok(s) => s,
         Err(e) => {
             client.shutdown().await;
@@ -234,6 +251,110 @@ pub async fn connect(id: &str, password: &str, seconds: u64, ops: FileOps, forwa
 }
 
 /// Checks the station for a newer build and installs it.
+/// The sign-in for a station address.
+fn account_for(client: &Client, station: &str) -> Result<slipstream_session::AccountRef> {
+    client
+        .settings()
+        .accounts
+        .iter()
+        .find(|a| a.is_station(station))
+        .map(slipstream_session::AccountRef::of)
+        .ok_or_else(|| anyhow::anyhow!("not signed in to {station}: use `slipstream sign-in {station} USERNAME`"))
+}
+
+pub async fn sign_in(station: &str, username: &str, password: Option<String>) -> Result<()> {
+    let password = match password {
+        Some(p) => p,
+        None => {
+            eprint!("password for {username} on {station}: ");
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            line.trim_end_matches(['\r', '\n']).to_string()
+        }
+    };
+    let store = Store::open_default()?;
+    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let result = client.sign_in(station, username, &password).await;
+    let accounts = client.settings().accounts;
+    client.shutdown().await;
+    let r = result?;
+    let a = accounts.iter().find(|a| a.is_station(&r.server)).expect("just signed in");
+    println!(
+        "signed in to {} as {}{}: {} saved device(s), {} shared",
+        a.label(),
+        a.user.name,
+        if a.user.admin { " (station admin)" } else { "" },
+        a.devices.len(),
+        a.shared.len()
+    );
+    Ok(())
+}
+
+pub async fn sign_out(station: &str) -> Result<()> {
+    let store = Store::open_default()?;
+    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let result = account_for(&client, station);
+    if let Ok(r) = &result {
+        client.sign_out(r).await;
+        println!("signed out of {station}");
+    }
+    client.shutdown().await;
+    result.map(|_| ())
+}
+
+pub async fn save(id: &str, station: &str, name: String, notes: String, password: Option<String>, shared: bool, remove: bool) -> Result<()> {
+    let id: DeviceId = id.parse()?;
+    let store = Store::open_default()?;
+    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let result = async {
+        let r = account_for(&client, station)?;
+        if remove {
+            client.delete_device(&r, id, shared).await?;
+            println!("removed {id}");
+        } else {
+            let device = slipstream_core::account::SavedDevice { id, name, notes, secret: None, added_by: None };
+            client.save_device(&r, device, password, shared).await?;
+            println!("saved {id}");
+        }
+        anyhow::Ok(())
+    }
+    .await;
+    client.shutdown().await;
+    result
+}
+
+pub async fn saved() -> Result<()> {
+    let store = Store::open_default()?;
+    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    client.sync_accounts().await;
+    let accounts = client.settings().accounts;
+    if accounts.is_empty() {
+        println!("not signed in to any station (see `slipstream sign-in`)");
+    }
+    for a in &accounts {
+        let r = slipstream_session::AccountRef::of(a);
+        println!("{} ({}) · {}{}", a.label(), a.server, a.user.name, if a.signed_out { " · SIGNED OUT, sign in again" } else { "" });
+        let ids: Vec<DeviceId> = a.devices.iter().chain(&a.shared).map(|d| d.id).collect();
+        let presence = client.presence(&r, &ids).await;
+        let state = |id| presence.iter().find(|(i, _)| *i == id).map(|(_, p)| format!("{p:?}").to_lowercase()).unwrap_or_default();
+        for (list, devices) in [("mine", &a.devices), ("shared", &a.shared)] {
+            for d in devices {
+                println!(
+                    "  {:<7} {}  {:<28} {:<8}{}{}",
+                    list,
+                    d.id,
+                    d.name,
+                    state(d.id),
+                    if d.secret.is_some() { " · password saved" } else { "" },
+                    if d.notes.is_empty() { String::new() } else { format!(" · {}", d.notes) }
+                );
+            }
+        }
+    }
+    client.shutdown().await;
+    Ok(())
+}
+
 pub async fn update() -> Result<()> {
     let store = Store::open_default()?;
     let (client, _events) = Client::start(store, ClientOptions::default()).await?;

@@ -405,6 +405,269 @@ function slip_store(): SlipStore
     return $store;
 }
 
+// ── Technician accounts ────────────────────────────────────────────────────
+//
+// Technicians sign in from the app, including to other organisations'
+// stations (whose access key their app doesn't carry), and keep their list
+// of devices here so it follows them to any computer. One JSON file per
+// account in <data>/accounts/; sign-in tokens are kept only as hashes, with
+// an index in <data>/tokens/. Saved device passwords arrive already
+// encrypted by the app, with a key derived from the technician's password
+// (crates/slipstream-core/src/vault.rs): this station stores them but has
+// no key to read them. Devices in <data>/shared.json are everyone's.
+
+const SLIP_USER_RE = '/^[a-z0-9][a-z0-9._-]{1,31}$/';
+const SLIP_MAX_DEVICES = 500;
+
+function slip_acct_dir(string $sub): string
+{
+    $dir = slip_data_dir() . "/$sub";
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0750, true);
+    }
+    return $dir;
+}
+
+function slip_user_norm($u): string
+{
+    return strtolower(trim(is_string($u) ? $u : ''));
+}
+
+function slip_user_valid(string $u): bool
+{
+    return (bool)preg_match(SLIP_USER_RE, $u);
+}
+
+function slip_user_load(string $u): ?array
+{
+    if (!slip_user_valid($u)) {
+        return null;
+    }
+    $d = json_decode((string)@file_get_contents(slip_acct_dir('accounts') . "/$u.json"), true);
+    return is_array($d) ? $d : null;
+}
+
+/** Runs $fn on the account under a lock and saves what it returns. */
+function slip_user_update(string $u, callable $fn): ?array
+{
+    $path = slip_acct_dir('accounts') . "/$u.json";
+    $fh = fopen("$path.lock", 'c');
+    flock($fh, LOCK_EX);
+    try {
+        $cur = slip_user_load($u);
+        if ($cur === null) {
+            return null;
+        }
+        $new = $fn($cur);
+        $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
+        file_put_contents($tmp, json_encode($new, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        @chmod($tmp, 0640);
+        rename($tmp, $path);
+        return $new;
+    } finally {
+        flock($fh, LOCK_UN);
+        fclose($fh);
+    }
+}
+
+/** All accounts, by username. */
+function slip_users(): array
+{
+    $out = [];
+    foreach (glob(slip_acct_dir('accounts') . '/*.json') ?: [] as $f) {
+        $d = json_decode((string)@file_get_contents($f), true);
+        if (is_array($d) && isset($d['username'])) {
+            $out[$d['username']] = $d;
+        }
+    }
+    ksort($out);
+    return $out;
+}
+
+function slip_user_create(string $u, string $name, string $pw, bool $admin): void
+{
+    $u = slip_user_norm($u);
+    if (!slip_user_valid($u)) {
+        throw new InvalidArgumentException('Usernames are 2–32 characters: letters, digits, dot, dash or underscore.');
+    }
+    if (strlen($pw) < 10) {
+        throw new InvalidArgumentException('Use a password of at least 10 characters.');
+    }
+    $path = slip_acct_dir('accounts') . "/$u.json";
+    $fh = @fopen($path, 'x'); // fails if the name is taken
+    if (!$fh) {
+        throw new InvalidArgumentException("There is already a technician called $u.");
+    }
+    fwrite($fh, json_encode([
+        'username' => $u,
+        'name' => slip_clip($name !== '' ? $name : $u, 64),
+        'hash' => password_hash($pw, PASSWORD_DEFAULT),
+        'admin' => $admin,
+        'created' => time(),
+        'vault_salt' => bin2hex(random_bytes(16)),
+        'devices' => [],
+        'sessions' => (object)[],
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    fclose($fh);
+    @chmod($path, 0640);
+}
+
+/** A new password from the admin: saved device passwords can't be opened
+ *  with it, so they're dropped (with a new vault salt), and every sign-in
+ *  ends. */
+function slip_user_set_password(string $u, string $pw): void
+{
+    if (strlen($pw) < 10) {
+        throw new InvalidArgumentException('Use a password of at least 10 characters.');
+    }
+    slip_user_signout_all($u);
+    slip_user_update($u, function (array $a) use ($pw) {
+        $a['hash'] = password_hash($pw, PASSWORD_DEFAULT);
+        $a['vault_salt'] = bin2hex(random_bytes(16));
+        foreach ($a['devices'] as &$d) {
+            $d['secret'] = null;
+        }
+        return $a;
+    });
+}
+
+function slip_user_signout_all(string $u): void
+{
+    $a = slip_user_load($u);
+    foreach (array_keys((array)($a['sessions'] ?? [])) as $hash) {
+        @unlink(slip_acct_dir('tokens') . "/$hash");
+    }
+    slip_user_update($u, function (array $a) {
+        $a['sessions'] = (object)[];
+        return $a;
+    });
+}
+
+function slip_user_delete(string $u): void
+{
+    if (!slip_user_valid($u)) {
+        return;
+    }
+    slip_user_signout_all($u);
+    @unlink(slip_acct_dir('accounts') . "/$u.json");
+    @unlink(slip_acct_dir('accounts') . "/$u.json.lock");
+}
+
+/** Signs a technician in from an app: a new token (returned once). */
+function slip_token_issue(string $u, string $device): string
+{
+    $token = bin2hex(random_bytes(32));
+    $hash = hash('sha256', $token);
+    file_put_contents(slip_acct_dir('tokens') . "/$hash", $u);
+    slip_user_update($u, function (array $a) use ($hash, $device) {
+        $sessions = (array)($a['sessions'] ?? []);
+        $sessions[$hash] = ['created' => time(), 'used' => time(), 'device' => $device];
+        // The oldest sign-ins go past 20 (each app keeps its own).
+        uasort($sessions, fn($x, $y) => $y['used'] <=> $x['used']);
+        foreach (array_slice(array_keys($sessions), 20) as $old) {
+            unset($sessions[$old]);
+            @unlink(slip_acct_dir('tokens') . "/$old");
+        }
+        $a['sessions'] = $sessions;
+        return $a;
+    });
+    return $token;
+}
+
+/** The account a token belongs to, or null if it's unknown or revoked. */
+function slip_token_user($token): ?array
+{
+    if (!is_string($token) || !preg_match('/^[0-9a-f]{64}$/', $token)) {
+        return null;
+    }
+    $hash = hash('sha256', $token);
+    $u = (string)@file_get_contents(slip_acct_dir('tokens') . "/$hash");
+    $a = slip_user_load($u);
+    $s = ((array)($a['sessions'] ?? []))[$hash] ?? null;
+    if (!$a || !$s) {
+        return null;
+    }
+    // Note use now and then, for the admin page (not on every request).
+    if (time() - (int)($s['used'] ?? 0) > 600) {
+        $a = slip_user_update($u, function (array $a) use ($hash) {
+            $sessions = (array)$a['sessions'];
+            if (isset($sessions[$hash])) {
+                $sessions[$hash]['used'] = time();
+            }
+            $a['sessions'] = $sessions;
+            return $a;
+        }) ?? $a;
+    }
+    return $a;
+}
+
+function slip_token_revoke($token): void
+{
+    $a = slip_token_user($token);
+    if (!$a) {
+        return;
+    }
+    $hash = hash('sha256', $token);
+    @unlink(slip_acct_dir('tokens') . "/$hash");
+    slip_user_update($a['username'], function (array $a) use ($hash) {
+        $sessions = (array)$a['sessions'];
+        unset($sessions[$hash]);
+        $a['sessions'] = $sessions;
+        return $a;
+    });
+}
+
+/** What the app may know about an account. */
+function slip_user_public(array $a): array
+{
+    return ['username' => $a['username'], 'name' => $a['name'] ?? $a['username'], 'admin' => !empty($a['admin'])];
+}
+
+/** A device entry as sent by the app, checked and trimmed; null if unusable. */
+function slip_clean_device($d, bool $withSecret = true): ?array
+{
+    if (!is_array($d)) {
+        return null;
+    }
+    $id = $d['id'] ?? null;
+    if (!is_int($id) || $id < SLIP_ID_MIN || $id > SLIP_ID_MAX) {
+        return null;
+    }
+    $out = ['id' => $id, 'name' => slip_clip(trim((string)($d['name'] ?? '')), 64), 'notes' => slip_clip(trim((string)($d['notes'] ?? '')), 500)];
+    $secret = $d['secret'] ?? null;
+    if ($withSecret) {
+        $ok = is_array($secret) && is_string($secret['n'] ?? null) && is_string($secret['c'] ?? null)
+            && preg_match('/^[0-9a-f]{48}$/', $secret['n']) && preg_match('/^[0-9a-f]{32,1024}$/', $secret['c']);
+        $out['secret'] = $ok ? ['n' => $secret['n'], 'c' => $secret['c']] : null;
+    }
+    return $out;
+}
+
+function slip_shared(): array
+{
+    $d = json_decode((string)@file_get_contents(slip_data_dir() . '/shared.json'), true);
+    return is_array($d) ? array_values($d) : [];
+}
+
+/** Changes the shared list under a lock: $fn gets and returns it. */
+function slip_shared_update(callable $fn): array
+{
+    $path = slip_data_dir() . '/shared.json';
+    $fh = fopen("$path.lock", 'c');
+    flock($fh, LOCK_EX);
+    try {
+        $new = array_values($fn(slip_shared()));
+        $tmp = $path . '.' . bin2hex(random_bytes(4));
+        file_put_contents($tmp, json_encode($new, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        @chmod($tmp, 0640);
+        rename($tmp, $path);
+        return $new;
+    } finally {
+        flock($fh, LOCK_UN);
+        fclose($fh);
+    }
+}
+
 // ── Relay supervisor ───────────────────────────────────────────────────────
 //
 // The relay is the slipstream-server program in bin/, run as this site's

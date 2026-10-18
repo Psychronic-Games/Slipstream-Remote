@@ -143,6 +143,14 @@ the challenge within 10 s is dropped.
   shows the mouse pointer (`cursor_in_video`). The viewer hides its own
   pointer only in that case.
 
+* **Technician accounts** (station API, not the session protocol):
+  `login` returns a token, the station's config (access key included) and
+  the account's vault salt; `account`/`device_*`/`shared_*` take the token.
+  These run before the access-key check, so an app can sign in to a
+  station it didn't come from. Saved passwords are sealed client-side
+  (`crates/slipstream-core/src/vault.rs`). The app looks a device up on
+  the station it's saved on and connects as usual
+  (`crates/slipstream-session/src/accounts.rs`).
 * **System information:** `StreamOpen::SystemInfo` → `StreamReply::SystemInfo`,
   titled sections of (label, value) rows already worded on the host
   (`crates/slipstream-platform/src/machine.rs`), so new facts need no

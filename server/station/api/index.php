@@ -49,6 +49,101 @@ if (($req['op'] ?? '') === 'link') {
     reply(['ok' => true] + slip_client_config());
 }
 
+// Technician accounts: a sign-in gives the app this station's config
+// (access key included) and a token for the rest, so these work without
+// the key too. See the accounts section of ../lib/slipstream.php.
+$op = (string)($req['op'] ?? '');
+if ($op === 'login') {
+    if (!slip_rate_ok('login', 20)) {
+        fail('too many sign-in attempts, wait a minute', 429);
+    }
+    $u = slip_user_norm($req['username'] ?? '');
+    $pw = (string)($req['password'] ?? '');
+    if (!slip_rate_ok("login|$u", 10)) {
+        fail('too many attempts for that account, wait a minute', 429);
+    }
+    $acct = slip_user_load($u);
+    // The same work for unknown names, so timing doesn't tell them apart.
+    $hash = $acct['hash'] ?? '$2y$12$qbJtzQ04aH6DWxr8jJh0g.VgXGS8MRZznxb3JTdipy/6KCYInoaAu';
+    if (!password_verify($pw, $hash) || !$acct) {
+        fail('wrong username or password', 403);
+    }
+    $token = slip_token_issue($u, slip_clip(trim((string)($req['device'] ?? '')), 64));
+    reply(['ok' => true, 'token' => $token, 'user' => slip_user_public($acct), 'station' => slip_client_config(), 'vault_salt' => $acct['vault_salt']]);
+}
+if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'shared_save', 'shared_delete'], true)) try {
+    if (!slip_rate_ok('account', 120)) {
+        fail('too many requests, slow down', 429);
+    }
+    $acct = slip_token_user($req['token'] ?? null);
+    if (!$acct) {
+        fail('signed out: sign in to this station again', 401);
+    }
+    $u = $acct['username'];
+    $isAdmin = !empty($acct['admin']);
+    switch ($op) {
+        case 'logout':
+            slip_token_revoke($req['token']);
+            reply(['ok' => true]);
+        case 'device_save':
+            $d = slip_clean_device($req['device'] ?? null);
+            if (!$d) {
+                fail('a device needs a 9-digit ID');
+            }
+            $acct = slip_user_update($u, function (array $a) use ($d) {
+                $list = array_values(array_filter($a['devices'] ?? [], fn($x) => ($x['id'] ?? 0) !== $d['id']));
+                if (count($list) >= SLIP_MAX_DEVICES) {
+                    throw new InvalidArgumentException('your list is full (' . SLIP_MAX_DEVICES . ' devices)');
+                }
+                $old = array_values(array_filter($a['devices'] ?? [], fn($x) => ($x['id'] ?? 0) === $d['id']))[0] ?? null;
+                $d['added'] = (int)($old['added'] ?? time());
+                $list[] = $d;
+                $a['devices'] = $list;
+                return $a;
+            });
+            break;
+        case 'device_delete':
+            $id = $req['id'] ?? null;
+            $acct = slip_user_update($u, function (array $a) use ($id) {
+                $a['devices'] = array_values(array_filter($a['devices'] ?? [], fn($x) => ($x['id'] ?? 0) !== $id));
+                return $a;
+            });
+            break;
+        case 'shared_save':
+        case 'shared_delete':
+            if (!$isAdmin) {
+                fail('only station admins can change the shared list', 403);
+            }
+            $d = $op === 'shared_save' ? slip_clean_device($req['device'] ?? null, false) : null;
+            if ($op === 'shared_save' && !$d) {
+                fail('a device needs a 9-digit ID');
+            }
+            $id = $d['id'] ?? ($req['id'] ?? null);
+            slip_shared_update(function (array $list) use ($d, $id, $u) {
+                $list = array_filter($list, fn($x) => ($x['id'] ?? 0) !== $id);
+                if ($d) {
+                    $list[] = $d + ['added_by' => $u, 'added' => time()];
+                }
+                return $list;
+            });
+            break;
+    }
+    // Every account call answers with the whole picture.
+    reply([
+        'ok' => true,
+        'user' => slip_user_public($acct),
+        'devices' => array_values($acct['devices'] ?? []),
+        'shared' => slip_shared(),
+        'vault_salt' => $acct['vault_salt'],
+        'station' => slip_client_config(),
+    ]);
+} catch (InvalidArgumentException $e) {
+    fail($e->getMessage(), 400);
+} catch (Throwable $e) {
+    error_log('slipstream: ' . $e->getMessage());
+    fail('server error', 500);
+}
+
 // Private stations only serve apps carrying the access key.
 if ($key = slip_access_key()) {
     $given = $req['key'] ?? '';

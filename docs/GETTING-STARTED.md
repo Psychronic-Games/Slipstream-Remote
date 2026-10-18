@@ -132,8 +132,8 @@ On the **Settings** tab:
 
 ### Step 6: Back up
 
-Back up the `slipstream-data/` folder. It holds your access key, settings and
-the device list. To move the station to another server, copy `public_html`
+Back up the `slipstream-data/` folder. It holds your access key, settings,
+the device list and your technicians' accounts. To move the station to another server, copy `public_html`
 and `slipstream-data/`, then repoint DNS. Apps only know the domain name, so
 they follow automatically.
 
@@ -270,6 +270,32 @@ From the command line: `slipstream connect <ID> --forward
 
 The remote computer has to allow it: *Config → Permissions → Port
 forwarding*, which is off by default.
+
+---
+
+## Technicians: saved devices and other stations
+
+Your station's admin page has a **Technicians** tab: add an account for each
+technician there. In the app, under **Config → Stations**, each technician
+signs in with the station's address, their username and password. You can
+be signed in to several stations at once, including other organisations'
+(you don't need their app or access key, only an account there).
+
+The Bridge then shows **Saved devices**, per station:
+
+- **+ Add device**, or **★** on a recent link, saves a device with a name
+  and notes. It's kept on the station, so it follows you to any computer.
+- Optionally save its **unattended password** too: **Connect** then works
+  in one click (🔑 marks those). The password is encrypted on your computer
+  with a key made from your sign-in password, so the station can't read it.
+  If an admin resets your sign-in password, saved passwords are cleared.
+- The lamp shows which devices are online right now.
+- **Shared by …** lists devices the station's admins share with everyone.
+
+From the command line: `slipstream sign-in relay.example.com jsmith`,
+`slipstream saved`, `slipstream save 482913077 --station relay.example.com
+--name "Front desk" --password …` and `slipstream connect 482913077
+--station relay.example.com`.
 
 ---
 

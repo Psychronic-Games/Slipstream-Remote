@@ -72,7 +72,7 @@ fn text_field(ui: &mut Ui, value: &mut String, hint: &str, password: bool) -> eg
     theme::input_frame()
         .show(ui, |ui| {
             ui.add(
-                egui::TextEdit::singleline(value)
+                egui::TextEdit::singleline(value).align(egui::Align2::LEFT_CENTER)
                     .hint_text(hint)
                     .password(password)
                     .frame(egui::Frame::NONE)
@@ -98,6 +98,8 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                  each other directly. Enter its web address, e.g. support.example.com."
             .to_string(),
     };
+    super::saved::stations_panel(app, ui);
+    ui.add_space(14.0);
     let f = &mut app.settings_form;
     theme::panel(ui, "Device identity", pal::LAVENDER, |ui| {
         row(ui, "Device name", |ui| {

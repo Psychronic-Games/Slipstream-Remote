@@ -9,6 +9,7 @@ mod keys;
 #[cfg(windows)]
 mod lite;
 mod remote;
+mod saved;
 #[cfg(windows)]
 mod scheme;
 #[cfg(windows)]
@@ -182,6 +183,8 @@ type ConnectResult = Result<(ViewerSession, tmpsc::UnboundedReceiver<ViewerEvent
 pub struct Attempt {
     pub id: DeviceId,
     pub password: String,
+    /// Found on this signed-in station (`None`: the app's own).
+    pub via: Option<slipstream_session::AccountRef>,
     pub progress: Arc<Mutex<String>>,
     pub rx: oneshot::Receiver<ConnectResult>,
     pub task: tokio::task::JoinHandle<()>,
@@ -260,6 +263,8 @@ pub struct App {
     service_job: Option<(bool, oneshot::Receiver<Result<u32, String>>)>,
     /// The Bridge/Config "connect to your station" form.
     pub link_station: String,
+    /// Station sign-ins and saved devices.
+    saved: saved::Saved,
     pub link_code: String,
     window_title: String,
     logo: Option<egui::TextureHandle>,
@@ -324,6 +329,7 @@ impl App {
             via_service: false,
             service_job: None,
             link_station: String::new(),
+            saved: saved::Saved::default(),
             link_code: String::new(),
             logo: None,
             window_title: String::new(),
@@ -405,25 +411,36 @@ impl App {
             return;
         }
         let password = self.connect_pw.clone();
+        self.start_connect_to(ctx, id, password, None);
+    }
+
+    /// Connects to `id`, found on this app's station (`via: None`) or a
+    /// signed-in one.
+    pub fn start_connect_to(&mut self, ctx: &egui::Context, id: DeviceId, password: String, via: Option<slipstream_session::AccountRef>) {
+        if self.attempt.is_some() {
+            return;
+        }
         let progress = Arc::new(Mutex::new(format!("Locating {id}…")));
         let (tx, rx) = oneshot::channel();
         let client = self.client.clone();
         let p = progress.clone();
         let wake = ctx.clone();
-        let pw = password.clone();
+        let (pw, station) = (password.clone(), via.clone());
         let task = self.rt.spawn(async move {
             let w2 = wake.clone();
-            let result = client
-                .connect(id, &pw, move |msg| {
-                    *p.lock().unwrap() = msg;
-                    w2.request_repaint();
-                })
-                .await
-                .map_err(|e| format!("{e:#}"));
+            let progress = move |msg| {
+                *p.lock().unwrap() = msg;
+                w2.request_repaint();
+            };
+            let result = match &station {
+                Some(r) => client.connect_via(r, id, Some(pw), progress).await,
+                None => client.connect(id, &pw, progress).await,
+            }
+            .map_err(|e| format!("{e:#}"));
             let _ = tx.send(result);
             wake.request_repaint();
         });
-        self.attempt = Some(Attempt { id, password, progress, rx, task });
+        self.attempt = Some(Attempt { id, password, via, progress, rx, task });
     }
 
     fn poll_attempt(&mut self, ctx: &egui::Context) {
@@ -440,6 +457,7 @@ impl App {
                 self.next_tab += 1;
                 let play_audio = self.client.settings().viewer.play_audio;
                 let mut tab = remote::RemoteTab::new(id, session, events, attempt.password, ctx, play_audio);
+                tab.via = attempt.via;
                 tab.files.open = self.open_files;
                 self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
                 self.tabs.push(tab);
@@ -1114,6 +1132,7 @@ impl eframe::App for App {
         }
         self.update_tray();
         home::incoming_windows(self, ctx);
+        saved::windows(self, ctx);
         if self.start_hidden {
             self.start_hidden = false;
             self.set_visible(ctx, false);
@@ -1239,6 +1258,7 @@ impl eframe::App for App {
         self.poll_update(&ctx);
         self.poll_link();
         self.poll_service(&ctx);
+        saved::poll(self, &ctx);
         for tab in &mut self.tabs {
             tab.poll(&ctx);
         }
@@ -1257,11 +1277,11 @@ impl eframe::App for App {
                 remote::TabAction::None => {}
                 remote::TabAction::Bridge => self.page = Page::Home,
                 remote::TabAction::Close => self.close_tab(id),
-                remote::TabAction::Reconnect(peer, pw) => {
+                remote::TabAction::Reconnect(peer, pw, via) => {
                     self.close_tab(id);
                     self.connect_id = peer.to_string();
-                    self.connect_pw = pw;
-                    self.start_connect(&ctx);
+                    self.connect_pw = pw.clone();
+                    self.start_connect_to(&ctx, peer, pw, via);
                 }
             }
         } else {

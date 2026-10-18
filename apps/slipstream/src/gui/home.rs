@@ -31,6 +31,8 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         connect_panel(app, ui);
     }
     ui.add_space(20.0);
+    super::saved::panel(app, ui);
+    ui.add_space(20.0);
     recent_panel(app, ui);
 }
 
@@ -132,7 +134,7 @@ fn link_form(app: &mut App, ui: &mut Ui, t: f64) {
         theme::input_frame()
             .show(ui, |ui| {
                 ui.add(
-                    egui::TextEdit::singleline(value)
+                    egui::TextEdit::singleline(value).align(egui::Align2::LEFT_CENTER)
                         .hint_text(hint)
                         .font(theme::mono(18.0))
                         .frame(egui::Frame::NONE)
@@ -169,7 +171,7 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
         let id_resp = theme::input_frame()
             .show(ui, |ui| {
                 ui.add(
-                    egui::TextEdit::singleline(&mut app.connect_id)
+                    egui::TextEdit::singleline(&mut app.connect_id).align(egui::Align2::LEFT_CENTER)
                         .hint_text("482 913 077")
                         .font(theme::mono(30.0))
                         .frame(egui::Frame::NONE)
@@ -182,7 +184,7 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
         let pw_resp = theme::input_frame()
             .show(ui, |ui| {
                 ui.add(
-                    egui::TextEdit::singleline(&mut app.connect_pw)
+                    egui::TextEdit::singleline(&mut app.connect_pw).align(egui::Align2::LEFT_CENTER)
                         .hint_text("partner's password")
                         .password(true)
                         .font(theme::mono(24.0))
@@ -241,7 +243,19 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
                     theme::mono(14.0),
                     pal::BLUE,
                 );
-                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                // ★: keep it in a signed-in station's list.
+                let star = egui::Rect::from_center_size(rect.right_top() + vec2(-18.0, 18.0), vec2(26.0, 26.0));
+                let star_resp = ui.interact(star, resp.id.with("save"), Sense::click()).on_hover_text("Save in my devices");
+                painter.text(
+                    star.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "★",
+                    theme::body(18.0),
+                    if star_resp.hovered() { pal::GOLD } else { pal::DIM },
+                );
+                if star_resp.clicked() {
+                    super::saved::save_recent(app, r.id, &r.name);
+                } else if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     app.connect_id = r.id.to_string();
                     app.connect_pw.clear();
                     app.toast(format!("Enter the password for {}", r.name), pal::BLUE);
@@ -391,7 +405,7 @@ pub fn chat_ui(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, s
     ui.horizontal(|ui| {
         let resp = theme::input_frame()
             .show(ui, |ui| {
-                ui.add(egui::TextEdit::singleline(input).hint_text("message").frame(egui::Frame::NONE).desired_width(ui.available_width() - 80.0))
+                ui.add(egui::TextEdit::singleline(input).align(egui::Align2::LEFT_CENTER).hint_text("message").frame(egui::Frame::NONE).desired_width(ui.available_width() - 80.0))
             })
             .inner;
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));

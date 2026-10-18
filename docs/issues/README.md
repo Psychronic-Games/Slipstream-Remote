@@ -15,7 +15,7 @@ track them.
 | 05 | [Code signing, and downloads browsers trust](05-code-signing.md) | Windows, macOS, infra, **high** |
 | 06 | [Hardware video encoding](06-hardware-encoding.md) | performance, feature |
 | 07 | [Stream the host's audio](07-audio.md) | feature |
-| 08 | [Address book with saved devices](08-address-book.md) | feature |
+| 08 | [Address book with saved devices](08-address-book.md) (done as technician accounts on stations) | feature |
 | 09 | [Android app](09-android.md) | Android, feature |
 | 10 | [Test the X11 host for real](10-x11-host-testing.md) | Linux, testing |
 | 11 | [Wayland unattended access after reboot](11-wayland-unattended-after-reboot.md) | Linux, testing |

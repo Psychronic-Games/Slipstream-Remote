@@ -50,7 +50,9 @@ pub enum TabAction {
     None,
     Bridge,
     Close,
-    Reconnect(DeviceId, String),
+    /// Again, the same way: password, and the station it was found on
+    /// (`None` = this app's own).
+    Reconnect(DeviceId, String, Option<slipstream_session::AccountRef>),
 }
 
 const PRESETS: [(&str, StreamSettings); 4] = [
@@ -69,6 +71,8 @@ pub struct RemoteTab {
     pub info: SessionInfo,
     pub peer: DeviceId,
     password: String,
+    /// The signed-in station this device was found on (`None`: this app's own).
+    pub via: Option<slipstream_session::AccountRef>,
     pub stats: ViewerStats,
     pub closed: Option<String>,
     display: u32,
@@ -139,6 +143,7 @@ impl RemoteTab {
             session,
             events,
             password,
+            via: None,
             stats: ViewerStats::default(),
             closed: None,
             display,
@@ -807,14 +812,17 @@ impl RemoteTab {
         let mut open = true;
         let mut refresh = false;
         let state = self.sysinfo.lock().unwrap().clone();
-        egui::Window::new(RichText::new(format!("SYSTEM · {}", self.info.host_name.to_uppercase())).font(theme::display(18.0)).color(pal::GOLD))
+        let title = format!("System · {}", self.info.host_name);
+        theme::window("sysinfo", pal::GOLD)
             .id(egui::Id::unique(("sysinfo", self.id)))
-            .open(&mut open)
             .collapsible(false)
             .default_pos(ctx.content_rect().min + vec2(24.0, 60.0))
             .default_width(680.0)
             .default_height((ctx.content_rect().height() - 90.0).clamp(300.0, 720.0))
             .show(ctx, |ui| {
+                if theme::window_header(ui, &title, pal::GOLD) {
+                    open = false;
+                }
                 match &state {
                     None => {
                         ui.horizontal(|ui| {
@@ -875,12 +883,14 @@ impl RemoteTab {
         let mut open = true;
         let mut close: Option<usize> = None;
         let mut add = false;
-        egui::Window::new(RichText::new("PORT FORWARDING").font(theme::display(18.0)).color(pal::GOLD))
-            .open(&mut open)
+        theme::window("port-forwarding", pal::GOLD)
             .collapsible(false)
             .resizable(false)
             .default_width(460.0)
             .show(ctx, |ui| {
+                if theme::window_header(ui, "Port forwarding", pal::GOLD) {
+                    open = false;
+                }
                 ui.label(
                     RichText::new(format!(
                         "A port on this computer that reaches a service as {} sees it: its own (localhost) or another machine on its network.",
@@ -911,11 +921,11 @@ impl RemoteTab {
                 ui.horizontal(|ui| {
                     let (local, host, port) = &mut self.tunnel_form;
                     ui.label("Local port");
-                    ui.add(egui::TextEdit::singleline(local).hint_text("auto").desired_width(60.0));
+                    ui.add(egui::TextEdit::singleline(local).align(egui::Align2::LEFT_CENTER).hint_text("auto").desired_width(60.0));
                     ui.label("→");
-                    ui.add(egui::TextEdit::singleline(host).hint_text("localhost").desired_width(130.0));
+                    ui.add(egui::TextEdit::singleline(host).align(egui::Align2::LEFT_CENTER).hint_text("localhost").desired_width(130.0));
                     ui.label(":");
-                    ui.add(egui::TextEdit::singleline(port).hint_text("3389").desired_width(60.0));
+                    ui.add(egui::TextEdit::singleline(port).align(egui::Align2::LEFT_CENTER).hint_text("3389").desired_width(60.0));
                     add = theme::pill(ui, "Forward", pal::GOLD).clicked();
                 });
                 if let Some(e) = &self.tunnel_error {
@@ -1008,7 +1018,7 @@ impl RemoteTab {
         let mut out = None;
         ui.horizontal(|ui| {
             if theme::pill(ui, "Reconnect", pal::ORANGE).clicked() {
-                out = Some(TabAction::Reconnect(self.peer, self.password.clone()));
+                out = Some(TabAction::Reconnect(self.peer, self.password.clone(), self.via.clone()));
             }
             if theme::pill(ui, "Close", pal::LAVENDER).clicked() {
                 out = Some(TabAction::Close);

@@ -5,6 +5,27 @@ Build numbers are the git commit count. The app shows them as
 
 ## Unreleased
 
+### Technician accounts, saved devices, several stations
+- Stations have technician accounts (admin page → **Technicians**). In the
+  app, *Config → Stations* signs in to any number of stations, also other
+  organisations', whose access key the sign-in hands over.
+- **Saved devices** on the Bridge: each technician's list per station,
+  kept on the station (follows you to any computer), with online lamps,
+  notes, and optionally the device's password for one-click connecting.
+  Saved passwords are sealed in the app (Argon2id key from the sign-in
+  password, XChaCha20-Poly1305, bound to the device ID): the station
+  stores them without being able to read them. ★ on a recent link saves
+  it. Station admins manage a **shared** list, from the admin page or the
+  app.
+- Connecting goes through the device's own station, several at once;
+  Reconnect remembers which.
+- New API ops `login`, `account`, `device_save`, `device_delete`,
+  `shared_save`, `shared_delete`, `logout` (before the access-key check;
+  tokens stored hashed; rate-limited). CLI: `sign-in`, `sign-out`,
+  `saved`, `save`, `connect --station`.
+- Dialogs have console headers (colour cap, title, rule, Close pill)
+  instead of a grey title bar, and text sits centred in input fields.
+
 ### System information
 - *Tools ▾ → System information…* shows the remote computer's name, make
   and model, motherboard, BIOS, operating system and build, processor

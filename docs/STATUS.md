@@ -22,6 +22,7 @@ back up.*
 | Full window through the built-in software renderer (Mesa llvmpipe) | ⚠️ under Wine: the full app and a 60 fps session draw on llvmpipe; unpacking, the failed-start fallback and the retry button work. Real Server 2016 pending (Wine's Direct3D loads its own OpenGL first, so loading Mesa's copy can only be proven on Windows) |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
+| Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. Not yet on the live station |
 | System information window (live) | ✅ end-to-end test; Linux and Windows (under Wine) collectors checked by hand; macOS type-checks only |
 | Port forwarding | ✅ end-to-end test (echo through the tunnel, unreachable target, refused when not allowed) |
 | Privacy mode | ⚠️ builds for Windows; needs a real Windows 10 2004+ machine (capture exclusion doesn't exist under Wine) |
