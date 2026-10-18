@@ -70,6 +70,7 @@ struct Pane {
     loading: bool,
     places: Vec<Place>,
     rect: Option<Rect>,
+    layer: Option<egui::LayerId>,
 }
 
 impl Pane {
@@ -166,9 +167,15 @@ impl FileManager {
 
     /// Uploads local files/folders to `target` on the remote computer.
     pub fn upload(&mut self, items: Vec<PathBuf>, target: UploadTarget, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
-        if items.is_empty() {
-            return;
-        }
+        self.start_upload(items, target, None, rt, ctx);
+    }
+
+    pub fn upload_to_screen(&mut self, items: Vec<PathBuf>, point: (i32, i32), rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
+        self.start_upload(items, UploadTarget::Default, Some(point), rt, ctx);
+    }
+
+    fn start_upload(&mut self, items: Vec<PathBuf>, target: UploadTarget, point: Option<(i32, i32)>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
+        if items.is_empty() { return; }
         let label = match items.as_slice() {
             [one] => one.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             many => format!("{} items", many.len()),
@@ -184,13 +191,22 @@ impl FileManager {
         let (fs, tx, ctx2, j) = (self.fs.clone(), self.tx.clone(), ctx.clone(), job.clone());
         let task = rt.spawn(async move {
             let result: anyhow::Result<String> = async {
-                let files: Vec<_> = tokio::task::spawn_blocking(move || {
-                    items.iter().map(|p| fsops::walk_local(p)).collect::<anyhow::Result<Vec<_>>>()
-                })
-                .await??
-                .into_iter()
-                .flatten()
-                .collect();
+                let target = match point {
+                    Some((x,y)) => fs.drop_target(x,y).await?,
+                    None => target,
+                };
+                let trees = tokio::task::spawn_blocking(move || {
+                    items.iter().map(|p| fsops::walk_local_tree(p)).collect::<anyhow::Result<Vec<_>>>()
+                }).await??;
+                if let UploadTarget::Folder(base) = &target {
+                    for tree in &trees {
+                        for dir in &tree.directories {
+                            fs.make_dir(format!("{}/{dir}", base.trim_end_matches(['/', '\\']))).await?;
+                        }
+                    }
+                }
+                let folders = trees.iter().map(|tree| tree.directories.len()).sum::<usize>();
+                let files: Vec<_> = trees.into_iter().flat_map(|tree| tree.files).collect();
                 j.total.store(files.iter().map(|f| f.2).sum(), Ordering::Relaxed);
                 *j.state.lock().unwrap() = JobState::Running;
                 let mut last = String::new();
@@ -203,6 +219,7 @@ impl FileManager {
                         .await?;
                 }
                 Ok(match files.len() {
+                    0 => format!("{folders} folders sent"),
                     1 => format!("saved to {last}"),
                     n => format!("{n} files sent"),
                 })
@@ -304,8 +321,9 @@ impl FileManager {
     }
 
     /// Where dropped files should go, if dropped on the remote pane.
-    pub fn remote_drop_target(&self, pos: egui::Pos2) -> Option<UploadTarget> {
-        (self.open && self.remote.rect.is_some_and(|r| r.contains(pos)))
+    pub fn remote_drop_target(&self, pos: egui::Pos2, ctx: &egui::Context) -> Option<UploadTarget> {
+        (self.open && self.remote.rect.is_some_and(|r| r.contains(pos))
+            && ctx.layer_id_at(pos).is_some_and(|layer| Some(layer) == self.remote.layer))
             .then(|| self.remote.listing.as_ref().map(|l| UploadTarget::Folder(l.path.clone())))
             .flatten()
     }
@@ -560,6 +578,7 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
         );
     });
     pane.rect = Some(out.response.rect);
+    pane.layer = Some(ui.layer_id());
     if let Some(l) = &pane.listing {
         let n = pane.selected.len();
         let bytes: u64 = pane.selected.iter().filter_map(|&i| l.entries.get(i)).map(|e| e.size).sum();

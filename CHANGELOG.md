@@ -13,6 +13,33 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Desktop drag and drop
+- Receive Linux desktop file/folder drops using X11/Xwayland when available,
+  including the actual pointer location during a drag. The remote capture
+  backend continues to use the Wayland portal when appropriate.
+- Drop over a Windows Explorer window to send into its open folder, or
+  elsewhere on the remote picture to send to the signed-in user's Desktop,
+  including redirected Desktops and service-hosted sessions. Resolve the
+  destination once per batch so later pointer movement cannot scatter files.
+- Preserve empty directories and nested folder structure, avoid following
+  symlink cycles, and show progress/errors in Files. Drops on local toolbar
+  buttons, letterboxing and dialogs do not start an unintended transfer.
+- The optional drop-folder stream requires an updated remote app. Existing
+  protocol-6 sessions and file browsing/transfers remain compatible.
+
+### Saved devices and dialog layout
+- Organize private and shared saved devices into collapsible named groups.
+  Type a new group or choose an existing one in Add/Edit; an empty group
+  means Ungrouped. Groups sync through the station, and updates from older
+  clients preserve them.
+- Add this device fills in the local host ID and computer name, using the
+  Windows service's host ID when applicable. Existing entries keep their details.
+- Notes wrap across multiple lines and grow while typing; longer forms scroll
+  while Save stays accessible. Give Group and Notes more breathing room.
+- Use contrasting peach Close and green Save actions beside the violet device editor rail.
+  The dialog elbow correction also keeps the bottom System Information rows,
+  including DNS servers, clear of the decorative curve.
+
 ## 0.11.4 — 2026-10-18
 
 ### Modal frame correction

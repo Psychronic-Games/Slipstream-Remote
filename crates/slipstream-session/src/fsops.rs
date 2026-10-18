@@ -213,6 +213,37 @@ pub fn walk_local(root: &Path) -> Result<Vec<(PathBuf, String, u64)>> {
     Ok(out)
 }
 
+/// An upload plan includes directories so empty folders survive a drop.
+#[derive(Default)]
+pub struct LocalTree {
+    pub files: Vec<(PathBuf, String, u64)>,
+    pub directories: Vec<String>,
+}
+
+pub fn walk_local_tree(root: &Path) -> Result<LocalTree> {
+    let base = root.parent().unwrap_or(Path::new(""));
+    let mut out = LocalTree::default();
+    let mut stack = vec![root.to_path_buf()];
+    let mut visited = std::collections::HashSet::new();
+    while let Some(path) = stack.pop() {
+        let metadata = std::fs::metadata(&path).with_context(|| format!("reading {}", path.display()))?;
+        let rel = path.strip_prefix(base)?.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+        if metadata.is_dir() {
+            // Follow useful symlinks, but stop a link back into an ancestor.
+            if !visited.insert(std::fs::canonicalize(&path)?) { continue; }
+            out.directories.push(rel);
+            let mut children = std::fs::read_dir(&path)?.map(|entry| entry.map(|e| e.path())).collect::<std::io::Result<Vec<_>>>()?;
+            children.sort();
+            stack.extend(children.into_iter().rev());
+        } else if metadata.is_file() {
+            out.files.push((path, rel, metadata.len()));
+        } else {
+            bail!("{} is not a regular file or folder", path.display());
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,6 +257,23 @@ mod tests {
         assert_eq!(safe_relative("/etc/passwd").unwrap(), PathBuf::from("etc").join("passwd"));
         assert_eq!(safe_relative("C:/Windows/x").unwrap(), PathBuf::from("C").join("Windows").join("x"));
         assert!(safe_relative("").is_err());
+    }
+
+    #[test]
+    fn dropped_folders_keep_empty_directories_and_stop_symlink_cycles() {
+        let root = std::env::temp_dir().join(format!("slipstream-drop-tree-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("empty/nested")).unwrap();
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::write(root.join("data/note.txt"), b"hello").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&root, root.join("data/back-to-root")).unwrap();
+        let tree = walk_local_tree(&root).unwrap();
+        let name = root.file_name().unwrap().to_str().unwrap();
+        assert_eq!(tree.directories, [name.to_owned(), format!("{name}/data"), format!("{name}/empty"), format!("{name}/empty/nested")]);
+        assert_eq!(tree.files.len(), 1);
+        assert_eq!(tree.files[0].1, format!("{name}/data/note.txt"));
+        assert_eq!(tree.files[0].2, 5);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

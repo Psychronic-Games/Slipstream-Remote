@@ -96,6 +96,7 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'shared_
                     throw new InvalidArgumentException('your list is full (' . SLIP_MAX_DEVICES . ' devices)');
                 }
                 $old = array_values(array_filter($a['devices'] ?? [], fn($x) => ($x['id'] ?? 0) === $d['id']))[0] ?? null;
+                $d['group'] = $d['group'] ?? (string)($old['group'] ?? '');
                 $d['added'] = (int)($old['added'] ?? time());
                 $list[] = $d;
                 $a['devices'] = $list;
@@ -120,8 +121,10 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'shared_
             }
             $id = $d['id'] ?? ($req['id'] ?? null);
             slip_shared_update(function (array $list) use ($d, $id, $u) {
+                $old = array_values(array_filter($list, fn($x) => ($x['id'] ?? 0) === $id))[0] ?? null;
                 $list = array_filter($list, fn($x) => ($x['id'] ?? 0) !== $id);
                 if ($d) {
+                    $d['group'] = $d['group'] ?? (string)($old['group'] ?? '');
                     $list[] = $d + ['added_by' => $u, 'added' => time()];
                 }
                 return $list;

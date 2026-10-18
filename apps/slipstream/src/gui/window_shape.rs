@@ -103,7 +103,7 @@ pub(super) fn update() {
 
 #[cfg(target_os = "linux")]
 pub(super) fn update() {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_none() {
+    if std::env::var_os("DISPLAY").is_none() {
         return;
     }
     thread_local! {static SHAPE:std::cell::RefCell<Option<X11Shape>>=std::cell::RefCell::new(X11Shape::connect().ok());}

@@ -232,6 +232,9 @@ pub enum StreamOpen {
     NetworkScan(crate::network::ScanRequest),
     /// Optional name discovery for already-discovered addresses.
     NetworkNames { interface: std::net::Ipv4Addr, addresses: Vec<std::net::Ipv4Addr> },
+    /// Resolve the folder at a physical remote-screen point once per drop.
+    /// Optional appended stream: existing protocol-6 sessions stay compatible.
+    DropTarget { x: i32, y: i32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +251,7 @@ pub enum StreamReply {
     NetworkInterfaces(Vec<crate::network::NetworkInterface>),
     NetworkScan(crate::network::ScanEvent),
     NetworkNames(Vec<crate::network::DeviceName>),
+    DropTarget { path: String },
 }
 
 /// One stage of the host's video pipeline ("screen capture (GDI)", "video

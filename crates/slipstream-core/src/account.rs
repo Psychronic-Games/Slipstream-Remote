@@ -40,6 +40,9 @@ pub struct SavedDevice {
     pub name: String,
     #[serde(default)]
     pub notes: String,
+    /// A station-synced folder name; empty means Ungrouped.
+    #[serde(default)]
+    pub group: String,
     /// The device's password, sealed with the technician's vault key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<SealedSecret>,
@@ -118,5 +121,32 @@ fn no_accounts(e: anyhow::Error) -> anyhow::Error {
         anyhow::anyhow!("that station doesn't have technician sign-in (it needs updating)")
     } else {
         e
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_saved_devices_default_to_ungrouped() {
+        let device: SavedDevice = serde_json::from_str(r#"{"id":482913077,"name":"Old client"}"#).unwrap();
+        assert!(device.group.is_empty());
+        // Empty is sent explicitly so a new client can clear a group.
+        assert_eq!(serde_json::to_value(device).unwrap()["group"], "");
+    }
+
+    #[test]
+    fn group_and_multiline_notes_survive_json_and_settings_cache() {
+        let device: SavedDevice = serde_json::from_value(serde_json::json!({
+            "id":482913077, "name":"Server", "group":"Lab / Servers",
+            "notes":"First line\nSecond line", "added_by":"admin"
+        })).unwrap();
+        assert_eq!(serde_json::from_value::<SavedDevice>(serde_json::to_value(&device).unwrap()).unwrap(), device);
+        let mut settings = crate::config::Settings::default();
+        settings.accounts.push(crate::config::StationAccount { devices:vec![device.clone()], ..Default::default() });
+        let text = toml::to_string(&settings).unwrap();
+        let loaded: crate::config::Settings = toml::from_str(&text).unwrap();
+        assert_eq!(loaded.accounts[0].devices[0], device);
     }
 }

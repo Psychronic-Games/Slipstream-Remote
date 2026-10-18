@@ -986,6 +986,12 @@ mod tests {
         std::fs::write(local_dir.join("big.bin"), &payload).unwrap();
 
         assert!(!fs.places().await.unwrap().is_empty());
+        // A drop resolves once, without needing an input-stream cursor move.
+        // Non-Windows hosts use their default receive folder.
+        #[cfg(not(windows))]
+        assert_eq!(fs.drop_target(500, 300).await.unwrap(), UploadTarget::Folder(crate::fsops::display(&crate::fsops::default_upload_dir())));
+        fs.make_dir(remote_dir.join("Empty folder/nested").display().to_string()).await.unwrap();
+        assert!(remote_dir.join("Empty folder/nested").is_dir());
 
         // Upload a file into a nested folder of the remote dir.
         let mut sent = 0u64;
@@ -1006,7 +1012,7 @@ mod tests {
 
         // Browse it back and download the whole folder.
         let listing = fs.list(Some(remote_dir.display().to_string())).await.unwrap();
-        assert_eq!(listing.entries[0].name, "Photos");
+        assert!(listing.entries.iter().any(|entry| entry.name == "Photos" && entry.is_dir));
         let photos = format!("{}{}Photos", listing.path, listing.sep);
         let files = fs.walk(photos, true, "Photos".into(), 0).await.unwrap();
         assert_eq!(files.len(), 2);
@@ -1031,6 +1037,8 @@ mod tests {
         assert!(!session.info().capabilities.file_transfer);
         let err = session.fs().list(None).await.unwrap_err();
         assert!(format!("{err:#}").contains("not allowed"), "{err:#}");
+        let drop_err = session.fs().drop_target(500, 300).await.unwrap_err();
+        assert!(format!("{drop_err:#}").contains("not allowed"), "{drop_err:#}");
         drop(session);
         viewer.shutdown().await;
         host.shutdown().await;

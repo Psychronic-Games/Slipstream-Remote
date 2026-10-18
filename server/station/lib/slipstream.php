@@ -634,6 +634,14 @@ function slip_clean_device($d, bool $withSecret = true): ?array
         return null;
     }
     $out = ['id' => $id, 'name' => slip_clip(trim((string)($d['name'] ?? '')), 64), 'notes' => slip_clip(trim((string)($d['notes'] ?? '')), 500)];
+    // Absence means an older client: retain the existing group on updates.
+    // An explicit empty string moves the device back to Ungrouped.
+    if (array_key_exists('group', $d)) {
+        if (!is_string($d['group'])) {
+            throw new InvalidArgumentException('The device group must be text.');
+        }
+        $out['group'] = slip_clip(trim($d['group']), 64);
+    }
     $secret = $d['secret'] ?? null;
     if ($withSecret) {
         $ok = is_array($secret) && is_string($secret['n'] ?? null) && is_string($secret['c'] ?? null)

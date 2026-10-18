@@ -150,7 +150,29 @@ the challenge within 10 s is dropped.
   station it didn't come from. Saved passwords are sealed client-side
   (`crates/slipstream-core/src/vault.rs`). The app looks a device up on
   the station it's saved on and connects as usual
-  (`crates/slipstream-session/src/accounts.rs`).
+  (`crates/slipstream-session/src/accounts.rs`). Each saved device carries
+  a group string (empty means Ungrouped), defaulting to empty when reading
+  older JSON/TOML. PHP preserves the existing group when an older client
+  omits it and accepts an explicit empty string to clear it. Group names
+  are trimmed and limited to 64 characters. The editor offers existing
+  groups and new names, with separate collapsible private/shared lists.
+  Add this device uses this station's host ID and computer name (the service
+  ID on Windows); it preserves an existing entry's details. Multiline notes
+  grow inside a bounded scrolling form with the Save controls outside it.
+* **Desktop file drops:** Linux windows use X11/Xwayland where available,
+  because winit 0.30 emits no native Wayland drop events. During a drag the
+  viewer samples the X11 pointer and translates it into its viewport; normal
+  mouse motion is grabbed by the source. A point on the fitted/zoomed remote
+  picture becomes a physical coordinate on the selected host display.
+  Appended `DropTarget` stream/reply variants resolve the destination once
+  before upload planning, independent of the input stream. Windows queries
+  the Explorer window at that point or the user's known Desktop folder;
+  service hosts query the user in their own session, never SYSTEM's Desktop.
+  Explorer lookup runs with the user's token, bounded time/output and limited
+  handle inheritance. Failures are reported rather than silently writing into
+  another folder. Upload plans retain empty directories and stop symlink loops.
+  Native Wayland without Xwayland cannot receive desktop drops with this
+  window library; remote capture/input still uses the Wayland portal.
 * **System information:** `StreamOpen::SystemInfo` → `StreamReply::SystemInfo`,
   titled sections of (label, value) rows already worded on the host
   (`crates/slipstream-platform/src/machine.rs`), so new facts need no

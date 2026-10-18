@@ -310,7 +310,17 @@ pub async fn sign_out(station: &str) -> Result<()> {
     result.map(|_| ())
 }
 
-pub async fn save(id: &str, station: &str, name: String, notes: String, password: Option<String>, shared: bool, remove: bool) -> Result<()> {
+pub struct SaveOptions {
+    pub name: String,
+    pub notes: String,
+    pub group: Option<String>,
+    pub password: Option<String>,
+    pub shared: bool,
+    pub remove: bool,
+}
+
+pub async fn save(id: &str, station: &str, options: SaveOptions) -> Result<()> {
+    let SaveOptions { name, notes, group, password, shared, remove } = options;
     let id: DeviceId = id.parse()?;
     let store = Store::open_default()?;
     let (client, _events) = Client::start(store, ClientOptions::default()).await?;
@@ -320,7 +330,13 @@ pub async fn save(id: &str, station: &str, name: String, notes: String, password
             client.delete_device(&r, id, shared).await?;
             println!("removed {id}");
         } else {
-            let device = slipstream_core::account::SavedDevice { id, name, notes, secret: None, added_by: None };
+            client.sync_account(&r).await?;
+            let settings = client.settings();
+            let account = settings.accounts.iter().find(|a| a.is_station(&r.server) && a.user.username == r.username)
+                .context("station account no longer available")?;
+            let existing = if shared { &account.shared } else { &account.devices };
+            let group = group.unwrap_or_else(|| existing.iter().find(|d| d.id == id).map(|d| d.group.clone()).unwrap_or_default());
+            let device = slipstream_core::account::SavedDevice { id, name, notes, group, secret: None, added_by: None };
             client.save_device(&r, device, password, shared).await?;
             println!("saved {id}");
         }
@@ -348,13 +364,14 @@ pub async fn saved() -> Result<()> {
         for (list, devices) in [("mine", &a.devices), ("shared", &a.shared)] {
             for d in devices {
                 println!(
-                    "  {:<7} {}  {:<28} {:<8}{}{}",
+                    "  {:<7} {}  {:<28} {:<8}{}{}{}",
                     list,
                     d.id,
                     d.name,
                     state(d.id),
                     if d.secret.is_some() { " · password saved" } else { "" },
-                    if d.notes.is_empty() { String::new() } else { format!(" · {}", d.notes) }
+                    if d.group.is_empty() { String::new() } else { format!(" · [{}]", d.group) },
+                    if d.notes.is_empty() { String::new() } else { format!(" · {}", d.notes.replace('\n', " / ")) }
                 );
             }
         }

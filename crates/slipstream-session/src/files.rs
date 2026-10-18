@@ -68,6 +68,15 @@ async fn handle(
     let req: StreamOpen = expect_msg(&mut recv).await?;
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
+        StreamOpen::DropTarget { x, y } => {
+            if !policy.receive { return reply(&mut send, &denied("Receiving files")).await; }
+            let result = tokio::task::spawn_blocking(move || crate::cursor_folder::drop_folder(x, y)).await?;
+            let response = match result {
+                Ok(path) => StreamReply::DropTarget { path: fsops::display(&path) },
+                Err(e) => StreamReply::Error(format!("Cannot choose the drop folder: {e:#}")),
+            };
+            reply(&mut send, &response).await?;
+        }
         StreamOpen::NetworkNames { interface, addresses } => {
             if !policy.network_scan { return reply(&mut send, &denied("Network scanning")).await; }
             let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
@@ -279,6 +288,18 @@ impl RemoteFs {
             bail!("{e}");
         }
         Ok((send, recv, reply))
+    }
+
+    /// Freeze the destination before walking/uploading a dropped folder.
+    /// This request is independent of the input stream: no cursor-move race.
+    pub async fn drop_target(&self, x: i32, y: i32) -> Result<UploadTarget> {
+        let response = tokio::time::timeout(std::time::Duration::from_secs(12), self.ask(StreamOpen::DropTarget { x, y }))
+            .await.context("remote drop-folder lookup timed out")?
+            .context("drop-folder lookup failed; update the remote app if it predates this feature")?.2;
+        match response {
+            StreamReply::DropTarget { path } => Ok(UploadTarget::Folder(path)),
+            other => bail!("unexpected drop-folder reply {other:?}"),
+        }
     }
 
     pub async fn places(&self) -> Result<Vec<Place>> {

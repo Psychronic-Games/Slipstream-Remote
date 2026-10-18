@@ -1,7 +1,18 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.11.4. Read this first when
+*Updated 2026-10-18; latest release 0.12.0. Read this first when
 picking the work back up.*
+
+**0.12.0:** Linux desktop file/folder drops use X11/Xwayland and actual drop
+coordinates; Windows resolves the open Explorer folder or the signed-in
+user's Desktop once per batch, including service hosts. Empty directories
+survive. The Windows service/Explorer path needs confirmation on the real VM.
+Also adds collapsible saved-device groups synced by the station, an
+Add this device shortcut, growing multiline notes, roomier editor fields,
+and contrasting peach Close / green Save actions. Station updates preserve
+groups when older clients edit entries; private/shared permissions and encrypted passwords
+remain enforced. The shared elbow correction also protects the bottom DNS
+rows in System Information.
 
 **0.11.4:** clip floating-dialog elbow cutouts to their own rail geometry,
 so the frame no longer erases the Save button's lower-left corner in the
@@ -36,14 +47,16 @@ peripheral/printer/network-drive inventory, restored Windows service chat,
 and LCARS desktop title bars. Protocol remains 6: optional name lookup uses
 appended stream variants, preserving 0.10 scan interoperability.
 
-79 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
+83 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
 confirm the scanner is larger than its main window, finds this machine's
 name/ports, switches views, maximizes/restores, and closes without ending the
 session. Linux and Windows Clippy and Android checks pass. Windows service
 chat and the expanded native inventory compile; their behavior on the actual
 Windows VM still needs confirmation. The previous 0.10 sharpness fix also
 needs real-VM confirmation. Latest clients are deployed to the live relay;
-its PHP/server program needs no update for these client-only changes.
+the two account API PHP files are updated for group persistence. The relay
+program needs no update. Isolated PHP and Rust CLI integration checks cover
+group changes, older-client updates, multiline notes, passwords and permissions.
 The verification table below also records earlier releases.
 
 

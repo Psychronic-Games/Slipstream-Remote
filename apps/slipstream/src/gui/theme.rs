@@ -472,20 +472,23 @@ pub fn console_menu(response: &Response) -> egui::Popup<'_> {
         .frame(egui::Frame::new().fill(pal::PANEL)
             .stroke(Stroke::new(1.0, pal::VIOLET))
             .corner_radius(6.0).inner_margin(6))
-        .style(|style: &mut egui::Style| {
-            egui::containers::menu::menu_style(style);
-            style.spacing.button_padding = vec2(10.0, 5.0);
-            style.spacing.item_spacing = vec2(4.0, 4.0);
-            style.spacing.interact_size.y = 32.0;
-            style.visuals.override_text_color = Some(pal::BLUE);
-            style.visuals.selection.bg_fill = Color32::from_rgb(24, 44, 64);
-            style.visuals.selection.stroke = Stroke::new(1.0, pal::BLUE);
-            style.visuals.widgets.active.bg_fill = Color32::from_rgb(30, 54, 76);
-            for widget in [&mut style.visuals.widgets.inactive, &mut style.visuals.widgets.hovered,
-                &mut style.visuals.widgets.active, &mut style.visuals.widgets.open] {
-                widget.corner_radius = CornerRadius::same(6);
-            }
-        })
+        .style(console_menu_style)
+}
+
+/// Shared selection and spacing for console menus and form choice lists.
+pub fn console_menu_style(style: &mut egui::Style) {
+    egui::containers::menu::menu_style(style);
+    style.spacing.button_padding = vec2(10.0, 5.0);
+    style.spacing.item_spacing = vec2(4.0, 4.0);
+    style.spacing.interact_size.y = 32.0;
+    style.visuals.override_text_color = Some(pal::BLUE);
+    style.visuals.selection.bg_fill = Color32::from_rgb(24, 44, 64);
+    style.visuals.selection.stroke = Stroke::new(1.0, pal::BLUE);
+    style.visuals.widgets.active.bg_fill = Color32::from_rgb(30, 54, 76);
+    for widget in [&mut style.visuals.widgets.inactive, &mut style.visuals.widgets.hovered,
+        &mut style.visuals.widgets.active, &mut style.visuals.widgets.open] {
+        widget.corner_radius = CornerRadius::same(6);
+    }
 }
 
 /// The host's independent communications window: a swept left rail, channel

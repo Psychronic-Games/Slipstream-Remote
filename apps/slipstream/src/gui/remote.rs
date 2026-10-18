@@ -13,7 +13,7 @@ use eframe::{
 };
 use slipstream_core::{
     directory::DeviceId,
-    proto::{InputEvent, MouseButton, SessionInfo, StreamSettings, UploadTarget},
+    proto::{InputEvent, MouseButton, SessionInfo, StreamSettings},
 };
 use slipstream_session::{FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 use tokio::sync::mpsc;
@@ -443,6 +443,7 @@ impl RemoteTab {
     /// → that folder; onto the remote screen → the remote folder under the
     /// drop point (or its Desktop).
     fn handle_drops(&mut self, ui: &mut Ui, ctx: &egui::Context, video_area: Rect, rt: &tokio::runtime::Runtime) {
+        if self.closed.is_some() { return; }
         let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
         let dropped: Vec<std::path::PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         if !self.info.capabilities.file_transfer {
@@ -451,41 +452,33 @@ impl RemoteTab {
             }
             return;
         }
-        let pos = ctx.input(|i| i.pointer.latest_pos());
-        if hovering {
-            let over_pane = pos.and_then(|p| self.files.remote_drop_target(p)).is_some();
-            if !over_pane {
-                let p = ui.painter();
-                p.rect_filled(video_area, 0.0, Color32::BLACK.gamma_multiply(0.6));
-                p.text(video_area.center(), Align2::CENTER_CENTER, "DROP TO SEND", theme::display_bold(42.0), pal::ORANGE);
-                p.text(
-                    video_area.center() + vec2(0.0, 40.0),
-                    Align2::CENTER_CENTER,
-                    "Files go to the remote folder under the pointer, or its Desktop",
-                    theme::body(17.0),
-                    pal::TAN,
-                );
-            }
+        let pos = ctx.input(|i| i.pointer.hover_pos());
+        let pane_target = pos.and_then(|p| self.files.remote_drop_target(p, ctx));
+        let screen_pos = pos.filter(|p| video_area.contains(*p)
+            && self.video_rect.is_some_and(|r| r.contains(*p))
+            && ctx.layer_id_at(*p).is_none_or(|layer| layer == ui.layer_id()));
+        if hovering && pane_target.is_none() && screen_pos.is_some() {
+            let p = ui.painter();
+            p.rect_filled(video_area, 0.0, Color32::BLACK.gamma_multiply(0.45));
+            p.text(video_area.center(), Align2::CENTER_CENTER, "DROP TO SEND", theme::display_bold(42.0), pal::ORANGE);
+            p.text(video_area.center() + vec2(0.0, 40.0), Align2::CENTER_CENTER,
+                "Open remote folder or Desktop · files and folders", theme::body(17.0), pal::TAN);
         }
-        if dropped.is_empty() {
+        if dropped.is_empty() { return; }
+        let n = dropped.len();
+        if let Some(target) = pane_target {
+            self.files.upload(dropped, target, rt, ctx);
+        } else if let (Some(p), Some(r), Some(display)) = (screen_pos, self.video_rect,
+            self.info.displays.iter().find(|d| d.index == self.display)) {
+            // Resolve a physical point on the host, independent of keyboard
+            // capture or the asynchronously injected remote mouse position.
+            let x = display.x + (((p.x-r.left())/r.width()).clamp(0.0,1.0) * display.width.saturating_sub(1) as f32).round() as i32;
+            let y = display.y + (((p.y-r.top())/r.height()).clamp(0.0,1.0) * display.height.saturating_sub(1) as f32).round() as i32;
+            self.files.upload_to_screen(dropped, (x,y), rt, ctx);
+        } else {
+            self.notice = Some(("Drop onto the remote picture or the Files window's remote pane".into(), Instant::now()));
             return;
         }
-        let target = match pos.and_then(|p| self.files.remote_drop_target(p)) {
-            Some(t) => t,
-            None => {
-                // Put the remote pointer where the files were dropped, so the
-                // host can find the folder under it.
-                if let (Some(p), Some(r)) = (pos, self.video_rect)
-                    && r.contains(p)
-                {
-                    let n = (((p.x - r.left()) / r.width()).clamp(0.0, 1.0), ((p.y - r.top()) / r.height()).clamp(0.0, 1.0));
-                    self.input(InputEvent::MouseMove { x: n.0, y: n.1 });
-                }
-                UploadTarget::UnderCursor
-            }
-        };
-        let n = dropped.len();
-        self.files.upload(dropped, target, rt, ctx);
         self.notice = Some((format!("Sending {n} item{} — progress in Files", if n == 1 { "" } else { "s" }), Instant::now()));
     }
 

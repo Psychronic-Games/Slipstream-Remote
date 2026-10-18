@@ -32,9 +32,23 @@ scripts/try-local.sh            # one-machine trial: local server + host + viewe
 single-instance lock. Use it to run a second copy next to your normal one.
 Such side instances leave your desktop launcher alone.
 
+The station account API has an isolated integration check (Python 3 and PHP
+CLI required). It copies the PHP site into a temporary directory and uses
+fixture accounts, without touching a running station or real settings:
+
+```sh
+python3 scripts/test-station-accounts.py --client target/debug/slipstream
+# Set SLIPSTREAM_TEST_PHP=/path/to/php if PHP is not on PATH.
+```
+
 Some tests touch real hardware or the network and are `#[ignore]`d by
 default (for example the real clipboard round-trip). Run them with
 `cargo test -- --ignored`.
+
+Linux desktop file drops need X11/Xwayland: the app selects X11 for its
+windows when `DISPLAY` is available, including inside a Wayland session.
+Capture/input still selects the native Wayland portal from `WAYLAND_DISPLAY`.
+Native Wayland file drops are unavailable in [winit 0.30's feature matrix](https://docs.rs/crate/winit/0.30.13/source/FEATURES.md).
 
 ### Disk space
 

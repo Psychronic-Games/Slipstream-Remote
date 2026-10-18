@@ -21,6 +21,8 @@ mod settings;
 mod single;
 pub mod theme;
 mod window_shape;
+#[cfg(target_os = "linux")]
+mod desktop_drop;
 mod touch;
 mod tray;
 mod video;
@@ -147,6 +149,16 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             .with_min_inner_size([820.0, 560.0])
             .with_icon(theme::icon(128))
             .with_drag_and_drop(true),
+        // winit 0.30 has no native Wayland file-drop events. Keep capture
+        // and input on the Wayland portal, but use Xwayland for our windows
+        // when available so the desktop can deliver files and folders.
+        #[cfg(target_os = "linux")]
+        event_loop_builder: Some(Box::new(|builder| {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+            if std::env::var_os("DISPLAY").is_some() {
+                builder.with_x11();
+            }
+        })),
         renderer: eframe::Renderer::Wgpu,
         // Ctrl+C/X/V are handled in `raw_input_hook`, which can see files
         // on the clipboard (egui only knows text).
@@ -1469,6 +1481,8 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         #[cfg(target_os = "android")]
         android::input(_ctx, raw);
+        #[cfg(target_os = "linux")]
+        desktop_drop::update_pointer(_ctx, raw);
         let root_input = raw.viewport_id == egui::ViewportId::ROOT;
         let focused_now = raw.focused;
         let lost_focus = !root_input || (self.window_focused && !focused_now);

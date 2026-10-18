@@ -136,6 +136,7 @@ impl Client {
     /// one, `None` keeps what's there.
     pub async fn save_device(&self, r: &AccountRef, mut device: SavedDevice, password: Option<String>, shared: bool) -> Result<()> {
         let a = self.account(r)?;
+        device.group = device.group.trim().chars().take(64).collect();
         if shared && !a.user.admin {
             bail!("only station admins can change the shared devices");
         }
@@ -151,7 +152,11 @@ impl Client {
         }
         let dc = Self::station_client(&a)?;
         let state = if shared { dc.save_shared(&a.token, &device).await } else { dc.save_device(&a.token, &device).await };
-        self.apply_state(r, state.map_err(|e| self.note_error(r, e))?);
+        let state = state.map_err(|e| self.note_error(r, e))?;
+        let list = if shared { &state.shared } else { &state.devices };
+        let group_saved = list.iter().find(|d| d.id == device.id).is_some_and(|d| d.group == device.group);
+        self.apply_state(r, state);
+        if !group_saved { bail!("that station needs an update to save device groups"); }
         Ok(())
     }
 

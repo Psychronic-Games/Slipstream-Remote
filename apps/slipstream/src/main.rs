@@ -138,6 +138,9 @@ enum Command {
         name: String,
         #[arg(long, default_value = "")]
         notes: String,
+        /// Organize the device in this group; an empty value means Ungrouped.
+        #[arg(long)]
+        group: Option<String>,
         /// Its unattended password, kept sealed (only your sign-in opens it).
         #[arg(long)]
         password: Option<String>,
@@ -248,8 +251,8 @@ fn main() -> anyhow::Result<()> {
         Some(Command::SignIn { station, username, password }) => rt.block_on(cli::sign_in(&station, &username, password)),
         Some(Command::SignOut { station }) => rt.block_on(cli::sign_out(&station)),
         Some(Command::Saved) => rt.block_on(cli::saved()),
-        Some(Command::Save { id, station, name, notes, password, shared, remove }) => {
-            rt.block_on(cli::save(&id, &station, name, notes, password, shared, remove))
+        Some(Command::Save { id, station, name, notes, group, password, shared, remove }) => {
+            rt.block_on(cli::save(&id, &station, cli::SaveOptions { name, notes, group, password, shared, remove }))
         }
         Some(Command::SetServer { address, key }) => cli::set_server(&address, key),
         Some(Command::SetPassword { password }) => cli::set_password(password.as_deref()),
