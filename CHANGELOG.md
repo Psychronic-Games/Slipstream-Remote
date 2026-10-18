@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.13.0 — 2026-10-18
+
 ### Remote web links from network scans
 - Highlight open HTTP (80) and HTTPS (443) services in an outlined LCARS
   section, with blue HTTP and green HTTPS actions. Select a topology node
