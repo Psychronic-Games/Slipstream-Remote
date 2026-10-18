@@ -1,7 +1,16 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.13.0. Read this first when
+*Updated 2026-10-18; latest release 0.14.0. Read this first when
 picking the work back up.*
+
+**0.14.0:** a single cyan scanner title rail with a curved left elbow,
+inset symbolic controls, peach Close and a fixed blue footer. Compact
+scanner contents scroll inside the frame. Also adds a public-IP row and Copy IP action near the top of System
+Information. The host queries ipify over HTTPS, with IPv4/dual-stack fallback,
+a shared one-minute cache and a separate request from hardware inventory.
+Refresh rechecks after five seconds; blocked internet/older hosts show
+Unavailable while the rest of the window remains usable. Copy all includes
+public IP too. The browser links from 0.13.0 are included in this live update.
 
 **0.13.0:** highlighted HTTP/HTTPS port actions in the network table and
 selected-device details. Clicking sends the numeric URL to the remote
@@ -55,7 +64,7 @@ peripheral/printer/network-drive inventory, restored Windows service chat,
 and LCARS desktop title bars. Protocol remains 6: optional name lookup uses
 appended stream variants, preserving 0.10 scan interoperability.
 
-85 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
+87 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
 confirm the scanner is larger than its main window, finds this machine's
 name/ports, switches views, maximizes/restores, and closes without ending the
 session. Linux and Windows Clippy and Android checks pass. Windows service

@@ -2,6 +2,7 @@
 //! reachable by ID, hosts incoming sessions, and opens outgoing ones.
 
 mod desktop_shell;
+mod public_ip;
 mod accounts;
 pub mod files;
 pub mod fsops;

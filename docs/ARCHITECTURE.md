@@ -188,7 +188,16 @@ the challenge within 10 s is dropped.
 * **System information:** `StreamOpen::SystemInfo` → `StreamReply::SystemInfo`,
   titled sections of (label, value) rows already worded on the host
   (`crates/slipstream-platform/src/machine.rs`), so new facts need no
-  protocol change.
+  protocol change. Public IP uses a separate optional `PublicIp { refresh }`
+  stream/reply so internet lookup cannot hold up inventory. The host's HTTPS
+  request goes to [ipify](https://www.ipify.org/), preferring its IPv4 endpoint
+  with dual-stack fallback; no station keys, device IDs or account data are
+  included. Replies are limited to 64 bytes and validated as public numeric
+  addresses. Each provider has a four-second timeout. A per-process cache
+  serializes concurrent lookups: success lasts 60 seconds, failure 15 seconds,
+  and manual Refresh has a five-second minimum interval. The viewer requests
+  while System Information is open, shows status/Copy IP above the inventory,
+  and includes the value in Copy all. VPN/proxy/NAT egress may be what is seen.
 
 `postcard` has no optional fields, so any change to a message bumps
 `PROTOCOL_VERSION`. The exception is a new variant appended to

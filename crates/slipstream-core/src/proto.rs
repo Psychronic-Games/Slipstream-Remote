@@ -238,6 +238,8 @@ pub enum StreamOpen {
     /// Open the discovered HTTP/HTTPS service in the host user's browser.
     /// Optional stream; no arbitrary URL or command is accepted.
     OpenNetworkWeb { address: std::net::Ipv4Addr, port: u16 },
+    /// Independently query the host's observed public internet address.
+    PublicIp { refresh: bool },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,6 +257,7 @@ pub enum StreamReply {
     NetworkScan(crate::network::ScanEvent),
     NetworkNames(Vec<crate::network::DeviceName>),
     DropTarget { path: String },
+    PublicIp(std::net::IpAddr),
 }
 
 /// One stage of the host's video pipeline ("screen capture (GDI)", "video

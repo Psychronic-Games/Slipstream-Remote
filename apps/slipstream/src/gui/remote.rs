@@ -119,6 +119,9 @@ pub struct RemoteTab {
     sysinfo_busy: Arc<std::sync::atomic::AtomicBool>,
     sysinfo_at: Option<Instant>,
     sysinfo: Arc<Mutex<SysInfo>>,
+    public_ip: Option<Result<std::net::IpAddr, String>>,
+    public_ip_rx: Option<tokio::sync::oneshot::Receiver<Result<std::net::IpAddr, String>>>,
+    public_ip_at: Option<Instant>,
 }
 
 impl RemoteTab {
@@ -184,6 +187,7 @@ impl RemoteTab {
             sysinfo_busy: Arc::default(),
             sysinfo_at: None,
             sysinfo: Arc::default(),
+            public_ip: None, public_ip_rx: None, public_ip_at: None,
             files,
             network,
         }
@@ -934,9 +938,33 @@ impl RemoteTab {
         });
     }
 
+    fn fetch_public_ip(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime, refresh: bool) {
+        if self.public_ip_rx.is_some() || self.closed.is_some() { return; }
+        let (tx,rx) = tokio::sync::oneshot::channel();
+        let (fs,wake) = (self.session.fs(),ctx.clone());
+        self.public_ip_rx = Some(rx);
+        self.public_ip_at = Some(Instant::now());
+        rt.spawn(async move {
+            let result = fs.public_ip(refresh).await.map_err(|e|format!("{e:#}"));
+            let _=tx.send(result);wake.request_repaint();
+        });
+    }
+
     fn sysinfo_window(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime) {
         if !self.show_sysinfo {
             return;
+        }
+        if let Some(rx) = &mut self.public_ip_rx {
+            match rx.try_recv() {
+                Ok(result) => { self.public_ip = Some(result); self.public_ip_rx = None; },
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    self.public_ip = Some(Err("Public-IP request ended without an answer".into()));self.public_ip_rx = None;
+                },
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {},
+            }
+        }
+        if self.public_ip_at.is_none_or(|at|at.elapsed() >= std::time::Duration::from_secs(60)) {
+            self.fetch_public_ip(ctx, rt, false);
         }
         if self.sysinfo_fetch {
             self.fetch_sysinfo(ctx, rt, true);
@@ -961,6 +989,20 @@ impl RemoteTab {
                 if chrome.close {
                     open = false;
                 }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("PUBLIC IP").font(theme::display(16.0)).color(pal::LAVENDER))
+                        .on_hover_text("The remote computer's outbound internet address, observed by ipify over HTTPS. VPN, proxy or NAT routing may affect this address. Cached for up to one minute.");
+                    match &self.public_ip {
+                        Some(Ok(address)) => {
+                            ui.label(RichText::new(address.to_string()).monospace().color(pal::BLUE));
+                            if theme::pill_sized(ui,"Copy IP",pal::BLUE,vec2(74.0,26.0)).clicked() { ui.ctx().copy_text(address.to_string()); }
+                        },
+                        Some(Err(error)) => { ui.label(RichText::new("Unavailable").color(pal::DIM)).on_hover_text(error); },
+                        None => { ui.label(RichText::new("Looking up from the remote computer…").color(pal::DIM)); },
+                    }
+                    if self.public_ip_rx.is_some() { ui.spinner(); }
+                });
+                ui.add_space(6.0);
                 match &state {
                     None => {
                         ui.horizontal(|ui| {
@@ -977,7 +1019,8 @@ impl RemoteTab {
                                 refresh = true;
                             }
                             if theme::pill(ui, "Copy all", pal::LAVENDER).on_hover_text("As text, e.g. for a ticket").clicked() {
-                                ui.ctx().copy_text(sysinfo_text(&self.info.host_name, sections));
+                                let public = match &self.public_ip { Some(Ok(ip)) => ip.to_string(), Some(Err(_)) => "Unavailable".into(), None => "Looking up…".into() };
+                                ui.ctx().copy_text(format!("{}\nPublic IP: {public}\n",sysinfo_text(&self.info.host_name, sections)));
                                 self.notice = Some(("System information copied".into(), Instant::now()));
                             }
                             ui.label(RichText::new("Live: use, memory and temperatures update every 3 s").small().color(pal::DIM));
@@ -1013,6 +1056,7 @@ impl RemoteTab {
             });
         if refresh {
             self.fetch_sysinfo(ctx, rt, false);
+            self.fetch_public_ip(ctx, rt, true);
         }
         if !open {
             self.show_sysinfo = false;

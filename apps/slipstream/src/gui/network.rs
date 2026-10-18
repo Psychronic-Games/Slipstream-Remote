@@ -254,15 +254,18 @@ impl NetworkScanner {
                 ICON.get_or_init(|| Arc::new(theme::icon(64))).clone()
             })
             .with_inner_size([1100.0,760.0]).with_min_inner_size([520.0,360.0]);
-        ctx.show_viewport_deferred(viewport, builder, move |ui, _class| {
+        ctx.show_viewport_deferred(viewport, builder, move |ui, class| {
             let mut scanner = shared.lock().expect("network window");
             let ctx = ui.ctx().clone();
             scanner.tick(&ctx, &rt, connected);
-            let body=theme::native_title_bar(ui,&format!("Network scan · {host}"));
+            let (body, close)=theme::scanner_frame(ui,&format!("Network scan · {host}"),class == egui::ViewportClass::Deferred);
             let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
-            if ui.input(|i|i.viewport().close_requested()) { scanner.open=false;scanner.stop();ctx.request_repaint_of(egui::ViewportId::ROOT);return; }
-            egui::Frame::new().fill(pal::PANEL)
-                .inner_margin(egui::Margin { left: 46, right: 14, top: 12, bottom: 12 })
+            if close || ui.input(|i|i.viewport().close_requested()) {
+                scanner.open=false;scanner.stop();
+                if class == egui::ViewportClass::Deferred { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
+                ctx.request_repaint_of(egui::ViewportId::ROOT);return;
+            }
+            egui::ScrollArea::vertical().id_salt("scan-body").auto_shrink([false,false])
                 .show(ui, |ui| scanner.contents(ui, &ctx, &rt, &host, connected));
         });
     }
@@ -288,8 +291,6 @@ impl NetworkScanner {
     }
 
     fn contents(&mut self, ui: &mut Ui, ctx: &egui::Context, rt: &tokio::runtime::Runtime, host: &str, connected: bool) {
-                let chrome = theme::window_header_with_close(ui, &format!("Network scan · {host}"), pal::CYAN, pal::PEACH);
-                let mut close = chrome.close;
                 self.controls(ui, ctx, rt, connected);
                 ui.add_space(5.0);
                 ui.horizontal_wrapped(|ui| {
@@ -330,7 +331,7 @@ impl NetworkScanner {
                 }
                 ui.add_space(5.0);
                 egui::ScrollArea::both().id_salt("scan-results").auto_shrink([false, false])
-                    .max_height((ui.available_height() - theme::FOOTER_SPACE - 64.0).max(100.0))
+                    .max_height((ui.available_height() - 80.0).max(100.0))
                     .show(ui, |ui| { if self.topology { self.topology(ui, host); } else if let Some(target) = self.table(ui, web_enabled) { open_web = Some(target); } });
                 if let Some((address,port)) = open_web {
                     self.open_web(address, port, ctx, rt);
@@ -338,14 +339,6 @@ impl NetworkScanner {
                 ui.label(RichText::new("80 HTTP / 443 HTTPS open in the REMOTE computer's browser; select a topology node for its port links.").small().color(pal::BLUE));
                 ui.label(RichText::new("Device names are best effort · TCP service names follow port conventions · silent devices may be missed").small().color(pal::DIM));
                 ui.label(RichText::new("Logical scan map: the remote gateway and discovered addresses; physical links are not discovered.").small().color(pal::DIM));
-                ui.add_space(18.0);
-                chrome.footer(ui);
-                close |= ui.input(|i| i.viewport().close_requested());
-                if close {
-                    self.open = false; self.stop();
-                    if ui.ctx().viewport_id() != egui::ViewportId::ROOT { ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close); }
-                    ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
-                }
     }
 
     fn controls(

@@ -13,6 +13,23 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Seamless network scanner frame
+- Replace the stacked scanner headers with one cyan title rail flowing into
+  the left frame through a curved elbow. Inset symbolic window controls,
+  a contrasting peach Close action and a blue footer keep the corners clear.
+- Keep the frame fixed while the scanner body scrolls at compact sizes;
+  preserve detached-window dragging, resizing and maximize/restore.
+
+### Public IP in System Information
+- Show the remote computer's public internet address near the top of System
+  Information, with Copy IP and inclusion in Copy all. Lookup runs on the
+  host over HTTPS, independently of hardware inventory and live statistics.
+- Prefer IPv4 with dual-stack fallback using ipify. Share a one-minute cache
+  across viewers; Refresh can recheck after five seconds. Failed lookups
+  show Unavailable, back off briefly, and leave system details usable.
+- Use an optional appended protocol-6 stream; existing hardware inventory
+  and sessions stay compatible with older clients/hosts.
+
 ## 0.13.0 — 2026-10-18
 
 ### Remote web links from network scans

@@ -751,12 +751,25 @@ pub fn native_title_bar_with_rail(ui: &mut Ui, title: &str, linked:bool) -> Rect
         p.rect_stroke(bar,16.0,Stroke::new(1.0,pal::VIOLET),egui::StrokeKind::Inside);
         p.rect_filled(Rect::from_min_size(bar.min,vec2(14.0,bar.height())),CornerRadius {nw:16,sw:16,..Default::default()},pal::LAVENDER);
     }
+    let (right,close)=native_window_controls(ui,bar,linked,maximized,true);
+    if close {ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);}
+    let title_rect=Rect::from_min_max(bar.min+vec2(22.0,0.0),pos2(right-4.0,bar.bottom()));
+    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title,display_bold(17.0),if linked{pal::BG}else{pal::LAVENDER});
+    native_window_interactions(ui,area,title_rect,maximized);
+    Rect::from_min_max(pos2(area.left()+5.0,bar.bottom()+3.0),area.max-vec2(5.0,5.0))
+}
+
+// Shared symbols and hit targets keep detached tools consistent with the app.
+fn native_window_controls(ui:&Ui,bar:Rect,linked:bool,maximized:bool,desktop:bool)->(f32,bool) {
+    let p=ui.painter();
+    let mut close=false;
     let mut right=bar.right()-9.0;
     for (symbol,hint,color,command) in [
         (0,"Close",pal::PEACH,egui::ViewportCommand::Close),
         (if maximized{3}else{1},if maximized{"Restore window"}else{"Maximize"},pal::LAVENDER,egui::ViewportCommand::Maximized(!maximized)),
         (2,"Minimize",pal::BLUE,egui::ViewportCommand::Minimized(true)),
     ] {
+        if !desktop && symbol != 0 { continue; }
         let width=44.0;
         let rect=Rect::from_min_max(pos2(right-width,bar.top()+3.0),pos2(right,bar.bottom()-3.0));
         let response=ui.interact(rect,ui.scope_id().with(("native-window",hint)),Sense::click());
@@ -779,11 +792,15 @@ pub fn native_title_bar_with_rail(ui: &mut Ui, title: &str, linked:bool) -> Rect
             },
         }
         response.widget_info(||egui::WidgetInfo::labeled(egui::Role::Button,true,hint));
-        if response.on_hover_text(hint).clicked(){ui.ctx().send_viewport_cmd(command);}
+        if response.on_hover_text(hint).clicked(){
+            if symbol==0 {close=true;} else {ui.ctx().send_viewport_cmd(command);}
+        }
         right=rect.left()-4.0;
     }
-    let title_rect=Rect::from_min_max(bar.min+vec2(22.0,0.0),pos2(right-4.0,bar.bottom()));
-    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title,display_bold(17.0),if linked{pal::BG}else{pal::LAVENDER});
+    (right,close)
+}
+
+fn native_window_interactions(ui:&Ui,area:Rect,title_rect:Rect,maximized:bool) {
     let drag=ui.interact(title_rect,ui.scope_id().with("native-title-drag"),Sense::click_and_drag());
     if drag.double_clicked(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));}
     else if drag.drag_started(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);}
@@ -804,7 +821,42 @@ pub fn native_title_bar_with_rail(ui: &mut Ui, title: &str, linked:bool) -> Rect
             if response.drag_started(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));}
         }
     }
-    Rect::from_min_max(pos2(area.left()+5.0,bar.bottom()+3.0),area.max-vec2(5.0,5.0))
+}
+
+/// A single title rail joined to the scanner's left frame. The frame stays
+/// fixed while its contents scroll, including at the minimum window size.
+pub fn scanner_frame(ui:&mut Ui,title:&str,desktop:bool)->(Rect,bool) {
+    super::window_shape::update();
+    let area=ui.max_rect();
+    let maximized=ui.input(|i|i.viewport().maximized==Some(true));
+    let square=!desktop || maximized || ui.input(|i|i.viewport().fullscreen==Some(true));
+    let p=ui.painter();
+    p.rect_filled(area,if square{0.0}else{18.0},pal::BG);
+    let frame=area.shrink(5.0);
+    p.rect_filled(frame,16.0,pal::PANEL);
+    let bar=Rect::from_min_max(frame.min,pos2(frame.right(),frame.top()+40.0));
+    let rail_right=frame.left()+18.0;
+    let foot_top=frame.bottom()-12.0;
+    let split=bar.bottom()+(foot_top-bar.bottom())*0.65;
+    p.rect_filled(bar,CornerRadius{nw:18,ne:18,..Default::default()},pal::CYAN);
+    p.rect_filled(Rect::from_min_max(pos2(frame.left(),bar.bottom()),pos2(rail_right,split-2.0)),0.0,pal::CYAN);
+    p.rect_filled(Rect::from_min_max(pos2(frame.left(),split+2.0),pos2(rail_right,foot_top)),0.0,pal::BLUE);
+    let foot=Rect::from_min_max(pos2(frame.left(),foot_top),frame.max);
+    p.rect_filled(foot,CornerRadius{sw:12,se:6,..Default::default()},pal::BLUE);
+    // Restrict each concave cutout to the elbow, clear of all content.
+    for (color,corner,center) in [
+        (pal::CYAN,Rect::from_min_size(pos2(rail_right,bar.bottom()),vec2(22.0,22.0)),pos2(rail_right+22.0,bar.bottom()+22.0)),
+        (pal::BLUE,Rect::from_min_size(pos2(rail_right,foot_top-18.0),vec2(18.0,18.0)),pos2(rail_right+18.0,foot_top-18.0)),
+    ] {
+        let elbow=p.with_clip_rect(corner.intersect(p.clip_rect()));
+        elbow.rect_filled(corner,0.0,color);
+        elbow.circle_filled(center,corner.width(),pal::PANEL);
+    }
+    let (right,close)=native_window_controls(ui,bar,true,maximized,desktop);
+    let title_rect=Rect::from_min_max(bar.min+vec2(42.0,0.0),pos2(right-8.0,bar.bottom()));
+    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title.to_uppercase(),display_bold(21.0),pal::BG);
+    if desktop {native_window_interactions(ui,area,title_rect,maximized);}
+    (Rect::from_min_max(pos2(rail_right+24.0,bar.bottom()+14.0),pos2(frame.right()-14.0,foot_top-14.0)),close)
 }
 
 /// A floating window in the console style: no grey title bar; start its

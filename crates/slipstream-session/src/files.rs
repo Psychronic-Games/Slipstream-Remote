@@ -69,6 +69,13 @@ async fn handle(
     let req: StreamOpen = expect_msg(&mut recv).await?;
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
+        StreamOpen::PublicIp { refresh } => {
+            let response = match crate::public_ip::get(refresh).await {
+                Ok(address) => StreamReply::PublicIp(address),
+                Err(error) => StreamReply::Error(error),
+            };
+            reply(&mut send, &response).await?;
+        }
         StreamOpen::OpenNetworkWeb { address, port } => {
             if !policy.network_scan || !policy.remote_input {
                 return reply(&mut send, &denied("Opening the remote browser (network scan and remote control)")).await;
