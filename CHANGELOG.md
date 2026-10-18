@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.7.0 — 2026-10-17
+
 ### 60 frames a second on slow computers
 - The video encoder now uses OpenH264's camera mode rather than its
   screen-content mode. Measured on 2 cores at 1280x800 with scrolling
