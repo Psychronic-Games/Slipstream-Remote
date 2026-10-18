@@ -1,7 +1,15 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.11.1. Read this first when
+*Updated 2026-10-18; latest release 0.11.2. Read this first when
 picking the work back up.*
+
+**0.11.2:** the windowed desktop frame reserves space for its left rail
+at every aspect ratio/display scale. The blue footer spans below the remote
+picture and taskbar, the right rail has a break below End Link, and the dark
+FPS/latency panel has a subtle blue outline. Video fitting and input share
+the inset content area; full screen and Android retain their full picture.
+Linux runtime checks cover wide, near-aspect and compact windows, 150%
+display scaling, chat, menus and full-screen transitions.
 
 **0.11.1:** remote-session LCARS rails in existing side letterboxing,
 a swept LINK elbow, full-height toolbar segments with vector icons, and

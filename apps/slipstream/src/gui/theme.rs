@@ -574,61 +574,72 @@ pub fn session_rail_label(p: &egui::Painter, rect: Rect, label: &str) {
     }
 }
 
-/// Use only spare letterboxing; the remote picture and its input mapping
-/// retain exactly the same rectangle, including while zooming or panning.
-pub fn session_rails(p: &egui::Painter, full: Rect, video: Rect, picture: Option<Rect>) -> f32 {
-    let Some(picture) = picture.map(|r| r.intersect(video)).filter(|r| r.is_positive()) else {
-        return 0.0;
-    };
-    let gutter = (picture.left() - video.left()).max(0.0);
-    let width = if gutter >= 64.0 { (gutter - 40.0).min(44.0) } else { 0.0 };
-    if width > 0.0 {
-        let left = full.left();
-        let right = left + width;
-        let clip = Rect::from_min_max(pos2(left, video.top()), pos2(picture.left() - 4.0, video.bottom()));
-        let p = p.with_clip_rect(clip.intersect(p.clip_rect()));
-        let h = video.height();
-        for (start, end, color) in [
-            (0.0, 0.28, pal::ORANGE),
-            (0.28, 0.5, pal::PEACH),
-            (0.5, 0.78, pal::LAVENDER),
-            (0.78, 1.0, pal::BLUE),
-        ] {
-            let top = video.top() + h * start + if start > 0.0 { 4.0 } else { 0.0 };
-            p.rect_filled(Rect::from_min_max(pos2(left, top), pos2(right, video.top() + h * end)), 0.0, color);
-        }
-        let elbow = 32.0;
-        p.rect_filled(Rect::from_min_size(pos2(right, video.top()), vec2(elbow, elbow)), 0.0, pal::ORANGE);
-        p.circle_filled(pos2(right + elbow, video.top() + elbow), elbow, Color32::BLACK);
-        let foot = Rect::from_min_max(pos2(left, video.bottom() - 12.0), pos2(picture.left() - 4.0, video.bottom()));
-        p.rect_filled(
-            foot,
-            CornerRadius {
-                sw: 12,
-                ne: 6,
-                ..Default::default()
-            },
-            pal::BLUE,
-        );
-        p.rect_filled(Rect::from_min_size(pos2(right, foot.top() - elbow), vec2(elbow, elbow)), 0.0, pal::BLUE);
-        p.circle_filled(pos2(right + elbow, foot.top() - elbow), elbow, Color32::BLACK);
+/// Reserve the desktop frame independently of video aspect ratio and display
+/// scaling. Both fitting and input use this body, so even a zoomed picture
+/// cannot cover the rails or lose its bottom row beneath the footer.
+pub fn session_body(full: Rect, toolbar_height: f32) -> Rect {
+    Rect::from_min_max(
+        full.min + vec2(80.0, toolbar_height),
+        full.max - vec2(16.0, 16.0),
+    )
+}
 
+/// A dark instrument panel with a quiet blue outline, including on narrow bars.
+pub fn session_stats_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(pal::PANEL)
+        .stroke(Stroke::new(1.0, pal::BLUE.gamma_multiply(0.45)))
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(8, 0))
+}
+
+/// Paint outside the reserved body; the left rail stays visible on every
+/// desktop platform, including while awaiting a frame or zooming the picture.
+pub fn session_rails(p: &egui::Painter, full: Rect, body: Rect) -> f32 {
+    let width = 44.0;
+    let left = full.left();
+    let right = left + width;
+    let top = body.top();
+    let bottom = full.bottom();
+    let h = bottom - top;
+    // The elbows extend into the reserved left gutter, never into the video.
+    let side = Rect::from_min_max(pos2(left, top), pos2(body.left() - 4.0, bottom));
+    let side_p = p.with_clip_rect(side.intersect(p.clip_rect()));
+    for (start, end, color) in [
+        (0.0, 0.28, pal::ORANGE),
+        (0.28, 0.5, pal::PEACH),
+        (0.5, 0.78, pal::LAVENDER),
+        (0.78, 1.0, pal::BLUE),
+    ] {
+        let segment_top = top + h * start + if start > 0.0 { 4.0 } else { 0.0 };
+        side_p.rect_filled(Rect::from_min_max(pos2(left, segment_top), pos2(right, top + h * end)), 0.0, color);
     }
-    let right_gap = video.right() - picture.right();
-    if right_gap >= 30.0 {
-        let x = video.right() - 8.0;
-        let split = video.top() + video.height() * 0.7;
-        p.rect_filled(
-            Rect::from_min_max(pos2(x, video.top()), pos2(video.right(), split - 2.0)),
-            CornerRadius { ne: 4, ..Default::default() },
-            pal::LAVENDER,
-        );
-        p.rect_filled(
-            Rect::from_min_max(pos2(x, split + 2.0), video.max),
-            CornerRadius { se: 4, ..Default::default() },
-            pal::BLUE,
-        );
-    }
+    let elbow = 32.0;
+    side_p.rect_filled(Rect::from_min_size(pos2(right, top), vec2(elbow, elbow)), 0.0, pal::ORANGE);
+    side_p.circle_filled(pos2(right + elbow, top + elbow), elbow, Color32::BLACK);
+
+    let foot_top = bottom - 12.0;
+    side_p.rect_filled(Rect::from_min_size(pos2(right, foot_top - elbow), vec2(elbow, elbow)), 0.0, pal::BLUE);
+    side_p.circle_filled(pos2(right + elbow, foot_top - elbow), elbow, Color32::BLACK);
+    p.rect_filled(
+        Rect::from_min_max(pos2(left, foot_top), full.max),
+        CornerRadius { sw: 12, se: 6, ..Default::default() },
+        pal::BLUE,
+    );
+
+    // A black break separates the right edge from the End Link control.
+    let x = full.right() - 8.0;
+    let split = top + h * 0.7;
+    p.rect_filled(
+        Rect::from_min_max(pos2(x, top + 12.0), pos2(full.right(), split - 2.0)),
+        CornerRadius { nw: 4, ne: 4, ..Default::default() },
+        pal::LAVENDER,
+    );
+    p.rect_filled(
+        Rect::from_min_max(pos2(x, split + 2.0), pos2(full.right(), foot_top - 4.0)),
+        CornerRadius { sw: 4, se: 4, ..Default::default() },
+        pal::BLUE,
+    );
     width
 }
 

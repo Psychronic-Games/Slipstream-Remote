@@ -423,12 +423,17 @@ egui also targets Android, so the same UI can ship on mobile later.
 ### Desktop session frame
 
 The title strip and remote controls use connected LCARS color segments.
-`theme::session_rails` draws within existing letterbox gutters, clipped away
-from the actual video rectangle; input normalization still uses that video
-rectangle. The rail caps at 44 points and disappears when the picture fills
-the width or is zoomed over that margin. The 36-point toolbar uses vector
-symbols with rounded rectangular controls and groups actions in Console
-when space is tight. Full-screen controls still auto-hide.
+`theme::session_body` reserves 80 points on the left, 16 on the right and
+16 below the content in windowed desktop sessions. The video fits inside
+this body (with room for chat); input normalization uses its actual fitted
+or zoomed video rectangle and interaction is clipped to the video area.
+`theme::session_rails` paints a 44-point left rail and curved elbows outside
+that body, with a full-width blue footer below the remote taskbar and a
+12-point break below End Link on the right. Rails no longer depend on
+letterboxing, picture arrival, zoom or platform display scaling. The
+36-point toolbar uses vector symbols with rounded rectangular controls,
+a bordered dark stats panel, and Console when space is tight. Full screen
+and Android omit the reserved frame; full-screen controls still auto-hide.
 
 `gui/window_shape.rs` gives borderless windows actual rounded bounds rather
 than painting rounded panels on rectangular black surfaces. Windows uses

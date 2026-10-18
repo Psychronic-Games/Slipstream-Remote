@@ -373,25 +373,30 @@ impl RemoteTab {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
         let show_toolbar = !self.fullscreen || lingering || self.closed.is_some();
+        let framed = !self.fullscreen && !cfg!(target_os = "android");
+        let body = if framed {
+            theme::session_body(full, toolbar_h)
+        } else {
+            full.with_min_y(full.top() + if self.fullscreen { 0.0 } else { toolbar_h })
+        };
         // Chat goes beside the picture, or under it on a phone.
         let narrow = full.width() < super::NARROW;
         let chat_w = if self.show_chat && !narrow { 330.0 } else { 0.0 };
-        let chat_h = if self.show_chat && narrow { (full.height() * 0.42).max(220.0) } else { 0.0 };
+        let chat_h = if self.show_chat && narrow { (body.height() * 0.42).max(220.0) } else { 0.0 };
         let video_area = Rect::from_min_max(
-            pos2(full.left(), full.top() + if self.fullscreen { 0.0 } else { toolbar_h }),
-            pos2(full.right() - chat_w, full.bottom() - chat_h),
+            body.min,
+            pos2(body.right() - chat_w, body.bottom() - chat_h),
         );
 
         self.draw_video(ui, video_area, t);
-        let rail_width=(!self.fullscreen && !cfg!(target_os="android"))
-            .then(||theme::session_rails(ui.painter(),full,video_area,self.video_rect));
+        let rail_width = framed.then(|| theme::session_rails(ui.painter(), full, body));
         self.handle_pointer(ui, video_area);
 
         if self.show_chat {
             let chat_rect = if narrow {
-                Rect::from_min_max(pos2(full.left(), full.bottom() - chat_h), full.max)
+                Rect::from_min_max(pos2(body.left(), body.bottom() - chat_h), body.max)
             } else {
-                Rect::from_min_max(pos2(full.right() - chat_w, full.top() + toolbar_h), full.max)
+                Rect::from_min_max(pos2(body.right() - chat_w, body.top()), body.max)
             };
             ui.painter().rect_filled(chat_rect, 0.0, pal::PANEL);
             let mut child = ui.new_child(UiBuilder::new().max_rect(chat_rect.shrink(12.0)));
@@ -663,8 +668,7 @@ impl RemoteTab {
             self.send(ViewerCmd::Disconnect);
             action = TabAction::Close;
         }
-        let stats=egui::Frame::new().fill(pal::PANEL).corner_radius(6.0).inner_margin(egui::Margin::symmetric(8,0));
-        stats.show(&mut right,|ui| {ui.set_min_height(36.0);self.stats_readout(ui,if compact_stats {Detail::Compact}else{Detail::Full},t);});
+        theme::session_stats_frame().show(&mut right,|ui| {ui.set_min_height(34.0);self.stats_readout(ui,if compact_stats {Detail::Compact}else{Detail::Full},t);});
         let right_left = right.min_rect().left();
 
         let left_rect = inner.with_max_x(right_left - 12.0);
@@ -771,8 +775,8 @@ impl RemoteTab {
             self.send(ViewerCmd::Disconnect);
             action = TabAction::Close;
         }
-        egui::Frame::new().fill(pal::PANEL).corner_radius(6.0).inner_margin(egui::Margin::symmetric(8,0))
-            .show(&mut right,|ui|{ui.set_min_height(36.0);self.stats_readout(ui,Detail::Fps,t)});
+        theme::session_stats_frame()
+            .show(&mut right,|ui|{ui.set_min_height(34.0);self.stats_readout(ui,Detail::Fps,t)});
         let left_rect = inner.with_max_x(right.min_rect().left() - 8.0);
         let mut left = ui.new_child(UiBuilder::new().max_rect(left_rect).layout(Layout::left_to_right(Align::Center)));
         left.set_clip_rect(left_rect.expand2(vec2(0.0, 8.0)));

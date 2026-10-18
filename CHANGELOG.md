@@ -13,6 +13,15 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Remote session frame corrections
+- Keep the slim left rail visible in windowed desktop sessions at every
+  video aspect ratio and display scale, including while zoomed or waiting
+  for a picture. Reserve frame space outside the video and its input area.
+- Extend the blue footer across the window below the remote taskbar, and
+  leave a black break between the right rail and End Link.
+- Outline the dark FPS/latency panel in subtle blue, including the compact
+  toolbar, so the connection figures have their own instrument section.
+
 ## 0.11.1 — 2026-10-18
 
 ### Remote session frame
