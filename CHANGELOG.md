@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.10.0 — 2026-10-18
+
 ### Sharp video on slow hosts
 - Balanced and Quality preserve full picture resolution during movement.
   Adaptive resolution had applied to every preset, shrinking the desktop
