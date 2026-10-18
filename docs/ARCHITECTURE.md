@@ -181,6 +181,24 @@ buffers — the picture is always as fresh as the network allows.
   before file transfers, so a big copy can't freeze the picture.
 * **Big screens:** OpenH264 takes at most 4K by area, so larger screens
   (5120×1440, 5K) are scaled down to fit before encoding.
+* **Encoder mode:** OpenH264 runs in its camera mode, on up to 8 threads.
+  Its screen-content mode was about 3× slower on desktop content, ignored
+  extra threads, and was no sharper once the picture settles.
+  `crates/slipstream-codec/examples/encode_bench.rs` measures modes for
+  speed and PSNR.
+* **Adaptive resolution** (`Speed` in `video.rs`): when encoding takes more
+  than about 90% of the frame budget (1/max fps), moving pictures are
+  encoded smaller (down to half size, from the square root of the
+  overshoot), and the size climbs back after 3 s with room to spare. About
+  0.3 s after the picture stops changing, the last frame goes out again at
+  full size, so text at rest is sharp. Every size change starts with a
+  keyframe; the viewer scales whatever size arrives.
+* **Pace reporting** (`slipstream_platform::pace`): each stage (capture
+  and its method, encoding, waiting for a new screen frame, waiting for
+  the viewer) logs its frames a second and ms a frame every 30 s, and
+  keeps a live 2-second figure. The viewer fetches those with
+  `StreamOpen::Pace` every 3 s, shows them in the stats tooltip, and logs
+  one line with the link's figures plus the host's every 30 s.
 * **Buffers:** captured frames are copied into recycled buffers (the frame
   slot keeps a small pool), so 4K capture doesn't allocate 33 MB a frame.
 * **Display:** the viewer presents with a one-frame swap chain queue.
@@ -191,7 +209,7 @@ buffers — the picture is always as fresh as the network allows.
 |---|---|---|
 | Linux (Wayland) | xdg-desktop-portal ScreenCast + PipeWire, pointer embedded by the compositor | RemoteDesktop portal |
 | Linux (X11) | MIT-SHM (GetImage fallback) via pure-Rust `x11rb`, RandR monitors, pointer composited from XFixes | XTest via `enigo` |
-| Windows | DXGI Desktop Duplication via `xcap`, pointer composited by us (`win_cursor.rs`) | `SendInput` via `enigo` |
+| Windows | DXGI Desktop Duplication via `xcap`; under the service, DXGI on the normal desktop and a reusable GDI capturer (`win_gdi.rs`) on the login screen and UAC's secure desktop. Pointer composited by us (`win_cursor.rs`) | `SendInput` via `enigo` |
 | macOS | ScreenCaptureKit via `xcap` | CGEvent via `enigo` |
 | Android (later) | MediaProjection | AccessibilityService |
 
@@ -209,7 +227,60 @@ the last clean frame. It draws the current pointer into a copy (colour,
 alpha and monochrome cursors, in physical pixels), and sends it again when
 only the pointer moved.
 
+**Windows pointer when Windows hides it.** On a computer with no mouse
+plugged in (a server or VM reached only remotely), Windows reports no
+visible pointer unless some program provides a mouse (another remote
+tool's virtual one, say). The host then draws the standard arrow, so the
+person controlling it still sees where they are.
+
+## The Windows service
+
+The service (`apps/slipstream/src/service.rs`) runs as LocalSystem in
+session 0. It starts a helper, `slipstream service host`, in the active
+console session as SYSTEM, and that helper captures, injects input and
+follows the input desktop (`windesk.rs`), which is what reaches UAC
+prompts and the login screen. Task Manager therefore shows two processes,
+plus the tray app if it's on.
+
+* **One host per computer.** Once the service is installed it is the
+  host, running or not. The app never hosts beside it: two endpoints with
+  one key push each other off the relay. Clients that don't host (the app
+  in service mode, `slipstream connect` and the other command-line tools)
+  bind a throwaway key, so the computer's identity is only ever used by
+  its one host.
+* **Identity handover.** Install copies the app's `identity.key` into the
+  machine profile (`%ProgramData%\Slipstream Remote`, SYSTEM and
+  administrators only). It writes a fresh file and renames it in, and
+  checks the copy matches. The ID therefore stays the app's.
+  `Store::identity` only ever creates a key when none exists: an
+  unreadable one is retried and then an error, never replaced.
+* **Permissions.** The profile's ACL is set on the folder alone, and
+  everything inside is reset to inherit it (`icacls … /reset`); the service
+  repeats that repair at every start. An `icacls /T` grant used to leave
+  files from an earlier install with no usable permissions.
+* **Public folder** (`…\public`, readable by all users): the service
+  writes `device-id.txt` (the ID it registered as, which the app's Bridge
+  shows in service mode) and its log, `slipstream.log`.
+* **Starting.** The service's DACL lets interactive users start it (not
+  stop or change it), so the app keeps an installed service running
+  (`keep_running`, paused while the app installs, starts or removes it)
+  and *Start* needs no administrator prompt.
+* **Diagnostics.** Install and start failures carry Windows' own account
+  (`diagnose`: `sc queryex`/`qc` and the Service Control Manager's System
+  log messages), written by the elevated process to a `--report` file and
+  shown, copyable, in Config.
+* **Install over a running copy.** The installed `.exe` is usually still
+  running (the tray app at sign-in), so it's renamed aside and replaced,
+  and the leftover is removed at the next install.
+
 ## Stations, updates and the app
+
+* **Versions:** semantic versioning (pre-1.0 minor = features, patch =
+  fixes). Every station build is a release: `scripts/release-version.sh`
+  raises the workspace version and files the changelog's "Unreleased"
+  entries under it, and `scripts/build-station.sh` refuses unreleased
+  changes. The Windows `.exe`'s version info comes from the same version
+  plus the build number.
 
 * **Self-update:** the station's `clients/manifest.json` lists version, build
   number (git commit count) and, per platform, size, SHA-256 and an Ed25519
@@ -241,7 +312,16 @@ frames are converted from YUV to RGB on the GPU (a WGSL shader in an
 egui_wgpu paint callback).
 
 The UI redraws at the display's refresh rate while visible (60 fps when
-unfocused) and slows to one tick a second when hidden or minimized. The
+unfocused) and slows to one tick a second when hidden or minimized. On a
+CPU renderer (Mesa llvmpipe, detected from the adapter) animations run at 8
+frames a second, 2 when unfocused; input and new video still redraw at
+once.
+
+**No usable GPU** (Windows Server 2016, VMs without a display driver):
+release builds embed Mesa's llvmpipe OpenGL driver (`gui/softgl.rs`). It's
+unpacked per user and loaded in-process, or, where that fails, a copy of
+the app runs from beside Mesa's DLLs. A start marker falls back to the
+native compact window (`gui/lite.rs`) after a crash. The
 host-side chat is a separate native window (an egui *deferred* viewport;
 immediate viewports don't map on KDE Wayland).
 

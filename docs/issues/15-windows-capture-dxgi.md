@@ -19,6 +19,18 @@ four full-frame copies plus a swizzle: roughly 60 MB per frame at 1440p and
 recorder isn't available, so this path can only be measured on real
 Windows.
 
+## Progress
+
+- Since 0.6.1 the service's helper uses this same xcap recorder on the
+  normal desktop, so it has the same copies. On the login screen and UAC
+  prompts it uses `win_gdi.rs`: one persistent DIB section, one copy per
+  frame, BGRA kept as is.
+- The host now reports per-stage timings (`screen capture (DXGI)` in the
+  viewer's stats tooltip and log), which gives the before and after
+  numbers this issue asks for. On the Server 2016 VM at 1280×800, DXGI
+  capture took 1.8 ms a frame and encoding was the bottleneck. So this
+  matters most at 1440p and 4K.
+
 ## Tasks
 
 - [ ] Use Desktop Duplication directly (the `windows` crate is already a

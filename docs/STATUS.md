@@ -1,7 +1,7 @@
 # Project status
 
-*Updated 2026-10-16, at version 0.5.0. Read this first when picking the work
-back up.*
+*Updated 2026-10-17, at version 0.7.0 (build 45). Read this first when
+picking the work back up.*
 
 ## What's verified
 
@@ -19,17 +19,20 @@ back up.*
 | Signed update installs; tampered, unsigned and foreign manifests and a swapped binary are refused | ✅ against a local station |
 | Windows build under Wine: host at 1440p/60 fps, GUI | ✅ |
 | Compact window (no usable GPU, e.g. Windows Server 2016): ID/password/status, being controlled | ✅ under Wine (forced); on real Server 2016 by the user |
-| Full window through the built-in software renderer (Mesa llvmpipe) | ⚠️ under Wine: the full app and a 60 fps session draw on llvmpipe; unpacking, the failed-start fallback and the retry button work. Real Server 2016 pending (Wine's Direct3D loads its own OpenGL first, so loading Mesa's copy can only be proven on Windows) |
+| Full window through the built-in software renderer (Mesa llvmpipe) | ✅ on real Windows Server 2016 (VMware VM), through the copy of the app beside Mesa (loading Mesa in-process found no adapter there). Idle CPU use cut by slower animations on llvmpipe (0.6.0); not re-measured |
+| Linux → Windows Server 2016 VM over the internet | ✅ direct path, 20–50 ms round trip. Service capture uses DXGI duplication there (1.8 ms a frame). Encoding took 23 ms a frame, so about 34 fps; 0.7.0's camera mode and adaptive resolution should reach 60 but haven't been measured there yet |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
 | Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. Not yet on the live station |
 | System information window (live) | ✅ end-to-end test; Linux and Windows (under Wine) collectors checked by hand; macOS type-checks only |
 | Port forwarding | ✅ end-to-end test (echo through the tunnel, unreachable target, refused when not allowed) |
 | Privacy mode | ⚠️ builds for Windows; needs a real Windows 10 2004+ machine (capture exclusion doesn't exist under Wine) |
-| Windows service | ⚠️ install, a session at 1440p/60 and uninstall under Wine; UAC, login screen and Ctrl+Alt+Del need real Windows (issue 04) |
+| Windows service | ⚠️ installs, reinstalls over an older one, starts without the administrator prompt, and hosts under the app's ID on real Server 2016 (from 0.6.0). Install, start, a session and the published ID also checked under Wine. UAC, login screen and Ctrl+Alt+Del still to try for real (issue 04). Once, after *Update*, the service ended up stopped for reasons not yet known; the app now restarts it and the readable service log records why it stops |
 | Portable Linux binary (glibc 2.31, no PipeWire link) | ⚠️ needs only libc, libm, libpthread and libdl (glibc symbols ≤ 2.30); the Debian server that failed before hasn't re-tried it |
 | Host chat as its own window (KDE Wayland) | ✅ |
-| Windows pointer drawing | ✅ unit tests under Wine; real hardware pending |
+| Windows pointer drawing | ✅ unit tests under Wine; on the Server 2016 VM, which has no mouse, the arrow is drawn when Windows hides the pointer (0.6.0, to confirm) |
+| Adaptive resolution and idle sharpening | ✅ pipeline test with a simulated slow encoder (shrinks to fit 60 fps, full-size frame once still) and a local session at 30 ms a simulated frame |
+| Host pace in the viewer (stats tooltip, 30 s log line) | ✅ local sessions and the live Server 2016 VM |
 | X11 host | ⚠️ implemented, lightly tested |
 | macOS | ⚠️ type-checks for Apple Silicon (cross-checked from Linux); `scripts/build-macos.sh` packages it; not yet run on a Mac |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
@@ -48,7 +51,8 @@ and port forwarding.
   reach the app on macOS (winit doesn't pass URL events on); setup codes do.
 - **Windows elevation**: without the Slipstream service the app runs as
   the user, so it can't control UAC prompts, elevated windows or the login
-  screen. The service does, but hasn't been tried on real Windows yet.
+  screen. The service does (it runs on real Server 2016), but UAC and the
+  login screen haven't been tried through it yet.
 - **Privacy mode** needs Windows 10 2004 or later on the remote side, and
   blocks the local keyboard and mouse only under the service (Windows
   allows `BlockInput` only to elevated programs).
@@ -56,10 +60,14 @@ and port forwarding.
   release workflow, which needs the repository public on GitHub. Until then
   the .exe is unsigned and SmartScreen warns about it.
 - **Software video only**: OpenH264 on the CPU (with its SIMD code: builds
-  need `nasm`). On the dev machine a fully moving picture runs at 60 fps up
-  to 1080p, about 56 at 1440p and 37 at 4K. Static and typing content is far
-  cheaper. Hardware encoding is issue 06.
-- **Windows capture** makes several full-frame copies inside xcap (issue 15).
+  need `nasm`), in camera mode since 0.7.0. The pipeline figures (60 fps up
+  to 1080p, about 56 at 1440p and 37 at 4K for a fully moving picture) were
+  measured before that and are worth re-measuring. Slow processors now
+  drop resolution while the picture moves, rather than frame rate.
+  Hardware encoding is issue 06.
+- **Windows capture** makes several full-frame copies inside xcap (issue
+  15). The service's GDI path on the login screen and UAC prompts no
+  longer does.
 - **Sound**: Windows and Linux hosts share it; Mac hosts can't yet
   (ScreenCaptureKit audio). Not yet heard on real speakers between two
   machines: end-to-end test with a test tone; real devices open on Linux.
@@ -75,29 +83,33 @@ and port forwarding.
 Each step is written up as an issue with tasks and pointers into the code
 in [issues/](issues/README.md).
 
-1. **Confirm 0.5.0 on real machines**: Windows pointer while controlling the
+1. **Measure 0.7.0 on the Server 2016 VM**: the viewer's 30-second log
+   line shows frame rate, round trip, decode time and the host's capture
+   and encode times. Confirm 60 fps, and how often adaptive resolution
+   kicks in. Also confirm the pointer on the mouseless VM, and that the
+   service stays running after *Update*.
+2. **Confirm 0.5.0 on real machines**: Windows pointer while controlling the
    laptop, the separate chat window on Windows, smooth animations, and the
    Linux app on the Debian server.
-2. **Push to GitHub**, get CI green on all three OSes, and attach release
-   builds.
-3. **macOS**: run `scripts/build-macos.sh` on the Mac; test install, Open
+3. **Push to GitHub** (tags `v0.5.0` to `v0.7.0` are local only), get CI
+   green on all three OSes, and attach release builds.
+4. **macOS**: run `scripts/build-macos.sh` on the Mac; test install, Open
    Anyway, permissions, capture, input, setup code and an update (issue 03).
-4. **Try the new session tools on real machines** (issue 16): the
-   Windows service, privacy mode, copying files both ways, port
-   forwarding to Remote Desktop.
-5. **Hardware encoding**: NVENC, VA-API, Media Foundation, VideoToolbox.
-6. **Code signing**: apply to SignPath once the repo is public (issue 05);
+5. **Try the new session tools on real machines** (issue 16): UAC and the
+   login screen through the service, privacy mode, copying files both
+   ways, port forwarding to Remote Desktop.
+6. **Hardware encoding**: NVENC, VA-API, Media Foundation, VideoToolbox.
+7. **Code signing**: apply to SignPath once the repo is public (issue 05);
    Apple notarisation when the Developer Program is joined.
-7. **Sound from Mac hosts** (ScreenCaptureKit audio).
-8. **Address book** with saved devices and credentials (OS keychain).
+8. **Sound from Mac hosts** (ScreenCaptureKit audio).
 9. **Android**: viewer first, then host (MediaProjection +
    AccessibilityService). The egui UI already targets Android.
 
 ## Picking the work back up
 
 - Build and test: [BUILDING.md](BUILDING.md). The release checklist is
-  there: commit, run `scripts/build-station.sh`, upload the apps, then the
-  manifest.
+  there: commit, `scripts/release-version.sh patch|minor`, commit, run
+  `scripts/build-station.sh`, upload the apps, then the manifest.
 - How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 - User-facing behaviour: [GETTING-STARTED.md](GETTING-STARTED.md).
 - What changed: [CHANGELOG.md](../CHANGELOG.md).

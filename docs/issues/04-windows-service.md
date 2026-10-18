@@ -40,9 +40,27 @@ program changes). Install, start, a session and uninstall work under Wine;
 session 0, the secure desktop and SendSAS can only be checked on real
 Windows.
 
+Since 0.6.0 (see ARCHITECTURE.md, "The Windows service"): one host per
+computer, under the app's ID. The app keeps the service running without an
+administrator prompt. The service log and its ID are readable from a
+public folder, failures show Windows' own explanation, and the profile's
+permissions repair themselves. Capture uses DXGI duplication on the normal
+desktop and GDI on the login screen and UAC prompts.
+
+On real Windows Server 2016 (a VMware VM), as of 0.6.0–0.7.0:
+
+- Install, reinstall over an older service, and Start all work.
+  Reinstalling failed with "Access is denied" on the identity until build
+  36's permission fix.
+- The service hosts under the app's ID, and DXGI capture runs there.
+- Once, after *Update*, the service was left stopped. The cause is still
+  unknown: the app restarts it now, and the public log should show why.
+
 ## Still to check on real Windows
 
-- [ ] Install from Config on Windows 11 and on Server 2016.
+- [ ] Install from Config on Windows 11 (Server 2016: done).
+- [ ] *Update* leaves the service running (it was found stopped once on
+      Server 2016).
 - [ ] Approve a UAC prompt remotely; type into an elevated window.
 - [ ] Ctrl+Alt+Del from *Keys*; log in at the login screen; lock and unlock.
 - [ ] Log off and back on, switch users: the host follows the session.

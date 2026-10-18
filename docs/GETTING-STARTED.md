@@ -233,7 +233,7 @@ The toolbar along the top:
 | **Sound** | Play the remote computer's sound here, or stop. The default is under *Config → Remote sound*. |
 | **Tools ▾** | **Privacy mode** blacks out the remote computer's own screen while you work (Windows 10 2004 and later). **Port forwarding…** opens tunnels, see below. **System information…** shows its hardware, OS, drives, temperatures and network, updating live, with *Copy all* for tickets. |
 | **Balanced ▾** | Quality preset: *Balanced*, *Speed* (lowest delay), *Quality* (sharpest picture) and *Low bandwidth* (slow connections). |
-| Stats | Frames per second, bandwidth, round-trip time, and **DIRECT** or **RELAY** (whether traffic goes peer-to-peer or through your station). |
+| Stats | Frames per second, bandwidth (kbit/s below 1 Mbit/s), round-trip time, and **DIRECT** or **RELAY** (whether traffic goes peer-to-peer or through your station). Hover for decode time and, from 0.6.2 hosts, the remote computer's own figures: capture, encoding, and waiting for a new screen frame or for you. Every 30 s the same figures go to this app's log. On a slow remote computer, moving pictures are sent at lower resolution to keep the frame rate, and sharpen once the picture stops. |
 | **End link** | Disconnect. |
 
 You can also:
@@ -413,11 +413,14 @@ broken session.
 | **Partner not found / offline** | The other computer's app isn't running, has *Accept connections* off, or has no internet. Its status light should say *Online*. |
 | Remote screen is **black** after the other person logs off, locks the computer or closes another remote tool | Windows is showing its lock screen, which normal apps can't see (the session bar says so). Install the [Slipstream service](#windows-the-slipstream-service) on that computer to reach the lock and login screens. |
 | **Ctrl+Alt+Del does nothing** | Windows only accepts it from a service: install the [Slipstream service](#windows-the-slipstream-service) on the remote computer. |
+| Service shows **Installed, not running** | Press **Start** (on the Bridge or in Config; no administrator prompt needed). If it won't start, Config shows Windows' own explanation with a *Copy* button, and *Config → Service log* opens the service's log (`C:\ProgramData\Slipstream Remote\public\slipstream.log`). |
+| **Two Slipstream processes** in Task Manager with the service installed | Expected. The service runs in the background where it can't see the screen, and starts a helper in the signed-in session that captures and controls it. The tray icon is a third, unless *Config → Tray icon* is off. |
 | A **small window** instead of the full app (Windows Server 2016, some VMs) | Slipstream draws the full window in software on machines without usable graphics, by itself. You get the small window only if that failed on this computer last time; press **Full window** in it to try again. The small window still lets others control the computer. |
 | **Wrong password** | One-time passwords change after every session. Ask for the current one. |
 | **"Too many wrong passwords"** | After three wrong tries the computer waits before it checks another password, longer each time (up to 5 minutes). Wait the time shown, then try the right one. |
 | Update not offered, log says **"signature doesn't match"** | The station's apps were built with a different release key from yours. Download the app from the station page again. |
 | Connection works but is slow, stats say **RELAY** | Both sides are behind strict firewalls, so traffic goes through your station. Try the *Speed* or *Low bandwidth* preset. |
+| Low frame rate, stats say **DIRECT** | Hover over the stats. Long *video encoding* times mean the remote computer's processor is the limit. Long *screen capture* times point at capture. Long *waiting for the viewer* times mean the network. The 30-second lines in the log show the same, over time. |
 | Black or frozen screen from a Wayland computer | The screen-sharing prompt on that computer wasn't approved. Approve it, or reset it under *Config → Screen permission*. |
 | Mac shows a black screen or ignores the mouse | Grant **Screen Recording** and **Accessibility** to Slipstream in *System Settings → Privacy & Security*, then restart the app. |
 | Update fails: "installed in a protected folder" | The app can't replace itself there. Download the new version from the station page instead. |
