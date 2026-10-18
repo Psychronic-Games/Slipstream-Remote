@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.6.0 — 2026-10-17
+
 ### Service install, the remote pointer, lighter software drawing
 - Installing the service over an older one no longer fails when the
   installed program is still running (the tray icon at sign-in, or the
