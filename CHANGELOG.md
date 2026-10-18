@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.14.1 — 2026-10-18
+
 ### System Information
 - Use a red Close button to distinguish it from the yellow header rail.
 
