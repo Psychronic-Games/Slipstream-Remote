@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.17.1 — 2026-10-18
+
 ### Audit: transfer and session reliability
 - Give each upload/download a private staging file, remove it on failure or
   cancellation, and publish without overwriting concurrent/existing files.
