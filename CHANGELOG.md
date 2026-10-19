@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.16.0 — 2026-10-18
+
 ### File previews and sorting
 - Show image thumbnails in both File Transfer panes, with a larger hover
   preview; support PNG, JPEG, GIF (first frame), WebP, BMP, ICO and TIFF.
