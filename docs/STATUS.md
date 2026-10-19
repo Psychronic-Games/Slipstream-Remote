@@ -3,6 +3,13 @@
 *Updated 2026-10-18; latest release 0.17.1. Read this first when
 picking the work back up.*
 
+Today's complete [development and deployment handoff](DEVELOPMENT-2026-10-18.md)
+covers releases 0.8.0–0.17.1, verification, rollback and remaining checks.
+**Published clients: 0.17.1, build 87, commit a8e5e25**, on
+https://relay.slipstreamremote.com. Later documentation commits do not change
+that deployed build. The mounted client directory and rollback backup are
+recorded in the handoff.
+
 **0.17.1:** a [deep code audit](AUDIT-2026-10-18.md) fixes concurrent transfer
 collisions/overwrites, abandoned staging on ordinary failures, held input after
 connection loss, video queue shutdown and unbounded decode buffering, tunnel
@@ -250,25 +257,31 @@ implemented and emulator-tested, alongside the touch viewer. Remaining work
 includes real-phone checks, viewer keyboard polish, hardware encoding and
 host audio/clipboard/files/updates. The steps below carry on alongside it.
 
-1. **Measure 0.7.x on the Server 2016 VM**: the viewer's 30-second log
-   line shows frame rate, round trip, decode time and the host's capture
-   and encode times. Confirm 60 fps, and how often adaptive resolution
-   kicks in. Also confirm the pointer on the mouseless VM, and that the
-   service stays running after *Update*.
-2. **Confirm 0.5.0 on real machines**: Windows pointer while controlling the
-   laptop, the separate chat window on Windows, smooth animations, and the
-   Linux app on the Debian server.
-3. **Push to GitHub** (tags `v0.5.0` to `v0.7.1` are local only), get CI
-   green on all three OSes, and attach release builds.
-4. **macOS**: run `scripts/build-macos.sh` on the Mac; test install, Open
+1. **Confirm 0.17.1 on the Windows Server VM**: sharp Balanced/Quality motion,
+   the pointer on the mouseless VM, service-update recovery, incoming chat,
+   peripheral/network-drive inventory, Explorer/Desktop drop destinations,
+   scanner browser launching and native frame corners/rails. Use the stats
+   tooltip and 30-second log line to measure capture/encode/decode and picture
+   dimensions rather than assuming a high frame rate means full resolution.
+2. **Confirm Android hosting on real phones**: persistent ID, sharing consent,
+   accessibility setup, PC input, cold direct/relay links, rotation and Stop.
+   Include older supported Android versions; current host runtime evidence is
+   from an Android 16 emulator.
+3. **Finish earlier real-machine checks**: Windows laptop pointer, Debian
+   portability, clipboard files and sound between machines. Existing issue
+   checklists retain the original version numbers for traceability.
+4. **Push to GitHub**, get CI green on all three OSes, and attach release builds.
+   Local commits/releases have not been pushed.
+5. **macOS**: run `scripts/build-macos.sh` on the Mac; test install, Open
    Anyway, permissions, capture, input, setup code and an update (issue 03).
-5. **Try the new session tools on real machines** (issue 16): UAC and the
+6. **Try the session tools on real machines** (issue 16): UAC and the
    login screen through the service, privacy mode, copying files both
    ways, port forwarding to Remote Desktop.
-6. **Hardware encoding**: NVENC, VA-API, Media Foundation, VideoToolbox.
-7. **Code signing**: apply to SignPath once the repo is public (issue 05);
+7. **Hardware encoding**: NVENC, VA-API, Media Foundation, VideoToolbox, Android
+   MediaCodec; continue Android host audio/clipboard/files and update support.
+8. **Code signing**: apply to SignPath once the repo is public (issue 05);
    Apple notarisation when the Developer Program is joined.
-8. **Sound from Mac hosts** (ScreenCaptureKit audio).
+9. **Sound from Mac hosts** (ScreenCaptureKit audio).
 
 ## Picking the work back up
 
@@ -278,3 +291,5 @@ host audio/clipboard/files/updates. The steps below carry on alongside it.
 - How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 - User-facing behaviour: [GETTING-STARTED.md](GETTING-STARTED.md).
 - What changed: [CHANGELOG.md](../CHANGELOG.md).
+- Today's handoff and deployed build: [DEVELOPMENT-2026-10-18.md](DEVELOPMENT-2026-10-18.md).
+- Audit findings, regression evidence and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md).

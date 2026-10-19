@@ -11,14 +11,15 @@ APK and opened it. egui, wgpu and iroh all run on Android, so the app is
 the desktop app's GUI and session code, plus a small Java activity (see
 ARCHITECTURE.md, "The Android app", and BUILDING.md, "Android").
 
-## Phase 0: the app runs on Android (done, unreleased)
+## Phase 0: the app runs on Android (shipped in 0.8.0)
 
 - [x] `apps/slipstream` split into a library and the desktop program;
       `apps/slipstream-android` is the library a GameActivity loads.
       GameActivity rather than NativeActivity for its soft-keyboard
       support.
 - [x] Gradle project (Java, no Kotlin), `scripts/build-android.sh`, APK in
-      `dist/android/` (arm64-v8a and x86_64, Android 8+, about 33 MB).
+      `dist/android/` (Android 8+; arm64-v8a station release, x86_64
+      available for emulator development).
 - [x] Settings, identity and log in the app's private storage; log to
       logcat.
 - [x] Clear of the status and navigation bars, camera cutout and
@@ -67,6 +68,14 @@ Android navigation. Android 16 emulator runtime checks cover view-only access,
 PC input/typing/dragging, background capture, rotation and notification stop.
 Real phones still need confirmation. Capture currently uses bounded RGBA
 ImageReader output and the existing software H.264 encoder.
+
+0.17.1 fixes retention of the last pending still frame and disables Android
+UDP segmentation offload after reproducing a cold direct-link stall. Three
+fresh direct connections then passed; a cold relayed connection also passed.
+Idle capture revocation/regrant, PC control and rotation were rechecked.
+See the [day's handoff](../DEVELOPMENT-2026-10-18.md) and
+[audit](../AUDIT-2026-10-18.md). Physical-device and older-Android checks remain
+open; emulator checks do not complete the real-phone task above.
 
 
 - [ ] Screen capture with MediaProjection into the hardware H.264 encoder

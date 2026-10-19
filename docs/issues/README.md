@@ -1,6 +1,6 @@
 # Open issues
 
-The work queue after 0.5.0. Each file is one issue: background, tasks or a
+The work queue, updated through 0.17.1 on 2026-10-18. Each file is one issue: background, tasks or a
 test checklist, a "done when" where it applies, and pointers into the code.
 Once the repository is on GitHub, `scripts/file-issues.sh` files them all as
 GitHub issues (it skips any already filed), and GitHub becomes the place to
@@ -24,5 +24,9 @@ track them.
 | 15 | [Windows: capture straight from DXGI](15-windows-capture-dxgi.md) (done in 0.7.1; to measure) | Windows, performance |
 | 16 | [Try the new session tools on real machines](16-session-tools-real-machines.md) | testing |
 
-**Start with 01.** It's a checklist for testing the 0.5.0 fixes on the
-laptop and the Debian server. 02 and 03 follow.
+Start with the current priorities in [status](../STATUS.md#next-steps-suggested-order)
+and the [2026-10-18 handoff](../DEVELOPMENT-2026-10-18.md). Issues 09 and 16
+cover the latest Android-host and Windows-service/tool runtime checks. Issue 01
+retains older checks for the laptop and Debian server; 02 and 03 cover GitHub/CI
+and macOS. Original version numbers in older checklists describe when the work
+was introduced, rather than the latest published client.

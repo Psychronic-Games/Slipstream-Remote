@@ -125,6 +125,8 @@ Build dependencies, cross-compiling and the release checklist are in
 | [Building and releasing](docs/BUILDING.md) | Toolchain, release builds, publishing updates |
 | [Architecture](docs/ARCHITECTURE.md) | Networking, authentication, protocol, platform backends |
 | [Status](docs/STATUS.md) | What's verified, known gaps, next steps |
+| [2026-10-18 handoff](docs/DEVELOPMENT-2026-10-18.md) | The day's features, verification, deployment and remaining checks |
+| [2026-10-18 audit](docs/AUDIT-2026-10-18.md) | Fixed reliability/performance findings, regression evidence and limits |
 | [Open issues](docs/issues/README.md) | The work queue, ready to file on GitHub |
 | [Changelog](CHANGELOG.md) | What's in each version |
 | [Code signing policy](docs/CODE-SIGNING.md) | What is signed, by whom, and privacy |
