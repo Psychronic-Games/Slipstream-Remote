@@ -11,7 +11,8 @@ session ends, Cancel reconnect and End Link stop recovery. The same tab,
 chat, display/quality and tool windows survive; input capture is released.
 Transfers fail visibly and port forwards close rather than being replayed.
 File Transfer now owns a native LCARS viewport, larger than a small remote
-window, with desktop drops into its remote pane and independent repainting.
+window, with vector folder/file icons, desktop drops into its remote pane
+and independent repainting/live connection state while the parent is minimized.
 Actual Windows service-update recovery still benefits from a real VM check;
 Linux runtime checks use an abruptly killed and restarted host process.
 

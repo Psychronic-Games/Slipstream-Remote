@@ -242,6 +242,7 @@ impl RemoteTab {
                     self.closed = Some(reason);
                     self.stats=ViewerStats::default();
                     self.reconnect_requested=retryable && self.peer.0!=0;
+                    self.repaint_tools(ctx);
                 }
             }
         }
@@ -300,10 +301,16 @@ impl RemoteTab {
         if self.audio!=default_audio {self.send(ViewerCmd::Audio(self.audio));}
         self.files.lock().unwrap().reconnect(self.session.fs(),self.info.host_name.clone());
         self.network.lock().unwrap().reconnect(self.session.fs(),self.info.capabilities.input);
+        self.repaint_tools(ctx);
         self.pasting=None;self.sysinfo=Arc::default();self.sysinfo_busy=Arc::default();self.sysinfo_at=None;
         self.sysinfo_fetch=self.show_sysinfo;
         self.public_ip=None;self.public_ip_rx=None;self.public_ip_at=None;
         self.notice=Some(("Link restored · click the picture to take control".into(),Instant::now()));
+    }
+
+    fn repaint_tools(&self,ctx:&egui::Context) {
+        if self.files.lock().unwrap().open {ctx.request_repaint_of(egui::ViewportId::from_hash_of(("file-transfer",self.id)));}
+        if self.network.lock().unwrap().open {ctx.request_repaint_of(egui::ViewportId::from_hash_of(("network-scan",self.id)));}
     }
 
     pub fn release_keyboard(&mut self) {
@@ -432,7 +439,7 @@ impl RemoteTab {
     }
 
     pub fn network_window(&self, ctx: &egui::Context, rt: &Arc<tokio::runtime::Runtime>) {
-        super::network::NetworkScanner::show(&self.network, ctx, rt, self.id, &self.info.host_name, self.closed.is_none());
+        super::network::NetworkScanner::show(&self.network, ctx, rt, self.id, &self.info.host_name);
     }
 
     pub fn ui(&mut self, ui: &mut Ui, full: Rect, t: f64, rt: &tokio::runtime::Runtime) -> TabAction {

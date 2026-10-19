@@ -295,6 +295,10 @@ pub struct RemoteFs {
 }
 
 impl RemoteFs {
+    /// Current transport state, also available to independently drawn tools
+    /// while their parent window is minimized and its UI isn't running.
+    pub fn is_connected(&self)->bool {self.conn.close_reason().is_none()}
+
     pub(crate) fn new(conn: Connection) -> Self {
         Self { conn }
     }

@@ -254,7 +254,7 @@ impl NetworkScanner {
 
     /// Each session owns a desktop viewport, independent of the main window.
     /// On Android, egui embeds it because that backend has no extra windows.
-    pub fn show(shared: &Arc<Mutex<Self>>, ctx: &egui::Context, rt: &Arc<tokio::runtime::Runtime>, id: u64, host: &str, connected: bool) {
+    pub fn show(shared: &Arc<Mutex<Self>>, ctx: &egui::Context, rt: &Arc<tokio::runtime::Runtime>, id: u64, host: &str) {
         if !shared.lock().expect("network window").open { return; }
         let (shared, rt, host) = (shared.clone(), rt.clone(), host.to_string());
         let viewport = egui::ViewportId::from_hash_of(("network-scan", id));
@@ -271,6 +271,7 @@ impl NetworkScanner {
         ctx.show_viewport_deferred(viewport, builder, move |ui, class| {
             let mut scanner = shared.lock().expect("network window");
             let ctx = ui.ctx().clone();
+            let connected=scanner.fs.is_connected();
             if !scanner.open {
                 if class==egui::ViewportClass::Deferred {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
                 return;

@@ -340,7 +340,7 @@ impl FileManager {
     }
 
     /// Independent desktop window; mobile backends embed the same body.
-    pub fn show(shared:&Arc<Mutex<Self>>,ctx:&egui::Context,rt:&Arc<tokio::runtime::Runtime>,id:u64,connected:bool) {
+    pub fn show(shared:&Arc<Mutex<Self>>,ctx:&egui::Context,rt:&Arc<tokio::runtime::Runtime>,id:u64) {
         let host={
             let mut files=shared.lock().expect("file window");
             files.handle_messages(rt,ctx);
@@ -357,6 +357,7 @@ impl FileManager {
         ctx.show_viewport_deferred(viewport,builder,move |ui,class| {
             let mut files=shared.lock().expect("file window");
             let ctx=ui.ctx().clone();
+            let connected=files.fs.is_connected();
             if !files.open {
                 if class==egui::ViewportClass::Deferred {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
                 return;
@@ -383,7 +384,9 @@ impl FileManager {
                 if connected && let Some(target)=target {files.upload(dropped,target,&rt,&ctx);}
                 else {files.remote.error=Some("Drop files or folders onto the remote pane while connected".into());}
             }
-            if files.activity().is_some() {ctx.request_repaint_after(std::time::Duration::from_millis(100));}
+            // The parent may only run logic while minimized. Keep this
+            // viewport responsive to transport/job changes on its own.
+            ctx.request_repaint_after(std::time::Duration::from_millis(if files.activity().is_some() {100}else{250}));
         });
     }
 
@@ -527,6 +530,33 @@ impl FileManager {
     }
 }
 
+/// Console-style vector symbols, independent of the operating system's
+/// emoji font. Shapes stay crisp at the current display scale.
+fn entry_icon(p:&egui::Painter,rect:Rect,folder:bool) {
+    let at=|x,y|rect.min+vec2(x,y);
+    let color=if folder {pal::GOLD}else{pal::BLUE};
+    let stroke=egui::Stroke::new(1.4,color);
+    if folder {
+        p.rect_filled(Rect::from_min_max(at(1.0,2.0),at(10.0,8.0)),egui::CornerRadius{nw:3,ne:3,..Default::default()},color);
+        let body=Rect::from_min_max(at(1.0,6.0),at(20.0,18.0));
+        p.rect_filled(body,3.0,color.gamma_multiply(0.14));
+        p.rect_stroke(body,3.0,stroke,egui::StrokeKind::Inside);
+        p.rect_filled(Rect::from_min_max(at(1.0,6.0),at(5.0,18.0)),egui::CornerRadius{nw:3,sw:3,..Default::default()},color);
+        p.line_segment([at(5.0,8.0),at(18.0,8.0)],egui::Stroke::new(2.0,color));
+        p.line_segment([at(11.0,14.0),at(17.0,14.0)],stroke);
+    } else {
+        let body=Rect::from_min_max(at(3.0,1.0),at(17.0,19.0));
+        p.rect_filled(body,2.0,color.gamma_multiply(0.14));
+        p.rect_stroke(body,2.0,stroke,egui::StrokeKind::Inside);
+        p.rect_filled(Rect::from_min_max(at(3.0,1.0),at(6.0,19.0)),egui::CornerRadius{nw:2,sw:2,..Default::default()},color);
+        p.line_segment([at(11.0,2.0),at(11.0,6.0)],stroke);
+        p.line_segment([at(11.0,6.0),at(16.0,6.0)],stroke);
+        for (y,end) in [(10.0,14.0),(13.0,14.0),(16.0,12.0)] {
+            p.line_segment([at(8.0,y),at(end,y)],egui::Stroke::new(1.0,color));
+        }
+    }
+}
+
 /// Draws one pane. Returns `Some(path)` to navigate (`Some(None)` = home).
 fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, show_hidden: bool) -> Option<Option<String>> {
     let mut nav: Option<Option<String>> = None;
@@ -590,8 +620,7 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
                     } else if resp.hovered() {
                         p.rect_filled(rect, 4.0, Color32::from_rgb(18, 22, 38));
                     }
-                    let icon = if e.is_dir { "📁" } else { "📄" };
-                    p.text(rect.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, icon, theme::body(15.0), pal::TAN);
+                    entry_icon(p,Rect::from_min_size(rect.left_center()+vec2(4.0,-10.0),vec2(20.0,20.0)),e.is_dir);
                     let name_w = rect.width() - 190.0;
                     let galley = p.layout(e.name.clone(), theme::body(15.0), if e.is_dir { pal::TAN } else { pal::TEXT }, name_w.max(60.0));
                     let name_rect = Rect::from_min_size(rect.left_top() + vec2(30.0, (row_h - 18.0) / 2.0), vec2(name_w.max(60.0), 18.0));

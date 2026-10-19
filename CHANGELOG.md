@@ -31,6 +31,8 @@ show in small print: `0.6.0 (build N · commit)`.
 ### Detached file transfer
 - Give File Transfer its own movable, resizable LCARS desktop window, with
   the same curved rails and separated window controls as Network Scan.
+- Draw LCARS folder/file symbols as vectors rather than platform emoji, with
+  segmented rails and theme colors that scale cleanly with the interface.
 - Keep transfers running when that window is closed. Support desktop file and
   folder drops onto its remote pane, including when the main window is hidden,
   and keep drop coordinates scoped to the correct native viewport.

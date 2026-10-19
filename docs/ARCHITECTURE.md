@@ -268,7 +268,9 @@ interrupted and port forwards close. Privacy mode resets with the new session.
 
 File Transfer, like Network Scan, owns a deferred native viewport per tab;
 Android uses egui's embedded fallback. `FileManager` is shared behind a mutex
-and retains job history when rebinding. Closing the tool only hides it; tab
+and retains job history when rebinding. Tools read live transport status
+inside their own viewport callbacks, including across minimized-parent
+recovery. Closing the tool only hides it; tab
 cleanup cancels active jobs. Async work repaints its captured viewport and
 the root toolbar, so progress/listings do not depend on root-window rendering.
 Drop hit testing includes the viewport ID as well as the pane rect/layer;

@@ -1584,7 +1584,7 @@ impl eframe::App for App {
         saved::poll(self, &ctx);
         for tab in &mut self.tabs {
             tab.network_window(&ctx, &self.rt);
-            files::FileManager::show(&tab.files,&ctx,&self.rt,tab.id,tab.closed.is_none());
+            files::FileManager::show(&tab.files,&ctx,&self.rt,tab.id);
         }
 
         let keys = std::mem::take(&mut self.captured_keys);
