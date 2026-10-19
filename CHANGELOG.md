@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.19.0 — 2026-10-19
+
 ### One-time codes, session windows and toolbar layout
 - Show the Windows service's actual one-time code alongside unattended access,
   with Copy and New controls in the full and compact apps. Both passwords
