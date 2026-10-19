@@ -5,8 +5,10 @@ labels: [platform:linux, testing]
 
 ## Background
 
-On Wayland, screen sharing goes through the desktop portal. The first
-session asks the user, and Slipstream stores the portal's restore token
+On Wayland, screen sharing goes through the desktop portal. Since 0.18.0,
+the GUI/headless host prepares permission at startup, and Config offers
+Approve now and Reset / approve again without waiting for a viewer.
+Slipstream stores the portal's restore token when supplied
 (`host.portal_restore_token`) so later sessions don't ask again. It isn't
 known whether that holds after logout or reboot on KDE, GNOME and wlroots,
 or what happens when the token has expired. If it fails, an unattended

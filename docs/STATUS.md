@@ -1,14 +1,42 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.17.1. Read this first when
+*Updated 2026-10-19; latest release 0.18.0. Read this first when
 picking the work back up.*
 
-Today's complete [development and deployment handoff](DEVELOPMENT-2026-10-18.md)
-covers releases 0.8.0–0.17.1, verification, rollback and remaining checks.
-**Published clients: 0.17.1, build 87, commit a8e5e25**, on
+The latest [development and deployment handoff](DEVELOPMENT-2026-10-19.md)
+covers tool-window cleanup, proactive screen approval and APK naming.
+**Published clients: 0.18.0, build 90, commit ba3161e**, on
 https://relay.slipstreamremote.com. Later documentation commits do not change
 that deployed build. The mounted client directory and rollback backup are
 recorded in the handoff.
+
+**0.18.0:** detached Files, transfer receipts and Network Scan hide immediately
+on close and force their parent to repaint even while occluded. System
+Information discards its closing frame and redraws without the panel. These
+changes target Windows black rectangles left until the main app is clicked;
+the actual Windows VM still needs visual confirmation.
+
+Wayland GUI/headless hosts prepare screen/control access at startup, before
+any viewer connects. Config adds **Approve now** and **Reset / approve again**.
+The approved backend stays ready in the tray; desktop restore tokens are
+saved when supplied. Reset refuses active viewers, and incoming session
+registration is serialized with reset. Reboot persistence remains desktop
+dependent. Windows Settings explains its automatic screen access and background
+service instead of showing the inapplicable portal Reset button. Android keeps
+explicit Start sharing consent. Station download links now include the app
+filename, including `.apk`, with simple ASCII attachment headers and UTF-8
+fallbacks; APK bytes remain unchanged by the station.
+
+116 workspace tests pass (five opt-in tests ignored), including local
+preapproval reuse, concurrent preparation and reset protection during a live
+encrypted session. Linux/Windows all-target Clippy and arm64 Android Clippy
+pass. Isolated PHP checks verify Android naming/MIME/exact bytes and account
+behavior. Release signatures, desktop trust keys, portable Linux startup,
+Android signing/version/ABI and live HTTPS update/download checks passed.
+No physical Windows UI or fresh Wayland consent/reboot runtime check was made.
+
+The previous [October 18 handoff](DEVELOPMENT-2026-10-18.md) covers releases
+0.8.0–0.17.1 and their broader runtime evidence.
 
 **0.17.1:** a [deep code audit](AUDIT-2026-10-18.md) fixes concurrent transfer
 collisions/overwrites, abandoned staging on ordinary failures, held input after
