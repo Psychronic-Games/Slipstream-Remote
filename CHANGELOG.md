@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.18.0 — 2026-10-19
+
 ### Screen access and tool cleanup
 - Hide detached File Transfer, transfer receipts and Network Scan immediately
   when closed, and repaint an occluded parent to finish native-window cleanup.
