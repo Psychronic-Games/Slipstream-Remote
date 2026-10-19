@@ -1,7 +1,30 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.17.0. Read this first when
+*Updated 2026-10-18; latest release 0.17.1. Read this first when
 picking the work back up.*
+
+**0.17.1:** a [deep code audit](AUDIT-2026-10-18.md) fixes concurrent transfer
+collisions/overwrites, abandoned staging on ordinary failures, held input after
+connection loss, video queue shutdown and unbounded decode buffering, tunnel
+lifetime/IPv6 issues, concurrent identity/settings writes, UNC paths and symlink
+cycles. Folder browsing runs off the UI thread and ignores stale replies.
+Updates hash incrementally with bounded trailing data and idle deadlines.
+Android retains its final pending capture image and uses individual UDP packets
+for compatibility: a cold direct-link stall reproduced with offload enabled,
+while the relayed connection and three cold direct starts with offload disabled
+passed. Other hosts can set SLIPSTREAM_DISABLE_GSO=1 for the same workaround.
+Audio driver waits and foreign-frame bounds are now bounded/checked. Rust server
+rate limiting ignores spoofed forwarding prefixes behind a single local proxy.
+
+115 workspace tests pass (five opt-in tests ignored); Linux and
+Windows Clippy include all targets/test code, and arm64 Android checks pass.
+Isolated native X11 checks confirm exact drop bytes, detached Files opening from
+its receipt with the parent hidden, and asynchronous navigation on both panes.
+Android 16 emulator checks cover cold direct/relay startup, revoking/restarting
+sharing with no viewer, PC navigation/typing/dragging, rotation and notification
+revocation. Physical Windows/macOS/Android runtime confirmation
+remains useful. The audit records shared input ownership, blocked-driver worker
+retention and abrupt-process-kill staging as remaining limits.
 
 **0.17.0:** Android now registers a stable host ID and shows its ID/password
 on the main console, with a manufacturer/model name for default identities.
@@ -123,7 +146,7 @@ peripheral/printer/network-drive inventory, restored Windows service chat,
 and LCARS desktop title bars. Protocol remains 6: optional name lookup uses
 appended stream variants, preserving 0.10 scan interoperability.
 
-98 workspace tests pass (5 hardware/display tests ignored). Isolated Linux
+115 workspace tests pass (5 opt-in tests ignored). Isolated Linux
 GUI checks also cover image/text thumbnails, hover previews, independent
 Name/Modified sorting and direction toggles, selected-file Send/Receive
 bytes after reordering, and native file/folder drops. Linux GUI checks
@@ -149,7 +172,7 @@ The verification table below also records earlier releases.
 | Relay-only session through the station | ✅ |
 | Wrong clock (a month behind, a year ahead) | ✅ against the live station |
 | Self-update: offer, download, checksum, swap, restart; tampered file rejected | ✅ |
-| Signed updates (release key, unsigned/foreign builds refused) | ⚠️ unit tests; first signed release not deployed yet |
+| Signed updates (release key, unsigned/foreign builds refused) | ✅ signature tests and deployed manifest/HTTPS download verification |
 | Parallel password guessing held to the lockout | ✅ end-to-end test |
 | Station on the server's PHP 8.4 (no extensions): setup, sign-in, settings, download password, devices, key renewal, update offer | ✅ against a local copy; all PHP lint-clean |
 | Signed update installs; tampered, unsigned and foreign manifests and a swapped binary are refused | ✅ against a local station |

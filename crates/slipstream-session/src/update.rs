@@ -68,11 +68,9 @@ impl UpdateInfo {
 fn exe_path() -> Result<PathBuf> {
     let exe = std::env::current_exe().context("cannot locate the app")?;
     let dir = exe.parent().context("app has no folder")?;
-    let probe = dir.join(".slipstream-write-test");
-    if std::fs::write(&probe, b"").is_err() {
+    if tempfile::NamedTempFile::with_prefix_in(".slipstream-write-test-",dir).is_err() {
         bail!("this copy of Slipstream is installed in a protected folder ({}) — download the new version from your station instead", dir.display());
     }
-    let _ = std::fs::remove_file(probe);
     Ok(exe)
 }
 
@@ -81,7 +79,7 @@ fn base_len(bytes: &[u8]) -> usize {
     let n = bytes.len();
     if n >= 12 && &bytes[n - 8..] == slipstream_core::provision::TRAILER_MAGIC {
         let json = u32::from_le_bytes(bytes[n - 12..n - 8].try_into().expect("4 bytes")) as usize;
-        if json + 12 <= n {
+        if json > 0 && json <= slipstream_core::provision::MAX_CONFIG as usize && json + 12 <= n {
             return n - 12 - json;
         }
     }
@@ -109,30 +107,36 @@ pub async fn download(
     if let Some(k) = key {
         req = req.header("X-Slipstream-Key", k);
     }
-    let mut resp = req.send().await.context("downloading the update")?;
-    if !resp.status().is_success() {
-        bail!("the station refused the download (HTTP {})", resp.status());
-    }
-    let mut file = tokio::fs::File::create(&staged).await.context("writing the update")?;
-    let mut done = 0u64;
-    let total = resp.content_length().unwrap_or(info.size);
-    while let Some(chunk) = resp.chunk().await? {
-        file.write_all(&chunk).await?;
-        done += chunk.len() as u64;
-        progress(done, total);
-    }
-    file.flush().await?;
-    drop(file);
-
-    let bytes = tokio::fs::read(&staged).await?;
-    let base = &bytes[..base_len(&bytes)];
-    let digest = Sha256::digest(base);
-    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-    if base.len() as u64 != info.size || !hex.eq_ignore_ascii_case(&info.sha256) {
-        let _ = tokio::fs::remove_file(&staged).await;
-        bail!("the downloaded update is damaged (checksum mismatch) — try again");
-    }
+    let response = tokio::time::timeout(std::time::Duration::from_secs(30),req.send()).await
+        .context("update response timed out")?.context("downloading the update")?;
+    stage_download(response,info,&staged,&mut progress).await?;
     Ok(staged)
+}
+
+async fn stage_download(mut resp:reqwest::Response,info:&UpdateInfo,staged:&Path,mut progress:impl FnMut(u64,u64))->Result<()> {
+    anyhow::ensure!(resp.status().is_success(),"the station refused the download (HTTP {})",resp.status());
+    let limit=info.size.checked_add(u64::from(slipstream_core::provision::MAX_CONFIG)+12).context("invalid update length")?;
+    anyhow::ensure!(resp.content_length().is_none_or(|len|len<=limit),"update response exceeds the signed size");
+    let parent=staged.parent().context("update path has no parent")?.to_owned();
+    let temp=tokio::task::spawn_blocking(move || tempfile::NamedTempFile::with_prefix_in(".slipstream-update-",parent)).await??;
+    let mut file=tokio::fs::File::from_std(temp.as_file().try_clone()?);
+    let (mut done,mut digest,mut trailer)=(0u64,Sha256::new(),Vec::new());
+    let total=resp.content_length().unwrap_or(info.size);
+    loop {
+        let chunk=tokio::time::timeout(std::time::Duration::from_secs(30),resp.chunk()).await.context("update download stopped responding")??;
+        let Some(chunk)=chunk else {break};
+        anyhow::ensure!(chunk.len() as u64<=limit-done,"update response exceeds the signed size");
+        let base=(info.size.saturating_sub(done)).min(chunk.len() as u64) as usize;
+        digest.update(&chunk[..base]);trailer.extend_from_slice(&chunk[base..]);
+        file.write_all(&chunk).await?;done+=chunk.len() as u64;progress(done,total);
+    }
+    file.flush().await?;drop(file);
+    let hex=slipstream_core::directory::hex(&digest.finalize());
+    anyhow::ensure!(done>=info.size && (trailer.is_empty() || base_len(&trailer)==0)
+        && hex.eq_ignore_ascii_case(&info.sha256),"the downloaded update is damaged (checksum mismatch) — try again");
+    let staged=staged.to_owned();
+    tokio::task::spawn_blocking(move || temp.persist(staged).map_err(|e|e.error)).await??;
+    Ok(())
 }
 
 /// Swaps the staged update in for the running app. Returns the app path to
@@ -220,6 +224,37 @@ pub fn cleanup() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn streamed_updates_are_bounded_verified_and_cleaned_on_failure() {
+        slipstream_core::init_crypto();
+        use tokio::io::{AsyncReadExt,AsyncWriteExt};
+        async fn response(body:Vec<u8>,length:Option<usize>)->reqwest::Response {
+            let server=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=server.local_addr().unwrap();
+            tokio::spawn(async move {
+                let (mut socket,_)=server.accept().await.unwrap();let mut request=[0u8;2048];let _=socket.read(&mut request).await;
+                let length=length.map(|n|format!("Content-Length: {n}\r\n")).unwrap_or_default();
+                let _=socket.write_all(format!("HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n").as_bytes()).await;
+                let _=socket.write_all(&body).await;
+            });
+            reqwest::Client::new().get(format!("http://{addr}/")).send().await.unwrap()
+        }
+        let payload:Vec<u8>=(0..300_000).map(|n|(n % 251) as u8).collect();
+        let info=UpdateInfo {size:payload.len() as u64,sha256:slipstream_core::directory::hex(&Sha256::digest(&payload)),version:String::new(),build:0,commit:String::new(),os:String::new(),sig:String::new()};
+        let dir=tempfile::tempdir().unwrap();let staged=dir.path().join("app.update");
+        let mut bytes=payload.to_vec();bytes.extend(slipstream_core::provision::trailer(&slipstream_core::provision::StationConfig {server:"example.invalid".into(),key:None,org:None}));
+        stage_download(response(bytes.clone(),Some(bytes.len())).await,&info,&staged,|_,_|{}).await.unwrap();
+        assert_eq!(tokio::fs::read(&staged).await.unwrap(),bytes);
+        tokio::fs::remove_file(&staged).await.unwrap();
+        stage_download(response(payload.clone(),None).await,&info,&staged,|_,_|{}).await.unwrap();
+        assert_eq!(tokio::fs::read(&staged).await.unwrap(),payload);
+        tokio::fs::remove_file(&staged).await.unwrap();
+        let oversized=payload.len()+slipstream_core::provision::MAX_CONFIG as usize+13;
+        for (body,length) in [(b"damaged".to_vec(),None),(vec![0;oversized],None),(Vec::new(),Some(1_000_000))] {
+            assert!(stage_download(response(body,length).await,&info,&staged,|_,_|{}).await.is_err());
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(),0,"failed update left staging data");
+        }
+    }
 
     #[test]
     fn version_ordering() {

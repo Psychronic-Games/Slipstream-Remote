@@ -108,26 +108,29 @@ fn host_pace_text(stages: &[slipstream_core::proto::PaceStage]) -> String {
 pub struct FrameShared {
     latest: Mutex<Option<Arc<YuvFrame>>>,
     serial: AtomicU64,
-    repaint: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    repaint: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl FrameShared {
     /// The newest frame and its serial number (increments per frame).
     pub fn latest(&self) -> (u64, Option<Arc<YuvFrame>>) {
-        (self.serial.load(Ordering::Acquire), self.latest.lock().unwrap().clone())
+        let latest = self.latest.lock().unwrap();
+        (self.serial.load(Ordering::Acquire), latest.clone())
     }
 
     /// Called whenever a new frame arrives (e.g. `egui::Context::request_repaint`).
     pub fn set_repaint(&self, f: impl Fn() + Send + Sync + 'static) {
-        *self.repaint.lock().unwrap() = Some(Box::new(f));
+        *self.repaint.lock().unwrap() = Some(Arc::new(f));
     }
 
     fn publish(&self, frame: YuvFrame) {
-        *self.latest.lock().unwrap() = Some(Arc::new(frame));
-        self.serial.fetch_add(1, Ordering::Release);
-        if let Some(f) = &*self.repaint.lock().unwrap() {
-            f();
+        {
+            let mut latest = self.latest.lock().unwrap();
+            *latest = Some(Arc::new(frame));
+            self.serial.fetch_add(1, Ordering::Release);
         }
+        let repaint = self.repaint.lock().unwrap().clone();
+        if let Some(f) = repaint {f();}
     }
 }
 
@@ -493,7 +496,7 @@ async fn session(
     }
 
     // Video: network → decoder thread.
-    let (frame_tx, frame_rx) = std::sync::mpsc::channel::<VideoFrame>();
+    let (frame_tx, frame_rx) = mpsc::channel::<VideoFrame>(2);
     let (dec_tx, mut dec_rx) = mpsc::unbounded_channel::<DecoderOut>();
     let bytes_rx = Arc::new(AtomicU64::new(0));
     let decode_us = Arc::new(AtomicU64::new(0));
@@ -511,7 +514,7 @@ async fn session(
         let mut stream = video_conn.accept_uni().await?;
         while let Some(frame) = read_msg::<VideoFrame>(&mut stream).await? {
             video_bytes.fetch_add(frame.data.len() as u64 + 32, Ordering::Relaxed);
-            if frame_tx.send(frame).is_err() {
+            if frame_tx.send(frame).await.is_err() {
                 break;
             }
         }
@@ -653,7 +656,7 @@ async fn session(
 }
 
 fn decode_loop(
-    rx: std::sync::mpsc::Receiver<VideoFrame>,
+    mut rx: mpsc::Receiver<VideoFrame>,
     out: mpsc::UnboundedSender<DecoderOut>,
     frames: Arc<FrameShared>,
     decode_us: Arc<AtomicU64>,
@@ -668,7 +671,7 @@ fn decode_loop(
         }
     };
     let mut waiting_for_key = false;
-    while let Ok(frame) = rx.recv() {
+    while let Some(frame) = rx.blocking_recv() {
         let seq = frame.seq;
         if waiting_for_key && !frame.keyframe {
             let _ = out.send(DecoderOut::Ack(seq));
@@ -710,6 +713,25 @@ impl<T> Drop for Abort<T> {
 #[cfg(test)]
 mod health_tests {
     use super::*;
+
+    #[test]
+    fn frame_serials_match_pixels_and_repaint_callbacks_can_reenter() {
+        let shared=Arc::new(FrameShared::default());let weak=Arc::downgrade(&shared);
+        shared.set_repaint(move || {
+            let shared=weak.upgrade().unwrap();let _=shared.latest();shared.set_repaint(||{});
+        });
+        let producer=shared.clone();
+        let task=std::thread::spawn(move || {
+            for n in 1..=2000u64 {
+                producer.publish(YuvFrame {width:2,height:2,y:n.to_le_bytes().to_vec(),u:vec![0],v:vec![0],y_stride:2,uv_stride:1});
+            }
+        });
+        while !task.is_finished() {
+            let (serial,frame)=shared.latest();
+            if let Some(frame)=frame {assert_eq!(serial,u64::from_le_bytes(frame.y[..8].try_into().unwrap()));}
+        }
+        task.join().unwrap();assert_eq!(shared.latest().0,2000);
+    }
 
     #[tokio::test]
     async fn stalled_probe_is_detected_but_unsupported_probe_is_not_an_outage() {

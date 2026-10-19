@@ -13,6 +13,39 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Audit: transfer and session reliability
+- Give each upload/download a private staging file, remove it on failure or
+  cancellation, and publish without overwriting concurrent/existing files.
+  Require the declared bytes and clean end of stream before reporting success.
+- Reject non-regular transfer sources, bound reads to the advertised length,
+  stop clipboard/remote symlink cycles, and preserve Windows UNC share paths.
+- Release held input after controller disconnects, observe video-writer errors,
+  interrupt full encoder queues, bound decoder buffering, and reject future
+  frame acknowledgements. Support non-contiguous display IDs.
+- Close active connections with their tunnel, preserve normal half-closes,
+  fix active-count races and IPv6 targets, and own/bound file-request tasks.
+- Publish one identity across concurrent first starts and atomically save private
+  settings with unique staging names and serialized snapshots.
+
+### Audit: responsiveness and bounds
+- Move local folder listings/places off the UI thread, bound listing workers,
+  ignore stale navigation replies, and register detached Files windows while
+  the parent is hidden. Cache lowercase directory-sort keys.
+- Stream update hashes instead of rereading the whole executable, bound
+  provisioning trailers and response waits, clean failed update staging, and
+  use a unique non-destructive write probe.
+- Retain Android's final pending screen image at the capture interval and close
+  replaced image readers on their acquisition worker. Disable Android UDP
+  segmentation offload for direct-link compatibility; other platforms can
+  request the same behavior with SLIPSTREAM_DISABLE_GSO=1.
+- Bound audio-device startup/shutdown waits, pair frame serials with pixels,
+  and invoke repaint callbacks outside their lock.
+- Validate foreign PipeWire/raw-frame bounds without integer overflow. Reject
+  extreme signed timestamps safely and ignore spoofed forwarding prefixes
+  behind the Rust server's immediate local reverse proxy.
+- Add regression coverage and document findings and remaining limits in
+  docs/AUDIT-2026-10-18.md. Repair outdated Windows cursor test coverage.
+
 ## 0.17.0 — 2026-10-18
 
 ### Android hosting and device ID

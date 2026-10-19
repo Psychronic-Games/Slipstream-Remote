@@ -57,7 +57,7 @@ impl Flow {
 
     pub fn ack(&self, seq: u64) {
         let mut s = self.state.lock().unwrap();
-        if seq <= s.acked {
+        if seq <= s.acked || seq >= s.next_seq {
             return;
         }
         s.acked = seq;
@@ -423,10 +423,24 @@ fn encode_loop(
             timestamp_us: start.elapsed().as_micros() as u64,
             data: encoded.data,
         };
-        if out.blocking_send(msg).is_err() {
-            return;
+        if !send_interruptibly(&out, msg, &stop) {return;}
+    }
+}
+
+/// Blocking sends cannot observe `stop` when the video writer is stalled.
+/// Bound this wait too so a quality change/disconnect can join the encoder.
+fn send_interruptibly(out:&mpsc::Sender<VideoFrame>,mut frame:VideoFrame,stop:&AtomicBool)->bool {
+    while !stop.load(Ordering::Relaxed) {
+        match out.try_send(frame) {
+            Ok(())=>return true,
+            Err(mpsc::error::TrySendError::Closed(_))=>return false,
+            Err(mpsc::error::TrySendError::Full(pending))=>{
+                frame=pending;
+                thread::sleep(Duration::from_millis(5));
+            }
         }
     }
+    false
 }
 
 #[cfg(test)]
@@ -539,6 +553,20 @@ mod tests {
     }
 
     #[test]
+    fn a_full_video_queue_can_be_stopped() {
+        let (tx,_rx)=mpsc::channel(1);
+        let frame=VideoFrame {seq:1,keyframe:true,width:2,height:2,timestamp_us:0,data:vec![0]};
+        tx.try_send(frame.clone()).unwrap();
+        let stop=Arc::new(AtomicBool::new(false));let flag=stop.clone();
+        let (done,finished)=std::sync::mpsc::channel();
+        let worker=std::thread::spawn(move || {done.send(send_interruptibly(&tx,frame,&flag)).unwrap();});
+        assert!(finished.recv_timeout(Duration::from_millis(50)).is_err(),"full queue should apply backpressure");
+        stop.store(true,Ordering::Relaxed);
+        assert!(!finished.recv_timeout(Duration::from_secs(2)).unwrap());
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn flow_limits_in_flight() {
         let flow = Flow::new();
         let iv = Duration::from_millis(16);
@@ -546,6 +574,8 @@ mod tests {
         flow.take_seq();
         flow.take_seq();
         assert!(!flow.wait_for_credit(2, iv, Duration::from_millis(5)));
+        flow.ack(u64::MAX);flow.ack(3);
+        assert!(!flow.wait_for_credit(2,iv,Duration::ZERO),"future acknowledgements must not grant credit or underflow");
         flow.ack(1);
         assert!(flow.wait_for_credit(2, iv, Duration::ZERO));
         flow.ack(2);

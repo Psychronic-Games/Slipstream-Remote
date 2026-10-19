@@ -31,7 +31,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::Settings;
 
 pub const TRAILER_MAGIC: &[u8; 8] = b"SLIPCFG1";
-const MAX_CONFIG: u32 = 64 * 1024;
+/// Maximum station trailer JSON length, also used to bound update downloads.
+pub const MAX_CONFIG: u32 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StationConfig {

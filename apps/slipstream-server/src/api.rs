@@ -73,8 +73,10 @@ fn err(status: StatusCode, msg: &str) -> Response {
 /// reverse proxy (Apache, Nginx, Caddy) sits in front of us.
 pub fn client_ip(peer: SocketAddr, headers: &HeaderMap) -> IpAddr {
     if peer.ip().is_loopback()
-        && let Some(fwd) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
-        && let Some(ip) = fwd.split(',').next().and_then(|s| s.trim().parse().ok())
+        // Trust the address appended by our immediate local proxy, not
+        // an arbitrary leftmost address supplied by the original client.
+        && let Some(fwd) = headers.get_all("x-forwarded-for").iter().next_back().and_then(|v| v.to_str().ok())
+        && let Some(ip) = fwd.rsplit(',').next().and_then(|s| s.trim().parse().ok())
     {
         return ip;
     }
@@ -162,7 +164,7 @@ pub async fn handle(
             if p.op != op {
                 return err(StatusCode::BAD_REQUEST, "op mismatch");
             }
-            if (p.time - now()).abs() > MAX_SKEW {
+            if !fresh_timestamp(p.time, now()) {
                 return err(StatusCode::FORBIDDEN, "request expired — check this computer's clock");
             }
             if op == "unregister" {
@@ -192,5 +194,31 @@ pub async fn handle(
             }
         }
         _ => err(StatusCode::BAD_REQUEST, "unknown op"),
+    }
+}
+
+fn fresh_timestamp(timestamp:i64,current:i64)->bool {timestamp.abs_diff(current)<=MAX_SKEW as u64}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn client_addresses_ignore_spoofed_forwarding_prefixes() {
+        let proxy:SocketAddr="127.0.0.1:8000".parse().unwrap();
+        let direct:SocketAddr="198.51.100.10:8000".parse().unwrap();
+        let mut headers=HeaderMap::new();
+        headers.append("x-forwarded-for","203.0.113.99".parse().unwrap());
+        headers.append("x-forwarded-for","203.0.113.77, 198.51.100.20".parse().unwrap());
+        assert_eq!(client_ip(proxy,&headers),"198.51.100.20".parse::<IpAddr>().unwrap());
+        assert_eq!(client_ip(direct,&headers),direct.ip());
+        headers.insert("x-forwarded-for","203.0.113.77, invalid".parse().unwrap());
+        assert_eq!(client_ip(proxy,&headers),proxy.ip());
+    }
+
+    #[test]
+    fn timestamp_bounds_do_not_overflow() {
+        assert!(fresh_timestamp(1_000,1_000));assert!(fresh_timestamp(1_600,1_000));
+        assert!(!fresh_timestamp(1_601,1_000));assert!(!fresh_timestamp(i64::MIN,1_000));
+        assert!(!fresh_timestamp(i64::MAX,1_000));
     }
 }

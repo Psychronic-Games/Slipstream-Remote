@@ -34,6 +34,13 @@ pub async fn bind_client(secret: SecretKey, server: &ServerSettings, accept_sess
         .alpns(alpns)
         .relay_mode(mode)
         .ca_tls_config(ca);
+    // Some Android UDP stacks advertise segmentation offload but stall
+    // when a connection first sends a batch. Use individual datagrams on
+    // phones to avoid that first-keyframe fallback failure (iroh issue 4555).
+    if cfg!(target_os = "android") || std::env::var_os("SLIPSTREAM_DISABLE_GSO").is_some() {
+        builder = builder.transport_config(iroh::endpoint::QuicTransportConfig::builder().enable_segmentation_offload(false).build());
+        tracing::info!("UDP segmentation offload disabled for compatibility");
+    }
     // Troubleshooting aid: force every connection through the relay.
     if std::env::var_os("SLIPSTREAM_RELAY_ONLY").is_some() {
         tracing::warn!("SLIPSTREAM_RELAY_ONLY set: direct connections disabled");

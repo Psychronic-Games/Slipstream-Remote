@@ -276,6 +276,13 @@ the root toolbar, so progress/listings do not depend on root-window rendering.
 Drop hit testing includes the viewport ID as well as the pane rect/layer;
 Linux's grabbed-pointer sampling also uses the event's own viewport and scale.
 
+Listings run on bounded blocking workers with generation-tagged replies;
+cancelled or stale navigation cannot replace a newer folder. Incoming files
+use unique private staging, require the advertised bytes and clean stream end,
+and publish without replacing existing files. Publication retries name races.
+Request task sets belong to their session, and active tunnel connections belong
+to their listener. Closing either owner cancels its children.
+
 ### File preview and sort state
 
 Each file pane owns its sort choice, cached display-index order and preview
@@ -333,6 +340,9 @@ link's base round-trip time (the minimum seen, not the smoothed one, which
 includes queueing). Frames are skipped *before* encoding, never after, so
 the H.264 reference chain is never broken and stale frames never pile up in
 buffers — the picture is always as fresh as the network allows.
+The decode queue also holds at most two pending frames. Encoder sends observe
+shutdown while backpressured, and the session observes video-writer failures.
+Frame acknowledgements cannot advance past the last issued sequence.
 
 * **Bitrate** adapts AIMD-style when frame round trips stretch. Changes are
   applied to the running encoder, without a keyframe.
@@ -550,7 +560,8 @@ plus the tray app if it's on.
   `update_check` 20 s after start and every 6 h, and only offer a newer
   build whose signature checks out. They download through `download.php`
   (which appends the station trailer; the trailer only holds station
-  settings, not code), verify the hash of the app without the trailer, and
+  settings, not code), hash the signed app prefix incrementally, validate the
+  bounded trailer and clean stream end with response/idle deadlines, and
   swap themselves in: rename over on Unix,
   move the running `.exe` aside on Windows. Then they restart with
   `SLIPSTREAM_RESTARTED=1`, so the single-instance guard waits for the old

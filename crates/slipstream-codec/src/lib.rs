@@ -42,7 +42,10 @@ impl RawFrame {
         if self.width == 0 || self.height == 0 {
             bail!("empty frame");
         }
-        if self.stride < self.width * 4 || self.data.len() < (self.stride * (self.height - 1) + self.width * 4) as usize {
+        let row_bytes = u64::from(self.width) * 4;
+        if u64::from(self.stride) < row_bytes
+            || (self.data.len() as u64) < u64::from(self.stride) * u64::from(self.height - 1) + row_bytes
+        {
             bail!("frame buffer too small for {}x{} stride {}", self.width, self.height, self.stride);
         }
         Ok(())
@@ -435,6 +438,13 @@ impl Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_frame_metadata_is_rejected_without_integer_overflow() {
+        for (width,height,stride) in [(u32::MAX,2,u32::MAX),(2,u32::MAX,u32::MAX),(1024,2,4096)] {
+            assert!(RawFrame {width,height,stride,format:PixelFormat::Rgba,data:vec![0;16]}.validate().is_err());
+        }
+    }
 
     /// `cargo test --release -p slipstream-codec bench -- --ignored --nocapture`
     #[test]

@@ -70,7 +70,8 @@ impl Job {
 }
 
 enum Msg {
-    RemoteListing(Result<DirListing, String>),
+    Listing {remote:bool, generation:u64, result:Result<DirListing,String>},
+    LocalPlaces(Vec<Place>),
     RemotePlaces(Vec<Place>),
     JobFinished { upload: bool },
 }
@@ -112,6 +113,8 @@ fn sorted_rows(entries: &[DirEntry], show_hidden: bool, sort: Sort) -> Vec<usize
 
 #[derive(Default)]
 struct Pane {
+    generation:u64,
+    load_task:Option<ListingTask>,
     sort: Sort,
     rows: Vec<usize>,
     rows_key: Option<(bool, Sort)>,
@@ -128,7 +131,26 @@ struct Pane {
     viewport: Option<egui::ViewportId>,
 }
 
+struct ListingTask(tokio::task::JoinHandle<()>);
+impl Drop for ListingTask {fn drop(&mut self) {self.0.abort();}}
+
 impl Pane {
+    fn start_listing(&mut self)->u64 {
+        self.load_task=None;
+        self.generation=self.generation.wrapping_add(1);
+        self.loading=true;self.error=None;
+        self.generation
+    }
+
+    fn finish_listing(&mut self,generation:u64,result:Result<DirListing,String>) {
+        if generation!=self.generation {return;}
+        self.load_task=None;
+        match result {
+            Ok(listing)=>self.set_listing(listing),
+            Err(error)=>{self.error=Some(error);self.loading=false;}
+        }
+    }
+
     fn set_listing(&mut self, l: DirListing) {
         self.previews.clear();
         self.rows_key = None;
@@ -182,22 +204,25 @@ impl FileManager {
         }
     }
 
-    fn load_local(&mut self, path: Option<String>) {
-        match fsops::list(path.as_deref()) {
-            Ok(l) => self.local.set_listing(l),
-            Err(e) => self.local.error = Some(format!("{e:#}")),
-        }
+    fn load_local(&mut self, path: Option<String>, rt:&tokio::runtime::Runtime, ctx:&egui::Context) {
+        let generation=self.local.start_listing();
+        let (tx,ctx)=(self.tx.clone(),ctx.clone());let viewport=ctx.viewport_id();
+        self.local.load_task=Some(ListingTask(rt.spawn(async move {
+            let result=fsops::list_async(path).await.map_err(|e|format!("{e:#}"));
+            let _=tx.send(Msg::Listing {remote:false,generation,result});
+            ctx.request_repaint_of(viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
+        })));
     }
 
     fn load_remote(&mut self, path: Option<String>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
-        self.remote.loading = true;
+        let generation=self.remote.start_listing();
         let (fs, tx, ctx) = (self.fs.clone(), self.tx.clone(), ctx.clone());
         let viewport=ctx.viewport_id();
-        rt.spawn(async move {
-            let r = fs.list(path).await.map_err(|e| format!("{e:#}"));
-            let _ = tx.send(Msg::RemoteListing(r));
+        self.remote.load_task=Some(ListingTask(rt.spawn(async move {
+            let result = fs.list(path).await.map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Msg::Listing {remote:true,generation,result});
             ctx.request_repaint_of(viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
-        });
+        })));
     }
 
     fn ensure_started(&mut self, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
@@ -205,8 +230,14 @@ impl FileManager {
             return;
         }
         self.started = true;
-        self.local.places = fsops::places();
-        self.load_local(None);
+        self.load_local(None,rt,ctx);
+        let (tx,ctx2)=(self.tx.clone(),ctx.clone());let viewport=ctx.viewport_id();
+        rt.spawn(async move {
+            if let Ok(places)=tokio::task::spawn_blocking(fsops::places).await {
+                let _=tx.send(Msg::LocalPlaces(places));
+                ctx2.request_repaint_of(viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
+            }
+        });
         self.load_remote(None, rt, ctx);
         let (fs, tx, ctx) = (self.fs.clone(), self.tx.clone(), ctx.clone());
         let viewport=ctx.viewport_id();
@@ -381,11 +412,11 @@ impl FileManager {
         self.remote.previews.poll(ctx);
         while let Ok(m) = self.rx.try_recv() {
             match m {
-                Msg::RemoteListing(Ok(l)) => self.remote.set_listing(l),
-                Msg::RemoteListing(Err(e)) => {
-                    self.remote.error = Some(e);
-                    self.remote.loading = false;
+                Msg::Listing {remote,generation,result}=>{
+                    let pane=if remote {&mut self.remote}else{&mut self.local};
+                    pane.finish_listing(generation,result);
                 }
+                Msg::LocalPlaces(p)=>self.local.places=p,
                 Msg::RemotePlaces(p) => self.remote.places = p,
                 Msg::JobFinished { upload } => {
                     // Show the new files where they landed.
@@ -396,7 +427,7 @@ impl FileManager {
                         }
                     } else {
                         let p = self.local.listing.as_ref().map(|l| l.path.clone());
-                        self.load_local(p);
+                        self.load_local(p,rt,ctx);
                     }
                 }
             }
@@ -552,6 +583,8 @@ impl FileManager {
     }
 
     pub fn disconnect(&mut self) {
+        self.local.start_listing();self.local.loading=false;
+        self.remote.start_listing();self.remote.loading=false;
         self.local.previews.clear();self.remote.previews.clear();
         for job in &self.jobs {
             job.stop(JobState::Failed("Link interrupted; restart this transfer after reconnecting".into()));
@@ -619,7 +652,7 @@ impl FileManager {
             });
         });
         if let Some(p) = go_local {
-            self.load_local(p);
+            self.load_local(p,rt,&ctx);
         }
         if let Some(p) = go_remote {
             self.load_remote(p, rt, &ctx);
@@ -881,6 +914,17 @@ fn short_date(unix: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_folder_results_never_replace_newer_navigation() {
+        let mut pane=Pane::default();let old=pane.start_listing();let new=pane.start_listing();
+        let listing=|path:&str|DirListing {path:path.into(),parent:None,sep:"/".into(),entries:Vec::new()};
+        pane.finish_listing(new,Ok(listing("new")));
+        pane.finish_listing(old,Ok(listing("old")));
+        pane.finish_listing(old,Err("old failure".into()));
+        assert_eq!(pane.listing.as_ref().unwrap().path,"new");
+        assert!(!pane.loading && pane.error.is_none());
+    }
 
     #[test]
     fn sort_keeps_folders_first_unknown_dates_last_and_selection_identity() {

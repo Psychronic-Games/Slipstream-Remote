@@ -64,6 +64,16 @@ pub fn places() -> Vec<Place> {
     out
 }
 
+/// Slow disks and mounted shares must not occupy the UI/runtime threads.
+/// A permit stays with its blocking worker even if navigation is cancelled.
+pub async fn list_async(path: Option<String>) -> Result<DirListing> {
+    use std::sync::{Arc, OnceLock};
+    static WORKERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    let permit = WORKERS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
+        .clone().acquire_owned().await?;
+    tokio::task::spawn_blocking(move || {let _permit=permit;list(path.as_deref())}).await?
+}
+
 /// Lists a folder (`None` = home). Folders first, then files, by name.
 pub fn list(path: Option<&str>) -> Result<DirListing> {
     let dir = match path {
@@ -87,7 +97,7 @@ pub fn list(path: Option<&str>) -> Result<DirListing> {
             Some(DirEntry { name, is_dir: meta.is_dir(), size: if meta.is_dir() { 0 } else { meta.len() }, modified })
         })
         .collect();
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    entries.sort_by_cached_key(|entry| (!entry.is_dir, entry.name.to_lowercase()));
     Ok(DirListing {
         path: display(&dir),
         parent: dir.parent().map(display),
@@ -99,6 +109,7 @@ pub fn list(path: Option<&str>) -> Result<DirListing> {
 /// Paths as users expect to see them (no `\\?\` prefix on Windows).
 pub fn display(p: &Path) -> String {
     let s = p.display().to_string();
+    if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {return format!(r"\\{unc}");}
     s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s)
 }
 
@@ -131,7 +142,7 @@ pub fn safe_relative(rel: &str) -> Result<PathBuf> {
 
 /// `path`, or `path (1)`, `path (2)`… if it exists.
 pub fn unique_path(path: &Path) -> PathBuf {
-    if !path.exists() {
+    if path.symlink_metadata().is_err() {
         return path.to_path_buf();
     }
     let dir = path.parent().unwrap_or(Path::new(""));
@@ -140,7 +151,7 @@ pub fn unique_path(path: &Path) -> PathBuf {
         Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
         _ => (name, String::new()),
     };
-    (1..).map(|i| dir.join(format!("{stem} ({i}){ext}"))).find(|p| !p.exists()).expect("unbounded")
+    (1..).map(|i| dir.join(format!("{stem} ({i}){ext}"))).find(|p| p.symlink_metadata().is_err()).expect("unbounded")
 }
 
 /// The temporary folder for one paste of copied files. Older ones (from a
@@ -195,22 +206,7 @@ pub fn summarize(paths: &[PathBuf], limit: u64) -> (Vec<slipstream_core::proto::
 /// All files under `root` (recursively) with their paths relative to the
 /// parent of `root`, e.g. `Photos/2026/a.jpg`. A plain file yields itself.
 pub fn walk_local(root: &Path) -> Result<Vec<(PathBuf, String, u64)>> {
-    let base = root.parent().unwrap_or(Path::new(""));
-    let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(p) = stack.pop() {
-        let meta = std::fs::metadata(&p)?;
-        if meta.is_dir() {
-            for e in std::fs::read_dir(&p)?.flatten() {
-                stack.push(e.path());
-            }
-        } else {
-            let rel = p.strip_prefix(base).unwrap_or(&p);
-            let rel = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
-            out.push((p.clone(), rel, meta.len()));
-        }
-    }
-    Ok(out)
+    Ok(walk_local_tree(root)?.files)
 }
 
 /// An upload plan includes directories so empty folders survive a drop.
@@ -249,6 +245,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn windows_unc_display_paths_remain_absolute() {
+        assert_eq!(display(Path::new(r"\\?\UNC\server\share\folder")),r"\\server\share\folder");
+        assert_eq!(display(Path::new(r"\\?\C:\folder")),r"C:\folder");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_links_are_occupied_destinations() {
+        let dir=tempfile::tempdir().unwrap();let dest=dir.path().join("note.txt");
+        std::os::unix::fs::symlink(dir.path().join("missing"),&dest).unwrap();
+        assert_eq!(unique_path(&dest),dir.path().join("note (1).txt"));
+    }
+
+    #[test]
     fn relative_paths_are_contained() {
         assert_eq!(safe_relative("a/b.txt").unwrap(), PathBuf::from("a").join("b.txt"));
         assert_eq!(safe_relative("dir\\\\x.bin").unwrap(), PathBuf::from("dir").join("x.bin"));
@@ -268,6 +278,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&root, root.join("data/back-to-root")).unwrap();
         let tree = walk_local_tree(&root).unwrap();
+        assert_eq!(walk_local(&root).unwrap(),tree.files,"clipboard traversal also stops symlink cycles");
         let name = root.file_name().unwrap().to_str().unwrap();
         assert_eq!(tree.directories, [name.to_owned(), format!("{name}/data"), format!("{name}/empty"), format!("{name}/empty/nested")]);
         assert_eq!(tree.files.len(), 1);

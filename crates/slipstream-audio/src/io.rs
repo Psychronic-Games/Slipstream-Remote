@@ -21,7 +21,7 @@ use crate::buffer::Jitter;
 #[cfg(target_os = "linux")]
 use crate::opus::{FRAME_SAMPLES, SAMPLE_RATE};
 
-/// A running capture or playback thread; stops when dropped.
+/// A running capture or playback thread; requests stop when dropped.
 struct Worker {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -31,7 +31,12 @@ impl Drop for Worker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            let start=std::time::Instant::now();
+            while !t.is_finished() && start.elapsed()<std::time::Duration::from_millis(500) {
+                thread::sleep(std::time::Duration::from_millis(5));
+            }
+            if t.is_finished() {let _=t.join();}
+            else {tracing::warn!("audio device did not stop promptly; its worker will finish in the background");}
         }
     }
 }
@@ -39,6 +44,10 @@ impl Drop for Worker {
 /// Starts `body` on a thread. It reports whether it got going (`ready`)
 /// before looping until `stop` is set.
 fn spawn(name: &str, body: impl FnOnce(Arc<AtomicBool>, &dyn Fn(Result<()>)) + Send + 'static) -> Result<Worker> {
+    spawn_with_timeout(name,std::time::Duration::from_secs(5),body)
+}
+
+fn spawn_with_timeout(name:&str,timeout:std::time::Duration,body:impl FnOnce(Arc<AtomicBool>,&dyn Fn(Result<()>))+Send+'static)->Result<Worker> {
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = std::sync::mpsc::channel();
     let flag = stop.clone();
@@ -48,10 +57,11 @@ fn spawn(name: &str, body: impl FnOnce(Arc<AtomicBool>, &dyn Fn(Result<()>)) + S
         })
     })?;
     let worker = Worker { stop, thread: Some(thread) };
-    match rx.recv() {
+    match rx.recv_timeout(timeout) {
         Ok(Ok(())) => Ok(worker),
         Ok(Err(e)) => Err(e),
-        Err(_) => bail!("the audio thread stopped"),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => bail!("the audio device did not respond in time"),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => bail!("the audio thread stopped"),
     }
 }
 
@@ -338,6 +348,23 @@ mod cpal_io {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stalled_audio_io_does_not_block_shutdown_or_initialization() {
+        use std::time::{Duration,Instant};
+        for initialized in [true,false] {
+            let (release,wait)=std::sync::mpsc::channel();let (done,finished)=std::sync::mpsc::channel();
+            let start=Instant::now();
+            let worker=spawn_with_timeout("stalled-audio-test",Duration::from_millis(30),move |stop,ready| {
+                if initialized {ready(Ok(()));}
+                wait.recv().unwrap();
+                assert!(stop.load(Ordering::Relaxed));done.send(()).unwrap();
+            });
+            if initialized {drop(worker.unwrap());}else{assert!(worker.is_err());}
+            assert!(start.elapsed()<Duration::from_secs(2));
+            release.send(()).unwrap();finished.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+    }
 
     /// Needs a real sound system: `cargo test -p slipstream-audio -- --ignored`.
     /// Records what the computer plays for half a second, and plays silence.

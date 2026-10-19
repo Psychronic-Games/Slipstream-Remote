@@ -4,10 +4,7 @@
 //! stream of its own, opened with [`StreamOpen::Tunnel`]; the host has to
 //! allow forwarding (off by default).
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
@@ -24,6 +21,7 @@ use tokio::{
 /// side's end of stream (half-close) to the other.
 pub(crate) async fn splice(tcp: TcpStream, mut send: SendStream, mut recv: RecvStream) {
     let _ = tcp.set_nodelay(true);
+    let stopped = send.stopped();
     let (mut from_tcp, mut to_tcp) = tcp.into_split();
     let up = async {
         let _ = tokio::io::copy(&mut recv, &mut to_tcp).await;
@@ -33,7 +31,17 @@ pub(crate) async fn splice(tcp: TcpStream, mut send: SendStream, mut recv: RecvS
         let _ = tokio::io::copy(&mut from_tcp, &mut send).await;
         let _ = send.finish();
     };
-    tokio::join!(up, down);
+    let copying = async {tokio::join!(up,down);};
+    tokio::pin!(copying);
+    tokio::select! {
+        _ = &mut copying => {},
+        reason = stopped => {
+            // A peer cancelling its receive half closes the whole forward.
+            // A clean FIN acknowledgement still allows the opposite half
+            // to finish (e.g. a response after the requester half-closes).
+            if matches!(reason,Ok(None)) {copying.await;}
+        }
+    }
 }
 
 /// What the UI shows about a tunnel.
@@ -76,30 +84,42 @@ pub async fn open(conn: Connection, local_port: u16, host: String, port: u16) ->
         .with_context(|| format!("port {local_port} is already in use on this computer"))?;
     let local_port = listener.local_addr()?.port();
     let status = Arc::new(Mutex::new(TunnelStatus::default()));
-    let active = Arc::new(AtomicUsize::new(0));
     let task = {
         let (status, host) = (status.clone(), host.clone());
         tokio::spawn(async move {
-            while let Ok((tcp, _)) = listener.accept().await {
-                let (conn, status, host, active) = (conn.clone(), status.clone(), host.clone(), active.clone());
-                tokio::spawn(async move {
-                    let n = active.fetch_add(1, Ordering::Relaxed) + 1;
-                    {
-                        let mut s = status.lock().unwrap();
-                        s.active = n;
-                        s.total += 1;
+            let mut connections = tokio::task::JoinSet::new();
+            loop {
+                tokio::select! {
+                    _ = conn.closed() => break,
+                    _ = connections.join_next(), if !connections.is_empty() => {},
+                    incoming = listener.accept(), if connections.len() < 64 => {
+                        let Ok((tcp,_)) = incoming else {break};
+                        let (conn,status,host) = (conn.clone(),status.clone(),host.clone());
+                        connections.spawn(async move {
+                            let _active = ActiveConnection::new(status.clone());
+                            if let Err(e) = forward(&conn,tcp,host,port).await {
+                                status.lock().unwrap().last_error = Some(format!("{e:#}"));
+                            }
+                        });
                     }
-                    if let Err(e) = forward(&conn, tcp, host, port).await {
-                        status.lock().unwrap().last_error = Some(format!("{e:#}"));
-                    }
-                    let n = active.fetch_sub(1, Ordering::Relaxed) - 1;
-                    status.lock().unwrap().active = n;
-                });
+                }
             }
+            // Aborting the listener also aborts every live forwarded socket.
         })
     };
     tracing::info!(local_port, %host, port, "tunnel listening");
     Ok(Tunnel { local_port, host, port, status, task })
+}
+
+struct ActiveConnection(Arc<Mutex<TunnelStatus>>);
+impl ActiveConnection {
+    fn new(status:Arc<Mutex<TunnelStatus>>)->Self {
+        {let mut s=status.lock().unwrap();s.active+=1;s.total+=1;}
+        Self(status)
+    }
+}
+impl Drop for ActiveConnection {
+    fn drop(&mut self) {self.0.lock().unwrap().active-=1;}
 }
 
 async fn forward(conn: &Connection, tcp: TcpStream, host: String, port: u16) -> Result<()> {

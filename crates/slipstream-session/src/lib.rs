@@ -2,6 +2,7 @@
 //! reachable by ID, hosts incoming sessions, and opens outgoing ones.
 
 mod desktop_shell;
+mod incoming;
 mod public_ip;
 mod reconnect;
 mod accounts;
@@ -94,6 +95,7 @@ pub(crate) struct Inner {
     pub endpoint: Endpoint,
     pub store: Store,
     pub settings: Mutex<Settings>,
+    save_lock: Mutex<()>,
     pub opts: ClientOptions,
     events: mpsc::UnboundedSender<ClientEvent>,
     dir_status: watch::Sender<DirStatus>,
@@ -122,6 +124,9 @@ impl Inner {
     }
 
     pub fn save_settings(&self) {
+        // Serialize snapshots as well as writes. A delayed older snapshot
+        // must not replace settings saved after a concurrent mutation.
+        let _save=self.save_lock.lock().unwrap();
         let s = self.settings.lock().unwrap().clone();
         if let Err(e) = self.store.save_settings(&s) {
             warn!("saving settings failed: {e:#}");
@@ -154,6 +159,7 @@ impl Client {
             endpoint,
             store,
             settings: Mutex::new(settings),
+            save_lock: Mutex::new(()),
             opts,
             events,
             dir_status: watch::Sender::new(DirStatus::Connecting),
@@ -957,6 +963,28 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), c.read_to_end(&mut back)).await.unwrap().unwrap();
         assert_eq!(back, payload, "echo through the tunnel");
 
+        // Closing a forward must close already-connected sockets as well.
+        let mut live=tokio::net::TcpStream::connect(("127.0.0.1",tunnel.local_port)).await.unwrap();
+        live.write_all(b"live").await.unwrap();let mut echoed=[0u8;4];
+        live.read_exact(&mut echoed).await.unwrap();assert_eq!(&echoed,b"live");
+        drop(tunnel);
+        let result=tokio::time::timeout(Duration::from_secs(3),live.read(&mut echoed)).await.expect("closed tunnel left a connection alive");
+        assert!(matches!(result,Ok(0)|Err(_)));
+
+        // IPv6 literals must not be formatted as an ambiguous host:port string.
+        if let Ok(echo6)=tokio::net::TcpListener::bind(("::1",0)).await {
+            let port=echo6.local_addr().unwrap().port();
+            let job=tokio::spawn(async move {
+                let (mut socket,_)=echo6.accept().await.unwrap();
+                let (mut read,mut write)=socket.split();let _=tokio::io::copy(&mut read,&mut write).await;
+            });
+            let tunnel6=session.tunnel(0,"::1".into(),port).await.unwrap();
+            let mut socket=tokio::net::TcpStream::connect(("127.0.0.1",tunnel6.local_port)).await.unwrap();
+            socket.write_all(b"ipv6").await.unwrap();
+            tokio::time::timeout(Duration::from_secs(3),socket.read_exact(&mut echoed)).await.unwrap().unwrap();
+            assert_eq!(&echoed,b"ipv6");drop(tunnel6);job.abort();
+        }
+
         // A target the host can't reach: the error comes back.
         let dead = session.tunnel(0, "127.0.0.1".into(), 1).await.unwrap();
         let mut c = tokio::net::TcpStream::connect(("127.0.0.1", dead.local_port)).await.unwrap();
@@ -1029,6 +1057,21 @@ mod tests {
         }
     }
 
+    #[tokio::test(flavor="multi_thread")]
+    async fn concurrent_settings_changes_match_the_persisted_snapshot() {
+        let (client,_events,dir)=client("settings-writers",false).await;
+        let expected=std::thread::scope(|scope| {
+            let jobs:Vec<_>=(0..8).map(|_| {
+                let client=&client;
+                scope.spawn(move || {for _ in 0..10 {client.update_settings(|s|s.device_name.push('x'));}})
+            }).collect();
+            for job in jobs {job.join().unwrap();}
+            client.settings()
+        });
+        assert_eq!(client.inner.store.load_settings().device_name,expected.device_name);
+        client.shutdown().await;let _=std::fs::remove_dir_all(dir);
+    }
+
     /// Remote file browsing, upload (incl. subfolders), download, and that
     /// a peer can't escape the target folder.
     #[tokio::test(flavor = "multi_thread")]
@@ -1068,6 +1111,22 @@ mod tests {
         fs.upload(&local_dir.join("big.bin"), target.clone(), "Photos/2026/big.bin".into(), |_| {}).await.unwrap();
         assert!(remote_dir.join("Photos/2026/big (1).bin").exists());
 
+        // Two uploads can finish into the same requested name concurrently.
+        // Neither the staging file nor the final file may be shared/overwritten.
+        let request = slipstream_core::proto::StreamOpen::Upload {
+            target: target.clone(), rel_path: "concurrent.bin".into(), size: 4,
+        };
+        let (mut a,mut ar,_) = fs.ask(request.clone()).await.unwrap();
+        let (mut b,mut br,_) = fs.ask(request).await.unwrap();
+        a.write_all(b"aaaa").await.unwrap(); a.finish().unwrap();
+        b.write_all(b"bbbb").await.unwrap(); b.finish().unwrap();
+        let saved_a=slipstream_core::framing::expect_msg::<slipstream_core::proto::StreamReply>(&mut ar).await.unwrap();
+        let saved_b=slipstream_core::framing::expect_msg::<slipstream_core::proto::StreamReply>(&mut br).await.unwrap();
+        let (slipstream_core::proto::StreamReply::Saved {path:a},slipstream_core::proto::StreamReply::Saved {path:b})=(saved_a,saved_b) else {panic!("uploads were not saved")};
+        assert_ne!(a,b,"simultaneous uploads overwrote the same destination");
+        assert_eq!(std::fs::read(a).unwrap(),b"aaaa");
+        assert_eq!(std::fs::read(b).unwrap(),b"bbbb");
+
         // Path traversal is refused.
         assert!(fs.upload(&local_dir.join("big.bin"), target.clone(), "../escape.bin".into(), |_| {}).await.is_err());
         assert!(!work.join("escape.bin").exists());
@@ -1102,6 +1161,97 @@ mod tests {
         viewer.shutdown().await;
         host.shutdown().await;
         std::fs::remove_dir_all(work).ok();
+    }
+
+    #[tokio::test(flavor="multi_thread")]
+    async fn interrupted_and_oversized_uploads_leave_no_partial_files() {
+        use slipstream_core::{proto::{StreamOpen,StreamReply,UploadTarget},framing::expect_msg};
+        let (host,_events,hdir)=client("broken-upload-host",true).await;
+        let (viewer,_events,vdir)=client("broken-upload-viewer",false).await;
+        let (session,_events)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
+        let work=tempfile::tempdir().unwrap();let fs=session.fs();
+        for mode in ["reset","short","excess"] {
+            let (mut send,mut recv,_)=fs.ask(StreamOpen::Upload {
+                target:UploadTarget::Folder(work.path().display().to_string()),rel_path:format!("{mode}.bin"),size:if mode=="excess" {1}else{4},
+            }).await.unwrap();
+            send.write_all(b"xx").await.unwrap();
+            if mode=="reset" {send.reset(0u32.into()).unwrap();}else{send.finish().unwrap();}
+            let response=tokio::time::timeout(Duration::from_secs(3),expect_msg::<StreamReply>(&mut recv)).await.unwrap().unwrap();
+            assert!(matches!(response,StreamReply::Error(_)),"{mode}: {response:?}");
+            assert_eq!(std::fs::read_dir(work.path()).unwrap().count(),0,"{mode} left staging files");
+        }
+        // Different extensions previously used the same staging filename.
+        let source=work.path().join("source");std::fs::write(&source,vec![42;1_000_000]).unwrap();
+        let target=UploadTarget::Folder(work.path().display().to_string());
+        let a=fs.upload(&source,target.clone(),"image.one".into(),|_|{}).await.unwrap();
+        let b=fs.upload(&source,target,"image.two".into(),|_|{}).await.unwrap();
+        let dest=work.path().join("downloads");std::fs::create_dir(&dest).unwrap();
+        let (dest_a,dest_b)=(dest.join("image.one"),dest.join("image.two"));
+        let (a,b)=tokio::join!(fs.download(a,&dest_a,|_|{}),fs.download(b,&dest_b,|_|{}));
+        for path in [a.unwrap(),b.unwrap()] {assert_eq!(std::fs::read(path).unwrap(),vec![42;1_000_000]);}
+        #[cfg(unix)] {
+            std::os::unix::fs::symlink(work.path(),work.path().join("cycle")).unwrap();
+            let files=tokio::time::timeout(Duration::from_secs(3),fs.walk(work.path().display().to_string(),true,"tree".into(),0)).await.unwrap().unwrap();
+            assert_eq!(files.len(),5,"remote symlink traversal repeated a directory");
+        }
+        drop(session);viewer.shutdown().await;host.shutdown().await;
+        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+    }
+
+    #[tokio::test(flavor="multi_thread")]
+    async fn a_stopped_video_receiver_ends_the_session_instead_of_freezing() {
+        use slipstream_core::{auth::ViewerAuth,framing::{expect_msg,write_msg},proto::{HostMsg,ViewerMsg,StreamSettings,PROTOCOL_VERSION,ALPN_REMOTE}};
+        let (host,mut events,hdir)=client("video-stop-host",true).await;
+        let (viewer,_events,vdir)=client("video-stop-viewer",false).await;
+        let conn=viewer.inner.endpoint.connect(host.endpoint_addr(),ALPN_REMOTE).await.unwrap();
+        let (mut send,mut recv)=conn.open_bi().await.unwrap();
+        write_msg(&mut send,&ViewerMsg::Hello {version:PROTOCOL_VERSION,viewer_name:"video-stop-test".into()}).await.unwrap();
+        let HostMsg::AuthChallenge {pakes}=expect_msg(&mut recv).await.unwrap() else {panic!("no challenge")};
+        let (auth,pakes,confirms)=ViewerAuth::respond("correct horse battery",&pakes,&host.inner.endpoint.id(),&viewer.inner.endpoint.id()).unwrap();
+        write_msg(&mut send,&ViewerMsg::AuthResponse {pakes,confirms}).await.unwrap();
+        let HostMsg::AuthOk {confirm,..}=expect_msg(&mut recv).await.unwrap() else {panic!("not authenticated")};
+        auth.verify_host(&confirm).unwrap();
+        write_msg(&mut send,&ViewerMsg::StartStream {display:0,settings:StreamSettings::default()}).await.unwrap();
+        let mut video=tokio::time::timeout(Duration::from_secs(3),conn.accept_uni()).await.unwrap().unwrap();
+        video.stop(0u32.into()).unwrap();
+        let bye=tokio::time::timeout(Duration::from_secs(3),async {
+            loop {if let HostMsg::Bye {reason}=expect_msg(&mut recv).await.unwrap() {break reason;}}
+        }).await.unwrap();
+        assert!(bye.contains("Video stream"),"{bye}");
+        conn.close(0u32.into(),b"test complete");
+        assert!(wait_for(&mut events,|e|matches!(e,ClientEvent::HostSessionEnded {..})).await);
+        viewer.shutdown().await;host.shutdown().await;
+        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+    }
+
+    #[tokio::test(flavor="multi_thread")]
+    async fn abrupt_disconnect_releases_input_and_sparse_display_ids_work() {
+        use slipstream_platform::{Backend,FrameStream,test_pattern::TestPattern};
+        struct Offset(TestPattern);
+        impl Backend for Offset {
+            fn name(&self)->&'static str {"offset-test-pattern"}
+            fn displays(&self)->Vec<slipstream_core::proto::DisplayInfo> {
+                let mut displays=self.0.displays();displays[0].index=7;displays
+            }
+            fn capture(&mut self,index:u32,fps:u32)->anyhow::Result<FrameStream> {assert_eq!(index,7);self.0.capture(0,fps)}
+            fn inject(&mut self,index:u32,event:InputEvent)->anyhow::Result<()> {assert_eq!(index,7);self.0.inject(0,event)}
+        }
+        let (host,mut events,hdir)=client("release-host",true).await;
+        let (viewer,_events,vdir)=client("release-viewer",false).await;
+        let backend=TestPattern::new(64,64);let log=backend.input_log();
+        *host.inner.backend.lock().await=Some(Box::new(Offset(backend)));
+        let (session,mut video)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
+        assert!(wait_for(&mut video,|e|matches!(e,ViewerEvent::Stats(stats) if stats.width==64)).await,"non-contiguous display ID did not start video");
+        session.input(InputEvent::Key {code:"ControlLeft".into(),down:true});
+        let deadline=tokio::time::Instant::now()+Duration::from_secs(3);
+        while !log.lock().unwrap().events.iter().any(|event|matches!(event,InputEvent::Key {down:true,..})) {
+            assert!(tokio::time::Instant::now()<deadline);tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        viewer.inner.endpoint.close().await;
+        assert!(wait_for(&mut events,|e|matches!(e,ClientEvent::HostSessionEnded {..})).await);
+        assert!(matches!(log.lock().unwrap().events.last(),Some(InputEvent::ReleaseAll)));
+        drop(session);viewer.shutdown().await;host.shutdown().await;
+        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
     }
 
     /// A projection can be revoked after its last viewer leaves. No encoder

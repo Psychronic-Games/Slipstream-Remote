@@ -42,9 +42,13 @@ async fn fail(send: &mut SendStream, reason: impl Into<String>, retry_after_secs
 
 pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
     let peer = conn.remote_id();
-    let (mut send, mut recv) = conn.accept_bi().await.context("waiting for control stream")?;
-    send.set_priority(slipstream_core::proto::PRIORITY_CONTROL).ok();
-    let ViewerMsg::Hello { version, viewer_name } = expect_msg(&mut recv).await? else {
+    let (mut send, mut recv, hello) = tokio::time::timeout(AUTH_RESPONSE_WAIT, async {
+        let (send, mut recv) = conn.accept_bi().await.context("waiting for control stream")?;
+        send.set_priority(slipstream_core::proto::PRIORITY_CONTROL).ok();
+        let hello = expect_msg::<ViewerMsg>(&mut recv).await?;
+        anyhow::Ok((send, recv, hello))
+    }).await.context("viewer did not start authentication")??;
+    let ViewerMsg::Hello { version, viewer_name } = hello else {
         bail!("expected Hello");
     };
     let viewer_name: String = viewer_name.chars().take(64).collect();
@@ -177,10 +181,17 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
     inner.host_sessions.lock().unwrap().insert(id, cmd_tx);
     inner.emit(ClientEvent::HostSessionStarted { session: id, peer: viewer_name.clone() });
 
+    let controlled = capabilities.input;
     let reason = match session_loop(&inner, &conn, id, &viewer_name, send, recv, displays, capabilities, cmd_rx).await {
         Ok(r) => r,
         Err(e) => format!("{e:#}"),
     };
+    // The backend is cached across connections, so dropping a viewer does
+    // not drop its held keyboard/mouse state. Release it on every exit path.
+    if controlled && let Some(backend) = inner.backend.lock().await.as_mut() {
+        let display = backend.displays().first().map(|d| d.index).unwrap_or(0);
+        let _ = backend.inject(display, InputEvent::ReleaseAll);
+    }
     inner.host_sessions.lock().unwrap().remove(&id);
     info!(%peer, %reason, "session ended");
     let restarting=reason==slipstream_core::proto::HOST_RESTARTING;
@@ -328,7 +339,7 @@ async fn session_loop(
         stream.finish().ok();
         anyhow::Ok(())
     });
-    let _writer_guard = AbortOnDrop(writer);
+    let mut writer_guard = AbortOnDrop(writer);
 
     // File browsing and transfer requests from the viewer.
     let files_inner = inner.clone();
@@ -356,6 +367,16 @@ async fn session_loop(
 
     loop {
         tokio::select! {
+            result = &mut writer_guard.0 => {
+                let reason=match result {
+                    Ok(Err(error))=>format!("Video stream stopped: {error:#}"),
+                    Err(error)=>format!("Video stream stopped: {error}"),
+                    Ok(Ok(()))=>"Video stream ended unexpectedly".into(),
+                };
+                write_msg(&mut send,&HostMsg::Bye {reason:reason.clone()}).await?;
+                crate::flush(&mut send).await;
+                return Ok(reason);
+            }
             _ = desktop_tick.tick() => {
                 if desktop_hidden() {
                     let due = hidden_since.is_none_or(|t| t.elapsed() >= Duration::from_secs(15));
@@ -376,17 +397,16 @@ async fn session_loop(
                 let Some(msg) = msg else { return Ok("they ended the session".into()) };
                 match msg {
                     ViewerMsg::StartStream { display: d, settings } => {
-                        if !displays.iter().any(|x| x.index == d) {
+                        let Some(info) = displays.iter().find(|x| x.index == d) else {
                             write_msg(&mut send, &HostMsg::Notice(format!("no display {d}"))).await?;
                             continue;
-                        }
+                        };
                         display = d;
                         let stream_settings = sanitize_settings(settings);
                         drop(pipeline.take()); // stop the old capture first
                         match open_capture(inner, display, stream_settings.max_fps).await? {
                             Ok(c) => {
                                 pipeline = Some(Pipeline::start(c, flow.clone(), stream_settings, video_tx.clone(), err_tx.clone()));
-                                let info = &displays[display as usize];
                                 write_msg(&mut send, &HostMsg::StreamStarted { display, width: info.width, height: info.height }).await?;
                             }
                             Err(e) => {

@@ -154,7 +154,7 @@ mod tests {
     #[tokio::test]
     async fn hung_attempt_is_bounded_and_cancelling_stops_retries() {
         let start = Instant::now();
-        let result = retry(policy(), || std::future::pending::<Result<()>>(), |_, _| {}).await;
+        let result = retry(policy(), std::future::pending::<Result<()>>, |_, _| {}).await;
         assert!(result.is_err());
         assert!(start.elapsed() < Duration::from_secs(1));
         let calls = Arc::new(AtomicU32::new(0));

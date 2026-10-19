@@ -330,9 +330,15 @@ impl Store {
                 Ok(bytes) => break bytes,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     let key = SecretKey::generate();
-                    write_private(&path, &key.to_bytes())?;
-                    tracing::info!("created this device's identity in {}", path.display());
-                    return Ok(key);
+                    match private_temp(&path, &key.to_bytes())?.persist_noclobber(&path) {
+                        Ok(_) => {
+                            tracing::info!("created this device's identity in {}", path.display());
+                            return Ok(key);
+                        }
+                        // Another process published a complete identity first.
+                        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                        Err(error) => return Err(error.error).context("saving this device's identity"),
+                    }
                 }
                 Err(_) if attempt < 20 => {
                     attempt += 1;
@@ -350,20 +356,48 @@ impl Store {
 
 /// Writes a file readable only by the current user.
 fn write_private(path: &Path, data: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, data)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
-    }
-    fs::rename(&tmp, path)?;
+    private_temp(path, data)?.persist(path).map_err(|e| e.error)?;
     Ok(())
+}
+
+fn private_temp(path: &Path, data: &[u8]) -> Result<tempfile::NamedTempFile> {
+    use std::io::Write;
+    let mut temp = tempfile::NamedTempFile::with_prefix_in(".slipstream-", path.parent().context("settings path has no parent")?)?;
+    // NamedTempFile creates the file with mode 0600 on Unix, before any
+    // passwords or keys are written, and uses a unique staging name.
+    temp.write_all(data)?;
+    Ok(temp)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_identity_and_settings_writes_stay_complete_and_private() {
+        let dir=tempfile::tempdir().unwrap();let store=Store::open(dir.path()).unwrap();
+        let barrier=std::sync::Barrier::new(8);
+        let keys=std::thread::scope(|scope| {
+            let jobs:Vec<_>=(0..8).map(|n| {
+                let (store,barrier)=(&store,&barrier);
+                scope.spawn(move || {
+                    barrier.wait();let key=store.identity().unwrap();
+                    for _ in 0..10 {store.save_settings(&Settings {device_name:format!("writer {n}"),..Default::default()}).unwrap();}
+                    key.to_bytes()
+                })
+            }).collect();
+            jobs.into_iter().map(|job|job.join().unwrap()).collect::<Vec<_>>()
+        });
+        assert!(keys.iter().all(|key|key==&keys[0]));
+        assert_eq!(store.identity().unwrap().to_bytes(),keys[0]);
+        let settings:Settings=toml::from_str(&fs::read_to_string(dir.path().join("settings.toml")).unwrap()).unwrap();
+        assert!(settings.device_name.starts_with("writer "));
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            for file in ["settings.toml","identity.key"] {assert_eq!(fs::metadata(dir.path().join(file)).unwrap().permissions().mode() & 0o777,0o600);}
+        }
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(),2);
+    }
 
     #[test]
     fn a_damaged_identity_is_never_replaced() {

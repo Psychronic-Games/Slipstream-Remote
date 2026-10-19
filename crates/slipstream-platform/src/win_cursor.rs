@@ -208,14 +208,14 @@ mod tests {
             let handle = unsafe { LoadCursorW(std::ptr::null_mut(), id) };
             let c = unsafe { load(handle) }.expect("cursor loads");
             let alphas: Vec<u8> = c.rgba.chunks(4).map(|p| p[3]).collect();
-            assert!(alphas.iter().any(|&a| a == 255), "cursor has visible pixels");
-            assert!(alphas.iter().any(|&a| a == 0), "cursor has a transparent background");
+            assert!(alphas.contains(&255), "cursor has visible pixels");
+            assert!(alphas.contains(&0), "cursor has a transparent background");
 
             // Drawn at the hotspot of a grey 64x64 frame placed at (100, 100).
             let mut frame = vec![128u8; 64 * 64 * 4];
             let p = Pointer { handle: handle as usize, pos: (100 + 10 + c.hot.0, 100 + 10 + c.hot.1) };
             CACHE.with(|cache| *cache.borrow_mut() = None);
-            draw(&mut frame, 64, 64, 64 * 4, (100, 100), p);
+            draw(&mut frame, 64, 64, 64 * 4, (100, 100), p, true);
             assert!(frame.chunks(4).any(|px| px[..3] != [128, 128, 128]), "pointer was drawn");
         }
     }

@@ -15,7 +15,7 @@ use slipstream_core::{
     framing::{expect_msg, write_msg},
     proto::{DirListing, FilePreview, Place, StreamOpen, StreamReply, UploadTarget},
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 
 use crate::fsops;
 
@@ -43,15 +43,24 @@ pub async fn serve(
     clipboard: Option<slipstream_platform::clipboard::Clipboard>,
 ) {
     let scans = Arc::new(tokio::sync::Semaphore::new(1));
-    while let Ok((send, recv)) = conn.accept_bi().await {
-        let (on_saved, clipboard) = (on_saved.clone(), clipboard.clone());
-        let scans = scans.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle(send, recv, policy, on_saved, clipboard, scans).await {
-                tracing::debug!("file request failed: {e:#}");
+    let mut requests = tokio::task::JoinSet::new();
+    loop {
+        tokio::select! {
+            _ = requests.join_next(), if !requests.is_empty() => {},
+            incoming = conn.accept_bi(), if requests.len() < 64 => {
+                let Ok((send,recv)) = incoming else {break};
+                let (on_saved, clipboard, scans) = (on_saved.clone(), clipboard.clone(), scans.clone());
+                requests.spawn(async move {
+                    if let Err(e) = handle(send, recv, policy, on_saved, clipboard, scans).await {
+                        tracing::debug!("file request failed: {e:#}");
+                    }
+                });
             }
-        });
+            _ = conn.closed() => break,
+        }
     }
+    // JoinSet drops/aborts requests if the session ends, including uploads
+    // and their staging files, rather than detaching them from the owner.
 }
 
 async fn reply(send: &mut SendStream, r: &StreamReply) -> Result<()> {
@@ -66,7 +75,7 @@ async fn handle(
     clipboard: Option<slipstream_platform::clipboard::Clipboard>,
     scans: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
-    let req: StreamOpen = expect_msg(&mut recv).await?;
+    let req: StreamOpen = tokio::time::timeout(std::time::Duration::from_secs(10), expect_msg(&mut recv)).await.context("file request header timed out")??;
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
         StreamOpen::FilePreview { path } => {
@@ -157,8 +166,9 @@ async fn handle(
             if !policy.tunnels {
                 return reply(&mut send, &denied("Port forwarding")).await;
             }
-            let target = format!("{host}:{port}");
-            match tokio::time::timeout(std::time::Duration::from_secs(10), tokio::net::TcpStream::connect(&target))
+            let hostname = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(&host);
+            let target = if hostname.contains(':') {format!("[{hostname}]:{port}")} else {format!("{hostname}:{port}")};
+            match tokio::time::timeout(std::time::Duration::from_secs(10), tokio::net::TcpStream::connect((hostname, port)))
                 .await
             {
                 Ok(Ok(tcp)) => {
@@ -195,7 +205,10 @@ async fn handle(
             let r = if !policy.browse {
                 denied("Browsing files")
             } else {
-                match tokio::task::spawn_blocking(move || fsops::list(path.as_deref())).await? {
+                match tokio::select! {
+                    listing = fsops::list_async(path) => listing,
+                    _ = send.stopped() => return Ok(()),
+                } {
                     Ok(l) => StreamReply::Listing(l),
                     Err(e) => StreamReply::Error(format!("{e:#}")),
                 }
@@ -218,22 +231,22 @@ async fn handle(
                 reply(&mut send, &denied("Downloading files")).await?;
                 return Ok(());
             }
-            let mut file = match tokio::fs::File::open(&path).await {
+            let (mut file, size) = match open_regular(Path::new(&path)).await {
                 Ok(f) => f,
                 Err(e) => {
                     reply(&mut send, &StreamReply::Error(format!("cannot open {path}: {e}"))).await?;
                     return Ok(());
                 }
             };
-            let size = file.metadata().await?.len();
             reply(&mut send, &StreamReply::File { size }).await?;
             let mut buf = vec![0u8; CHUNK];
-            loop {
-                let n = file.read(&mut buf).await?;
-                if n == 0 {
-                    break;
-                }
+            let mut remaining = size;
+            while remaining > 0 {
+                let want = remaining.min(CHUNK as u64) as usize;
+                let n = file.read(&mut buf[..want]).await?;
+                anyhow::ensure!(n > 0, "source file became shorter during download");
                 send.write_all(&buf[..n]).await?;
+                remaining -= n as u64;
             }
             send.finish()?;
         }
@@ -265,37 +278,30 @@ async fn handle(
                 reply(&mut send, &StreamReply::Error(format!("folder {} does not exist", base.display()))).await?;
                 return Ok(());
             }
-            let dest = fsops::unique_path(&base.join(&rel));
-            if let Some(parent) = dest.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
+            let requested = base.join(&rel);
             reply(&mut send, &StreamReply::Ready).await?;
-            let partial = dest.with_file_name(format!(
-                ".{}.slipstream-part",
-                dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-            ));
-            let mut file = tokio::fs::File::create(&partial).await?;
-            let mut remaining = size;
-            let mut buf = vec![0u8; CHUNK];
-            while remaining > 0 {
-                let want = buf.len().min(remaining as usize);
-                let Some(n) = recv.read(&mut buf[..want]).await? else { break };
-                file.write_all(&buf[..n]).await?;
-                remaining -= n as u64;
-            }
-            file.flush().await?;
-            drop(file);
-            if remaining != 0 {
-                let _ = tokio::fs::remove_file(&partial).await;
-                bail!("upload of {rel_path} was interrupted");
-            }
-            tokio::fs::rename(&partial, &dest).await?;
+            let dest = match crate::incoming::receive(&mut recv, &requested, size, |_| {}).await {
+                Ok(path) => path,
+                Err(error) => {
+                    reply(&mut send, &StreamReply::Error(format!("Could not receive {rel_path}: {error:#}"))).await?;
+                    return Ok(());
+                }
+            };
             reply(&mut send, &StreamReply::Saved { path: fsops::display(&dest) }).await?;
             send.finish().ok();
             on_saved(dest);
         }
     }
     Ok(())
+}
+
+/// Refuse devices/FIFOs before opening them, and check the opened handle too.
+async fn open_regular(path: &Path) -> Result<(tokio::fs::File, u64)> {
+    anyhow::ensure!(tokio::fs::metadata(path).await?.is_file(), "{} is not a regular file", path.display());
+    let file = tokio::fs::File::open(path).await.with_context(|| format!("opening {}", path.display()))?;
+    let metadata = file.metadata().await?;
+    anyhow::ensure!(metadata.is_file(), "{} is not a regular file", path.display());
+    Ok((file, metadata.len()))
 }
 
 /// The remote computer's files, as seen from the viewer.
@@ -379,19 +385,19 @@ impl RemoteFs {
 
     /// Uploads one local file. Returns where it was saved remotely.
     pub async fn upload(&self, local: &Path, target: UploadTarget, rel_path: String, mut progress: impl FnMut(u64)) -> Result<String> {
-        let mut file = tokio::fs::File::open(local).await.with_context(|| format!("opening {}", local.display()))?;
-        let size = file.metadata().await?.len();
+        let (mut file, size) = open_regular(local).await?;
         let (mut send, mut recv, reply) = self.ask(StreamOpen::Upload { target, rel_path, size }).await?;
         if !matches!(reply, StreamReply::Ready) {
             bail!("unexpected reply {reply:?}");
         }
+        let mut remaining = size;
         let mut buf = vec![0u8; CHUNK];
-        loop {
-            let n = file.read(&mut buf).await?;
-            if n == 0 {
-                break;
-            }
+        while remaining > 0 {
+            let want = remaining.min(CHUNK as u64) as usize;
+            let n = file.read(&mut buf[..want]).await?;
+            anyhow::ensure!(n > 0, "source file became shorter during upload");
             send.write_all(&buf[..n]).await?;
+            remaining -= n as u64;
             progress(n as u64);
         }
         send.finish()?;
@@ -407,29 +413,8 @@ impl RemoteFs {
     pub async fn download(&self, remote: String, dest: &Path, mut progress: impl FnMut(u64)) -> Result<PathBuf> {
         let (_send, mut recv, reply) = self.ask(StreamOpen::Download { path: remote.clone() }).await?;
         let StreamReply::File { size } = reply else { bail!("unexpected reply {reply:?}") };
-        if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let dest = fsops::unique_path(dest);
-        let partial = dest.with_extension("slipstream-part");
-        let mut file = tokio::fs::File::create(&partial).await?;
-        let mut remaining = size;
-        let mut buf = vec![0u8; CHUNK];
-        while remaining > 0 {
-            let want = buf.len().min(remaining as usize);
-            let Some(n) = recv.read(&mut buf[..want]).await? else { break };
-            file.write_all(&buf[..n]).await?;
-            remaining -= n as u64;
-            progress(n as u64);
-        }
-        file.flush().await?;
-        drop(file);
-        if remaining != 0 {
-            let _ = tokio::fs::remove_file(&partial).await;
-            bail!("download of {remote} was interrupted");
-        }
-        tokio::fs::rename(&partial, &dest).await?;
-        Ok(dest)
+        crate::incoming::receive(&mut recv, dest, size, &mut progress)
+            .await.with_context(|| format!("downloading {remote}"))
     }
 
     /// All files under a remote path, with paths relative to its parent
@@ -440,8 +425,11 @@ impl RemoteFs {
         }
         let mut out = Vec::new();
         let mut stack = vec![(path, name)];
+        let mut visited = std::collections::HashSet::new();
         while let Some((dir, rel)) = stack.pop() {
             let listing = self.list(Some(dir)).await?;
+            // Hosts return canonical listing paths, including symlink targets.
+            if !visited.insert(listing.path.clone()) {continue;}
             for e in listing.entries {
                 let child = format!("{}{}{}", listing.path.trim_end_matches(['/', '\\']), listing.sep, e.name);
                 let child_rel = format!("{rel}/{}", e.name);

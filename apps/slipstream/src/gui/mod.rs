@@ -1413,9 +1413,9 @@ impl eframe::App for App {
         for tab in &mut self.tabs {
             tab.poll(ctx);
             if tab.maintain_connection(ctx,&self.rt,&self.client) {restored.push(tab.id);}
-            // A drop in Files can create a receipt while the parent is minimized.
+            // Drops and the receipt's Files action also work with the parent minimized.
             if ctx.viewport_id()==egui::ViewportId::ROOT && !ctx.embed_viewports() {
-                files::FileManager::show_progress(&tab.files,ctx,&self.rt,tab.id);
+                files::FileManager::show(&tab.files,ctx,&self.rt,tab.id);
             }
         }
         // Frame serials restart on a new session; discard cached old textures.

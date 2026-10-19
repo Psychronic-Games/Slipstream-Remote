@@ -22,6 +22,8 @@ public final class ScreenShareService extends Service {
     private Handler frames;
     private int sourceWidth, sourceHeight;
     private long lastFrame;
+    private boolean framePending; // Accessed only by the frame handler.
+    private static final long FRAME_INTERVAL_NANOS = 33_333_334L;
     private String stopReason = "Screen sharing stopped. Tap Start sharing and approve a new session to reconnect.";
     private final Handler main = new Handler(Looper.getMainLooper());
     private static native void onFrame(ByteBuffer buffer, int width, int height, int rowStride, int pixelStride);
@@ -94,17 +96,25 @@ public final class ScreenShareService extends Service {
     private ImageReader reader(int width, int height) {
         ImageReader reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
         reader.setOnImageAvailableListener(source -> {
-            if (source != images || !active) return;
-            try (Image image = source.acquireLatestImage()) {
-                if (image == null) return;
-                long now = SystemClock.elapsedRealtimeNanos();
-                if (now - lastFrame < 33_000_000L) return;
-                lastFrame = now;
-                Image.Plane plane = image.getPlanes()[0];
-                onFrame(plane.getBuffer(), image.getWidth(), image.getHeight(), plane.getRowStride(), plane.getPixelStride());
-            } catch (IllegalStateException ignored) { /* Reader was replaced during rotation. */ }
+            if (source != images || !active || framePending) return;
+            // Do not acquire/discard an early frame: it may be the last image
+            // of a now-static screen. Drain the newest image when it is due.
+            framePending = true;
+            long wait = Math.max(0, FRAME_INTERVAL_NANOS - (SystemClock.elapsedRealtimeNanos() - lastFrame));
+            frames.postDelayed(this::drainFrame, (wait + 999_999L) / 1_000_000L);
         }, frames);
         return reader;
+    }
+    private void drainFrame() {
+        framePending = false;
+        ImageReader source = images;
+        if (source == null || !active) return;
+        try (Image image = source.acquireLatestImage()) {
+            if (image == null) return;
+            lastFrame = SystemClock.elapsedRealtimeNanos();
+            Image.Plane plane = image.getPlanes()[0];
+            onFrame(plane.getBuffer(), image.getWidth(), image.getHeight(), plane.getRowStride(), plane.getPixelStride());
+        } catch (IllegalStateException ignored) { /* Sharing ended or the reader was replaced. */ }
     }
     private void resize(int width, int height) {
         if (!active || display == null || width <= 0 || height <= 0) return;
@@ -120,7 +130,7 @@ public final class ScreenShareService extends Service {
         images = reader(size[0], size[1]);
         display.setSurface(images.getSurface());
         display.resize(size[0], size[1], getResources().getConfiguration().densityDpi);
-        if (old != null) old.close();
+        if (old != null) frames.post(old::close);
     }
     @Override public void onDestroy() {
         active = false;
@@ -129,7 +139,7 @@ public final class ScreenShareService extends Service {
         getSystemService(DisplayManager.class).unregisterDisplayListener(rotations);
         if (display != null) {display.release();display = null;}
         if (projection != null) {projection.unregisterCallback(callback);projection.stop();projection = null;}
-        ImageReader old = images;images = null;if (old != null) old.close();
+        ImageReader old = images;images = null;if (old != null) frames.post(old::close);
         if (worker != null) worker.quitSafely();
         stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();

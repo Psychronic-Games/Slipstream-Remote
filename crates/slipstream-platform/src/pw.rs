@@ -389,15 +389,36 @@ unsafe fn take_frame(st: &mut State, buf: *mut PwBuffer) {
     };
     let dims = st.format.size();
     let (w, h) = (dims.width, dims.height);
-    let stride = if chunk.stride > 0 { chunk.stride as u32 } else { w * 4 };
+    let Some((stride,needed))=frame_bounds(w,h,chunk.stride,chunk.offset,chunk.size,d.maxsize) else {return;};
     let offset = chunk.offset as usize;
-    let needed = (stride * h.saturating_sub(1) + w * 4) as usize;
-    if chunk.size == 0 || w == 0 || h == 0 || offset + needed > d.maxsize as usize {
-        return; // cursor-only update or bad buffer
-    }
     let bytes = unsafe { std::slice::from_raw_parts((d.data as *const u8).add(offset), needed) };
     st.last = Instant::now();
     let mut data = st.slot.buffer(needed);
     data.extend_from_slice(bytes);
     st.slot.put(RawFrame { width: w, height: h, stride, format, data });
+}
+
+// Validate all foreign metadata before making a Rust slice. A corrupt
+// stride/dimension must neither wrap u32 arithmetic nor unwind across C.
+fn frame_bounds(width:u32,height:u32,stride:i32,offset:u32,size:u32,max_size:u32)->Option<(u32,usize)> {
+    if width==0 || height==0 || stride<0 {return None;}
+    let row=width.checked_mul(4)?;
+    let stride=if stride==0 {row}else{stride as u32};
+    if stride<row {return None;}
+    let needed=u64::from(stride)*u64::from(height-1)+u64::from(row);
+    if needed>u64::from(size) || u64::from(offset)+needed>u64::from(max_size) {return None;}
+    Some((stride,usize::try_from(needed).ok()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn foreign_frame_bounds_are_checked_before_mapping() {
+        assert_eq!(frame_bounds(2,2,12,4,24,28),Some((12,20)));
+        assert_eq!(frame_bounds(2,2,0,0,16,16),Some((8,16)));
+        for (w,h,stride,offset,size,max_size) in [(u32::MAX,2,0,0,32,32),(2,u32::MAX,8,0,u32::MAX,u32::MAX),(2,2,4,0,16,16),(2,2,-8,0,16,16),(2,2,8,u32::MAX,16,u32::MAX),(2,2,8,0,15,16)] {
+            assert!(frame_bounds(w,h,stride,offset,size,max_size).is_none());
+        }
+    }
 }
