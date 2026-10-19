@@ -1,5 +1,5 @@
-//! Chat between the SYSTEM host and the signed-in user's app. No chat is
-//! written to disk. The native transport is a local, session-checked pipe;
+//! Chat and one-time codes between the SYSTEM host and the signed-in user's
+//! app. Neither is written to disk. The transport is a session-checked pipe;
 //! the GUI authenticates its host against the protected machine identity.
 
 use serde::{Deserialize, Serialize};
@@ -17,11 +17,14 @@ struct Session {
     peer: String,
     lines: Vec<Line>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Snapshot {
     epoch: u64,
     sequence: u64,
     sessions: Vec<Session>,
+    /// Sent only over the authenticated, session-checked local pipe.
+    #[serde(default)]
+    password: Option<String>,
 }
 
 impl Snapshot {
@@ -56,6 +59,7 @@ impl Snapshot {
 enum Action {
     Chat { session: u64, text: String },
     Disconnect { session: u64 },
+    RegeneratePassword,
 }
 #[cfg(windows)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,16 +83,22 @@ pub enum Event {
     Started { session: u64, peer: String },
     Ended { session: u64 },
     Message { session: u64, ours: bool, text: String },
+    Password(Option<String>),
 }
 
 #[derive(Default)]
 struct Cursor {
     epoch: Option<u64>,
     sessions: BTreeMap<u64, u64>,
+    password: Option<String>,
 }
 impl Cursor {
     fn update(&mut self, snapshot: &Snapshot) -> Vec<Event> {
         let mut events = Vec::new();
+        if self.password != snapshot.password {
+            self.password = snapshot.password.clone();
+            events.push(Event::Password(self.password.clone()));
+        }
         let old = std::mem::take(&mut self.sessions);
         for &id in old.keys() {
             if self.epoch != Some(snapshot.epoch) || !snapshot.sessions.iter().any(|s| s.id == id) {
@@ -267,6 +277,7 @@ mod native {
                 epoch: rand::random(),
                 sequence: 0,
                 sessions: Vec::new(),
+                password: Some(client.one_time_password()),
             };
             let state = Arc::new(Mutex::new(initial.clone()));
             let (changes, _) = watch::channel(initial);
@@ -314,6 +325,7 @@ mod native {
         pub fn observe(&mut self, event: &ClientEvent) {
             let mut state = self.state.lock().expect("service chat state");
             match event {
+                ClientEvent::Password(password) => state.password = Some(password.clone()),
                 ClientEvent::HostSessionStarted { session, peer } => {
                     if state.sessions.len() >= 32 {
                         state.sessions.remove(0);
@@ -379,6 +391,7 @@ mod native {
                         changes.send_replace(s.clone());
                     }
                     Action::Disconnect { session } => client.disconnect_host_session(session),
+                    Action::RegeneratePassword => { client.regenerate_password(); }
                     _ => {}
                 }
             }
@@ -404,6 +417,12 @@ mod native {
         connected: Arc<AtomicBool>,
     }
     impl Sender {
+        pub fn regenerate_password(&self) -> bool {
+            self.connected() && self.tx.send(Command {
+                epoch: self.epoch,
+                action: Action::RegeneratePassword,
+            }).is_ok()
+        }
         pub fn connected(&self) -> bool {
             self.connected.load(Ordering::Acquire)
         }
@@ -492,6 +511,9 @@ mod native {
                     }
                     .await;
                     c.store(false, Ordering::Release);
+                    if cursor.password.take().is_some() {
+                        let _ = tx.send(Event::Password(None));
+                    }
                     if let Err(e) = result {
                         tracing::debug!("waiting for host-chat service: {e:#}");
                     }
@@ -517,6 +539,20 @@ pub use native::{Gui, Sender, Server};
 mod tests {
     use super::*;
     #[test]
+    fn service_codes_rotate_without_replaying_chat_and_older_snapshots_still_load() {
+        let mut snapshot: Snapshot = serde_json::from_str(r#"{"epoch":1,"sequence":0,"sessions":[]}"#).unwrap();
+        let mut cursor = Cursor::default();
+        assert!(cursor.update(&snapshot).is_empty());
+        snapshot.password = Some("code-one".into());
+        assert_eq!(cursor.update(&snapshot), vec![Event::Password(Some("code-one".into()))]);
+        assert!(cursor.update(&snapshot).is_empty());
+        snapshot.password = Some("code-two".into());
+        assert_eq!(cursor.update(&snapshot), vec![Event::Password(Some("code-two".into()))]);
+        snapshot.password = None;
+        assert_eq!(cursor.update(&snapshot), vec![Event::Password(None)]);
+    }
+
+    #[test]
     fn reconnect_does_not_repeat_messages_and_restart_resets_sessions() {
         let mut snapshot = Snapshot {
             epoch: 1,
@@ -526,6 +562,7 @@ mod tests {
                 peer: "Technician".into(),
                 lines: Vec::new(),
             }],
+            password: None,
         };
         snapshot.message(0, false, "Hello".into());
         let mut cursor = Cursor::default();

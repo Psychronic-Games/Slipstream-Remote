@@ -396,7 +396,7 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
         settings.host.set_permanent_password(Some(pw));
     }
     if settings.host.permanent_secret().is_none() {
-        bail!("set an unattended password first (Config → Unattended password, or --password): the service has no one-time passwords to show");
+        bail!("set an unattended password first (Config → Unattended password, or --password) for access before sign-in; signed-in users can also share the service's one-time code");
     }
     settings.host.enabled = true;
     let home = machine_home();

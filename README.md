@@ -18,6 +18,8 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
   loop keeps latency low instead of letting frames queue up.
 - **Full control** — mouse, wheel, keyboard (physical keys, works across
   layouts), Ctrl+Alt+Del and other special keys, multi-monitor switching.
+- **Several workstations at once** — pop desktop links into separate windows,
+  or dock them back into the console without reconnecting.
 - **Clipboard sync, chat, and a two-pane file manager** — copy and paste
   text and files between the computers, browse both, send and receive
   folders, or drag files from your desktop straight onto the remote screen.
@@ -84,6 +86,11 @@ control any other.
 
 The **BRIDGE** page shows the computer's ID and password. On the other
 computer, enter them under **Establish link** and press **Engage**.
+
+The one-time code and an unattended password both work with the same ID,
+including through the Windows service. Share the rotating code when you do
+not want to share the unattended password. Update an older installed service
+to make its code available in the app.
 
 On Wayland, approve screen sharing when Slipstream starts, or choose
 **Config → Screen permission → Approve now** before someone connects.

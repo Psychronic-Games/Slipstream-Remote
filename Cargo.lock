@@ -6800,6 +6800,7 @@ dependencies = [
  "slipstream-core",
  "slipstream-platform",
  "slipstream-session",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

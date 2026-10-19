@@ -87,10 +87,11 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         });
         ui.add_space(4.0);
         if app.via_service {
-            // The service hosts this computer: unattended password only.
+            // The service owns both its one-time code and permanent password.
+            one_time_password(app, ui);
             ui.label(RichText::new("REACHABLE THROUGH THE SLIPSTREAM SERVICE").font(theme::display(15.0)).color(pal::LAVENDER));
             ui.label(
-                RichText::new("Use this computer's unattended password. The service also reaches the login screen and administrator prompts.")
+                RichText::new("Share the one-time code above, or use this computer's unattended password. Both work with the same ID. The service also reaches the login screen and administrator prompts.")
                     .color(pal::DIM),
             );
             if let (Some(h), Some(own)) = (hosted, own_id)
@@ -127,18 +128,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             }
             return;
         }
-        ui.label(RichText::new("ONE-TIME PASSWORD").font(theme::display(15.0)).color(pal::LAVENDER));
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&app.password).font(theme::mono(if ui.available_width()<420.0 {26.0}else{34.0})).color(pal::GOLD));
-            ui.add_space(8.0);
-            if theme::pill_sized(ui, "Copy", pal::LAVENDER, vec2(70.0, 28.0)).clicked() {
-                ui.ctx().copy_text(app.password.clone());
-                app.toast("Password copied", pal::LAVENDER);
-            }
-            if theme::pill_sized(ui, "New", pal::VIOLET, vec2(64.0, 28.0)).clicked() {
-                app.password = app.client.regenerate_password();
-            }
-        });
+        one_time_password(app, ui);
         ui.add_space(10.0);
         if app.dir_status == DirStatus::NotConfigured {
             link_form(app, ui, t);
@@ -164,6 +154,33 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             ui.label(RichText::new(if cfg!(target_os="android") {"Your saved password also works while screen sharing is active."}else{"Unattended access enabled — your permanent password also works."}).small().color(pal::DIM));
         }
     });
+}
+
+/// Show the code belonging to the actual host, including the Windows service.
+fn one_time_password(app: &mut App, ui: &mut Ui) {
+    let password = if app.via_service { app.service_password.clone() } else { Some(app.password.clone()) };
+    ui.label(RichText::new("ONE-TIME CODE").font(theme::display(15.0)).color(pal::LAVENDER));
+    if let Some(password) = password {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&password).font(theme::mono(if ui.available_width()<420.0 {26.0}else{34.0})).color(pal::GOLD));
+            ui.add_space(8.0);
+            if theme::pill_sized(ui, "Copy", pal::LAVENDER, vec2(70.0, 28.0)).clicked() {
+                ui.ctx().copy_text(password.clone());
+                app.toast("One-time code copied", pal::LAVENDER);
+            }
+            if theme::pill_sized(ui, "New", pal::VIOLET, vec2(64.0, 28.0)).clicked() {
+                app.regenerate_password();
+            }
+        });
+        let help = if app.via_service || app.client.settings().host.permanent_password_secret.is_some() {
+            "Either this code or the unattended password works. The code changes after a session ends."
+        } else { "The code changes after a session ends." };
+        ui.label(RichText::new(help).small().color(pal::DIM));
+    } else {
+        ui.label(RichText::new("Waiting for the service's code…").color(pal::GOLD))
+            .on_hover_text("If the service is running an older build, use Config → Windows service → Update. Your unattended password continues to work.");
+    }
+    ui.add_space(6.0);
 }
 
 /// For an app that isn't linked to a station yet: its address and a setup
@@ -517,8 +534,10 @@ pub fn links_ui(app: &mut App, ui: &mut Ui) {
             return;
         }
         let mut open = None;
+        let mut window = None;
         let mut close = None;
-        for tab in &app.tabs {
+        for shared in &app.tabs {
+            let tab = shared.lock().unwrap();
             ui.horizontal(|ui| {
                 let status = match &tab.closed {
                     Some(r) => (format!("TERMINATED — {r}"), pal::RED),
@@ -534,13 +553,18 @@ pub fn links_ui(app: &mut App, ui: &mut Ui) {
                     if theme::pill(ui, "View", pal::BLUE).clicked() {
                         open = Some(tab.id);
                     }
+                    if !ui.ctx().embed_viewports() && theme::pill(ui, if tab.detached {"Focus window"} else {"Open window"}, pal::VIOLET).clicked() {
+                        window = Some(tab.id);
+                    }
                 });
             });
             ui.separator();
         }
         if let Some(id) = open {
-            app.page = Page::Remote(id);
+            if app.tab(id).is_some_and(|t| t.lock().unwrap().detached) { app.open_session_window(ui.ctx(), id); }
+            else { app.page = Page::Remote(id); }
         }
+        if let Some(id) = window { app.open_session_window(ui.ctx(), id); }
         if let Some(id) = close {
             app.close_tab(id);
         }

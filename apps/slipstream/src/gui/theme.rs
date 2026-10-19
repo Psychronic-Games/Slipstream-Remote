@@ -431,6 +431,11 @@ impl ConsoleIcon {
     }
 }
 
+pub fn console_button_width(ui: &Ui, label: &str, menu: bool) -> f32 {
+    let text_w = ui.painter().layout_no_wrap(label.to_uppercase(), display(17.0), pal::BG).size().x;
+    34.0 + if text_w > 0.0 { 6.0 + text_w } else { 0.0 } + if menu { 12.0 } else { 0.0 }
+}
+
 pub fn console_button(ui: &mut Ui, label: &str, color: Color32, icon: ConsoleIcon, menu: bool) -> Response {
     let galley = ui.painter().layout_no_wrap(label.to_uppercase(), display(17.0), pal::BG);
     let text_w = galley.size().x;
@@ -734,10 +739,11 @@ pub fn dismiss_tool_viewport(ctx: &egui::Context, desktop: bool) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
-    repaint_after_tool_close(ctx);
+    repaint_console(ctx);
 }
 
-pub fn repaint_after_tool_close(ctx: &egui::Context) {
+/// Paint the console once even when covered, so new tool viewports register.
+pub fn repaint_console(ctx: &egui::Context) {
     ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::RequestPaintWhileHidden);
     ctx.request_repaint_of(egui::ViewportId::ROOT);
 }
@@ -763,6 +769,14 @@ pub fn native_title_bar(ui: &mut Ui, title: &str) -> Rect {
 }
 
 pub fn native_title_bar_with_rail(ui: &mut Ui, title: &str, linked:bool) -> Rect {
+    native_title_bar_inner(ui, title, linked, None)
+}
+
+pub fn native_session_title_bar(ui: &mut Ui, title: &str, workstation: Option<&str>) -> Rect {
+    native_title_bar_inner(ui, title, workstation.is_some(), workstation)
+}
+
+fn native_title_bar_inner(ui: &mut Ui, title: &str, linked: bool, workstation: Option<&str>) -> Rect {
     super::window_shape::update();
     let area=ui.max_rect();
     let square=cfg!(target_os="android") || ui.input(|i|i.viewport().fullscreen==Some(true)||i.viewport().maximized==Some(true));
@@ -781,7 +795,16 @@ pub fn native_title_bar_with_rail(ui: &mut Ui, title: &str, linked:bool) -> Rect
     let (right,close)=native_window_controls(ui,bar,linked,maximized,true);
     if close {ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);}
     let title_rect=Rect::from_min_max(bar.min+vec2(22.0,0.0),pos2(right-4.0,bar.bottom()));
-    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title,display_bold(17.0),if linked{pal::BG}else{pal::LAVENDER});
+    if let Some(workstation) = workstation {
+        let app_width = (title_rect.width() * 0.32).min(240.0);
+        let app_rect = title_rect.with_max_x(title_rect.left() + app_width);
+        p.with_clip_rect(app_rect).text(app_rect.left_center(), Align2::LEFT_CENTER, "SLIPSTREAM REMOTE", display(15.0), pal::BG);
+        let host_rect = title_rect.with_min_x(app_rect.right() + 12.0);
+        p.with_clip_rect(host_rect).text(host_rect.center(), Align2::CENTER_CENTER, workstation.to_uppercase(), display_bold(21.0), pal::BG);
+        ui.interact(host_rect, ui.scope_id().with("workstation-title"), Sense::hover()).on_hover_text(workstation);
+    } else {
+        p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title,display_bold(17.0),if linked{pal::BG}else{pal::LAVENDER});
+    }
     native_window_interactions(ui,area,title_rect,maximized);
     Rect::from_min_max(pos2(area.left()+5.0,bar.bottom()+3.0),area.max-vec2(5.0,5.0))
 }

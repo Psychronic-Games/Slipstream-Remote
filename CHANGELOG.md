@@ -13,6 +13,27 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### One-time codes, session windows and toolbar layout
+- Show the Windows service's actual one-time code alongside unattended access,
+  with Copy and New controls in the full and compact apps. Both passwords
+  authenticate the same host ID. Codes rotate after sessions, clear when the
+  local service disconnects, and travel only through its authenticated,
+  session-checked local pipe; service stdout no longer prints them. Older
+  services retain unattended access until updated.
+- Pop a desktop session into its own native window, open/focus windows from
+  Links, and dock them back without reconnecting. Several workstations can
+  remain visible at once. Closing a session window ends only that link;
+  Bridge opens the console while the link continues. Reconnection preserves
+  the window, quality/display choices and tools.
+- Route keyboard capture and pending shortcuts by viewport, release held input
+  on focus loss, and keep background tool repaints from stealing control.
+  Files and Network Scan can open while the console is hidden.
+- Put the workstation name in the top title bar beside the app name/window
+  controls. Place FPS/latency next to picture quality. Measure the remaining
+  toolbar space before showing labels; retain compact buttons at medium
+  widths and a Console menu in very small windows. Screen selection uses a
+  menu so multiple monitors do not crowd out the other controls.
+
 ## 0.18.0 — 2026-10-19
 
 ### Screen access and tool cleanup

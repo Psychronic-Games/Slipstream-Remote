@@ -13,6 +13,7 @@ mod keys;
 #[cfg(windows)]
 mod lite;
 mod remote;
+mod session_windows;
 mod saved;
 #[cfg(windows)]
 mod scheme;
@@ -264,6 +265,8 @@ pub struct Toast {
 }
 
 type ConnectResult = Result<(ViewerSession, tmpsc::UnboundedReceiver<ViewerEvent>), String>;
+type SessionAction = (u64, remote::TabAction);
+type SessionActionQueue = (mpsc::Sender<SessionAction>, mpsc::Receiver<SessionAction>);
 
 pub struct Attempt {
     pub id: DeviceId,
@@ -317,10 +320,12 @@ pub struct App {
     pub page: Page,
     pub dir_status: DirStatus,
     pub password: String,
+    pub service_password: Option<String>,
     pub connect_id: String,
     pub connect_pw: String,
     pub attempt: Option<Attempt>,
-    pub tabs: Vec<remote::RemoteTab>,
+    pub tabs: Vec<Arc<Mutex<remote::RemoteTab>>>,
+    session_actions: SessionActionQueue,
     next_tab: u64,
     pub incoming: Vec<IncomingSession>,
     toasts: Vec<Toast>,
@@ -330,8 +335,6 @@ pub struct App {
     pub motd: Option<String>,
     /// Organisation running our station, shown in the frame.
     pub org: Option<String>,
-    /// Keyboard events captured for the focused remote tab this frame.
-    captured_keys: Vec<remote::CapturedKey>,
     window_focused: bool,
     /// Drawing on the processor (Mesa's llvmpipe, a VM without graphics):
     /// every frame costs real CPU time, so animations run slowly. `None`
@@ -400,6 +403,7 @@ impl App {
         let org = client.settings().server.org_name.clone();
         Self {
             password: client.one_time_password(),
+            service_password: None,
             dir_status: client.dir_status(),
             rt,
             client,
@@ -411,6 +415,7 @@ impl App {
             connect_pw: String::new(),
             attempt: None,
             tabs: Vec::new(),
+            session_actions: mpsc::channel(),
             next_tab: 1,
             incoming: Vec::new(),
             toasts: Vec::new(),
@@ -419,7 +424,6 @@ impl App {
             screen_access,
             motd: None,
             org,
-            captured_keys: Vec::new(),
             window_focused: true,
             software: None,
             screenshot: None,
@@ -465,12 +469,22 @@ impl App {
         self.toasts.push(Toast { text: text.into(), color, until: Instant::now() + Duration::from_secs(5) });
     }
 
+    pub fn regenerate_password(&mut self) {
+        #[cfg(windows)]
+        if self.via_service {
+            if let Some(bridge) = &self.service_chat { bridge.sender().regenerate_password(); }
+            return;
+        }
+        self.password = self.client.regenerate_password();
+    }
+
     fn handle_events(&mut self) {
         #[cfg(windows)]
         if let Some(bridge)=&mut self.service_chat {
             use crate::service_chat::Event;
             while let Ok(event)=bridge.events.try_recv() {
                 match event {
+                        Event::Password(password) => self.service_password = password,
                     Event::Started{session,peer}=> {
                         if !self.incoming.iter().any(|s|s.id==session) {self.incoming.push(IncomingSession{id:session,peer,chat:Default::default(),started:Instant::now()});}
                     },
@@ -588,7 +602,7 @@ impl App {
                 tab.via = attempt.via;
                 tab.files.lock().unwrap().open = self.open_files;
                 self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
-                self.tabs.push(tab);
+                self.tabs.push(Arc::new(Mutex::new(tab)));
                 self.page = Page::Remote(id);
                 self.connect_pw.clear();
                 self.settings_form.refresh_recent(&self.client.settings());
@@ -819,17 +833,55 @@ impl App {
     }
 
     pub fn close_tab(&mut self, id: u64) {
-        self.tabs.retain(|t| t.id != id);
-        let alive: Vec<u64> = self.tabs.iter().map(|t| t.id).collect();
+        if let Some(tab) = self.tab(id) { tab.lock().unwrap().end_link(); }
+        self.tabs.retain(|t| t.lock().unwrap().id != id);
+        let alive: Vec<u64> = self.tabs.iter().map(|t| t.lock().unwrap().id).collect();
         video::retain_streams(&self.render_state, |s| alive.contains(&s));
         if self.page == Page::Remote(id) {
             self.page = if self.tabs.is_empty() { Page::Home } else { Page::Links };
         }
     }
 
-    fn focused_tab_mut(&mut self) -> Option<&mut remote::RemoteTab> {
-        let Page::Remote(id) = self.page else { return None };
-        self.tabs.iter_mut().find(|t| t.id == id)
+    fn tab(&self, id: u64) -> Option<Arc<Mutex<remote::RemoteTab>>> {
+        self.tabs.iter().find(|t| t.lock().unwrap().id == id).cloned()
+    }
+
+    pub fn open_session_window(&mut self, ctx: &egui::Context, id: u64) {
+        if ctx.embed_viewports() { self.page = Page::Remote(id); return; }
+        if let Some(tab) = self.tab(id) {
+            let mut tab = tab.lock().unwrap();
+            if !tab.detached {
+                tab.release_keyboard();
+                tab.leave_fullscreen(ctx);
+                tab.detached = true;
+            }
+            let viewport = tab.viewport_id();
+            ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
+        }
+        if self.page == Page::Remote(id) { self.page = Page::Links; }
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
+    }
+
+    fn session_action(&mut self, ctx: &egui::Context, id: u64, action: remote::TabAction) {
+        match action {
+            remote::TabAction::None => {},
+            remote::TabAction::Bridge => {
+                self.page = Page::Home;
+                self.set_visible(ctx, true);
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+            },
+            remote::TabAction::Close => self.close_tab(id),
+            remote::TabAction::Detach => self.open_session_window(ctx, id),
+            remote::TabAction::Dock => {
+                if let Some(tab) = self.tab(id) { tab.lock().unwrap().detached = false; }
+                self.page = Page::Remote(id);
+                self.set_visible(ctx, true);
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+            },
+        }
     }
 
     // ── Frame ──────────────────────────────────────────────────────────
@@ -965,7 +1017,11 @@ impl App {
             text = format!("{label} · {}", self.tabs.len());
         }
         if theme::block_button_pointing(ui, rect, &text, &format!("{:02}-{}", i + 1, 40 + i * 13), color, active, up).clicked() {
-            self.page = if page == Page::Links && self.tabs.len() == 1 { Page::Remote(self.tabs[0].id) } else { page };
+            let single = self.tabs.first().filter(|_| self.tabs.len() == 1).and_then(|tab| {
+                let tab = tab.lock().unwrap();
+                (!tab.detached).then_some(tab.id)
+            });
+            self.page = if page == Page::Links { single.map(Page::Remote).unwrap_or(page) } else { page };
         }
     }
 
@@ -1419,20 +1475,43 @@ impl App {
 /// what to say when it worked, the result).
 type ServiceJob = (bool, &'static str, oneshot::Receiver<Result<(), String>>);
 
+/// Resolve focus to one session; tool repaints never steal its input.
+fn route_session_input(
+    tabs: &[Arc<Mutex<remote::RemoteTab>>], page: Page, viewport: egui::ViewportId, focused: bool,
+) -> Option<Arc<Mutex<remote::RemoteTab>>> {
+    let target = tabs.iter().find(|tab| {
+        let tab = tab.lock().unwrap();
+        tab.viewport_id() == viewport && (tab.detached || page == Page::Remote(tab.id))
+    }).cloned();
+    for tab in tabs {
+        let is_target = target.as_ref().is_some_and(|target| Arc::ptr_eq(tab, target));
+        if (focused && !is_target) || (!focused && is_target) {
+            tab.lock().unwrap().release_keyboard();
+        }
+    }
+    target
+}
+
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32;4] { [0.0;4] }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         #[cfg(target_os = "linux")]
         self.screen_access.poll();
+        while let Ok((id, action)) = self.session_actions.1.try_recv() { self.session_action(ctx, id, action); }
         let mut restored=Vec::new();
-        for tab in &mut self.tabs {
+        for shared in &self.tabs {
+            let mut tab = shared.lock().unwrap();
             tab.poll(ctx);
             if tab.maintain_connection(ctx,&self.rt,&self.client) {restored.push(tab.id);}
             // Drops and the receipt's Files action also work with the parent minimized.
             if ctx.viewport_id()==egui::ViewportId::ROOT && !ctx.embed_viewports() {
                 files::FileManager::show(&tab.files,ctx,&self.rt,tab.id);
+                tab.network_window(ctx, &self.rt);
             }
+        }
+        for tab in &self.tabs {
+            session_windows::show(tab, ctx, &self.rt, &self.session_actions.0, self.t0.elapsed().as_secs_f64(), &window_title(self.org.as_deref()));
         }
         // Frame serials restart on a new session; discard cached old textures.
         if !restored.is_empty() {video::retain_streams(&self.render_state,|id|!restored.contains(&id));}
@@ -1513,21 +1592,9 @@ impl eframe::App for App {
         desktop_drop::update_pointer(_ctx, raw);
         let root_input = raw.viewport_id == egui::ViewportId::ROOT;
         let focused_now = raw.focused;
-        // Detached tools run this hook for background repaints too. Only
-        // their actual focus should release the remote window's control.
-        let lost_focus = if root_input { !focused_now } else { focused_now };
         if root_input { self.window_focused = focused_now; }
-        if lost_focus { self.captured_keys.clear(); }
-        let captured = match self.focused_tab_mut() {
-            Some(tab) if lost_focus => {
-                tab.release_keyboard();
-                false
-            }
-            // Tool events always belong to the tool, even while a background
-            // repaint leaves the remote window's keyboard capture intact.
-            Some(tab) => root_input && tab.keyboard_captured(),
-            None => false,
-        };
+        let target = route_session_input(&self.tabs, self.page, raw.viewport_id, focused_now);
+        let captured = focused_now && target.as_ref().is_some_and(|tab| tab.lock().unwrap().keyboard_captured());
         if !captured {
             // Ours: the usual clipboard shortcuts for egui's text fields.
             for ev in &mut raw.events {
@@ -1550,6 +1617,7 @@ impl eframe::App for App {
         }
         // Steal keyboard events so egui doesn't act on them (Tab focus
         // cycling, shortcuts…) and forward them to the remote machine.
+        let mut pending_keys = Vec::new();
         let mut keep = Vec::with_capacity(raw.events.len());
         for ev in raw.events.drain(..) {
             match ev {
@@ -1557,7 +1625,7 @@ impl eframe::App for App {
                     // Ours, not theirs: the way out of full screen.
                     if key == egui::Key::Enter && modifiers.ctrl && modifiers.alt {
                         if pressed && !repeat {
-                            self.captured_keys.push(remote::CapturedKey::ToggleFullscreen);
+                            pending_keys.push(remote::CapturedKey::ToggleFullscreen);
                         }
                         continue;
                     }
@@ -1567,32 +1635,33 @@ impl eframe::App for App {
                         use slipstream_platform::clipboard::{Clip, read_local};
                         match read_local() {
                             Some(Clip::Files(paths)) => {
-                                self.captured_keys.push(remote::CapturedKey::PasteFiles(paths));
+                                pending_keys.push(remote::CapturedKey::PasteFiles(paths));
                                 continue;
                             }
                             Some(Clip::Text(text)) => {
-                                self.captured_keys.push(remote::CapturedKey::Shortcut("KeyV", Some(text)));
+                                pending_keys.push(remote::CapturedKey::Shortcut("KeyV", Some(text)));
                                 continue;
                             }
                             None => {}
                         }
                     }
                     let k = physical_key.unwrap_or(key);
-                    self.captured_keys.push(remote::CapturedKey::Key { key: k, pressed, repeat });
+                    pending_keys.push(remote::CapturedKey::Key { key: k, pressed, repeat });
                 }
                 egui::Event::Text(_) | egui::Event::Ime(_) => {}
                 other => keep.push(other),
             }
         }
         raw.events = keep;
+        if let Some(target) = target { target.lock().unwrap().pending_keys.extend(pending_keys); }
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         #[cfg(windows)]
         softgl::started();
         let ctx = ui.ctx().clone();
-        let linked = matches!(self.page,Page::Remote(id) if self.tabs.iter().any(|tab|tab.id==id));
-        let body = theme::native_title_bar_with_rail(ui, &window_title(self.org.as_deref()), linked);
+        let workstation = if let Page::Remote(id) = self.page { self.tab(id).map(|t| t.lock().unwrap().info.host_name.clone()) } else { None };
+        let body = theme::native_session_title_bar(ui, &window_title(self.org.as_deref()), workstation.as_deref());
         let ui = &mut ui.new_child(UiBuilder::new().max_rect(body));
         // Clear of the status and navigation bars, the camera cutout and
         // the soft keyboard (the root Ui covers the whole screen).
@@ -1603,39 +1672,27 @@ impl eframe::App for App {
         self.poll_link();
         self.poll_service(&ctx);
         saved::poll(self, &ctx);
-        for tab in &mut self.tabs {
+        for shared in &self.tabs {
+            let tab = shared.lock().unwrap();
             tab.network_window(&ctx, &self.rt);
             files::FileManager::show(&tab.files,&ctx,&self.rt,tab.id);
         }
 
-        let keys = std::mem::take(&mut self.captured_keys);
         if let Page::Remote(id) = self.page
-            && self.tabs.iter().any(|t| t.id == id)
+            && let Some(tab) = self.tab(id)
+            && !tab.lock().unwrap().detached
         {
             let full = ui.max_rect();
-            let mut action = remote::TabAction::None;
-            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
-                tab.forward_keys(keys, &self.rt, &ctx);
-                action = tab.ui(ui, full, self.t0.elapsed().as_secs_f64(), &self.rt);
-            }
-            match action {
-                remote::TabAction::None => {}
-                remote::TabAction::Bridge => self.page = Page::Home,
-                remote::TabAction::Close => self.close_tab(id),
-                remote::TabAction::Reconnect(peer, pw, via) => {
-                    self.close_tab(id);
-                    self.connect_id = peer.to_string();
-                    self.connect_pw = pw.clone();
-                    self.start_connect_to(&ctx, peer, pw, via);
-                }
-            }
+            let action = tab.lock().unwrap().ui(ui, full, self.t0.elapsed().as_secs_f64(), &self.rt);
+            self.session_action(&ctx, id, action);
         } else {
             if matches!(self.page, Page::Remote(_)) {
                 self.page = Page::Home;
             }
             // Full screen belongs to a session; the other pages get the window back.
-            for tab in &mut self.tabs {
-                tab.leave_fullscreen(&ctx);
+            for tab in &self.tabs {
+                let mut tab = tab.lock().unwrap();
+                if !tab.detached { tab.leave_fullscreen(&ctx); }
             }
             if ctx.input(|i| i.viewport().fullscreen == Some(true)) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));

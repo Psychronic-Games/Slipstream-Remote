@@ -33,6 +33,7 @@ use windows_sys::Win32::{
         Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock},
     },
     UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED, ODT_BUTTON},
+    UI::Input::KeyboardAndMouse::EnableWindow,
     UI::WindowsAndMessaging::{
         AdjustWindowRect, BS_OWNERDRAW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
         DestroyWindow, DispatchMessageW, GetClientRect, GetDlgCtrlID, GetMessageW, IDC_ARROW, LoadCursorW, LoadIconW, MSG,
@@ -78,6 +79,7 @@ const WM_REFRESH: u32 = WM_APP + 1;
 /// A later launch asked for something (see `single`).
 const WM_REQUEST: u32 = WM_APP + 2;
 const TIMER_SCREENSHOT: usize = 2;
+const TIMER_SERVICE: usize = 3;
 
 // The console palette (COLORREF is 0x00BBGGRR).
 const fn rgb(r: u8, g: u8, b: u8) -> u32 {
@@ -104,6 +106,7 @@ const HEIGHT: i32 = 422;
 struct Ui {
     view: Arc<Mutex<View>>,
     client: Client,
+    service_sender: Option<crate::service_chat::Sender>,
     rt: Arc<Runtime>,
     requests: smpsc::Receiver<single::Request>,
     controls: Vec<(i32, HWND)>,
@@ -166,7 +169,7 @@ pub fn run(
                 {
                     let mut v = view.lock().unwrap();
                     match ev {
-                        ClientEvent::Password(p) => v.password = p,
+                        ClientEvent::Password(p) if !via_service => v.password = p,
                         ClientEvent::Directory(DirStatus::Online { id }) => {
                             v.id = id.to_string();
                             v.status = "ONLINE · READY FOR LINK".into();
@@ -199,8 +202,10 @@ pub fn run(
             }
         });
     }
+    let mut service_sender = None;
     if via_service {
         let mut bridge=crate::service_chat::Gui::start(&rt,eframe::egui::Context::default());
+        service_sender = Some(bridge.sender());
         let view=view.clone();
         rt.spawn(async move {
             while let Some(event)=bridge.events.recv().await {
@@ -208,6 +213,7 @@ pub fn run(
                 {
                     let mut v=view.lock().unwrap();
                     match event {
+                        Event::Password(password) => v.password = password.unwrap_or_default(),
                         Event::Started{peer,..}=>v.status=format!("{} IS CONNECTED",peer.to_uppercase()),
                         Event::Ended{..}=>v.status="ONLINE · READY FOR LINK".into(),
                         Event::Message{ours:false,text,..}=>{v.note=format!("Message: {text}");wake(WM_APP+3);},
@@ -251,6 +257,7 @@ pub fn run(
             *u.borrow_mut() = Some(Ui {
                 view: view.clone(),
                 client: client.clone(),
+                service_sender,
                 rt: rt.clone(),
                 requests,
                 controls: Vec::new(),
@@ -286,6 +293,7 @@ pub fn run(
         if let Some((_, delay)) = screenshot {
             SetTimer(hwnd, TIMER_SCREENSHOT, (delay * 1000.0) as u32, None);
         }
+        if via_service { SetTimer(hwnd, TIMER_SERVICE, 1000, None); }
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
@@ -415,6 +423,14 @@ fn set_text(ui: &mut Ui, id: i32, text: &str) {
 }
 
 fn refresh(ui: &mut Ui, hwnd: HWND) {
+    if ui.service_sender.is_some() {
+        let mut view = ui.view.lock().unwrap();
+        view.id = crate::service::hosted_id().map(|id| id.to_string()).unwrap_or_else(|| "--- --- ---".into());
+        view.online = crate::service::is_running();
+        if !view.status.ends_with("IS CONNECTED") {
+            view.status = if view.online {"SERVICE RUNNING".into()} else {format!("SERVICE {}", crate::service::status_text().to_uppercase())};
+        }
+    }
     let (title, id, pw, status, online, note, update) = {
         let v = ui.view.lock().unwrap();
         (v.title.clone(), v.id.clone(), v.password.clone(), v.status.clone(), v.online, v.note.clone(), v.update.is_some())
@@ -429,11 +445,11 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     set_text(ui, ID_TITLE, &title);
     set_text(ui, ID_ID_LABEL, "YOUR ID");
     set_text(ui, ID_ID, &id);
-    set_text(ui, ID_PW_LABEL, "ONE-TIME PASSWORD");
+    set_text(ui, ID_PW_LABEL, "ONE-TIME CODE");
     set_text(ui, ID_PW, &pw);
     set_text(ui, ID_STATUS, &status);
     set_text(ui, ID_NOTE, &note);
-    set_text(ui, BTN_NEW, "New password");
+    set_text(ui, BTN_NEW, "New code");
     set_text(ui, BTN_COPY, "Copy");
     set_text(ui, BTN_UPDATE, "Install update");
     set_text(ui, BTN_FULL, "Try full window");
@@ -442,6 +458,8 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     set_text(ui,BTN_CLOSE,"Close");
     // SAFETY: live controls of our window.
     unsafe {
+        EnableWindow(control(ui, BTN_NEW), i32::from(ui.service_sender.as_ref().is_none_or(|s| s.connected()) && !pw.is_empty()));
+        EnableWindow(control(ui, BTN_COPY), i32::from(!pw.is_empty() && id.chars().filter(char::is_ascii_digit).count() == 9));
         ShowWindow(control(ui, BTN_UPDATE), if update { SW_SHOW } else { SW_HIDE });
         ShowWindow(control(ui, BTN_FULL), if full { SW_SHOW } else { SW_HIDE });
         if online != ui.online {
@@ -727,8 +745,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     BTN_MIN=>unsafe{ShowWindow(hwnd,SW_MINIMIZE);},
                     BTN_CLOSE=>unsafe{DestroyWindow(hwnd);},
                     BTN_NEW => {
-                        let pw = ui.client.regenerate_password();
-                        ui.view.lock().unwrap().password = pw;
+                        if let Some(sender) = &ui.service_sender {
+                            sender.regenerate_password();
+                        } else {
+                            let pw = ui.client.regenerate_password();
+                            ui.view.lock().unwrap().password = pw;
+                        }
                         refresh(ui, hwnd);
                     }
                     BTN_COPY => {
@@ -744,6 +766,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 }
                 Some(0)
             }
+            WM_TIMER if wparam == TIMER_SERVICE => { refresh(ui, hwnd); Some(0) }
             WM_TIMER if wparam == TIMER_SCREENSHOT => {
                 if let Some(path) = ui.screenshot.take()
                     && let Err(e) = save_screenshot(hwnd, &path)

@@ -57,9 +57,8 @@ pub enum TabAction {
     None,
     Bridge,
     Close,
-    /// Again, the same way: password, and the station it was found on
-    /// (`None` = this app's own).
-    Reconnect(DeviceId, String, Option<slipstream_session::AccountRef>),
+    Detach,
+    Dock,
 }
 
 const PRESETS: [(&str, StreamSettings); 4] = [
@@ -71,6 +70,8 @@ const PRESETS: [(&str, StreamSettings); 4] = [
 
 pub struct RemoteTab {
     pub id: u64,
+    pub detached: bool,
+    pub pending_keys: Vec<CapturedKey>,
     session: ViewerSession,
     cmds: mpsc::UnboundedSender<ViewerCmd>,
     events: mpsc::UnboundedReceiver<ViewerEvent>,
@@ -142,6 +143,21 @@ impl Drop for RemoteTab {
 }
 
 impl RemoteTab {
+    pub fn window_id(id: u64) -> egui::ViewportId {
+        egui::ViewportId::from_hash_of(("remote-session", id))
+    }
+
+    pub fn viewport_id(&self) -> egui::ViewportId {
+        if self.detached { Self::window_id(self.id) } else { egui::ViewportId::ROOT }
+    }
+
+    pub fn end_link(&mut self) {
+        self.release_keyboard();
+        self.reconnect = None;
+        self.detached = false;
+        self.send(ViewerCmd::Disconnect);
+    }
+
     pub fn new(
         id: u64,
         session: ViewerSession,
@@ -152,7 +168,10 @@ impl RemoteTab {
     ) -> Self {
         let frames = session.frames();
         let wake = ctx.clone();
-        frames.set_repaint(move || wake.request_repaint_of(egui::ViewportId::ROOT));
+        frames.set_repaint(move || {
+            wake.request_repaint_of(egui::ViewportId::ROOT);
+            wake.request_repaint_of(Self::window_id(id));
+        });
         let info = session.info().clone();
         let files = Arc::new(Mutex::new(FileManager::new(session.fs(), info.host_name.clone())));
         let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(session.fs(), info.capabilities.input)));
@@ -162,6 +181,8 @@ impl RemoteTab {
         let audio = play_audio && info.capabilities.audio;
         Self {
             id,
+            detached: false,
+            pending_keys: Vec::new(),
             cmds: session.command_sender(),
             peer: session.peer_id(),
             frames,
@@ -287,7 +308,11 @@ impl RemoteTab {
         tracing::info!(peer=%self.peer,"viewer link restored");
         self.info=session.info().clone();
         self.cmds=session.command_sender();self.frames=session.frames();
-        let wake=ctx.clone();self.frames.set_repaint(move ||wake.request_repaint_of(egui::ViewportId::ROOT));
+        let (wake, viewport) = (ctx.clone(), Self::window_id(self.id));
+        self.frames.set_repaint(move || {
+            wake.request_repaint_of(egui::ViewportId::ROOT);
+            wake.request_repaint_of(viewport);
+        });
         self.events=events;self.session=session;
         self.forward_repeats=self.info.os!="Linux";
         if !self.info.displays.iter().any(|d|d.index==self.display) {
@@ -314,6 +339,7 @@ impl RemoteTab {
     }
 
     pub fn release_keyboard(&mut self) {
+        self.pending_keys.clear();
         if self.captured || !self.held_keys.is_empty() || !self.held_buttons.is_empty() {
             self.input(InputEvent::ReleaseAll);
         }
@@ -443,6 +469,8 @@ impl RemoteTab {
     }
 
     pub fn ui(&mut self, ui: &mut Ui, full: Rect, t: f64, rt: &tokio::runtime::Runtime) -> TabAction {
+        let keys = std::mem::take(&mut self.pending_keys);
+        self.forward_keys(keys, rt, ui.ctx());
         let mut action = TabAction::None;
         let ctx = ui.ctx().clone();
         ui.painter().rect_filled(full, 0.0, Color32::BLACK);
@@ -735,21 +763,23 @@ impl RemoteTab {
         let ctx = ui.ctx().clone();
         let start=rail.max(36.0)+36.0;
         let inner = bar.with_min_x(bar.left()+start);
-        let w=bar.width()-(start-72.0);
-        if w<1100.0 {return self.toolbar_narrow(ui,inner,&ctx,t);}
-        let compact_stats = w < 1460.0;
-        let tight = w < 1320.0;
-        let screens_as_menu = w < 1360.0;
-        let icon_only_back = w < 1280.0;
+        let w = inner.width();
+        if w < 780.0 { return self.toolbar_narrow(ui,inner,&ctx,t); }
+        let compact_stats = w < 1440.0;
+        let tight = w < 1050.0;
+
 
         // Right side first, so the buttons know how much room is left.
         let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
         right.spacing_mut().item_spacing.x = 4.0;
-        if theme::console_button(&mut right, "End link", pal::RED,Icon::End,false).clicked() {
+        if theme::console_button(&mut right, if tight {""} else {"End link"}, pal::RED,Icon::End,false).on_hover_text("End this link").clicked() {
             self.send(ViewerCmd::Disconnect);
             action = TabAction::Close;
         }
         theme::session_stats_frame().show(&mut right,|ui| {ui.set_min_height(34.0);self.stats_readout(ui,if compact_stats {Detail::Compact}else{Detail::Full},t);});
+        let quality = theme::console_button(&mut right, if tight {""} else {PRESETS[self.preset].0}, pal::BLUE, Icon::Performance, true)
+            .on_hover_text(format!("Picture quality · {}", PRESETS[self.preset].0));
+        theme::console_menu(&quality).show(|ui| self.quality_menu(ui));
         let right_left = right.min_rect().left();
 
         let left_rect = inner.with_max_x(right_left - 12.0);
@@ -757,6 +787,20 @@ impl RemoteTab {
         child.set_clip_rect(left_rect.expand2(vec2(0.0, 8.0)));
         let ui = &mut child;
         ui.spacing_mut().item_spacing.x = 4.0;
+        // Measure the actual labels after reserving quality/stats/End. Long
+        // presets, several screens and active transfers must not clip tools.
+        let mut nav = vec![("Bridge", false), (if self.fullscreen {"Window"} else {"Full"}, false)];
+        if !ctx.embed_viewports() { nav.push((if self.detached {"Dock"} else {"Pop out"}, false)); }
+        if self.info.displays.len() > 1 { nav.push(("Screens", true)); }
+        let mut tools = vec![("Keys", true), (if self.unread {"Chat ◆"} else {"Chat"}, false), (if self.audio {"Sound"} else {"Muted"}, false), ("Tools", true)];
+        if self.info.capabilities.file_transfer { tools.push(("Files", false)); }
+        let count = nav.len() + tools.len();
+        let icons = nav.iter().chain(&tools).map(|(_, menu)| theme::console_button_width(ui, "", *menu)).sum::<f32>() + (count - 1) as f32 * 4.0;
+        let extra = |buttons: &[(&str, bool)]| buttons.iter().map(|(label, menu)| theme::console_button_width(ui, label, *menu) - theme::console_button_width(ui, "", *menu)).sum::<f32>();
+        let tool_labels = left_rect.width() >= icons + extra(&tools) + 4.0;
+        let tight = left_rect.width() < icons + extra(&tools) + extra(&nav) + 4.0;
+        let icon_only_back = tight;
+
         if tight {
             ui.spacing_mut().button_padding.x = 8.0;
         }
@@ -767,55 +811,50 @@ impl RemoteTab {
             action = TabAction::Bridge;
         }
 
+        if !ctx.embed_viewports() && theme::console_button(ui, if tight {""} else if self.detached {"Dock"} else {"Pop out"}, pal::BLUE, Icon::Window, false)
+            .on_hover_text(if self.detached {"Move this link into the main console"} else {"Open this workstation in its own window"}).clicked() {
+            self.release_keyboard();
+            action = if self.detached {TabAction::Dock} else {TabAction::Detach};
+        }
+
         if self.info.displays.len() > 1 {
             let tip = |d: &slipstream_core::proto::DisplayInfo| {
                 format!("Screen {}: {} · {}×{}{}", d.index + 1, d.name, d.width, d.height, if d.primary { " (main)" } else { "" })
             };
             let mut pick = None;
-            if screens_as_menu {
-                let screens=theme::console_button(ui,&format!("Screen {}",self.display+1),pal::VIOLET,Icon::Window,true);
-                theme::console_menu(&screens).show(|ui| {
-                    for d in &self.info.displays {
-                        if ui.selectable_label(d.index == self.display, tip(d)).clicked() {
-                            pick = Some(d.index);
-                            ui.close();
-                        }
-                    }
-                });
-                screens.on_hover_text("The remote computer's screens: pick one to view");
-            } else {
-                ui.add_space(4.0);
-                ui.label(RichText::new("SCREEN").font(theme::display(15.0)).color(pal::LAVENDER))
-                    .on_hover_text("The remote computer's screens: pick one to view");
+            let screens=theme::console_button(ui,if tight {""} else {"Screens"},pal::VIOLET,Icon::Window,true);
+            theme::console_menu(&screens).show(|ui| {
                 for d in &self.info.displays {
-                    let color = if d.index == self.display { pal::GOLD } else { pal::VIOLET };
-                    if theme::console_button(ui, &format!("{}", d.index + 1), color,Icon::Window,false).on_hover_text(tip(d)).clicked() {
+                    if ui.selectable_label(d.index == self.display, tip(d)).clicked() {
                         pick = Some(d.index);
+                        ui.close();
                     }
                 }
-            }
+            });
+            screens.on_hover_text("The remote computer's screens: pick one to view");
             if let Some(i) = pick.filter(|&i| i != self.display) {
                 self.display = i;
                 self.send(ViewerCmd::SelectDisplay(i));
             }
         }
 
-        if theme::console_button(ui, if self.fullscreen { "Window" } else { "Full" }, pal::BLUE,if self.fullscreen{Icon::Window}else{Icon::Fullscreen},false)
+        if theme::console_button(ui, if tight {""} else if self.fullscreen { "Window" } else { "Full" }, pal::BLUE,if self.fullscreen{Icon::Window}else{Icon::Fullscreen},false)
             .on_hover_text("Full screen on/off (Ctrl+Alt+Enter)")
             .clicked()
         {
             self.toggle_fullscreen(&ctx);
         }
 
-        let keys=theme::console_button(ui,"Keys",pal::LAVENDER,Icon::Keys,true);
+        let keys=theme::console_button(ui,if tool_labels {"Keys"} else {""},pal::LAVENDER,Icon::Keys,true);
         theme::console_menu(&keys).show(|ui|self.keys_menu(ui));
 
         let chat_label = if self.unread { "Chat ◆" } else { "Chat" };
-        if theme::console_button(ui,chat_label,pal::LAVENDER,Icon::Chat,false).clicked() {
+        if theme::console_button(ui,if tool_labels {chat_label} else {""},pal::LAVENDER,Icon::Chat,false).on_hover_text(chat_label).clicked() {
             self.show_chat = !self.show_chat;
         }
-        if self.info.capabilities.file_transfer && theme::console_button(ui,"Files",pal::GOLD,Icon::Files,false).on_hover_text("Browse and transfer files").clicked() {
+        if self.info.capabilities.file_transfer && theme::console_button(ui,if tool_labels {"Files"} else {""},pal::GOLD,Icon::Files,false).on_hover_text("Browse and transfer files").clicked() {
             { let mut files=self.files.lock().unwrap();files.open = !files.open; }
+            theme::repaint_console(&ctx);
             self.release_keyboard();
         }
 
@@ -826,7 +865,7 @@ impl RemoteTab {
             (true, true) => ("Sound", pal::GOLD, "Playing the remote computer's sound. Click to mute"),
             (true, false) => ("Muted", pal::LAVENDER.gamma_multiply(0.6), "Click to hear the remote computer's sound"),
         };
-        let sound = ui.add_enabled_ui(can_hear, |ui| theme::console_button(ui,label,color,if self.audio{Icon::Sound}else{Icon::Muted},false)).inner.on_hover_text(tip).on_disabled_hover_text(tip);
+        let sound = ui.add_enabled_ui(can_hear, |ui| theme::console_button(ui,if tool_labels {label} else {""},color,if self.audio{Icon::Sound}else{Icon::Muted},false)).inner.on_hover_text(tip).on_disabled_hover_text(tip);
         if sound.clicked() {
             self.audio = !self.audio;
             self.send(ViewerCmd::Audio(self.audio));
@@ -834,17 +873,9 @@ impl RemoteTab {
 
         // Tools: privacy mode, port forwarding. Gold while privacy is on.
         let tools_color = if self.privacy { pal::GOLD } else { pal::LAVENDER };
-        let tools=theme::console_button(ui,"Tools",tools_color,Icon::Tools,true);
+        let tools=theme::console_button(ui,if tool_labels {"Tools"} else {""},tools_color,Icon::Tools,true);
         theme::console_menu(&tools).show(|ui|self.tools_menu(ui));
 
-        let preset_label=if ui.available_width()<145.0 {""}else{PRESETS[self.preset].0};
-        let quality=theme::console_button(ui,preset_label,pal::BLUE,Icon::Performance,true)
-            .on_hover_text(format!("Picture quality · {}",PRESETS[self.preset].0));
-        theme::console_menu(&quality).show(|ui|self.quality_menu(ui));
-        let gap=Rect::from_min_max(pos2(ui.min_rect().right()+4.0,bar.top()),pos2(right_left-4.0,bar.bottom()));
-        // The label extends past the controls' clip to meet the stats panel;
-        // use the toolbar's painter so its right-hand curves remain visible.
-        theme::session_rail_label(&painter,gap,&self.info.host_name.to_uppercase());
         action
     }
 
@@ -854,12 +885,17 @@ impl RemoteTab {
         let mut action = TabAction::None;
         let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
         right.spacing_mut().item_spacing.x = 4.0;
-        if theme::console_button(&mut right,"End",pal::RED,Icon::End,false).clicked() {
+        if theme::console_button(&mut right,"",pal::RED,Icon::End,false).on_hover_text("End this link").clicked() {
             self.send(ViewerCmd::Disconnect);
             action = TabAction::Close;
         }
         theme::session_stats_frame()
-            .show(&mut right,|ui|{ui.set_min_height(34.0);self.stats_readout(ui,Detail::Fps,t)});
+            .show(&mut right,|ui|{ui.set_min_height(34.0);self.stats_readout(ui,if cfg!(target_os="android") {Detail::Fps} else {Detail::Compact},t)});
+        if !cfg!(target_os="android") {
+            let quality = theme::console_button(&mut right, "", pal::BLUE, Icon::Performance, true)
+                .on_hover_text(format!("Picture quality · {}", PRESETS[self.preset].0));
+            theme::console_menu(&quality).show(|ui| self.quality_menu(ui));
+        }
         let left_rect = inner.with_max_x(right.min_rect().left() - 8.0);
         let mut left = ui.new_child(UiBuilder::new().max_rect(left_rect).layout(Layout::left_to_right(Align::Center)));
         left.set_clip_rect(left_rect.expand2(vec2(0.0, 8.0)));
@@ -868,9 +904,14 @@ impl RemoteTab {
             self.release_keyboard();
             action = TabAction::Bridge;
         }
-        let console = theme::console_button(&mut left,"Console",if self.unread {pal::GOLD}else{pal::LAVENDER},Icon::Console,true);
+        let console = theme::console_button(&mut left,if left_rect.width()<180.0 {""} else {"Console"},if self.unread {pal::GOLD}else{pal::LAVENDER},Icon::Console,true);
         theme::console_menu(&console).show(|ui| {
             ui.set_min_width(230.0);
+            if !ctx.embed_viewports() && ui.button(if self.detached {"Dock in main console"} else {"Open in separate window"}).clicked() {
+                self.release_keyboard();
+                action = if self.detached {TabAction::Dock} else {TabAction::Detach};
+                ui.close();
+            }
             if self.info.displays.len() > 1 {
                 ui.label(RichText::new("SCREEN").font(theme::display(15.0)).color(pal::LAVENDER));
                 let mut pick = None;
@@ -903,6 +944,7 @@ impl RemoteTab {
             }
             if self.info.capabilities.file_transfer && ui.button("Files").clicked() {
                 { let mut files=self.files.lock().unwrap();files.open = !files.open; }
+                theme::repaint_console(ctx);
                 self.release_keyboard();
                 ui.close();
             }
@@ -914,8 +956,6 @@ impl RemoteTab {
             ui.menu_button("Tools", |ui| self.tools_menu(ui));
             ui.menu_button(format!("Quality: {}", PRESETS[self.preset].0), |ui| self.quality_menu(ui));
         });
-        let gap=Rect::from_min_max(pos2(left.min_rect().right()+4.0,inner.top()),pos2(right.min_rect().left()-4.0,inner.bottom()));
-        theme::session_rail_label(ui.painter(),gap,&self.info.host_name.to_uppercase());
         action
     }
 
@@ -952,6 +992,7 @@ impl RemoteTab {
             .clicked() {
             self.release_keyboard();
             self.network.lock().expect("network window").open = true;
+            theme::repaint_console(ui.ctx());
             ui.close();
         }
         let (privacy_ok, tunnels_ok) = (self.info.capabilities.privacy, self.info.capabilities.tunnels);
@@ -1152,7 +1193,7 @@ impl RemoteTab {
         }
         if !open {
             self.show_sysinfo = false;
-            theme::repaint_after_tool_close(ctx);
+            theme::repaint_console(ctx);
             // The Close click was drawn with the panel still present. Redraw
             // this pass without it instead of waiting for focus/input to return.
             ctx.request_discard("System information closed");
@@ -1296,8 +1337,8 @@ impl RemoteTab {
         let activity=self.files.lock().unwrap().activity();
         if let Some((n, frac)) = activity {
             let r = ui
-                .add(egui::Button::new(RichText::new(format!("⇅ {n} · {:.0}%", frac * 100.0)).font(theme::mono(14.0)).color(pal::GOLD)).frame(false))
-                .on_hover_text("Show transfers");
+                .add(egui::Button::new(RichText::new(if detail == Detail::Full {format!("⇅ {n} · {:.0}%", frac * 100.0)} else {"⇅".into()}).font(theme::mono(14.0)).color(pal::GOLD)).frame(false))
+                .on_hover_text(format!("Show {n} transfers · {:.0}%", frac * 100.0));
             if r.clicked() {
                 self.files.lock().unwrap().open = true;
             }
@@ -1333,7 +1374,7 @@ impl RemoteTab {
             if recovering {
                 if theme::pill(ui,"Cancel reconnect",pal::ORANGE).clicked() {tracing::info!(peer=%self.peer,"automatic reconnect canceled");self.reconnect=None;}
             } else if theme::pill(ui,"Reconnect",pal::ORANGE).clicked() {
-                out=Some(TabAction::Reconnect(self.peer,self.password.clone(),self.via.clone()));
+                self.reconnect_requested = true;
             }
             if theme::pill(ui,"End link",pal::RED).clicked() {out=Some(TabAction::Close);}
         });
@@ -1372,4 +1413,68 @@ fn sysinfo_text(host: &str, sections: &[slipstream_core::proto::InfoSection]) ->
         }
     }
     out
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+    use slipstream_core::config::Store;
+    use slipstream_session::{Client, ClientOptions, AudioOut};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn window_focus_routes_to_one_live_session_and_background_tools_keep_control() {
+        let work = tempfile::tempdir().unwrap();
+        let mut clients = Vec::new();
+        for (name, host) in [("first", true), ("second", true), ("viewer", false)] {
+            let store = Store::open(work.path().join(name)).unwrap();
+            let mut settings = store.load_settings();
+            settings.server.use_public_relays = false;
+            settings.host.set_permanent_password(Some("window-test-password"));
+            store.save_settings(&settings).unwrap();
+            let (client, _) = Client::start(store, ClientOptions {
+                test_pattern: host, accept_sessions: host,
+                clipboard: slipstream_platform::clipboard::ClipboardSource::Memory(Default::default()),
+                audio_out: AudioOut::Memory(Default::default()),
+            }).await.unwrap();
+            clients.push(client);
+        }
+        let ctx = egui::Context::default();
+        let mut tabs = Vec::new();
+        for (index, host) in clients[..2].iter().enumerate() {
+            let (session, events) = clients[2].connect_direct(host.endpoint_addr(), "window-test-password", |_| {}).await.unwrap();
+            let mut tab = RemoteTab::new(index as u64 + 1, session, events, "window-test-password".into(), &ctx, false);
+            tab.detached = true;
+            tab.captured = true;
+            tab.held_keys.insert("ControlLeft");
+            tab.pending_keys.push(CapturedKey::ToggleFullscreen);
+            tabs.push(Arc::new(Mutex::new(tab)));
+        }
+        let route = |viewport, focused| super::super::route_session_input(&tabs, super::super::Page::Links, viewport, focused);
+        assert!(Arc::ptr_eq(&route(RemoteTab::window_id(1), true).unwrap(), &tabs[0]));
+        assert!(tabs[0].lock().unwrap().keyboard_captured());
+        assert!(!tabs[1].lock().unwrap().keyboard_captured());
+        assert!(tabs[1].lock().unwrap().pending_keys.is_empty());
+        assert!(tabs[1].lock().unwrap().held_keys.is_empty());
+        let tool = egui::ViewportId::from_hash_of("background-tool");
+        assert!(route(tool, false).is_none());
+        assert!(tabs[0].lock().unwrap().keyboard_captured());
+        assert!(route(tool, true).is_none());
+        assert!(!tabs[0].lock().unwrap().keyboard_captured());
+        {
+            let mut second = tabs[1].lock().unwrap();
+            second.captured = true;
+            second.pending_keys.push(CapturedKey::ToggleFullscreen);
+        }
+        route(RemoteTab::window_id(2), false);
+        assert!(!tabs[1].lock().unwrap().keyboard_captured());
+        assert!(tabs[1].lock().unwrap().pending_keys.is_empty());
+        tabs[0].lock().unwrap().detached = false;
+        assert!(route(egui::ViewportId::ROOT, true).is_none());
+        let docked = super::super::route_session_input(&tabs, super::super::Page::Remote(1), egui::ViewportId::ROOT, true).unwrap();
+        assert!(Arc::ptr_eq(&docked, &tabs[0]));
+        drop(docked);
+        for tab in &tabs { tab.lock().unwrap().end_link(); }
+        drop(tabs);
+        for client in &clients { client.shutdown().await; }
+    }
 }

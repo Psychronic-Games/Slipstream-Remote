@@ -585,6 +585,30 @@ plus the tray app if it's on.
 
 ## UI
 
+The [desktop session preview](screenshots/session-0.19.0.png) shows the
+workstation in the title bar and the performance/quality controls together.
+
+Outgoing sessions are shared `Arc<Mutex<RemoteTab>>` objects owned by the
+console. A session may render in the root or a deferred native viewport with
+a stable ID derived from its tab ID. Moving it changes the presentation, not
+the connection or GPU stream ID. Deferred callbacks send lifecycle actions
+back to the root; the root polls sessions/reconnects and registers session,
+Files and Network Scan windows even while hidden. Each session queues its
+own captured keys and consumes them in its own viewport, so full-screen
+commands and shortcuts target the right window. Focus changes release other
+sessions; unfocused tool repaints do not. Ending a link explicitly disconnects
+it before dropping shared callbacks, and texture retention includes detached
+sessions. Manual reconnect now uses the same retained-session recovery path.
+
+The Windows local service pipe additionally publishes the host's current
+one-time code in its authenticated snapshots and accepts regeneration requests
+bound to the current host epoch. Missing optional fields preserve older local
+service compatibility. The code is never written to public files or service
+stdout, and the GUI clears it when the pipe disconnects. The compact GUI
+refreshes the authoritative service ID instead of pairing a service code with
+the viewer process's ID. Network authentication still accepts the temporary
+and permanent password alternatives; session protocol remains version 6.
+
 egui on wgpu, styled with a custom sci-fi theme: a starship-console layout
 with a neon-on-dark palette, glow strokes and HUD corner brackets. Video
 frames are converted from YUV to RGB on the GPU (a WGSL shader in an

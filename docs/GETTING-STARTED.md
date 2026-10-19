@@ -233,6 +233,23 @@ time.
 
 ## 3. Connect to a computer
 
+The device's one-time code and its optional unattended password both work
+with the same ID. A code changes after a session ends; changing it does not
+change the unattended password or disconnect an existing controller. Windows
+service hosts show their code in the signed-in user's app, with Copy and New
+controls. If an older service has no code to show, update it under
+**Config → Windows service → Update**. An unattended password is still
+required when installing the service for access before sign-in.
+
+On desktop, use **Pop out** in the session toolbar or **Links → Open window**
+to give each workstation its own movable/resizable window. At compact widths,
+the option is under Console. **Dock** returns it to the main console without
+reconnecting; **Bridge** opens the console while the window's link continues.
+Closing a session window or choosing End link disconnects only that workstation.
+Links can focus an existing window. Phones keep their embedded session view.
+The top title bar identifies the workstation; picture quality and FPS/latency
+sit together on the second bar.
+
 1. Open Slipstream on your own computer. You download it from the same
    station page.
 2. On the **Bridge** page, under **Establish link**, enter the client's

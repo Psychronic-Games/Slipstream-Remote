@@ -90,7 +90,7 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
                 match ev {
                     ClientEvent::Directory(DirStatus::Online { id }) => println!("ID       {id}"),
                     ClientEvent::Directory(other) => println!("server   {other:?}"),
-                    ClientEvent::Password(pw) => println!("PASSWORD {pw}"),
+                    ClientEvent::Password(pw) => if !service { println!("PASSWORD {pw}"); },
                     ClientEvent::HostSessionStarted { session, peer } => println!("session {session} started by {peer}"),
                     ClientEvent::HostSessionEnded { session, reason } => println!("session {session} ended: {reason}"),
                     ClientEvent::HostChat { text, .. } => if service {println!("chat message received");} else {println!("chat: {text}");}

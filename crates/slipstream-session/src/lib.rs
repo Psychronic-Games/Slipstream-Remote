@@ -1281,6 +1281,29 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn temporary_and_unattended_passwords_work_together_and_only_the_code_rotates() {
+        let (host, mut events, hdir) = client("dual-password-host", true).await;
+        let (first, _events, adir) = client("dual-password-a", false).await;
+        let (second, _events, bdir) = client("dual-password-b", false).await;
+        let code = host.one_time_password();
+        let (permanent, _events) = first.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let (temporary, _events) = second.connect_direct(host.endpoint_addr(), &code, |_| {}).await.unwrap();
+        temporary.send(ViewerCmd::Disconnect);
+        assert!(wait_for(&mut events, |e| matches!(e, ClientEvent::Password(password) if password != &code)).await);
+        // The first controller remains connected when another code user leaves.
+        assert!(!permanent.system_info().await.unwrap().is_empty());
+        assert!(second.connect_direct(host.endpoint_addr(), &code, |_| {}).await.is_err());
+        let new_code = host.regenerate_password();
+        let (new_session, _events) = second.connect_direct(host.endpoint_addr(), &new_code, |_| {}).await.unwrap();
+        new_session.send(ViewerCmd::Disconnect);
+        permanent.send(ViewerCmd::Disconnect);
+        first.shutdown().await;
+        second.shutdown().await;
+        host.shutdown().await;
+        for dir in [hdir, adir, bdir] { let _ = std::fs::remove_dir_all(dir); }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn local_screen_approval_is_reused_and_reset_does_not_interrupt_viewers() {
         let (host, mut events, hdir) = client("preapproved-host", true).await;
         let (viewer, _events, vdir) = client("preapproved-viewer", false).await;
