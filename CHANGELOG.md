@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.19.1 — 2026-10-19
+
 ### Session identification
 - Keep the workstation label in the toolbar when Android or full screen hides
   the native title bar. Compact Console menus also show the full workstation
