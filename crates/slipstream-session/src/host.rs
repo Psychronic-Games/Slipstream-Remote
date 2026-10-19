@@ -109,45 +109,30 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
 
     // Open (or reuse) the screen session. On Wayland the first time this
     // shows the desktop's "allow screen sharing" dialog on this machine.
-    let (displays, cursor_in_video, privacy, input_supported) = {
-        let mut backend = inner.backend.lock().await;
-        // Android may revoke a projection while no viewer owns a pipeline;
-        // there is then no capture-error event to evict the cached backend.
-        if backend.as_ref().is_some_and(|b|b.displays().is_empty()) {*backend=None;}
-        if backend.is_none() {
-            let opts = OpenOptions {
-                test_pattern: inner.opts.test_pattern,
-                restore_token: settings.host.portal_restore_token.clone(),
-            };
-            let open = slipstream_platform::open(&opts);
-            tokio::pin!(open);
-            // Only mention the prompt if there evidently is one (opening
-            // is instant on X11, Windows, or with a remembered permission).
-            let opened = tokio::select! {
-                r = &mut open => r,
-                _ = tokio::time::sleep(Duration::from_millis(700)) => {
-                    write_msg(&mut send, &HostMsg::Notice("Waiting for the remote side to allow screen sharing…".into()))
-                        .await?;
-                    open.await
-                }
-            };
-            match opened {
-                Ok(b) => {
-                    if let Some(token) = b.restore_token() {
-                        set_restore_token(&inner, token);
-                    }
-                    info!(backend = b.name(), "screen backend ready");
-                    *backend = Some(b);
-                }
-                Err(e) => {
-                    warn!("screen sharing unavailable: {e:#}");
-                    fail(&mut send, format!("screen sharing unavailable: {e:#}"), 0).await?;
-                    return Ok(());
-                }
+    let backend = {
+        let open = screen_backend(&inner);
+        tokio::pin!(open);
+        // Only mention the prompt if there evidently is one (opening
+        // is instant on X11, Windows, or with a remembered permission).
+        let opened = tokio::select! {
+            r = &mut open => r,
+            _ = tokio::time::sleep(Duration::from_millis(700)) => {
+                write_msg(&mut send, &HostMsg::Notice("Waiting for the remote side to allow screen sharing…".into()))
+                    .await?;
+                open.await
+            }
+        };
+        match opened {
+            Ok(backend) => backend,
+            Err(e) => {
+                warn!("screen sharing unavailable: {e:#}");
+                fail(&mut send, format!("screen sharing unavailable: {e:#}"), 0).await?;
+                return Ok(());
             }
         }
-        backend.as_ref().map(|b| (b.displays(), b.cursor_in_video(), b.privacy_supported(), b.input_supported())).unwrap_or_default()
     };
+    let (displays, cursor_in_video, privacy, input_supported) = backend.as_ref()
+        .map(|b| (b.displays(), b.cursor_in_video(), b.privacy_supported(), b.input_supported())).unwrap_or_default();
 
     if displays.is_empty() {
         let reason=if cfg!(target_os="android") {
@@ -179,6 +164,9 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
     let id = inner.next_session_id();
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     inner.host_sessions.lock().unwrap().insert(id, cmd_tx);
+    // Register the viewer before allowing a local reset to acquire this lock.
+    // Otherwise reset could discard its backend just as authentication ends.
+    drop(backend);
     inner.emit(ClientEvent::HostSessionStarted { session: id, peer: viewer_name.clone() });
 
     let controlled = capabilities.input;
@@ -203,6 +191,29 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
     inner.emit(ClientEvent::Password(pw));
     conn.close((if restarting {slipstream_core::proto::RESTART_CLOSE_CODE}else{0}).into(), b"bye");
     Ok(())
+}
+
+/// Shared by local approval and incoming sessions, so preparing access never
+/// opens a second portal or replaces a backend a viewer is already using.
+pub(crate) async fn screen_backend(inner: &Inner) -> Result<tokio::sync::MutexGuard<'_, Option<Box<dyn slipstream_platform::Backend>>>> {
+    let mut backend = inner.backend.lock().await;
+    // Android can revoke capture with no viewer left to report its failure.
+    if backend.as_ref().is_some_and(|b| b.displays().is_empty()) {
+        *backend = None;
+    }
+    if backend.is_none() {
+        let restore_token = inner.settings.lock().unwrap().host.portal_restore_token.clone();
+        let opened = slipstream_platform::open(&OpenOptions {
+            test_pattern: inner.opts.test_pattern,
+            restore_token,
+        }).await?;
+        if let Some(token) = opened.restore_token() {
+            set_restore_token(inner, token);
+        }
+        info!(backend = opened.name(), "screen backend ready");
+        *backend = Some(opened);
+    }
+    Ok(backend)
 }
 
 fn set_restore_token(inner: &Inner, token: String) {

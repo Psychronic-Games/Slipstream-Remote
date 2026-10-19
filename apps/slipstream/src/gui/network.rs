@@ -273,7 +273,7 @@ impl NetworkScanner {
             let ctx = ui.ctx().clone();
             let connected=scanner.fs.is_connected();
             if !scanner.open {
-                if class==egui::ViewportClass::Deferred {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
+                theme::dismiss_tool_viewport(&ctx, class==egui::ViewportClass::Deferred);
                 return;
             }
             scanner.tick(&ctx, &rt, connected);
@@ -281,8 +281,8 @@ impl NetworkScanner {
             let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
             if close || ui.input(|i|i.viewport().close_requested()) {
                 scanner.open=false;scanner.stop();
-                if class == egui::ViewportClass::Deferred { ctx.send_viewport_cmd(egui::ViewportCommand::Close); }
-                ctx.request_repaint_of(egui::ViewportId::ROOT);return;
+                theme::dismiss_tool_viewport(&ctx, class==egui::ViewportClass::Deferred);
+                return;
             }
             egui::ScrollArea::vertical().id_salt("scan-body").auto_shrink([false,false])
                 .show(ui, |ui| scanner.contents(ui, &ctx, &rt, &host, connected));

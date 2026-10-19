@@ -380,6 +380,15 @@ Frame acknowledgements cannot advance past the last issued sequence.
 
 ## Platform backends
 
+The Wayland GUI and headless host prepare the cached backend at startup,
+before an incoming viewer needs it. Config can prepare or reset/reapprove
+it locally. Preparation and authenticated sessions share the backend mutex,
+so they reuse one portal grant. Reset drops the cached portal and stored
+restore token only when no incoming session is active. Tokens returned by
+the desktop persist to settings; a desktop that supplies none only grants
+access for the current running process. Windows service hosts use their
+existing active-console-session backend and require no portal approval.
+
 | | Capture | Input |
 |---|---|---|
 | Linux (Wayland) | xdg-desktop-portal ScreenCast + PipeWire, pointer embedded by the compositor | RemoteDesktop portal |

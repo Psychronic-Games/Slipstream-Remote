@@ -85,8 +85,11 @@ control any other.
 The **BRIDGE** page shows the computer's ID and password. On the other
 computer, enter them under **Establish link** and press **Engage**.
 
-On Wayland the first incoming session asks you to approve screen sharing;
-the choice is remembered.
+On Wayland, approve screen sharing when Slipstream starts, or choose
+**Config → Screen permission → Approve now** before someone connects.
+Access stays ready while it runs in the tray; the desktop decides whether
+approval can be remembered across restarts. Windows needs no screen-sharing
+approval, including when its background service hosts the computer.
 
 ## Command line
 

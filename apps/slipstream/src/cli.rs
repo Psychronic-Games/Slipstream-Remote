@@ -68,6 +68,15 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
         store.save_settings(&s)?;
     }
     let (client, mut events) = Client::start(store, ClientOptions { test_pattern, accept_sessions: true, ..Default::default() }).await?;
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() && client.settings().host.enabled {
+        let preparing = client.clone();
+        tokio::spawn(async move {
+            if let Err(e) = preparing.prepare_screen_access().await {
+                tracing::warn!("approve screen access locally before connecting: {e:#}");
+            }
+        });
+    }
     #[cfg(windows)]
     let mut chat_bridge=if service {match crate::service_chat::Server::start(client.clone()){Ok(bridge)=>Some(bridge),Err(e)=>{tracing::warn!("host chat unavailable: {e:#}");None}}} else {None};
     println!("hosting; endpoint {}", client.endpoint_id());

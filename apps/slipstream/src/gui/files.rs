@@ -463,7 +463,7 @@ impl FileManager {
             let ctx=ui.ctx().clone();
             let connected=files.fs.is_connected();
             if !files.open {
-                if class==egui::ViewportClass::Deferred {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
+                theme::dismiss_tool_viewport(&ctx, class==egui::ViewportClass::Deferred);
                 return;
             }
             files.handle_messages(&rt,&ctx);
@@ -471,8 +471,8 @@ impl FileManager {
             let (body,close)=theme::tool_frame(ui,&format!("File transfer · {host}"),desktop,pal::ORANGE);
             if close || ui.input(|i|i.viewport().close_requested()) {
                 files.open=false;
-                if desktop {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
-                ctx.request_repaint_of(egui::ViewportId::ROOT);return;
+                theme::dismiss_tool_viewport(&ctx, desktop);
+                return;
             }
             let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
             if connected {files.ensure_started(&rt,&ctx);} else {
@@ -513,15 +513,15 @@ impl FileManager {
             let ctx=ui.ctx().clone();
             let desktop=class==egui::ViewportClass::Deferred;
             if !files.progress_open {
-                if desktop {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
+                theme::dismiss_tool_viewport(&ctx, desktop);
                 return;
             }
             files.handle_messages(&rt,&ctx);
             let (body,close)=theme::tool_frame(ui,&format!("Transfers · {host}"),desktop,pal::ORANGE);
             if close || ctx.input(|i|i.viewport().close_requested()) {
                 files.progress_open=false;
-                if desktop {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
-                ctx.request_repaint_of(egui::ViewportId::ROOT);return;
+                theme::dismiss_tool_viewport(&ctx, desktop);
+                return;
             }
             let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
             ui.horizontal(|ui| {

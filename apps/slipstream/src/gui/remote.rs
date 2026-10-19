@@ -1152,6 +1152,10 @@ impl RemoteTab {
         }
         if !open {
             self.show_sysinfo = false;
+            theme::repaint_after_tool_close(ctx);
+            // The Close click was drawn with the panel still present. Redraw
+            // this pass without it instead of waiting for focus/input to return.
+            ctx.request_discard("System information closed");
         }
     }
 

@@ -100,10 +100,8 @@ fn text_field_sized(ui: &mut Ui, value: &mut String, hint: &str, password: bool,
 }
 
 pub fn ui(app: &mut App, ui: &mut Ui) {
-    #[cfg(not(target_os="android"))]
-    let mut reset_permission = false;
-    #[cfg(target_os="android")]
-    let reset_permission = false;
+    #[cfg(target_os = "linux")]
+    let mut approve_screen = None;
     let mut link_now = false;
     let linking = app.linking();
     #[cfg(windows)]
@@ -196,11 +194,49 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             row(ui, "Close button", |ui| {
                 ui.checkbox(&mut f.run_in_tray, "Keep running in the tray when the window is closed (stay reachable)");
             });
-            #[cfg(not(target_os="android"))]
-            row(ui, "Screen permission", |ui| {
-                if theme::pill(ui, "Reset", pal::VIOLET).clicked() {
-                    reset_permission = true;
+            #[cfg(target_os = "linux")]
+            row(ui, "Screen permission", |ui| { ui.vertical(|ui| {
+                if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                    let busy = app.screen_access.busy();
+                    ui.add_enabled_ui(!busy && f.accept && app.incoming.is_empty(), |ui| { ui.horizontal_wrapped(|ui| {
+                        if theme::pill(ui, "Approve now", pal::GREEN).clicked() {
+                            approve_screen = Some(false);
+                        }
+                        if theme::pill(ui, "Reset / approve again", pal::VIOLET).clicked() {
+                            approve_screen = Some(true);
+                        }
+                    }); });
+                    let (text, color) = if busy {
+                        ("Waiting for your desktop's screen-sharing approval…", pal::GOLD)
+                    } else {
+                        match &app.screen_access.result {
+                            Some(Ok(true)) => ("Ready · permission saved for future starts", pal::GREEN),
+                            Some(Ok(false)) => ("Ready while running · this desktop did not save permission", pal::GREEN),
+                            Some(Err(error)) => (error.as_str(), pal::RED),
+                            None => ("Approve access before someone connects", pal::DIM),
+                        }
+                    };
+                    ui.label(RichText::new(text).small().color(color));
+                } else {
+                    ui.label(RichText::new("Available automatically on X11, including while running in the tray").small().color(pal::DIM));
                 }
+            }); });
+            #[cfg(target_os = "linux")]
+            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                ui.label(RichText::new("Screen access is prepared when Slipstream starts and remains available in the tray. Your desktop decides whether approval survives a restart or reboot.").small().color(pal::DIM));
+            }
+            #[cfg(windows)]
+            row(ui, "Screen access", |ui| {
+                let text = if via_service {
+                    "The Windows service provides background screen access, including the login screen and administrator prompts. No screen-sharing approval is needed."
+                } else {
+                    "Available automatically while Slipstream runs, including in the tray. Install the Windows service below for access before sign-in and to administrator prompts."
+                };
+                ui.label(RichText::new(text).small().color(pal::DIM));
+            });
+            #[cfg(target_os = "macos")]
+            row(ui, "Screen access", |ui| {
+                ui.label(RichText::new("Allow Slipstream in System Settings → Privacy & Security → Screen Recording and Accessibility before connecting. Access stays available while Slipstream runs in the tray.").small().color(pal::DIM));
             });
             #[cfg(windows)]
             row(ui, "Windows service", |ui| {
@@ -280,9 +316,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             app.start_link(&ctx, slipstream_core::provision::StationLink { station, code }, true);
         }
     }
-    if reset_permission {
-        app.client.update_settings(|s| s.host.portal_restore_token = None);
-        app.toast("Screen-sharing permission will be asked again next session", pal::VIOLET);
+    #[cfg(target_os = "linux")]
+    if let Some(reset) = approve_screen {
+        app.screen_access.start(&app.rt, &app.client, ui.ctx(), reset);
     }
 
     let f = &mut app.settings_form;

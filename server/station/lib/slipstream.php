@@ -948,6 +948,20 @@ function h($s): string
     return htmlspecialchars((string)$s, ENT_QUOTES);
 }
 
+/** One filename for the HTTP attachment and the browser's download hint. */
+function slip_download_name(string $os): string
+{
+    $org = preg_replace('/[\x00-\x1F<>:"\/\\\\|?*]+/u', ' ', (string)(slip_station()['org'] ?? ''));
+    $org = trim(preg_replace('/\s+/u', ' ', $org), " .");
+    $base = 'Slipstream Remote' . ($org !== '' && strcasecmp($org, 'Slipstream Remote') !== 0 ? " - $org" : '');
+    return match ($os) {
+        'windows' => "$base.exe",
+        'macos' => "$base (macOS).zip",
+        'android' => "$base.apk",
+        default => $base,
+    };
+}
+
 /** Client builds the station can hand out, keyed by platform. */
 function slip_client_builds(): array
 {

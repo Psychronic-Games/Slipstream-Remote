@@ -32,18 +32,16 @@ if (!$b || !$b['path']) {
     exit('That download is not available.');
 }
 
-// "Slipstream Remote - Acme IT". Characters that are illegal in file names
-// on any OS (Windows forbids <>:"/\|?*) are dropped from the org name.
-$org = preg_replace('/[\x00-\x1F<>:"\/\\\\|?*]+/u', ' ', (string)($station['org'] ?? ''));
-$org = trim(preg_replace('/\s+/u', ' ', $org), " .");
-$base = 'Slipstream Remote' . ($org !== '' && strcasecmp($org, 'Slipstream Remote') !== 0 ? " - $org" : '');
+$name = slip_download_name($os);
 
 function slip_disposition(string $name): string
 {
     // Plain ASCII name for every browser, plus the exact UTF-8 name (RFC 6266)
     // for org names with accents etc.
     $ascii = preg_replace('/[^\x20-\x7E]/', '_', $name);
-    return 'Content-Disposition: attachment; filename="' . $ascii . "\"; filename*=UTF-8''" . rawurlencode($name);
+    $header = 'Content-Disposition: attachment; filename="' . $ascii . '"';
+    // Keep ordinary ASCII downloads simple for older Android downloaders.
+    return $ascii === $name ? $header : $header . "; filename*=UTF-8''" . rawurlencode($name);
 }
 
 while (ob_get_level()) {
@@ -58,7 +56,6 @@ header('X-Content-Type-Options: nosniff');
 // (see index.php). Unsigned builds get the station's settings appended, so
 // they need no setup at all.
 if ($b['signed'] || $os === 'macos') {
-    $name = ['windows' => "$base.exe", 'macos' => "$base (macOS).zip", 'android' => "$base.apk"][$os] ?? $base;
     $type = ['macos' => 'application/zip', 'android' => 'application/vnd.android.package-archive'][$os] ?? 'application/octet-stream';
     header("Content-Type: $type");
     header(slip_disposition($name));
@@ -68,7 +65,6 @@ if ($b['signed'] || $os === 'macos') {
 }
 
 $trailer = slip_trailer();
-$name = $os === 'windows' ? "$base.exe" : $base;
 header('Content-Type: application/octet-stream');
 header(slip_disposition($name));
 header('Content-Length: ' . ($b['size'] + strlen($trailer)));

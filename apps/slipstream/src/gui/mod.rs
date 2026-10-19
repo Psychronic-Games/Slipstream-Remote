@@ -19,6 +19,8 @@ mod scheme;
 #[cfg(windows)]
 mod softgl;
 mod settings;
+#[cfg(target_os = "linux")]
+mod screen_access;
 mod single;
 pub mod theme;
 mod window_shape;
@@ -323,6 +325,8 @@ pub struct App {
     pub incoming: Vec<IncomingSession>,
     toasts: Vec<Toast>,
     pub settings_form: settings::SettingsForm,
+    #[cfg(target_os = "linux")]
+    screen_access: screen_access::ScreenAccess,
     pub motd: Option<String>,
     /// Organisation running our station, shown in the frame.
     pub org: Option<String>,
@@ -384,6 +388,14 @@ impl App {
             }
         });
         let settings_form = settings::SettingsForm::from(&client.settings());
+        #[cfg(target_os = "linux")]
+        let screen_access = {
+            let mut access = screen_access::ScreenAccess::default();
+            if std::env::var_os("WAYLAND_DISPLAY").is_some() && client.settings().host.enabled {
+                access.start(&rt, &client, &ctx, false);
+            }
+            access
+        };
         let tray = tray::Tray::new(&rt, &ctx);
         let org = client.settings().server.org_name.clone();
         Self {
@@ -403,6 +415,8 @@ impl App {
             incoming: Vec::new(),
             toasts: Vec::new(),
             settings_form,
+            #[cfg(target_os = "linux")]
+            screen_access,
             motd: None,
             org,
             captured_keys: Vec::new(),
@@ -1409,6 +1423,8 @@ impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32;4] { [0.0;4] }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        #[cfg(target_os = "linux")]
+        self.screen_access.poll();
         let mut restored=Vec::new();
         for tab in &mut self.tabs {
             tab.poll(ctx);

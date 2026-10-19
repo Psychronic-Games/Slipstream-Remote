@@ -13,6 +13,22 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Screen access and tool cleanup
+- Hide detached File Transfer, transfer receipts and Network Scan immediately
+  when closed, and repaint an occluded parent to finish native-window cleanup.
+  Redraw System Information's closing frame without the panel so it cannot
+  leave a black rectangle waiting for another click.
+- Prepare Wayland screen/control permission when the desktop app or headless
+  host starts, keeping the approved session available while running in the tray.
+  Config adds Approve now and Reset / approve again; desktop restore tokens
+  are saved when supplied, and resetting refuses to interrupt incoming viewers.
+- Show platform-specific screen-access guidance: Windows needs no portal
+  approval and its installed service provides access in the background;
+  Android retains its explicit Start sharing approval.
+- Give station download buttons an explicit app filename, including the APK,
+  and simplify ASCII attachment headers for older mobile downloaders. Keep
+  signed APK bytes unchanged and retain UTF-8 names for non-ASCII station names.
+
 ## 0.17.1 — 2026-10-18
 
 ### Audit: transfer and session reliability

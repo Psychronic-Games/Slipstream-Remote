@@ -70,7 +70,7 @@ and you've shared your password.</p>
         <h3><?= h($b['label']) ?></h3>
         <div class="dim"><?= h($b['note']) ?><?= $b['path'] ? ' · ' . $fmt($b['size']) : '' ?></div>
         <?php if ($b['path']): ?>
-          <a class="btn <?= $os === $guess ? '' : 'blue' ?>" href="download.php?os=<?= h($os) ?>&amp;c=<?= h($code) ?>">Download</a>
+          <a class="btn <?= $os === $guess ? '' : 'blue' ?>" href="download.php?os=<?= h($os) ?>&amp;c=<?= h($code) ?>" download="<?= h(slip_download_name($os)) ?>">Download</a>
         <?php else: ?>
           <span class="btn off">Not available</span>
         <?php endif ?>

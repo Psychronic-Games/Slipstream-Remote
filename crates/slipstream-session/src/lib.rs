@@ -188,6 +188,32 @@ impl Client {
         self.inner.settings.lock().unwrap().clone()
     }
 
+    /// Approve screen/input access locally before any viewer connects. The
+    /// backend stays available while the host runs, including in the tray.
+    /// Returns whether the desktop supplied a permission token for later runs.
+    pub async fn prepare_screen_access(&self) -> Result<bool> {
+        if !self.inner.opts.accept_sessions || !self.settings().host.enabled {
+            bail!("Enable incoming connections before approving screen access");
+        }
+        let backend = host::screen_backend(&self.inner).await?;
+        let backend = backend.as_ref().context("No screen is available")?;
+        if backend.displays().is_empty() {
+            bail!("No screen is available");
+        }
+        Ok(backend.restore_token().is_some())
+    }
+
+    /// Forget a portal grant and its cached session. Do not interrupt a viewer.
+    pub async fn reset_screen_access(&self) -> Result<()> {
+        let mut backend = self.inner.backend.lock().await;
+        if !self.inner.host_sessions.lock().unwrap().is_empty() {
+            bail!("End incoming sessions before changing screen permission");
+        }
+        *backend = None;
+        self.update_settings(|s| s.host.portal_restore_token = None);
+        Ok(())
+    }
+
     /// Changes settings and saves them. Reconnects to the directory if the
     /// server changed.
     pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) {
@@ -1252,6 +1278,41 @@ mod tests {
         assert!(matches!(log.lock().unwrap().events.last(),Some(InputEvent::ReleaseAll)));
         drop(session);viewer.shutdown().await;host.shutdown().await;
         let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn local_screen_approval_is_reused_and_reset_does_not_interrupt_viewers() {
+        let (host, mut events, hdir) = client("preapproved-host", true).await;
+        let (viewer, _events, vdir) = client("preapproved-viewer", false).await;
+        assert!(viewer.prepare_screen_access().await.is_err());
+        let (first, second) = tokio::join!(host.prepare_screen_access(), host.prepare_screen_access());
+        assert!(!first.unwrap()); // Synthetic backend has no desktop restore token.
+        assert!(!second.unwrap());
+        let backend_address = {
+            let backend = host.inner.backend.lock().await;
+            std::ptr::from_ref(&**backend.as_ref().unwrap()).cast::<()>() as usize
+        };
+        let (session, mut video) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        assert!(wait_for(&mut video, |e| matches!(e, ViewerEvent::Stats(_))).await);
+        assert!(host.reset_screen_access().await.is_err());
+        host.prepare_screen_access().await.unwrap();
+        {
+            let backend = host.inner.backend.lock().await;
+            assert_eq!(std::ptr::from_ref(&**backend.as_ref().unwrap()).cast::<()>() as usize, backend_address);
+        }
+        session.send(ViewerCmd::Disconnect);
+        assert!(wait_for(&mut events, |e| matches!(e, ClientEvent::HostSessionEnded { .. })).await);
+        host.update_settings(|s| s.host.portal_restore_token = Some("old-desktop-grant".into()));
+        host.reset_screen_access().await.unwrap();
+        assert!(host.inner.backend.lock().await.is_none());
+        assert!(host.inner.store.load_settings().host.portal_restore_token.is_none());
+        host.prepare_screen_access().await.unwrap();
+        host.update_settings(|s| s.host.enabled = false);
+        assert!(host.prepare_screen_access().await.is_err());
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
     /// A projection can be revoked after its last viewer leaves. No encoder

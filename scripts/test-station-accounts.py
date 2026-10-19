@@ -37,6 +37,8 @@ slip_user_create('owner','Owner','local-owner-password',true);
 slip_user_create('other','Other','local-other-password',false);
 '''
         subprocess.run([php, '-r', init, str(web / 'lib/slipstream.php')], check=True, capture_output=True)
+        apk = b'PK\x03\x04isolated-signed-apk-fixture'
+        (web / 'clients/slipstream-android.apk').write_bytes(apk)
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -54,6 +56,15 @@ slip_user_create('other','Other','local-other-password',false);
                         time.sleep(.05)
                 else:
                     raise RuntimeError('PHP station startup timed out')
+
+                with urllib.request.urlopen(address + '/', timeout=10) as response:
+                    page = response.read().decode()
+                    assert 'download="Slipstream Remote - Group test.apk"' in page
+                with urllib.request.urlopen(address + '/download.php?os=android', timeout=10) as response:
+                    assert response.headers['Content-Type'] == 'application/vnd.android.package-archive'
+                    assert response.headers['Content-Disposition'] == 'attachment; filename="Slipstream Remote - Group test.apk"'
+                    assert response.read() == apk, 'APK signature bytes changed during download'
+                print('PHP station: Android download hint, attachment filename, MIME type and unchanged APK passed', flush=True)
 
                 def call(op, token=None, status=200, **fields):
                     body = {'op': op, **fields}

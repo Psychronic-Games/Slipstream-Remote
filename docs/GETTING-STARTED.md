@@ -172,9 +172,13 @@ computer. The app **connects to your station by itself**:
 It runs on any 64-bit distribution from 2020 on (glibc 2.31+: Debian 11,
 Ubuntu 20.04, Fedora, Arch…) and needs no extra packages.
 
-- **Wayland** (KDE, GNOME, …): the first time someone connects, the desktop
-  asks which screen to share and whether to allow remote control. Choose
-  *Share/Allow*. The choice is remembered for later sessions.
+- **Wayland** (KDE, GNOME, …): Slipstream prepares screen access at startup,
+  before anyone connects. Choose a screen and *Share/Allow* in the desktop's
+  prompt. You can also use **Config → Screen permission → Approve now**;
+  **Reset / approve again** lets you change the selection when no incoming
+  viewer is connected. Access remains ready while Slipstream runs in the tray.
+  Permission is remembered across starts when the desktop supplies a restore
+  token; some desktops require approval again after a restart or reboot.
 - **X11**: works without any prompt.
 
 ### macOS (12 or newer, Apple Silicon or Intel)
@@ -412,7 +416,7 @@ The **Config** page on each computer:
 | Permissions | What connected people may do: **Control** (mouse and keyboard), **Clipboard**, **Files**, **Sound** (hear this computer) and **Port forwarding** (off by default). Untick any to allow view-only, no clipboard, or no file access. |
 | One-time password length | Longer means harder to guess. |
 | Unattended password, Start with system, Close button | See [Unattended access](#unattended-access). |
-| Screen permission | Wayland: forget the remembered screen-sharing approval, so it's asked again. |
+| Screen permission / access | Wayland: Approve now, or Reset / approve again to change the selection. Prepared at startup and kept ready in the tray; persistence depends on the desktop. Windows: no screen-sharing approval is needed, including for the background service. |
 | Max frame rate | Upper limit for the video you *receive*. |
 | Clipboard sync | Share copied text and files with remote computers. |
 | Remote sound | Whether sessions start with the remote computer's sound on. |

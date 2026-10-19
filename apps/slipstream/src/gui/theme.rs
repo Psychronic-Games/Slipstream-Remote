@@ -726,6 +726,22 @@ const BAND: f32 = 30.0;
 const FOOT: f32 = 12.0;
 const ELBOW: f32 = 12.0;
 
+/// Close requests alone leave a deferred window alive until its parent stops
+/// registering it. Hide it immediately, then wake even an occluded parent so
+/// Windows cannot leave an empty swapchain rectangle behind.
+pub fn dismiss_tool_viewport(ctx: &egui::Context, desktop: bool) {
+    if desktop {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+    repaint_after_tool_close(ctx);
+}
+
+pub fn repaint_after_tool_close(ctx: &egui::Context) {
+    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::RequestPaintWhileHidden);
+    ctx.request_repaint_of(egui::ViewportId::ROOT);
+}
+
 /// Height [`WindowChrome::footer`] takes: what a window's scrolling body
 /// must leave free below it, or the window grows by that much every frame.
 pub const FOOTER_SPACE: f32 = FOOT + 4.0 + 8.0 + 2.0;
