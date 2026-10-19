@@ -1,12 +1,82 @@
 # Development handoff — 2026-10-19
 
+Published **0.20.0, build 98, commit 98e84e0** at
+https://relay.slipstreamremote.com. Implementation commit: **85bf92f**.
+Later documentation commits do not change the deployed build.
+
+## Session tabs and windows: 0.20.0
+
+- A strip below the title bar switches attached workstation sessions and
+  returns to Bridge. Drag within it to reorder; release outside it for a
+  floating window. Floating windows have their own draggable tab, which can
+  be dropped back into the main strip, including when no tabs remain there.
+  All moves retain the same encrypted session and GPU stream identity.
+- Config → Viewing → New links selects Tabs / Separate windows, applied to
+  future connections after Save configuration. Existing profiles default to
+  tabs and current sessions retain their layout. Android embeds its tabs and
+  does not create desktop viewports. Pop out / Dock, tab context menus and
+  Links window actions remain available. Closing ends only that link.
+- The shared drag coordinator stores root drop geometry and queues placement
+  actions; mutation follows UI lock release. Keyboard capture is released on
+  selection/drag, keeping shortcuts away from the old workstation. Targets
+  use physical pixels across viewport scales. Windows/X11 sample the pointer
+  during a tab drag to restore movement/release lost after winit CursorLeft.
+  The destination can also accept release locally. Hidden/minimized roots
+  do not accept drops. Pure Wayland/macOS cross-window dragging still needs
+  runtime confirmation; explicit Dock remains available.
+
+## Verification for 0.20.0
+
+- Workspace tests: **122 passed, zero failed, five ignored**. Three new
+  headless UI tests exercise real pointer events through the strip, including
+  reorder/tear-out/Escape, different source/destination scales and mouse-up
+  delivered to the destination. Settings round-trip coverage checks the
+  default and persistence of the window preference.
+- Linux/Windows all-target workspace Clippy and arm64 Android Clippy passed
+  with `-D warnings`. No physical Windows, macOS, real mixed-DPI monitor or
+  new Android runtime check was made for this feature.
+- Private Xvfb/X11 sessions confirmed two workstation tabs, switching,
+  reordering, tear-out beyond the source window, drag-back into an empty main
+  strip and closing only one link. Saving Separate windows through the GUI
+  persisted the preference; the next connection opened its own native window
+  while the other link remained. These tests used synthetic hosts and private
+  settings, with no production accounts. Fixture processes were stopped.
+- [Tab-strip preview](screenshots/session-tabs-0.20.0.png) uses synthetic hosts.
+- Packaged desktop hashes/signatures and embedded trust keys matched the
+  existing release key. Portable Linux started under an isolated profile and
+  retained the glibc 2.31 bound. The arm64 release APK uses versionName 0.20.0,
+  versionCode 98, release mode and the existing signing certificate.
+- Live authenticated HTTPS offers report 0.20.0 / 98 / 98e84e0 with valid
+  signatures. Full desktop downloads match signed prefixes and provisioning
+  trailers. Android retains its app filename, APK MIME type, page filename
+  hint and exact signed bytes. Session protocol remains 6.
+
+## Deployment and rollback for 0.20.0
+
+Only clients and the signed manifest changed on the station at
+`/home/doug/WebServer/home/relay/public_html/`. Prior clients were backed up;
+new clients were staged and checked, ownership/modes preserved, and atomically
+renamed before publishing the manifest last. Copied hashes were checked again.
+PHP remains at 0.18.0. No relay binary restart or GitHub push was needed.
+
+Rollback (contains 0.19.1 build 95 clients/manifest):
+`/home/doug/WebServer/home/relay/tmp/slipstream-rollback-0.19.1-build95-to-0.20.0-build98-20261019T233944Z`
+
+Restore the client files atomically, then the saved manifest last. Prior
+release evidence and rollback paths follow. On the real Windows VM, check
+reorder/tear-out/dock-back with tabs and windows mixed, keyboard focus,
+Escape cancellation, the new-link default after restarting, and per-monitor
+DPI. Older service/permissions/tool-window confirmation tasks still apply.
+
+## Earlier releases today: 0.19.0–0.19.1
+
 Published **0.19.1, build 95, commit 491f201** at
 https://relay.slipstreamremote.com. Feature implementation: **404086e**;
 phone/full-screen identification fix: **bd6ff9a**. The intermediate 0.19.0
 release was **a81e951**, build 93. Subsequent documentation commits do not
 change the deployed client build.
 
-## Current changes: 0.19.0–0.19.1
+### Changes in 0.19.0–0.19.1
 
 - Full and compact Windows consoles show the service host's real one-time
   code with Copy and New actions, alongside unattended access on the same ID.
@@ -32,7 +102,7 @@ change the deployed client build.
   multiple displays. Android/full-screen sessions retain the name in the
   toolbar or Console menu because their native title bar is absent.
 
-## Current verification
+### Verification for 0.19.x
 
 - `cargo test --workspace --locked`: **119 passed, zero failed, five ignored**
   after the final patch. Added end-to-end coverage accepts one-time and
@@ -65,7 +135,7 @@ change the deployed client build.
   and exact signed bytes. Direct access to `clients/` stays denied; tests use
   the supported API and download handler. Session protocol remains 6.
 
-## Current deployment and rollback
+### Deployment and rollback for 0.19.x
 
 Station root: `/home/doug/WebServer/home/relay/public_html/`.
 Only the Linux, Windows and Android clients and `clients/manifest.json` were
@@ -84,7 +154,7 @@ Feature rollback (contains 0.18.0 build 90):
 Restore the listed client files atomically, then the saved manifest last.
 The earlier 0.18.0 rollback below also retains the previous PHP implementation.
 
-## Remaining current checks
+### Remaining checks from 0.19.x
 
 On the Windows VM, update the installed service as well as the GUI; verify
 Copy/New in full and compact consoles, use both password types on the same

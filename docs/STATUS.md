@@ -1,15 +1,36 @@
 # Project status
 
-*Updated 2026-10-19; latest release 0.19.1. Read this first when
+*Updated 2026-10-19; latest release 0.20.0. Read this first when
 picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-19.md)
-covers service one-time codes, independent workstation windows, toolbar layout,
+covers draggable tabs, configurable windows, service one-time codes, toolbar layout,
 tool-window cleanup, proactive screen approval and APK naming.
-**Published clients: 0.19.1, build 95, commit 491f201**, on
+**Published clients: 0.20.0, build 98, commit 98e84e0**, on
 https://relay.slipstreamremote.com. Later documentation commits do not change
 that deployed build. The mounted client directory and rollback backups are
 recorded in the handoff.
+
+**0.20.0:** a session strip switches workstations and returns to Bridge.
+Drag tabs to reorder, release outside the strip to create a floating window,
+or drag a floating session's tab back to the main strip to dock the same link.
+Tabbed and floating links can coexist. Config → Viewing → New links saves
+Tabs / Separate windows as the default for future connections; existing
+profiles default to tabs and existing links retain their layout. Pop out /
+Dock and tab context menus remain available. Closing a tab/window ends only
+its link. Windows/X11 drags sample native pointer release outside the source;
+physical-pixel targets account for per-window scaling.
+
+122 workspace tests pass (five ignored); Linux/Windows all-target and arm64
+Android Clippy pass. New headless UI checks cover reordering, tear-out, Escape,
+cross-scale docking and release delivered to the destination. Isolated native
+X11 checks confirm two tabs, reordering, tear-out beyond the source window,
+docking into an empty strip, retaining another link on close, and saving /
+using the separate-window default. [Preview](screenshots/session-tabs-0.20.0.png).
+Physical Windows drag and real mixed-DPI monitors remain runtime checks;
+macOS and pure Wayland cross-window dragging were not exercised. Explicit
+Pop out / Dock actions provide an alternative. Release and live download
+verification are recorded in the handoff.
 
 **0.19.0–0.19.1:** the full and compact Windows apps show the running
 service's actual one-time code alongside its unattended password. Copy and
@@ -313,7 +334,8 @@ implemented and emulator-tested, alongside the touch viewer. Remaining work
 includes real-phone checks, viewer keyboard polish, hardware encoding and
 host audio/clipboard/files/updates. The steps below carry on alongside it.
 
-1. **Confirm 0.19.1 on the Windows Server VM**: service one-time codes beside
+1. **Confirm 0.20.0 on the Windows Server VM**: tab reorder/tear-out/dock-back
+   and the saved new-link default, service one-time codes beside
    unattended access, independent workstation windows, closing tools without
    black remnants, sharp Balanced/Quality motion,
    the pointer on the mouseless VM, service-update recovery, incoming chat,
