@@ -834,9 +834,9 @@ fn native_window_interactions(ui:&Ui,area:Rect,title_rect:Rect,maximized:bool) {
     }
 }
 
-/// A single title rail joined to the scanner's left frame. The frame stays
+/// A single title rail joined to a detached tool's left frame. The frame stays
 /// fixed while its contents scroll, including at the minimum window size.
-pub fn scanner_frame(ui:&mut Ui,title:&str,desktop:bool)->(Rect,bool) {
+pub fn tool_frame(ui:&mut Ui,title:&str,desktop:bool,color:Color32)->(Rect,bool) {
     super::window_shape::update();
     let area=ui.max_rect();
     let maximized=ui.input(|i|i.viewport().maximized==Some(true));
@@ -849,15 +849,15 @@ pub fn scanner_frame(ui:&mut Ui,title:&str,desktop:bool)->(Rect,bool) {
     let rail_right=frame.left()+18.0;
     let foot_top=frame.bottom()-12.0;
     let split=bar.bottom()+(foot_top-bar.bottom())*0.65;
-    p.rect_filled(bar,CornerRadius{nw:18,ne:18,..Default::default()},pal::CYAN);
-    p.rect_filled(Rect::from_min_max(pos2(frame.left(),bar.bottom()),pos2(rail_right,split-2.0)),0.0,pal::CYAN);
+    p.rect_filled(bar,CornerRadius{nw:18,ne:18,..Default::default()},color);
+    p.rect_filled(Rect::from_min_max(pos2(frame.left(),bar.bottom()),pos2(rail_right,split-2.0)),0.0,color);
     p.rect_filled(Rect::from_min_max(pos2(frame.left(),split+2.0),pos2(rail_right,foot_top)),0.0,pal::BLUE);
     let foot=Rect::from_min_max(pos2(frame.left(),foot_top),frame.max);
     p.rect_filled(foot,CornerRadius{sw:12,se:6,..Default::default()},pal::BLUE);
     rail_outer_corner(p,frame.left_bottom(),18.0,pal::BLUE,pal::BG);
     // Restrict each concave cutout to the elbow, clear of all content.
     for (color,corner,center) in [
-        (pal::CYAN,Rect::from_min_size(pos2(rail_right,bar.bottom()),vec2(22.0,22.0)),pos2(rail_right+22.0,bar.bottom()+22.0)),
+        (color,Rect::from_min_size(pos2(rail_right,bar.bottom()),vec2(22.0,22.0)),pos2(rail_right+22.0,bar.bottom()+22.0)),
         (pal::BLUE,Rect::from_min_size(pos2(rail_right,foot_top-18.0),vec2(18.0,18.0)),pos2(rail_right+18.0,foot_top-18.0)),
     ] {
         let elbow=p.with_clip_rect(corner.intersect(p.clip_rect()));

@@ -54,6 +54,20 @@ impl Drop for NetworkScanner {
 }
 
 impl NetworkScanner {
+    pub fn close(&mut self) {
+        self.open=false;self.stop();
+        if let Some(job)=self.adapter_job.take() {job.abort();}
+        if let Some(job)=self.web_job.take() {job.abort();}
+    }
+    pub fn reconnect(&mut self,fs:RemoteFs,can_open_web:bool) {
+        self.stop();
+        if let Some(job)=self.adapter_job.take() {job.abort();}
+        if let Some(job)=self.web_job.take() {job.abort();}
+        if self.web_rx.take().is_some() {self.web_notice=Some(Err("Link interrupted; browser launch was not confirmed".into()));}
+        self.adapter_rx=None;self.adapters.clear();self.loaded=false;
+        self.fs=fs;self.can_open_web=can_open_web;
+    }
+
     pub fn new(fs: RemoteFs, can_open_web: bool) -> Self {
         Self {
             open: std::env::var_os("SLIPSTREAM_TEST_NETWORK").is_some(),
@@ -257,8 +271,12 @@ impl NetworkScanner {
         ctx.show_viewport_deferred(viewport, builder, move |ui, class| {
             let mut scanner = shared.lock().expect("network window");
             let ctx = ui.ctx().clone();
+            if !scanner.open {
+                if class==egui::ViewportClass::Deferred {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
+                return;
+            }
             scanner.tick(&ctx, &rt, connected);
-            let (body, close)=theme::scanner_frame(ui,&format!("Network scan · {host}"),class == egui::ViewportClass::Deferred);
+            let (body, close)=theme::tool_frame(ui,&format!("Network scan · {host}"),class == egui::ViewportClass::Deferred,pal::CYAN);
             let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
             if close || ui.input(|i|i.viewport().close_requested()) {
                 scanner.open=false;scanner.stop();

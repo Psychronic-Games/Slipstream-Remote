@@ -245,7 +245,7 @@ pub async fn connect(
                             .collect::<String>()
                     );
                 }
-                Some(ViewerEvent::Disconnected { reason }) => { println!("disconnected: {reason}"); break; }
+                Some(ViewerEvent::Disconnected { reason, .. }) => { println!("disconnected: {reason}"); break; }
                 Some(other) => println!("{other:?}"),
                 None => break,
             }

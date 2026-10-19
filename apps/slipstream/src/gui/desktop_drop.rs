@@ -5,8 +5,7 @@ use eframe::egui;
 use x11rb::{connection::Connection, protocol::xproto::ConnectionExt};
 
 pub(super) fn update_pointer(ctx: &egui::Context, raw: &mut egui::RawInput) {
-    if raw.viewport_id != egui::ViewportId::ROOT
-        || (raw.hovered_files.is_empty() && raw.dropped_files.is_empty())
+    if raw.hovered_files.is_empty() && raw.dropped_files.is_empty()
     {
         return;
     }
@@ -22,7 +21,7 @@ pub(super) fn update_pointer(ctx: &egui::Context, raw: &mut egui::RawInput) {
         }
         let rect = raw.viewports.get(&raw.viewport_id)?.inner_rect?;
         let global = egui::pos2(f32::from(pointer.root_x), f32::from(pointer.root_y))
-            / ctx.pixels_per_point();
+            / (raw.viewport().native_pixels_per_point.unwrap_or(1.0)*ctx.zoom_factor());
         rect.contains(global).then_some(global - rect.min.to_vec2())
     });
     raw.events.push(

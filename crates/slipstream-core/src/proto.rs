@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 /// Bumped whenever the session protocol changes incompatibly.
 pub const PROTOCOL_VERSION: u32 = 6;
 
+/// An update can announce restart using the existing Bye message and QUIC
+/// close code, without adding a control-stream variant older viewers reject.
+pub const HOST_RESTARTING: &str = "The remote host is restarting after an update";
+pub const RESTART_CLOSE_CODE: u32 = 1;
+
 /// Audio travels as QUIC datagrams (a lost one is concealed, never waited
 /// for): `[AUDIO_DATAGRAM][u16 LE sequence][Opus packet]`, 20 ms each.
 pub const AUDIO_DATAGRAM: u8 = 0xA1;

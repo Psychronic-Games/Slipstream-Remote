@@ -61,7 +61,7 @@ pub enum ViewerEvent {
     Chat(String),
     Notice(String),
     Stats(ViewerStats),
-    Disconnected { reason: String },
+    Disconnected { reason: String, retryable: bool },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -81,11 +81,14 @@ pub struct ViewerStats {
 
 /// Asks the host how fast its video stages run, every few seconds, until
 /// it says it can't (older hosts).
-async fn poll_host_pace(fs: RemoteFs, out: Arc<Mutex<Vec<slipstream_core::proto::PaceStage>>>) {
+async fn poll_host_pace(fs: RemoteFs, out: Arc<Mutex<Vec<slipstream_core::proto::PaceStage>>>) -> Option<String> {
     loop {
-        match fs.ask(slipstream_core::proto::StreamOpen::Pace).await {
-            Ok((_, _, slipstream_core::proto::StreamReply::Pace(stages))) => *out.lock().unwrap() = stages,
-            _ => return,
+        match tokio::time::timeout(Duration::from_secs(6),fs.ask(slipstream_core::proto::StreamOpen::Pace)).await {
+            Ok(Ok((_, _, slipstream_core::proto::StreamReply::Pace(stages)))) => *out.lock().unwrap() = stages,
+            Err(_) => return Some("The remote host stopped responding; it may be restarting".into()),
+            // Older hosts can decline this optional request. A real connection
+            // close is handled by the control stream, not mistaken for a hang.
+            _ => return None,
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
@@ -315,7 +318,7 @@ pub(crate) async fn connect(
     let info = loop {
         match expect_msg::<HostMsg>(&mut recv).await? {
             HostMsg::AuthOk { confirm, session } => {
-                auth.verify_host(&confirm)?;
+                auth.verify_host(&confirm).map_err(|e|AuthRejected(format!("Remote identity verification failed: {e:#}")))?;
                 break session;
             }
             HostMsg::Notice(n) => on_progress(n),
@@ -412,8 +415,26 @@ async fn receive_audio(conn: Connection, player: slipstream_audio::Player) {
     }
 }
 
-fn auth_error(reason: String, retry_after: u32) -> String {
-    if retry_after > 0 { format!("{reason} (wait {retry_after}s)") } else { reason }
+#[derive(Debug)]
+pub(crate) struct AuthRejected(pub String);
+impl std::fmt::Display for AuthRejected {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str(&self.0)}
+}
+impl std::error::Error for AuthRejected {}
+fn auth_error(reason:String,retry_after:u32)->AuthRejected {
+    AuthRejected(if retry_after>0 {format!("{reason} (wait {retry_after}s)")} else {reason})
+}
+
+struct SessionEnd {reason:String,retryable:bool}
+impl SessionEnd {
+    fn deliberate(reason:impl Into<String>)->Self {Self{reason:reason.into(),retryable:false}}
+    fn interrupted(reason:impl Into<String>)->Self {Self{reason:reason.into(),retryable:true}}
+    fn connection(reason:&iroh::endpoint::ConnectionError)->Self {
+        if matches!(reason,iroh::endpoint::ConnectionError::ApplicationClosed(c) if c.error_code==slipstream_core::proto::RESTART_CLOSE_CODE.into()) {
+            return Self::interrupted(slipstream_core::proto::HOST_RESTARTING);
+        }
+        Self{reason:crate::closed_reason(reason,"the host"),retryable:!matches!(reason,iroh::endpoint::ConnectionError::ApplicationClosed(_))}
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -431,16 +452,16 @@ async fn run(
     audio_out: AudioOut,
 ) {
     let mut recv = MsgReader::<HostMsg>::spawn(recv);
-    let reason = match session(&conn, &mut send, &mut recv, &mut cmds, &events, frames, display, stream_settings, sync_clipboard, audio, audio_out)
+    let ended = match session(&conn, &mut send, &mut recv, &mut cmds, &events, frames, display, stream_settings, sync_clipboard, audio, audio_out)
         .await
     {
         Ok(r) => r,
-        Err(e) => format!("{e:#}"),
+        Err(e) => conn.close_reason().map(|r|SessionEnd::connection(&r)).unwrap_or_else(||SessionEnd::interrupted(format!("{e:#}"))),
     };
-    let _ = write_msg(&mut send, &ViewerMsg::Bye).await;
+    let _ = tokio::time::timeout(Duration::from_millis(250),write_msg(&mut send, &ViewerMsg::Bye)).await;
     crate::flush(&mut send).await;
     conn.close(0u32.into(), b"bye");
-    let _ = events.send(ViewerEvent::Disconnected { reason });
+    let _ = events.send(ViewerEvent::Disconnected { reason:ended.reason,retryable:ended.retryable });
 }
 
 /// Messages the decoder thread hands back to the async side.
@@ -462,7 +483,7 @@ async fn session(
     sync_clipboard: Option<ClipboardSource>,
     play_audio: bool,
     audio_out: AudioOut,
-) -> Result<String> {
+) -> Result<SessionEnd> {
     write_msg(send, &ViewerMsg::StartStream { display, settings }).await?;
 
     // Sound: datagrams → decoder → player, while wanted.
@@ -508,7 +529,12 @@ async fn session(
     // Every 30 s the link's figures go to the log, with the host's.
     let mut last_log = (Instant::now(), 0u64, 0u64);
     let host_pace = Arc::new(Mutex::new(Vec::new()));
-    let _pace_task = Abort(tokio::spawn(poll_host_pace(RemoteFs::new(conn.clone()), host_pace.clone())));
+    let (health_tx,mut health_rx)=mpsc::channel(1);
+    let fs=RemoteFs::new(conn.clone());
+    let pace_out=host_pace.clone();
+    let _pace_task=Abort(tokio::spawn(async move {
+        if let Some(reason)=poll_host_pace(fs,pace_out).await {let _=health_tx.send(reason).await;}
+    }));
 
     loop {
         tokio::select! {
@@ -516,9 +542,9 @@ async fn session(
                 let msg = match msg {
                     Ok(m) => m,
                     // The read fails first when the connection closes.
-                    Err(e) => return conn.close_reason().map(|r| crate::closed_reason(&r, "the host")).ok_or(e),
+                    Err(e) => return conn.close_reason().map(|r|SessionEnd::connection(&r)).ok_or(e),
                 };
-                let Some(msg) = msg else { return Ok("the host ended the session".into()) };
+                let Some(msg) = msg else { return Ok(SessionEnd::interrupted("The host connection ended unexpectedly")) };
                 match msg {
                     HostMsg::StreamStarted { display, width, height } => {
                         let _ = events.send(ViewerEvent::StreamStarted { display, width, height });
@@ -545,7 +571,7 @@ async fn session(
                     }
                     HostMsg::Chat(t) => { let _ = events.send(ViewerEvent::Chat(t)); }
                     HostMsg::Notice(n) => { let _ = events.send(ViewerEvent::Notice(n)); }
-                    HostMsg::Bye { reason } => return Ok(reason),
+                    HostMsg::Bye { reason } => return Ok(if reason==slipstream_core::proto::HOST_RESTARTING {SessionEnd::interrupted(reason)}else{SessionEnd::deliberate(reason)}),
                     other => debug!("ignoring {other:?}"),
                 }
             }
@@ -580,7 +606,7 @@ async fn session(
                         write_msg(send, &ViewerMsg::SetAudio(false)).await?;
                     }
                 }
-                Some(ViewerCmd::Disconnect) | None => return Ok("disconnected".into()),
+                Some(ViewerCmd::Disconnect) | None => return Ok(SessionEnd::deliberate("disconnected")),
             },
             _ = stats_tick.tick() => {
                 let (t0, b0, f0) = last_stats;
@@ -620,7 +646,8 @@ async fn session(
                 }));
                 last_stats = (Instant::now(), b1, f1);
             }
-            reason = conn.closed() => return Ok(crate::closed_reason(&reason, "the host")),
+            Some(reason)=health_rx.recv() => return Ok(SessionEnd::interrupted(reason)),
+            reason = conn.closed() => return Ok(SessionEnd::connection(&reason)),
         }
     }
 }
@@ -677,5 +704,33 @@ struct Abort<T>(tokio::task::JoinHandle<T>);
 impl<T> Drop for Abort<T> {
     fn drop(&mut self) {
         self.0.abort();
+    }
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stalled_probe_is_detected_but_unsupported_probe_is_not_an_outage() {
+        slipstream_core::init_crypto();
+        let config=slipstream_core::config::ServerSettings{use_public_relays:false,..Default::default()};
+        for unsupported in [false,true] {
+            let host=slipstream_core::net::bind_client(iroh::SecretKey::generate(),&config,true).await.unwrap();
+            let viewer=slipstream_core::net::bind_client(iroh::SecretKey::generate(),&config,false).await.unwrap();
+            let (out,incoming)=tokio::join!(viewer.connect(host.addr(),ALPN_REMOTE),async {host.accept().await.unwrap().await});
+            let out=out.unwrap();let incoming=incoming.unwrap();
+            let worker_conn=incoming.clone();
+            let worker=tokio::spawn(async move {
+                let (_send,mut recv)=worker_conn.accept_bi().await.unwrap();
+                assert!(matches!(expect_msg::<slipstream_core::proto::StreamOpen>(&mut recv).await.unwrap(),slipstream_core::proto::StreamOpen::Pace));
+                if !unsupported {std::future::pending::<()>().await;}
+            });
+            let answer=tokio::time::timeout(Duration::from_secs(8),poll_host_pace(RemoteFs::new(out.clone()),Arc::default())).await.unwrap();
+            assert_eq!(answer.is_none(),unsupported);
+            worker.abort();let _=worker.await;
+            out.close(0u32.into(),b"test complete");incoming.close(0u32.into(),b"test complete");
+            viewer.close().await;host.close().await;
+        }
     }
 }

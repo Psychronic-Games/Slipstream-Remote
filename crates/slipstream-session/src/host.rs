@@ -172,13 +172,14 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
     };
     inner.host_sessions.lock().unwrap().remove(&id);
     info!(%peer, %reason, "session ended");
+    let restarting=reason==slipstream_core::proto::HOST_RESTARTING;
     inner.emit(ClientEvent::HostSessionEnded { session: id, reason });
     // A new one-time password after every session, like TeamViewer.
     let len = inner.settings.lock().unwrap().host.one_time_password_len.clamp(4, 32);
     let pw = slipstream_core::auth::generate_password(len);
     *inner.password.lock().unwrap() = pw.clone();
     inner.emit(ClientEvent::Password(pw));
-    conn.close(0u32.into(), b"bye");
+    conn.close((if restarting {slipstream_core::proto::RESTART_CLOSE_CODE}else{0}).into(), b"bye");
     Ok(())
 }
 
@@ -474,6 +475,12 @@ async fn session_loop(
             }
             cmd = cmds.recv() => match cmd {
                 Some(HostSessionCmd::Chat(text)) => write_msg(&mut send, &HostMsg::Chat(text)).await?,
+                Some(HostSessionCmd::Restart) => {
+                    let reason=slipstream_core::proto::HOST_RESTARTING.to_string();
+                    write_msg(&mut send,&HostMsg::Bye{reason:reason.clone()}).await.ok();
+                    crate::flush(&mut send).await;
+                    return Ok(reason);
+                }
                 Some(HostSessionCmd::Disconnect) | None => {
                     write_msg(&mut send, &HostMsg::Bye { reason: "the host ended the session".into() }).await.ok();
                     crate::flush(&mut send).await;

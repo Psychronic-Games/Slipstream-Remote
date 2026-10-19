@@ -571,7 +571,7 @@ impl App {
                 let play_audio = self.client.settings().viewer.play_audio;
                 let mut tab = remote::RemoteTab::new(id, session, events, attempt.password, ctx, play_audio);
                 tab.via = attempt.via;
-                tab.files.open = self.open_files;
+                tab.files.lock().unwrap().open = self.open_files;
                 self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
                 self.tabs.push(tab);
                 self.page = Page::Remote(id);
@@ -1408,6 +1408,13 @@ impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32;4] { [0.0;4] }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let mut restored=Vec::new();
+        for tab in &mut self.tabs {
+            tab.poll(ctx);
+            if tab.maintain_connection(ctx,&self.rt,&self.client) {restored.push(tab.id);}
+        }
+        // Frame serials restart on a new session; discard cached old textures.
+        if !restored.is_empty() {video::retain_streams(&self.render_state,|id|!restored.contains(&id));}
         if self.software.is_none()
             && let Some(rs) = frame.wgpu_render_state()
         {
@@ -1576,8 +1583,8 @@ impl eframe::App for App {
         self.poll_service(&ctx);
         saved::poll(self, &ctx);
         for tab in &mut self.tabs {
-            tab.poll(&ctx);
             tab.network_window(&ctx, &self.rt);
+            files::FileManager::show(&tab.files,&ctx,&self.rt,tab.id,tab.closed.is_none());
         }
 
         let keys = std::mem::take(&mut self.captured_keys);

@@ -239,6 +239,41 @@ The scanner owns a deferred native viewport and releases remote keyboard
 capture whenever its input receives focus. Its state belongs to the session;
 closing the tool or session cancels its tasks.
 
+### Link recovery and detached tools
+
+`viewer.rs` distinguishes interrupted connections from deliberate host/viewer
+session ends. Existing optional `StreamOpen::Pace` requests double as bounded
+health checks: a six-second deadline and three-second interval detect silent
+host death without treating a low frame rate or static desktop as a lost link.
+Hosts declining the optional probe retain normal transport-close detection.
+Before installing an update, a hosting client sends the existing Bye message
+with the reserved restart reason and closes with restart code 1. Either
+signal requests recovery; deliberate endings still use code 0. No wire
+variants change; protocol remains 6.
+
+`Client::reconnect` in `reconnect.rs` performs fresh station/account lookups
+for the same device, retrying for at most two minutes with 1/2/4/8-second gaps
+and a twenty-second bound around each complete lookup/connect/auth attempt.
+Authentication refusals are typed terminal errors. Dropping the future stops
+retries. Each GUI tab owns its recovery task, so End Link or closing the tab
+aborts it; Cancel reconnect leaves the manual reconnect action available.
+Recovery runs during the app logic tick, including while minimized.
+
+The tab keeps its last picture under an inactive reconnecting overlay, and
+preserves chat, display, quality and window identities. On success it replaces
+transport, frame and event handles, clears cached video textures, reloads
+system details, and rebinds file/scanner state. Held input is released and
+never replayed; taking control requires another click. Transfers are marked
+interrupted and port forwards close. Privacy mode resets with the new session.
+
+File Transfer, like Network Scan, owns a deferred native viewport per tab;
+Android uses egui's embedded fallback. `FileManager` is shared behind a mutex
+and retains job history when rebinding. Closing the tool only hides it; tab
+cleanup cancels active jobs. Async work repaints its captured viewport and
+the root toolbar, so progress/listings do not depend on root-window rendering.
+Drop hit testing includes the viewport ID as well as the pane rect/layer;
+Linux's grabbed-pointer sampling also uses the event's own viewport and scale.
+
 ### Windows service chat and device inventory
 
 The SYSTEM helper owns incoming sessions; the user GUI has an ephemeral

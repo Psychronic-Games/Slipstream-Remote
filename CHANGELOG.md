@@ -13,6 +13,29 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Automatic link recovery
+- Detect an unresponsive remote host with bounded performance-probe requests,
+  independently of video frame rate, and show a reconnecting overlay over the
+  last picture instead of silently waiting for a transport timeout.
+- Announce host updates before replacing the program, using a compatible
+  restart reason and close code so graceful service updates also recover.
+- Retry interrupted desktop links for up to two minutes with fresh device
+  lookups and bounded, backed-off attempts. Cancel reconnect and End Link stop
+  recovery; explicit session endings and authentication rejections never loop.
+- Restore the same tab, chat, display, quality and tool windows after the host
+  returns. Release held input, clear old video textures and require a click to
+  regain control. Interrupted transfers and port forwards are not replayed.
+
+### Detached file transfer
+- Give File Transfer its own movable, resizable LCARS desktop window, with
+  the same curved rails and separated window controls as Network Scan.
+- Keep transfers running when that window is closed. Support desktop file and
+  folder drops onto its remote pane, including when the main window is hidden,
+  and keep drop coordinates scoped to the correct native viewport.
+- Preserve transfer history across reconnects, mark interrupted jobs failed,
+  and reload remote folders through the new authenticated session. Android
+  embeds the tool on backends without native secondary windows.
+
 ## 0.14.1 — 2026-10-18
 
 ### Remote control focus

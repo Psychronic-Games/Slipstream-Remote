@@ -3,6 +3,7 @@
 
 mod desktop_shell;
 mod public_ip;
+mod reconnect;
 mod accounts;
 pub mod files;
 pub mod fsops;
@@ -85,6 +86,7 @@ pub struct ClientOptions {
 pub(crate) enum HostSessionCmd {
     Chat(String),
     Disconnect,
+    Restart,
 }
 
 pub(crate) struct Inner {
@@ -228,6 +230,19 @@ impl Client {
         }
     }
 
+    /// Tell connected viewers to wait for the updated host before replacing
+    /// its binary. Graceful shutdown must not look like a deliberate End Link.
+    pub async fn notify_restarting(&self) {
+        for tx in self.inner.host_sessions.lock().unwrap().values() {
+            let _=tx.send(HostSessionCmd::Restart);
+        }
+        let _=tokio::time::timeout(Duration::from_secs(1),async {
+            while !self.inner.host_sessions.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await;
+    }
+
     async fn directory(&self) -> Result<DirectoryClient> {
         let mut rx = self.inner.dir_client.subscribe();
         let wait = rx.wait_for(|c| c.is_some());
@@ -350,6 +365,7 @@ impl Client {
     pub async fn install_update(&self, info: &update::UpdateInfo, progress: impl FnMut(u64, u64)) -> Result<std::path::PathBuf> {
         let dc = self.directory().await?;
         let staged = update::download(dc.base_url(), dc.key(), info, progress).await?;
+        self.notify_restarting().await;
         let staged2 = staged.clone();
         tokio::task::spawn_blocking(move || update::install(&staged2)).await?
     }
@@ -653,6 +669,25 @@ mod tests {
         host.shutdown().await;
         let _ = std::fs::remove_dir_all(hdir);
         let _ = std::fs::remove_dir_all(vdir);
+    }
+
+    #[tokio::test(flavor="multi_thread")]
+    async fn explicit_end_stays_closed_but_update_restart_requests_recovery() {
+        let (host,_hev,hdir)=client("deliberate-host",true).await;
+        let (viewer,_vev,vdir)=client("deliberate-viewer",false).await;
+        for mode in 0..3 {
+            let (session,mut events)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
+            match mode {0=>host.disconnect_all_host_sessions(),1=>session.send(ViewerCmd::Disconnect),_=>host.notify_restarting().await}
+            let retryable=tokio::time::timeout(Duration::from_secs(8),async {
+                while let Some(event)=events.recv().await {
+                    if let ViewerEvent::Disconnected{retryable,..}=event {return retryable;}
+                }
+                panic!("missing disconnect event");
+            }).await.unwrap();
+            assert_eq!(retryable,mode==2,"wrong recovery policy for session end mode {mode}");drop(session);
+        }
+        viewer.shutdown().await;host.shutdown().await;
+        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
     }
 
     /// Big control messages (clipboard) arrive intact while video and frame

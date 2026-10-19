@@ -71,6 +71,7 @@ struct Pane {
     places: Vec<Place>,
     rect: Option<Rect>,
     layer: Option<egui::LayerId>,
+    viewport: Option<egui::ViewportId>,
 }
 
 impl Pane {
@@ -102,6 +103,10 @@ pub struct FileManager {
     show_hidden: bool,
 }
 
+impl Drop for FileManager {
+    fn drop(&mut self) {for job in &self.jobs {if job.is_active() {job.cancel();}}}
+}
+
 impl FileManager {
     pub fn new(fs: RemoteFs, remote_name: String) -> Self {
         let (tx, rx) = mpsc::channel();
@@ -129,10 +134,11 @@ impl FileManager {
     fn load_remote(&mut self, path: Option<String>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
         self.remote.loading = true;
         let (fs, tx, ctx) = (self.fs.clone(), self.tx.clone(), ctx.clone());
+        let viewport=ctx.viewport_id();
         rt.spawn(async move {
             let r = fs.list(path).await.map_err(|e| format!("{e:#}"));
             let _ = tx.send(Msg::RemoteListing(r));
-            ctx.request_repaint();
+            ctx.request_repaint_of(viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
         });
     }
 
@@ -145,10 +151,11 @@ impl FileManager {
         self.load_local(None);
         self.load_remote(None, rt, ctx);
         let (fs, tx, ctx) = (self.fs.clone(), self.tx.clone(), ctx.clone());
+        let viewport=ctx.viewport_id();
         rt.spawn(async move {
             if let Ok(p) = fs.places().await {
                 let _ = tx.send(Msg::RemotePlaces(p));
-                ctx.request_repaint();
+                ctx.request_repaint_of(viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
             }
         });
     }
@@ -189,6 +196,7 @@ impl FileManager {
             task: Mutex::new(None),
         });
         let (fs, tx, ctx2, j) = (self.fs.clone(), self.tx.clone(), ctx.clone(), job.clone());
+        let viewport=ctx.viewport_id();
         let task = rt.spawn(async move {
             let result: anyhow::Result<String> = async {
                 let target = match point {
@@ -214,7 +222,8 @@ impl FileManager {
                     last = fs
                         .upload(path, target.clone(), rel.clone(), |n| {
                             j.done.fetch_add(n, Ordering::Relaxed);
-                            ctx2.request_repaint_after(std::time::Duration::from_millis(100));
+                            ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),viewport);
+                            ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),egui::ViewportId::ROOT);
                         })
                         .await?;
                 }
@@ -230,7 +239,7 @@ impl FileManager {
                 Err(e) => JobState::Failed(format!("{e:#}")),
             };
             let _ = tx.send(Msg::JobFinished { upload: true });
-            ctx2.request_repaint();
+            ctx2.request_repaint_of(viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
         });
         *job.task.lock().unwrap() = Some(task);
         self.jobs.push(job);
@@ -260,6 +269,7 @@ impl FileManager {
             task: Mutex::new(None),
         });
         let (fs, tx, ctx2, j) = (self.fs.clone(), self.tx.clone(), ctx.clone(), job.clone());
+        let viewport=ctx.viewport_id();
         let task = rt.spawn(async move {
             let result: anyhow::Result<String> = async {
                 let mut files = Vec::new();
@@ -274,7 +284,8 @@ impl FileManager {
                     last = fs
                         .download(remote.clone(), &dest, |n| {
                             j.done.fetch_add(n, Ordering::Relaxed);
-                            ctx2.request_repaint_after(std::time::Duration::from_millis(100));
+                            ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),viewport);
+                            ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),egui::ViewportId::ROOT);
                         })
                         .await?;
                 }
@@ -289,7 +300,7 @@ impl FileManager {
                 Err(e) => JobState::Failed(format!("{e:#}")),
             };
             let _ = tx.send(Msg::JobFinished { upload: false });
-            ctx2.request_repaint();
+            ctx2.request_repaint_of(viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
         });
         *job.task.lock().unwrap() = Some(task);
         self.jobs.push(job);
@@ -322,48 +333,81 @@ impl FileManager {
 
     /// Where dropped files should go, if dropped on the remote pane.
     pub fn remote_drop_target(&self, pos: egui::Pos2, ctx: &egui::Context) -> Option<UploadTarget> {
-        (self.open && self.remote.rect.is_some_and(|r| r.contains(pos))
+        (self.open && self.remote.viewport==Some(ctx.viewport_id()) && self.remote.rect.is_some_and(|r| r.contains(pos))
             && ctx.layer_id_at(pos).is_some_and(|layer| Some(layer) == self.remote.layer))
             .then(|| self.remote.listing.as_ref().map(|l| UploadTarget::Folder(l.path.clone())))
             .flatten()
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime) {
-        self.handle_messages(rt, ctx);
-        if !self.open {
-            return;
-        }
-        self.ensure_started(rt, ctx);
-        let mut open = self.open;
-        let screen = ctx.content_rect();
-        let size = vec2((screen.width() - 60.0).min(1000.0), (screen.height() - 90.0).min(620.0));
-        theme::window("file-transfer", pal::ORANGE)
-            .id(egui::Id::unique("file-transfer"))
-            .default_pos(egui::pos2(screen.center().x - size.x / 2.0, screen.top() + 56.0))
-            .default_size(size)
-            .max_size(vec2(screen.width() - 30.0, screen.height() - 66.0))
-            .min_size([640.0, 380.0])
-            .resizable(true)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                let chrome = theme::window_header(ui, "File transfer", pal::ORANGE);
-                if chrome.close {
-                    open = false;
-                }
-                self.contents(ui, rt, &chrome)
-            });
-        self.open = open;
+    /// Independent desktop window; mobile backends embed the same body.
+    pub fn show(shared:&Arc<Mutex<Self>>,ctx:&egui::Context,rt:&Arc<tokio::runtime::Runtime>,id:u64,connected:bool) {
+        let host={
+            let mut files=shared.lock().expect("file window");
+            files.handle_messages(rt,ctx);
+            if !files.open {return;}
+            files.remote_name.clone()
+        };
+        let (shared,rt)=(shared.clone(),rt.clone());
+        let viewport=egui::ViewportId::from_hash_of(("file-transfer",id));
+        let builder=egui::ViewportBuilder::default().with_decorations(false)
+            .with_transparent(theme::transparent_window()).with_app_id("slipstream-remote")
+            .with_title(format!("File transfer · {host} · Slipstream Remote"))
+            .with_icon(Arc::new(theme::icon(64)))
+            .with_inner_size([1100.0,740.0]).with_min_inner_size([720.0,400.0]);
+        ctx.show_viewport_deferred(viewport,builder,move |ui,class| {
+            let mut files=shared.lock().expect("file window");
+            let ctx=ui.ctx().clone();
+            if !files.open {
+                if class==egui::ViewportClass::Deferred {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
+                return;
+            }
+            files.handle_messages(&rt,&ctx);
+            let desktop=class==egui::ViewportClass::Deferred;
+            let (body,close)=theme::tool_frame(ui,&format!("File transfer · {host}"),desktop,pal::ORANGE);
+            if close || ui.input(|i|i.viewport().close_requested()) {
+                files.open=false;
+                if desktop {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
+                ctx.request_repaint_of(egui::ViewportId::ROOT);return;
+            }
+            let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
+            if connected {files.ensure_started(&rt,&ctx);} else {
+                ui.label(RichText::new("Remote host unavailable · reconnect to continue").color(pal::GOLD));
+            }
+            ui.add_enabled_ui(connected,|ui|files.contents(ui,&rt));
+            let dropped=ctx.input(|i|i.raw.dropped_files.iter().map(|f|f.path().to_path_buf()).collect::<Vec<_>>());
+            let hovering=ctx.input(|i|!i.raw.hovered_files.is_empty());
+            let target=ctx.pointer_hover_pos().and_then(|p|files.remote_drop_target(p,&ctx));
+            if connected && hovering && target.is_some()
+                && let Some(rect)=files.remote.rect {theme::brackets(ui.painter(),rect,pal::ORANGE,18.0);}
+            if !dropped.is_empty() {
+                if connected && let Some(target)=target {files.upload(dropped,target,&rt,&ctx);}
+                else {files.remote.error=Some("Drop files or folders onto the remote pane while connected".into());}
+            }
+            if files.activity().is_some() {ctx.request_repaint_after(std::time::Duration::from_millis(100));}
+        });
     }
 
-    fn contents(&mut self, ui: &mut Ui, rt: &tokio::runtime::Runtime, chrome: &theme::WindowChrome) {
-        // Panels take the window's space as it is, whatever their contents
-        // measure: sizing these from estimates made the window grow a little
-        // every frame, back to the bottom of the screen after any resize.
-        egui::Panel::bottom("file-footer").frame(egui::Frame::NONE).show(ui, |ui| chrome.footer(ui));
-        if !self.jobs.is_empty() {
-            egui::Panel::bottom("file-jobs").frame(egui::Frame::NONE).show(ui, |ui| self.jobs_ui(ui));
+    pub fn disconnect(&mut self) {
+        for job in &self.jobs {
+            if job.is_active() {
+                job.cancel();
+                *job.state.lock().unwrap()=JobState::Failed("Link interrupted; restart this transfer after reconnecting".into());
+            }
         }
-        egui::CentralPanel::no_frame().show(ui, |ui| self.panes(ui, rt));
+    }
+
+    pub fn reconnect(&mut self,fs:RemoteFs,name:String) {
+        self.disconnect();
+        self.fs=fs;self.remote_name=name;self.remote=Pane::default();self.started=false;
+        // Late listings from the old connection must not replace the new pane.
+        (self.tx,self.rx)=mpsc::channel();
+    }
+
+    fn contents(&mut self,ui:&mut Ui,rt:&tokio::runtime::Runtime) {
+        if !self.jobs.is_empty() {
+            egui::Panel::bottom("file-jobs").frame(egui::Frame::NONE).show(ui,|ui|self.jobs_ui(ui));
+        }
+        egui::CentralPanel::no_frame().show(ui,|ui|self.panes(ui,rt));
     }
 
     fn panes(&mut self, ui: &mut Ui, rt: &tokio::runtime::Runtime) {
@@ -579,6 +623,7 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
     });
     pane.rect = Some(out.response.rect);
     pane.layer = Some(ui.layer_id());
+    pane.viewport = Some(ui.ctx().viewport_id());
     if let Some(l) = &pane.listing {
         let n = pane.selected.len();
         let bytes: u64 = pane.selected.iter().filter_map(|&i| l.entries.get(i)).map(|e| e.size).sum();

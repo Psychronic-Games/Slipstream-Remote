@@ -1,7 +1,19 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.14.1. Read this first when
+*Updated 2026-10-18; latest release 0.15.0. Read this first when
 picking the work back up.*
+
+**0.15.0:** desktop viewers detect an unresponsive host using the existing
+performance probe (six-second request deadline, three-second polling gap),
+then automatically retry interrupted links for up to two minutes. Recovery
+uses fresh lookups, bounded attempts and backoff; rejected passwords, explicit
+session ends, Cancel reconnect and End Link stop recovery. The same tab,
+chat, display/quality and tool windows survive; input capture is released.
+Transfers fail visibly and port forwards close rather than being replayed.
+File Transfer now owns a native LCARS viewport, larger than a small remote
+window, with desktop drops into its remote pane and independent repainting.
+Actual Windows service-update recovery still benefits from a real VM check;
+Linux runtime checks use an abruptly killed and restarted host process.
 
 **0.14.1:** System Information uses a contrasting red Close button on its
 yellow title rail. Background scanner repaints preserve remote control;
@@ -72,7 +84,7 @@ peripheral/printer/network-drive inventory, restored Windows service chat,
 and LCARS desktop title bars. Protocol remains 6: optional name lookup uses
 appended stream variants, preserving 0.10 scan interoperability.
 
-87 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
+91 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
 confirm the scanner is larger than its main window, finds this machine's
 name/ports, switches views, maximizes/restores, and closes without ending the
 session. Linux and Windows Clippy and Android checks pass. Windows service

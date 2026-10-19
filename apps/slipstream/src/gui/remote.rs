@@ -46,6 +46,13 @@ struct Pasting {
     done: Option<Result<usize, String>>,
 }
 
+struct Reconnecting {
+    progress:Arc<Mutex<String>>,
+    rx:tokio::sync::oneshot::Receiver<super::ConnectResult>,
+    task:tokio::task::JoinHandle<()>,
+}
+impl Drop for Reconnecting {fn drop(&mut self) {self.task.abort();}}
+
 pub enum TabAction {
     None,
     Bridge,
@@ -75,6 +82,8 @@ pub struct RemoteTab {
     pub via: Option<slipstream_session::AccountRef>,
     pub stats: ViewerStats,
     pub closed: Option<String>,
+    reconnect_requested:bool,
+    reconnect:Option<Reconnecting>,
     display: u32,
     preset: usize,
     chat: Vec<(bool, String)>,
@@ -95,7 +104,7 @@ pub struct RemoteTab {
     held_keys: HashSet<&'static str>,
     forward_repeats: bool,
     notice: Option<(String, Instant)>,
-    pub files: FileManager,
+    pub files: Arc<Mutex<FileManager>>,
     network: Arc<Mutex<super::network::NetworkScanner>>,
     /// Playing the remote computer's sound.
     audio: bool,
@@ -124,6 +133,14 @@ pub struct RemoteTab {
     public_ip_at: Option<Instant>,
 }
 
+impl Drop for RemoteTab {
+    fn drop(&mut self) {
+        self.reconnect=None;
+        let mut files=self.files.lock().unwrap();files.disconnect();files.open=false;
+        self.network.lock().unwrap().close();
+    }
+}
+
 impl RemoteTab {
     pub fn new(
         id: u64,
@@ -135,9 +152,9 @@ impl RemoteTab {
     ) -> Self {
         let frames = session.frames();
         let wake = ctx.clone();
-        frames.set_repaint(move || wake.request_repaint());
+        frames.set_repaint(move || wake.request_repaint_of(egui::ViewportId::ROOT));
         let info = session.info().clone();
-        let files = FileManager::new(session.fs(), info.host_name.clone());
+        let files = Arc::new(Mutex::new(FileManager::new(session.fs(), info.host_name.clone())));
         let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(session.fs(), info.capabilities.input)));
         // Wayland apps repeat held keys themselves; Windows/macOS need repeats sent.
         let forward_repeats = info.os != "Linux";
@@ -155,6 +172,7 @@ impl RemoteTab {
             via: None,
             stats: ViewerStats::default(),
             closed: None,
+            reconnect_requested:false,reconnect:None,
             display,
             preset: 0,
             chat: Vec::new(),
@@ -216,9 +234,14 @@ impl RemoteTab {
                     self.show_chat = true;
                 }
                 ViewerEvent::Notice(n) => self.notice = Some((n, Instant::now())),
-                ViewerEvent::Disconnected { reason } => {
+                ViewerEvent::Disconnected { reason,retryable } => {
+                    tracing::info!(peer=%self.peer,retryable,"viewer link ended: {reason}");
+                    self.release_keyboard();
+                    self.files.lock().unwrap().disconnect();
+                    self.tunnels.clear();
                     self.closed = Some(reason);
-                    self.captured = false;
+                    self.stats=ViewerStats::default();
+                    self.reconnect_requested=retryable && self.peer.0!=0;
                 }
             }
         }
@@ -226,6 +249,61 @@ impl RemoteTab {
 
     pub fn keyboard_captured(&self) -> bool {
         self.captured && self.closed.is_none()
+    }
+
+    /// Keep recovery attached to this tab: ending the link drops the job.
+    pub fn maintain_connection(&mut self,ctx:&egui::Context,rt:&tokio::runtime::Runtime,client:&slipstream_session::Client)->bool {
+        let mut restored=false;
+        if std::mem::take(&mut self.reconnect_requested) && self.reconnect.is_none() {
+            tracing::info!(peer=%self.peer,"reconnecting lost link");
+            let progress=Arc::new(Mutex::new("Waiting for the remote host…".into()));
+            let (tx,rx)=tokio::sync::oneshot::channel();
+            let (client,peer,password,via,wake,status)=(client.clone(),self.peer,self.password.clone(),self.via.clone(),ctx.clone(),progress.clone());
+            let task=rt.spawn(async move {
+                let w=wake.clone();
+                let result=client.reconnect(peer,&password,via.as_ref(),move |text|{*status.lock().unwrap()=text;w.request_repaint_of(egui::ViewportId::ROOT);}).await.map_err(|e|format!("{e:#}"));
+                let _=tx.send(result);wake.request_repaint_of(egui::ViewportId::ROOT);
+            });
+            self.reconnect=Some(Reconnecting{progress,rx,task});
+        }
+        let result=self.reconnect.as_mut().and_then(|retry|match retry.rx.try_recv() {
+            Ok(result)=>Some(result),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)=>None,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)=>Some(Err("Reconnect ended without an answer".into())),
+        });
+        if let Some(result)=result {
+            self.reconnect=None;
+            match result {
+                Ok((session,events))=>{self.restore(session,events,ctx,client.settings().viewer.play_audio);restored=true;},
+                Err(error)=>{tracing::warn!(peer=%self.peer,"automatic reconnect stopped: {error}");self.closed=Some(error);},
+            }
+        }
+        if self.reconnect.is_some() {ctx.request_repaint_after(std::time::Duration::from_millis(100));}
+        restored
+    }
+
+    fn restore(&mut self,session:ViewerSession,events:mpsc::UnboundedReceiver<ViewerEvent>,ctx:&egui::Context,default_audio:bool) {
+        tracing::info!(peer=%self.peer,"viewer link restored");
+        self.info=session.info().clone();
+        self.cmds=session.command_sender();self.frames=session.frames();
+        let wake=ctx.clone();self.frames.set_repaint(move ||wake.request_repaint_of(egui::ViewportId::ROOT));
+        self.events=events;self.session=session;
+        self.forward_repeats=self.info.os!="Linux";
+        if !self.info.displays.iter().any(|d|d.index==self.display) {
+            self.display=self.info.displays.iter().find(|d|d.primary).or(self.info.displays.first()).map(|d|d.index).unwrap_or(0);
+        }
+        self.closed=None;self.captured=false;self.last_pointer=None;
+        self.held_keys.clear();self.held_buttons.clear();self.touch=touch::Touch::default();
+        self.privacy=false;self.audio &= self.info.capabilities.audio;
+        self.send(ViewerCmd::SelectDisplay(self.display));
+        self.send(ViewerCmd::Settings(PRESETS[self.preset].1));
+        if self.audio!=default_audio {self.send(ViewerCmd::Audio(self.audio));}
+        self.files.lock().unwrap().reconnect(self.session.fs(),self.info.host_name.clone());
+        self.network.lock().unwrap().reconnect(self.session.fs(),self.info.capabilities.input);
+        self.pasting=None;self.sysinfo=Arc::default();self.sysinfo_busy=Arc::default();self.sysinfo_at=None;
+        self.sysinfo_fetch=self.show_sysinfo;
+        self.public_ip=None;self.public_ip_rx=None;self.public_ip_at=None;
+        self.notice=Some(("Link restored · click the picture to take control".into(),Instant::now()));
     }
 
     pub fn release_keyboard(&mut self) {
@@ -418,7 +496,6 @@ impl RemoteTab {
             action = self.toolbar(ui, bar, t, rail_width);
         }
 
-        self.files.ui(&ctx, rt);
         self.tunnels_window(&ctx, rt);
         self.sysinfo_window(&ctx, rt);
         self.handle_drops(ui, &ctx, video_area, rt);
@@ -457,7 +534,7 @@ impl RemoteTab {
             return;
         }
         let pos = ctx.input(|i| i.pointer.hover_pos());
-        let pane_target = pos.and_then(|p| self.files.remote_drop_target(p, ctx));
+        let pane_target = pos.and_then(|p| self.files.lock().unwrap().remote_drop_target(p, ctx));
         let screen_pos = pos.filter(|p| video_area.contains(*p)
             && self.video_rect.is_some_and(|r| r.contains(*p))
             && ctx.layer_id_at(*p).is_none_or(|layer| layer == ui.layer_id()));
@@ -471,14 +548,14 @@ impl RemoteTab {
         if dropped.is_empty() { return; }
         let n = dropped.len();
         if let Some(target) = pane_target {
-            self.files.upload(dropped, target, rt, ctx);
+            self.files.lock().unwrap().upload(dropped, target, rt, ctx);
         } else if let (Some(p), Some(r), Some(display)) = (screen_pos, self.video_rect,
             self.info.displays.iter().find(|d| d.index == self.display)) {
             // Resolve a physical point on the host, independent of keyboard
             // capture or the asynchronously injected remote mouse position.
             let x = display.x + (((p.x-r.left())/r.width()).clamp(0.0,1.0) * display.width.saturating_sub(1) as f32).round() as i32;
             let y = display.y + (((p.y-r.top())/r.height()).clamp(0.0,1.0) * display.height.saturating_sub(1) as f32).round() as i32;
-            self.files.upload_to_screen(dropped, (x,y), rt, ctx);
+            self.files.lock().unwrap().upload_to_screen(dropped, (x,y), rt, ctx);
         } else {
             self.notice = Some(("Drop onto the remote picture or the Files window's remote pane".into(), Instant::now()));
             return;
@@ -731,7 +808,7 @@ impl RemoteTab {
             self.show_chat = !self.show_chat;
         }
         if self.info.capabilities.file_transfer && theme::console_button(ui,"Files",pal::GOLD,Icon::Files,false).on_hover_text("Browse and transfer files").clicked() {
-            self.files.open = !self.files.open;
+            { let mut files=self.files.lock().unwrap();files.open = !files.open; }
             self.release_keyboard();
         }
 
@@ -818,7 +895,7 @@ impl RemoteTab {
                 ui.close();
             }
             if self.info.capabilities.file_transfer && ui.button("Files").clicked() {
-                self.files.open = !self.files.open;
+                { let mut files=self.files.lock().unwrap();files.open = !files.open; }
                 self.release_keyboard();
                 ui.close();
             }
@@ -946,7 +1023,7 @@ impl RemoteTab {
         self.public_ip_at = Some(Instant::now());
         rt.spawn(async move {
             let result = fs.public_ip(refresh).await.map_err(|e|format!("{e:#}"));
-            let _=tx.send(result);wake.request_repaint();
+            let _=tx.send(result);wake.request_repaint_of(egui::ViewportId::ROOT);
         });
     }
 
@@ -1197,12 +1274,13 @@ impl RemoteTab {
             Detail::Full => format!("{fps:>3.0} FPS · {rate:>4} {rate_unit} · {rtt:>3.0} MS"),
         };
         ui.label(RichText::new(text).font(theme::mono(15.0)).color(pal::BLUE)).on_hover_text(&details);
-        if let Some((n, frac)) = self.files.activity() {
+        let activity=self.files.lock().unwrap().activity();
+        if let Some((n, frac)) = activity {
             let r = ui
                 .add(egui::Button::new(RichText::new(format!("⇅ {n} · {:.0}%", frac * 100.0)).font(theme::mono(14.0)).color(pal::GOLD)).frame(false))
                 .on_hover_text("Show transfers");
             if r.clicked() {
-                self.files.open = true;
+                self.files.lock().unwrap().open = true;
             }
         }
         // The lamp shows the path when the label is left out.
@@ -1212,29 +1290,37 @@ impl RemoteTab {
         resp.on_hover_text(details);
     }
 
-    fn closed_overlay(&mut self, ui: &mut Ui, area: Rect, reason: &str) -> Option<TabAction> {
-        let painter = ui.painter();
-        painter.rect_filled(area, 0.0, Color32::BLACK.gamma_multiply(0.75));
-        let panel = Rect::from_center_size(area.center(), vec2(520.0, 200.0));
-        theme::glow(painter, panel, 16.0, pal::RED, 1.0);
-        painter.rect_filled(panel, 16.0, pal::PANEL);
-        let mut child = ui.new_child(UiBuilder::new().max_rect(panel.shrink(20.0)));
-        let ui = &mut child;
-        theme::header(ui, "Link terminated", pal::RED);
+    fn closed_overlay(&mut self,ui:&mut Ui,area:Rect,reason:&str)->Option<TabAction> {
+        let progress=self.reconnect.as_ref().map(|r|r.progress.lock().unwrap().clone());
+        let recovering=progress.is_some();
+        let color=if recovering {pal::BLUE}else{pal::RED};
+        let painter=ui.painter();
+        painter.rect_filled(area,0.0,Color32::BLACK.gamma_multiply(0.75));
+        let panel=Rect::from_center_size(area.center(),vec2((area.width()-24.0).clamp(260.0,560.0),240.0));
+        theme::glow(painter,panel,16.0,color,1.0);
+        painter.rect_filled(panel,16.0,pal::PANEL);
+        let mut child=ui.new_child(UiBuilder::new().max_rect(panel.shrink(20.0)));
+        let ui=&mut child;
+        theme::header(ui,if recovering {"Re-establishing link"}else{"Link terminated"},color);
         ui.add_space(8.0);
         ui.label(RichText::new(reason).font(theme::body(17.0)));
+        if let Some(progress)=progress {
+            ui.add_space(8.0);ui.label(RichText::new(progress).color(pal::BLUE));
+            ui.label(RichText::new("Retrying for up to two minutes. Transfers are not resumed automatically.").small().color(pal::DIM));
+        }
         ui.add_space(16.0);
-        let mut out = None;
-        ui.horizontal(|ui| {
-            if theme::pill(ui, "Reconnect", pal::ORANGE).clicked() {
-                out = Some(TabAction::Reconnect(self.peer, self.password.clone(), self.via.clone()));
+        let mut out=None;
+        ui.horizontal_wrapped(|ui| {
+            if recovering {
+                if theme::pill(ui,"Cancel reconnect",pal::ORANGE).clicked() {tracing::info!(peer=%self.peer,"automatic reconnect canceled");self.reconnect=None;}
+            } else if theme::pill(ui,"Reconnect",pal::ORANGE).clicked() {
+                out=Some(TabAction::Reconnect(self.peer,self.password.clone(),self.via.clone()));
             }
-            if theme::pill(ui, "Close", pal::LAVENDER).clicked() {
-                out = Some(TabAction::Close);
-            }
+            if theme::pill(ui,"End link",pal::RED).clicked() {out=Some(TabAction::Close);}
         });
         out
     }
+
 }
 
 /// How much of the link's figures the session bar shows.
