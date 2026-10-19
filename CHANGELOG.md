@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.17.0 — 2026-10-18
+
 ### Android hosting and device ID
 - Register Android as a persistent host, show its ID and password on the home
   console, and name new phones from the manufacturer/model instead of leaving
