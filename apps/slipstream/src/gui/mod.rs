@@ -4,6 +4,7 @@
 mod android;
 mod autostart;
 mod files;
+mod file_previews;
 #[cfg(target_os = "linux")]
 mod desktop;
 mod home;

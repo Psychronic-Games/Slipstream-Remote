@@ -7,6 +7,7 @@ mod reconnect;
 mod accounts;
 pub mod files;
 pub mod fsops;
+pub mod preview;
 mod host;
 pub mod network;
 mod network_names;
@@ -1083,6 +1084,20 @@ mod tests {
         }
         assert_eq!(std::fs::read(local_dir.join("down/Photos/2026/big.bin")).unwrap(), payload);
 
+        // Passive previews are small, use the same authenticated session,
+        // and unsupported files do not break subsequent browsing/transfers.
+        let image=image::RgbaImage::from_pixel(600,300,image::Rgba([10,50,200,255]));
+        image.save(remote_dir.join("photo.png")).unwrap();
+        let preview=fs.preview(remote_dir.join("photo.png").display().to_string()).await.unwrap().unwrap();
+        assert!(preview.valid());
+        assert!(matches!(preview,slipstream_core::proto::FilePreview::Image {width:128,height:64,..}));
+        std::fs::write(remote_dir.join("notes.txt"),"Remote text preview\nSecond line").unwrap();
+        assert!(matches!(fs.preview(remote_dir.join("notes.txt").display().to_string()).await.unwrap(),
+            Some(slipstream_core::proto::FilePreview::Text(t)) if t.contains("Second line")));
+        assert!(fs.preview(remote_dir.join("Photos/2026/big.bin").display().to_string()).await.unwrap().is_none());
+        assert!(fs.preview(remote_dir.join("missing.png").display().to_string()).await.unwrap().is_none());
+        assert!(!fs.list(Some(remote_dir.display().to_string())).await.unwrap().entries.is_empty());
+
         drop(session);
         viewer.shutdown().await;
         host.shutdown().await;
@@ -1098,6 +1113,8 @@ mod tests {
         assert!(!session.info().capabilities.file_transfer);
         let err = session.fs().list(None).await.unwrap_err();
         assert!(format!("{err:#}").contains("not allowed"), "{err:#}");
+        let preview_err=session.fs().preview("unused.png".into()).await.unwrap_err();
+        assert!(format!("{preview_err:#}").contains("not allowed"));
         let drop_err = session.fs().drop_target(500, 300).await.unwrap_err();
         assert!(format!("{drop_err:#}").contains("not allowed"), "{drop_err:#}");
         drop(session);

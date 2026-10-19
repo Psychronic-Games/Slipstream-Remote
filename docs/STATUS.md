@@ -1,7 +1,18 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.15.0. Read this first when
+*Updated 2026-10-18; latest release 0.16.0. Read this first when
 picking the work back up.*
+
+**0.16.0:** File Transfer has independent Name/Modified sorting in each
+pane, reversible with another click and with folders always first. Choices
+survive navigation and reconnects; raw listing indices preserve selection
+and transfer identity. Common raster images show thumbnails and larger hover
+previews; text/source files show passive page previews. Visible rows load in
+the background, with two requests per pane and 128 cached entries. Hosts
+return bounded previews, never the original image, over an optional
+file-browsing-authorized stream. Refresh/navigation clear previews and ignore
+late results. Older hosts retain generic icons. Update both ends for remote
+previews. PDFs, video and office-document rendering are not implemented.
 
 **0.15.0:** desktop viewers detect an unresponsive host using the existing
 performance probe (six-second request deadline, three-second polling gap),
@@ -85,7 +96,10 @@ peripheral/printer/network-drive inventory, restored Windows service chat,
 and LCARS desktop title bars. Protocol remains 6: optional name lookup uses
 appended stream variants, preserving 0.10 scan interoperability.
 
-91 workspace tests pass (5 hardware/display tests ignored). Linux GUI checks
+94 workspace tests pass (5 hardware/display tests ignored). Isolated Linux
+GUI checks also cover image/text thumbnails, hover previews, independent
+Name/Modified sorting and direction toggles, selected-file Send/Receive
+bytes after reordering, and native file/folder drops. Linux GUI checks
 confirm the scanner is larger than its main window, finds this machine's
 name/ports, switches views, maximizes/restores, and closes without ending the
 session. Linux and Windows Clippy and Android checks pass. Windows service

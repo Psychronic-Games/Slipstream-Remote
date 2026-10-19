@@ -253,6 +253,14 @@ The toolbar along the top:
 | Stats | Frames per second, bandwidth (kbit/s below 1 Mbit/s), round-trip time, and **DIRECT** or **RELAY** (whether traffic goes peer-to-peer or through your station). Hover for decode time and, from 0.6.2 hosts, the remote computer's own figures: capture, encoding, and waiting for a new screen frame or for you. Every 30 s the same figures go to this app's log. On a slow remote computer, moving pictures are sent at lower resolution to keep the frame rate, and sharpen once the picture stops. |
 | **End link** | Disconnect. |
 
+**File Transfer** opens in its own resizable LCARS window. Each pane has
+**Name** and **Modified** sorting; click the active choice again to reverse it.
+Folders stay at the top. Images show mini thumbnails; hover for a larger view.
+PNG, JPEG, GIF (first frame), WebP, BMP, ICO and TIFF are supported, along with
+passive text previews for common notes, logs and source files. Large,
+unsupported or unreadable files keep their console icon. Remote thumbnails
+require an updated host as well as an updated viewer.
+
 You can also:
 
 - **Drag and drop** files from your desktop onto the remote screen. They are

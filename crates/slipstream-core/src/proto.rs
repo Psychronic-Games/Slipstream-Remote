@@ -245,6 +245,8 @@ pub enum StreamOpen {
     OpenNetworkWeb { address: std::net::Ipv4Addr, port: u16 },
     /// Independently query the host's observed public internet address.
     PublicIp { refresh: bool },
+    /// Small passive preview; requires the same permission as file browsing.
+    FilePreview { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +265,29 @@ pub enum StreamReply {
     NetworkNames(Vec<crate::network::DeviceName>),
     DropTarget { path: String },
     PublicIp(std::net::IpAddr),
+    FilePreview(Option<FilePreview>),
+}
+
+/// Bounded passive data, never an executable document or an original image.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FilePreview {
+    Image { width: u32, height: u32, rgba: Vec<u8> },
+    Text(String),
+}
+
+impl FilePreview {
+    pub const EDGE: u32 = 128;
+    pub const TEXT_BYTES: usize = 8192;
+
+    pub fn valid(&self) -> bool {
+        match self {
+            Self::Image { width, height, rgba } => *width > 0 && *height > 0
+                && *width <= Self::EDGE && *height <= Self::EDGE
+                && rgba.len() == *width as usize * *height as usize * 4,
+            Self::Text(text) => text.len() <= Self::TEXT_BYTES
+                && !text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')),
+        }
+    }
 }
 
 /// One stage of the host's video pipeline ("screen capture (GDI)", "video

@@ -13,7 +13,7 @@ use anyhow::{Context, Result, bail};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use slipstream_core::{
     framing::{expect_msg, write_msg},
-    proto::{DirListing, Place, StreamOpen, StreamReply, UploadTarget},
+    proto::{DirListing, FilePreview, Place, StreamOpen, StreamReply, UploadTarget},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -69,6 +69,16 @@ async fn handle(
     let req: StreamOpen = expect_msg(&mut recv).await?;
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
+        StreamOpen::FilePreview { path } => {
+            if !policy.browse { return reply(&mut send, &denied("Browsing files")).await; }
+            // Ordinary unreadable/unsupported files keep their generic icon.
+            tokio::select! {
+                preview = crate::preview::load(path) => {
+                    reply(&mut send, &StreamReply::FilePreview(preview.ok().flatten())).await?;
+                }
+                _ = send.stopped() => {},
+            }
+        }
         StreamOpen::PublicIp { refresh } => {
             let response = match crate::public_ip::get(refresh).await {
                 Ok(address) => StreamReply::PublicIp(address),
@@ -328,6 +338,24 @@ impl RemoteFs {
         match response {
             StreamReply::DropTarget { path } => Ok(UploadTarget::Folder(path)),
             other => bail!("unexpected drop-folder reply {other:?}"),
+        }
+    }
+
+    /// Optional appended RPC: older hosts keep browsing with generic icons.
+    pub async fn preview(&self, path: String) -> Result<Option<FilePreview>> {
+        let response = tokio::time::timeout(std::time::Duration::from_secs(12), async {
+            let (mut send, mut recv) = self.conn.open_bi().await?;
+            send.set_priority(-10)?;
+            write_msg(&mut send, &StreamOpen::FilePreview { path }).await?;
+            expect_msg::<StreamReply>(&mut recv).await
+        }).await.context("file preview timed out")??;
+        match response {
+            StreamReply::FilePreview(preview) => {
+                if preview.as_ref().is_some_and(|p| !p.valid()) { bail!("invalid file preview"); }
+                Ok(preview)
+            }
+            StreamReply::Error(e) => bail!("{e}"),
+            _ => bail!("unsupported file preview reply"),
         }
     }
 

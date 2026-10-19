@@ -12,10 +12,10 @@ use std::{
 };
 
 use eframe::egui::{self, Align, Align2, Color32, Layout, Rect, RichText, Sense, Ui, vec2};
-use slipstream_core::proto::{DirListing, Place, UploadTarget};
+use slipstream_core::proto::{DirEntry, DirListing, Place, UploadTarget};
 use slipstream_session::{RemoteFs, fsops};
 
-use super::{theme, theme::pal};
+use super::{file_previews::{Loader, PreviewCache}, theme, theme::pal};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JobState {
@@ -60,8 +60,47 @@ enum Msg {
     JobFinished { upload: bool },
 }
 
+#[derive(Clone, Copy, Default, PartialEq)]
+enum SortField { #[default] Name, Modified }
+
+#[derive(Clone, Copy, Default, PartialEq)]
+struct Sort { field: SortField, descending: bool }
+
+impl Sort {
+    fn choose(&mut self, field: SortField) {
+        if self.field == field { self.descending = !self.descending; }
+        else { self.field = field; self.descending = field == SortField::Modified; }
+    }
+}
+
+/// Display order only: selections, transfers and anchors keep listing indices.
+fn sorted_rows(entries: &[DirEntry], show_hidden: bool, sort: Sort) -> Vec<usize> {
+    let mut rows: Vec<_> = entries.iter().enumerate()
+        .filter(|(_,e)|show_hidden || !e.name.starts_with('.'))
+        .map(|(i,e)|(i,e.name.to_lowercase())).collect();
+    rows.sort_by(|(a,an),(b,bn)| {
+        let (a,b)=(&entries[*a],&entries[*b]);
+        b.is_dir.cmp(&a.is_dir).then_with(|| {
+            if sort.field == SortField::Modified {
+                // Unknown timestamps stay last in either direction.
+                (a.modified <= 0).cmp(&(b.modified <= 0)).then_with(|| {
+                    if sort.descending {b.modified.cmp(&a.modified)} else {a.modified.cmp(&b.modified)}
+                })
+            } else {std::cmp::Ordering::Equal}
+        }).then_with(|| {
+            let order=an.cmp(bn).then_with(||a.name.cmp(&b.name));
+            if sort.field == SortField::Name && sort.descending {order.reverse()} else {order}
+        })
+    });
+    rows.into_iter().map(|(i,_)|i).collect()
+}
+
 #[derive(Default)]
 struct Pane {
+    sort: Sort,
+    rows: Vec<usize>,
+    rows_key: Option<(bool, Sort)>,
+    previews: PreviewCache,
     listing: Option<DirListing>,
     path_edit: String,
     selected: BTreeSet<usize>,
@@ -76,6 +115,8 @@ struct Pane {
 
 impl Pane {
     fn set_listing(&mut self, l: DirListing) {
+        self.previews.clear();
+        self.rows_key = None;
         self.path_edit = l.path.clone();
         self.listing = Some(l);
         self.selected.clear();
@@ -307,6 +348,8 @@ impl FileManager {
     }
 
     fn handle_messages(&mut self, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
+        self.local.previews.poll(ctx);
+        self.remote.previews.poll(ctx);
         while let Ok(m) = self.rx.try_recv() {
             match m {
                 Msg::RemoteListing(Ok(l)) => self.remote.set_listing(l),
@@ -391,6 +434,7 @@ impl FileManager {
     }
 
     pub fn disconnect(&mut self) {
+        self.local.previews.clear();self.remote.previews.clear();
         for job in &self.jobs {
             if job.is_active() {
                 job.cancel();
@@ -401,7 +445,8 @@ impl FileManager {
 
     pub fn reconnect(&mut self,fs:RemoteFs,name:String) {
         self.disconnect();
-        self.fs=fs;self.remote_name=name;self.remote=Pane::default();self.started=false;
+        let sort=self.remote.sort;
+        self.fs=fs;self.remote_name=name;self.remote=Pane {sort,..Default::default()};self.started=false;
         // Late listings from the old connection must not replace the new pane.
         (self.tx,self.rx)=mpsc::channel();
     }
@@ -429,7 +474,7 @@ impl FileManager {
             ui.allocate_ui_with_layout(vec2(pane_w, pane_h), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(pane_w);
                 ui.set_height(pane_h);
-                go_local = pane_ui(ui, &mut self.local, "This computer", pal::BLUE, "local", self.show_hidden);
+                go_local = pane_ui(ui, &mut self.local, "This computer", pal::BLUE, "local", self.show_hidden, &Loader {rt,remote:None});
             });
             ui.allocate_ui_with_layout(vec2(mid_w, pane_h), Layout::top_down(Align::Center), |ui| {
                 ui.set_width(mid_w);
@@ -455,7 +500,7 @@ impl FileManager {
                 ui.set_width(pane_w);
                 ui.set_height(pane_h);
                 let title = format!("Remote · {}", self.remote_name);
-                go_remote = pane_ui(ui, &mut self.remote, &title, pal::ORANGE, "remote", self.show_hidden);
+                go_remote = pane_ui(ui, &mut self.remote, &title, pal::ORANGE, "remote", self.show_hidden, &Loader {rt,remote:Some(&self.fs)});
             });
         });
         if let Some(p) = go_local {
@@ -532,7 +577,7 @@ impl FileManager {
 
 /// Console-style vector symbols, independent of the operating system's
 /// emoji font. Shapes stay crisp at the current display scale.
-fn entry_icon(p:&egui::Painter,rect:Rect,folder:bool) {
+pub(super) fn entry_icon(p:&egui::Painter,rect:Rect,folder:bool) {
     let at=|x,y|rect.min+vec2(x,y);
     let color=if folder {pal::GOLD}else{pal::BLUE};
     let stroke=egui::Stroke::new(1.4,color);
@@ -558,7 +603,8 @@ fn entry_icon(p:&egui::Painter,rect:Rect,folder:bool) {
 }
 
 /// Draws one pane. Returns `Some(path)` to navigate (`Some(None)` = home).
-fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, show_hidden: bool) -> Option<Option<String>> {
+#[allow(clippy::too_many_arguments)]
+fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, show_hidden: bool, loader: &Loader<'_>) -> Option<Option<String>> {
     let mut nav: Option<Option<String>> = None;
     theme::header(ui, title, color);
     ui.horizontal(|ui| {
@@ -584,8 +630,24 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
             nav = Some(Some(pane.path_edit.clone()));
         }
     });
+    ui.push_id(("sort",id),|ui|ui.horizontal(|ui| {
+        ui.label(RichText::new("SORT").font(theme::mono(11.0)).color(pal::DIM));
+        for (field,label) in [(SortField::Name,"Name"),(SortField::Modified,"Modified")] {
+            let active=pane.sort.field == field;
+            let label=if active {format!("{label} {}",if pane.sort.descending {"▼"}else{"▲"})}else{label.into()};
+            let button=egui::Button::new(RichText::new(label).color(if active {pal::BG}else{pal::TEXT}))
+                .fill(if active {color}else{Color32::from_rgb(18,22,38)}).corner_radius(6.0);
+            if ui.add(button).on_hover_text("Click to sort; click again to reverse. Folders stay first.").clicked() {
+                pane.sort.choose(field);
+            }
+        }
+    }));
     if let Some(e) = &pane.error {
         ui.label(RichText::new(e).color(pal::RED));
+    }
+    if pane.rows_key != Some((show_hidden,pane.sort)) {
+        pane.rows=pane.listing.as_ref().map(|l|sorted_rows(&l.entries,show_hidden,pane.sort)).unwrap_or_default();
+        pane.rows_key=Some((show_hidden,pane.sort));
     }
     let frame = egui::Frame::new().fill(Color32::from_rgb(4, 6, 12)).corner_radius(6.0).inner_margin(4.0);
     // Room for the "N items" line below, measured: a guess that came out
@@ -600,10 +662,9 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
             return;
         }
         let Some(listing) = &pane.listing else { return };
-        let row_h = 24.0;
+        let row_h = 36.0;
         let modifiers = ui.input(|i| i.modifiers);
-        let rows: Vec<usize> =
-            (0..listing.entries.len()).filter(|&i| show_hidden || !listing.entries[i].name.starts_with('.')).collect();
+        let rows = &pane.rows;
         egui::ScrollArea::vertical().id_salt(("rows", id)).auto_shrink([false, false]).show_rows(
             ui,
             row_h,
@@ -620,15 +681,23 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
                     } else if resp.hovered() {
                         p.rect_filled(rect, 4.0, Color32::from_rgb(18, 22, 38));
                     }
-                    entry_icon(p,Rect::from_min_size(rect.left_center()+vec2(4.0,-10.0),vec2(20.0,20.0)),e.is_dir);
-                    let name_w = rect.width() - 190.0;
-                    let galley = p.layout(e.name.clone(), theme::body(15.0), if e.is_dir { pal::TAN } else { pal::TEXT }, name_w.max(60.0));
-                    let name_rect = Rect::from_min_size(rect.left_top() + vec2(30.0, (row_h - 18.0) / 2.0), vec2(name_w.max(60.0), 18.0));
-                    p.with_clip_rect(name_rect).galley(name_rect.min, galley, pal::TEXT);
-                    if !e.is_dir {
-                        p.text(rect.right_center() - vec2(110.0, 0.0), Align2::RIGHT_CENTER, human_size(e.size), theme::mono(13.0), pal::BLUE);
+                    let icon_rect=Rect::from_min_size(rect.left_center()+vec2(3.0,-16.0),vec2(32.0,32.0));
+                    let previewable=!e.is_dir && slipstream_session::preview::supported(&e.name);
+                    let path=format!("{}{}{}",listing.path.trim_end_matches(['/', '\\']),listing.sep,e.name);
+                    if !previewable || !pane.previews.paint(ui,icon_rect,i,path,loader) {
+                        entry_icon(p,Rect::from_center_size(icon_rect.center(),vec2(20.0,20.0)),e.is_dir);
                     }
-                    p.text(rect.right_center() - vec2(6.0, 0.0), Align2::RIGHT_CENTER, short_date(e.modified), theme::mono(12.0), pal::DIM);
+                    // Two text lines keep long dates clear of file sizes, even in narrow panes.
+                    let name_w = (rect.width() - 46.0).max(60.0);
+                    let galley = p.layout(e.name.clone(), theme::body(15.0), if e.is_dir { pal::TAN } else { pal::TEXT }, name_w);
+                    let name_rect = Rect::from_min_size(rect.left_top() + vec2(42.0, 0.0), vec2(name_w, 18.0));
+                    p.with_clip_rect(name_rect).galley(name_rect.min, galley, pal::TEXT);
+                    let details=Rect::from_min_max(rect.min+vec2(42.0,19.0),rect.max);
+                    if !e.is_dir {
+                        p.with_clip_rect(details).text(details.left_top(),Align2::LEFT_TOP,human_size(e.size),theme::mono(11.0),pal::BLUE);
+                    }
+                    p.with_clip_rect(details).text(details.right_top()-vec2(4.0,0.0),Align2::RIGHT_TOP,short_date(e.modified),theme::mono(11.0),pal::DIM);
+                    if previewable {resp.clone().on_hover_ui(|ui|pane.previews.hover(ui,i));}
                     if resp.double_clicked() && e.is_dir {
                         nav = Some(Some(format!("{}{}{}", listing.path.trim_end_matches(['/', '\\']), listing.sep, e.name)));
                     } else if resp.clicked() {
@@ -697,6 +766,32 @@ fn short_date(unix: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sort_keeps_folders_first_unknown_dates_last_and_selection_identity() {
+        let entries:Vec<_>=[("z-folder",true,20),("a-folder",true,10),("Alpha.txt",false,20),
+            ("beta.txt",false,30),(".hidden",false,40),("unknown.txt",false,0),("alpha.txt",false,20)]
+            .into_iter().map(|(name,is_dir,modified)|DirEntry {name:name.into(),is_dir,size:10,modified}).collect();
+        let mut sort=Sort::default();
+        assert_eq!(sorted_rows(&entries,false,sort),[1,0,2,6,3,5]);
+        let selected:BTreeSet<usize>=[2,3].into();
+        sort.choose(SortField::Name);
+        assert_eq!(sorted_rows(&entries,false,sort),[0,1,5,3,6,2]);
+        sort.choose(SortField::Modified); // first date click is newest first
+        let rows=sorted_rows(&entries,false,sort);
+        assert_eq!(rows,[0,1,3,2,6,5]);
+        assert_eq!(rows.iter().filter(|i|selected.contains(i)).map(|&i|entries[i].name.as_str()).collect::<Vec<_>>(),["beta.txt","Alpha.txt"]);
+        // Shift ranges use the new display order, while the anchor stays an entry index.
+        let anchor=rows.iter().position(|&i|i==3).unwrap();
+        assert_eq!(&rows[anchor..=4],[3,2,6]);
+        sort.choose(SortField::Modified);
+        assert_eq!(sorted_rows(&entries,false,sort),[1,0,2,6,3,5]);
+        assert!(sorted_rows(&entries,true,sort).contains(&4));
+        let mut pane=Pane {sort,..Default::default()};
+        pane.set_listing(DirListing {path:"/test".into(),parent:None,sep:"/".into(),entries});
+        assert!(pane.sort.field==SortField::Modified && !pane.sort.descending);
+        assert!(pane.rows_key.is_none());
+    }
 
     #[test]
     fn formats() {

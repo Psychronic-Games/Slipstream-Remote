@@ -276,6 +276,33 @@ the root toolbar, so progress/listings do not depend on root-window rendering.
 Drop hit testing includes the viewport ID as well as the pane rect/layer;
 Linux's grabbed-pointer sampling also uses the event's own viewport and scale.
 
+### File preview and sort state
+
+Each file pane owns its sort choice, cached display-index order and preview
+cache. Sorting never mutates a listing: selected rows and shift anchors keep
+original entry indices so upload/download actions cannot change targets.
+Folders sort before files, unknown timestamps follow known ones, and names
+break equal-date ties. New Modified sorting defaults to newest first.
+
+Optional appended `StreamOpen::FilePreview` / `StreamReply::FilePreview`
+variants preserve protocol-6 interoperability. Hosts require `FilePolicy.browse`;
+unsupported/unreadable items return no preview. Older-host RPC failures disable
+further preview attempts until reconnect, without affecting file browsing.
+A preview is either at most 128 × 128 RGBA pixels or 8192 UTF-8 bytes, validated
+before texture allocation. Raster files are limited to 32 MiB, 8192 pixels
+per dimension, 16 million pixels total and a 96 MiB decoder allocation limit.
+EXIF orientation is applied after resizing. Text is truncated safely at UTF-8
+boundaries, rejects binary control characters, and is never interpreted as HTML,
+SVG or executable code. PDFs, office documents and videos use generic icons.
+
+Only visible rows request previews: at most two tasks per pane, low-priority
+QUIC streams, a twelve-second remote request deadline and a 128-entry LRU
+texture/text cache per pane. All local/host decoders share a two-worker process
+semaphore; its permit stays with a blocking job after cancellation. Refresh
+and navigation advance a generation, abort old requests and drop textures;
+late results cannot populate another folder's cache. Reconnect replaces the
+remote cache/transport while preserving its sort choice.
+
 ### Windows service chat and device inventory
 
 The SYSTEM helper owns incoming sessions; the user GUI has an ephemeral

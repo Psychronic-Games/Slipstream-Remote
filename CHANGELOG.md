@@ -13,6 +13,21 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### File previews and sorting
+- Show image thumbnails in both File Transfer panes, with a larger hover
+  preview; support PNG, JPEG, GIF (first frame), WebP, BMP, ICO and TIFF.
+- Preview plain-text notes, logs and source files as passive page icons and
+  readable hover text. Unsupported, corrupt or oversized items keep LCARS icons.
+- Load only visible-row previews in the background with bounded concurrency
+  and a 128-entry cache per pane. Generate remote previews on the host, sending
+  at most a 128-pixel RGBA image or 8 KB of text instead of the original file.
+- Sort each pane independently by Name or Modified, click again to reverse,
+  keep folders first and retain sort choices across navigation and reconnects.
+  Selection and transfers continue to reference the original listing entries.
+- Clear preview caches on refresh/navigation and reject stale asynchronous
+  results. Older hosts keep normal browsing and generic icons; previews use
+  the existing file-browsing permission over an optional protocol-6 stream.
+
 ## 0.15.0 — 2026-10-18
 
 ### Automatic link recovery
