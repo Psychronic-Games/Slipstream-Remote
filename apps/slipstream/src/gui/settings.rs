@@ -24,6 +24,7 @@ pub struct SettingsForm {
     max_fps: u32,
     sync_clipboard: bool,
     play_audio: bool,
+    separate_windows: bool,
     run_in_tray: bool,
     service_tray: bool,
     autostart: bool,
@@ -50,6 +51,7 @@ impl From<&Settings> for SettingsForm {
             max_fps: s.viewer.max_fps,
             sync_clipboard: s.viewer.sync_clipboard,
             play_audio: s.viewer.play_audio,
+            separate_windows: s.viewer.separate_windows,
             run_in_tray: s.app.run_in_tray,
             service_tray: !s.app.hide_tray_with_service,
             autostart: super::autostart::is_enabled(),
@@ -323,6 +325,17 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
 
     let f = &mut app.settings_form;
     theme::panel(ui, "Viewing", pal::GOLD, |ui| {
+        #[cfg(not(target_os = "android"))]
+        row(ui, "New links", |ui| {
+            egui::ComboBox::from_id_salt("new-link-layout")
+                .selected_text(if f.separate_windows {"Separate windows"} else {"Tabs"})
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut f.separate_windows, false, "Tabs");
+                    ui.selectable_value(&mut f.separate_windows, true, "Separate windows");
+                });
+        });
+        #[cfg(not(target_os = "android"))]
+        ui.label(RichText::new("Drag tabs to reorder, drag out for a window, or drop a floating tab back onto the main tab strip. You can also use Pop out / Dock.").small().color(pal::DIM));
         row(ui, "Max frame rate", |ui| {
             ui.add(egui::Slider::new(&mut f.max_fps, 10..=144).suffix(" fps"));
         });
@@ -420,6 +433,7 @@ fn save(app: &mut App) {
         s.viewer.max_fps = fps;
         s.viewer.sync_clipboard = sync;
         s.viewer.play_audio = play_audio;
+        s.viewer.separate_windows = f.separate_windows;
         s.app.run_in_tray = run_in_tray;
         s.app.hide_tray_with_service = !service_tray;
     });

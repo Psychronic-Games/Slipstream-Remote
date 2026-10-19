@@ -14,6 +14,7 @@ mod keys;
 mod lite;
 mod remote;
 mod session_windows;
+mod session_tabs;
 mod saved;
 #[cfg(windows)]
 mod scheme;
@@ -326,6 +327,7 @@ pub struct App {
     pub attempt: Option<Attempt>,
     pub tabs: Vec<Arc<Mutex<remote::RemoteTab>>>,
     session_actions: SessionActionQueue,
+    session_tabs: Arc<Mutex<session_tabs::Tabs>>,
     next_tab: u64,
     pub incoming: Vec<IncomingSession>,
     toasts: Vec<Toast>,
@@ -416,6 +418,7 @@ impl App {
             attempt: None,
             tabs: Vec::new(),
             session_actions: mpsc::channel(),
+            session_tabs: Arc::new(Mutex::new(session_tabs::Tabs::default())),
             next_tab: 1,
             incoming: Vec::new(),
             toasts: Vec::new(),
@@ -452,6 +455,7 @@ impl App {
 
     fn set_visible(&mut self, ctx: &egui::Context, visible: bool) {
         self.hidden = !visible;
+        if !visible {self.session_tabs.lock().unwrap().hide_target();}
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(visible));
     }
 
@@ -604,6 +608,9 @@ impl App {
                 self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
                 self.tabs.push(Arc::new(Mutex::new(tab)));
                 self.page = Page::Remote(id);
+                if self.client.settings().viewer.separate_windows && !ctx.embed_viewports() {
+                    self.open_session_window(ctx, id);
+                }
                 self.connect_pw.clear();
                 self.settings_form.refresh_recent(&self.client.settings());
             }
@@ -833,12 +840,16 @@ impl App {
     }
 
     pub fn close_tab(&mut self, id: u64) {
+        self.session_tabs.lock().unwrap().cancel(id);
         if let Some(tab) = self.tab(id) { tab.lock().unwrap().end_link(); }
         self.tabs.retain(|t| t.lock().unwrap().id != id);
         let alive: Vec<u64> = self.tabs.iter().map(|t| t.lock().unwrap().id).collect();
         video::retain_streams(&self.render_state, |s| alive.contains(&s));
         if self.page == Page::Remote(id) {
-            self.page = if self.tabs.is_empty() { Page::Home } else { Page::Links };
+            self.page = self.tabs.iter().find_map(|tab| {
+                let tab = tab.lock().unwrap();
+                (!tab.detached).then_some(Page::Remote(tab.id))
+            }).unwrap_or(if self.tabs.is_empty() {Page::Home} else {Page::Links});
         }
     }
 
@@ -867,6 +878,7 @@ impl App {
         match action {
             remote::TabAction::None => {},
             remote::TabAction::Bridge => {
+                for tab in &self.tabs {tab.lock().unwrap().release_keyboard();}
                 self.page = Page::Home;
                 self.set_visible(ctx, true);
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
@@ -874,8 +886,34 @@ impl App {
             },
             remote::TabAction::Close => self.close_tab(id),
             remote::TabAction::Detach => self.open_session_window(ctx, id),
+            remote::TabAction::Activate => {
+                for tab in &self.tabs { tab.lock().unwrap().release_keyboard(); }
+                if let Some(tab) = self.tab(id) {
+                    if tab.lock().unwrap().detached { return; }
+                    self.page = Page::Remote(id);
+                }
+            },
+            remote::TabAction::FloatAt(position) => {
+                if let Some(tab) = self.tab(id) {tab.lock().unwrap().window_position = Some(position);}
+                self.open_session_window(ctx, id);
+                ctx.send_viewport_cmd_to(remote::RemoteTab::window_id(id), egui::ViewportCommand::OuterPosition(position));
+            },
+            remote::TabAction::PlaceTab(before) => {
+                if let Some(index) = self.tabs.iter().position(|tab| tab.lock().unwrap().id == id) {
+                    let tab = self.tabs.remove(index);
+                    let index = before.and_then(|other| self.tabs.iter().position(|tab| tab.lock().unwrap().id == other)).unwrap_or(self.tabs.len());
+                    self.tabs.insert(index, tab);
+                    self.session_action(ctx, id, remote::TabAction::Dock);
+                }
+            },
             remote::TabAction::Dock => {
-                if let Some(tab) = self.tab(id) { tab.lock().unwrap().detached = false; }
+                if let Some(tab) = self.tab(id) {
+                    let mut tab = tab.lock().unwrap();
+                    tab.release_keyboard();
+                    tab.detached = false;
+                }
+                ctx.send_viewport_cmd_to(remote::RemoteTab::window_id(id), egui::ViewportCommand::Visible(false));
+                ctx.send_viewport_cmd_to(remote::RemoteTab::window_id(id), egui::ViewportCommand::Close);
                 self.page = Page::Remote(id);
                 self.set_visible(ctx, true);
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
@@ -1510,8 +1548,11 @@ impl eframe::App for App {
                 tab.network_window(ctx, &self.rt);
             }
         }
+        if self.hidden || ctx.input(|i| i.raw.viewports.get(&egui::ViewportId::ROOT).is_some_and(|v| v.minimized == Some(true))) {
+            self.session_tabs.lock().unwrap().hide_target();
+        }
         for tab in &self.tabs {
-            session_windows::show(tab, ctx, &self.rt, &self.session_actions.0, self.t0.elapsed().as_secs_f64(), &window_title(self.org.as_deref()));
+            session_windows::show(tab, ctx, &self.rt, &self.session_actions.0, &self.session_tabs, self.t0.elapsed().as_secs_f64(), &window_title(self.org.as_deref()));
         }
         // Frame serials restart on a new session; discard cached old textures.
         if !restored.is_empty() {video::retain_streams(&self.render_state,|id|!restored.contains(&id));}
@@ -1590,11 +1631,13 @@ impl eframe::App for App {
         android::input(_ctx, raw);
         #[cfg(target_os = "linux")]
         desktop_drop::update_pointer(_ctx, raw);
+        self.session_tabs.lock().unwrap().update_input(_ctx, raw);
         let root_input = raw.viewport_id == egui::ViewportId::ROOT;
         let focused_now = raw.focused;
         if root_input { self.window_focused = focused_now; }
         let target = route_session_input(&self.tabs, self.page, raw.viewport_id, focused_now);
-        let captured = focused_now && target.as_ref().is_some_and(|tab| tab.lock().unwrap().keyboard_captured());
+        let dragging = self.session_tabs.lock().unwrap().dragging();
+        let captured = !dragging && focused_now && target.as_ref().is_some_and(|tab| tab.lock().unwrap().keyboard_captured());
         if !captured {
             // Ours: the usual clipboard shortcuts for egui's text fields.
             for ev in &mut raw.events {
@@ -1677,6 +1720,22 @@ impl eframe::App for App {
             tab.network_window(&ctx, &self.rt);
             files::FileManager::show(&tab.files,&ctx,&self.rt,tab.id);
         }
+
+        let entries: Vec<_> = self.tabs.iter().filter_map(|tab| {
+            let tab = tab.lock().unwrap();
+            (!tab.detached).then(|| (tab.id, tab.info.host_name.clone()))
+        }).collect();
+        let mut content_ui = if !self.tabs.is_empty() {
+            let active = if let Page::Remote(id) = self.page {Some(id)} else {None};
+            let visible = !self.hidden && ctx.input(|i| i.viewport().minimized != Some(true));
+            let (body, actions) = session_tabs::show(&self.session_tabs, ui, ui.max_rect(), &entries, active, true, visible);
+            for (id, action) in actions { self.session_action(&ctx, id, action); }
+            ui.new_child(UiBuilder::new().max_rect(body))
+        } else {
+            self.session_tabs.lock().unwrap().hide_target();
+            ui.new_child(UiBuilder::new().max_rect(ui.max_rect()))
+        };
+        let ui = &mut content_ui;
 
         if let Page::Remote(id) = self.page
             && let Some(tab) = self.tab(id)

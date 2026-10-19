@@ -241,14 +241,23 @@ controls. If an older service has no code to show, update it under
 **Config → Windows service → Update**. An unattended password is still
 required when installing the service for access before sign-in.
 
-On desktop, use **Pop out** in the session toolbar or **Links → Open window**
-to give each workstation its own movable/resizable window. At compact widths,
-the option is under Console. **Dock** returns it to the main console without
-reconnecting; **Bridge** opens the console while the window's link continues.
-Closing a session window or choosing End link disconnects only that workstation.
-Links can focus an existing window. Phones keep their embedded session view.
-The top title bar identifies the workstation; picture quality and FPS/latency
-sit together on the second bar.
+Desktop links start as tabs by default. Switch workstations from the strip
+below the title bar, or select **Bridge** to return to the console. Drag a tab
+along the strip to reorder it; drag it outside the strip and release to open
+a floating window. Drag the floating window's tab back onto the main strip
+to dock it at the highlighted position. These moves keep the existing link.
+
+Choose **Config → Viewing → New links → Tabs / Separate windows**, then
+**Save configuration**, to set the default for future connections. Existing
+links keep their current layout. You can mix tabbed and floating sessions.
+**Pop out**, **Dock**, and the tab's right-click menu provide the same moves
+without dragging; at compact widths, Pop out / Dock are under Console.
+**Links → Open window / Focus window** remains available. Closing a tab or
+session window ends only that workstation's link. Phones keep embedded tabs;
+separate native windows require desktop support. On systems that withhold
+cross-window pointer positions, use the Dock action if dragging back is
+unavailable. The title bar identifies the workstation; picture quality and
+FPS/latency sit together on the session toolbar.
 
 1. Open Slipstream on your own computer. You download it from the same
    station page.

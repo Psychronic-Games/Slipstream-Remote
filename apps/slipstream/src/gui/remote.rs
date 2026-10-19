@@ -59,6 +59,9 @@ pub enum TabAction {
     Close,
     Detach,
     Dock,
+    Activate,
+    PlaceTab(Option<u64>),
+    FloatAt(egui::Pos2),
 }
 
 const PRESETS: [(&str, StreamSettings); 4] = [
@@ -71,6 +74,7 @@ const PRESETS: [(&str, StreamSettings); 4] = [
 pub struct RemoteTab {
     pub id: u64,
     pub detached: bool,
+    pub window_position: Option<egui::Pos2>,
     pub pending_keys: Vec<CapturedKey>,
     session: ViewerSession,
     cmds: mpsc::UnboundedSender<ViewerCmd>,
@@ -182,6 +186,7 @@ impl RemoteTab {
         Self {
             id,
             detached: false,
+            window_position: None,
             pending_keys: Vec::new(),
             cmds: session.command_sender(),
             peer: session.peer_id(),

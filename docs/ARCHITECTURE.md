@@ -600,6 +600,20 @@ sessions; unfocused tool repaints do not. Ending a link explicitly disconnects
 it before dropping shared callbacks, and texture retention includes detached
 sessions. Manual reconnect now uses the same retained-session recovery path.
 
+`gui/session_tabs.rs` adds a shared tab strip and drag coordinator. Root tabs
+snapshot attached sessions; floating sessions show a draggable single tab.
+Drops queue placement actions so session locks are released before reordering,
+docking or creating a viewport. Targets and pointer positions use physical
+screen pixels across viewport scale factors. During a tab drag only, Windows
+and X11 sample the native pointer and synthesize missing pointer-up events:
+winit can drop them after CursorLeft. The destination may also accept release
+locally when a compositor withholds global positions. Hidden/minimized root
+windows are not drop targets. Drag cancellation/close clears pending ownership.
+`viewer.separate_windows` persists the new-link default; its absent-field
+value is false for existing profiles. Android embeds tabs and ignores the
+native-window preference. No session protocol changes are involved.
+
+
 The Windows local service pipe additionally publishes the host's current
 one-time code in its authenticated snapshots and accepts regeneration requests
 bound to the current host epoch. Missing optional fields preserve older local

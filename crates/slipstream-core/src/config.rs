@@ -136,6 +136,8 @@ pub struct ViewerSettings {
     /// Play the remote computer's sound when a link starts (it can be
     /// switched per session).
     pub play_audio: bool,
+    /// Open new desktop links in independent windows rather than console tabs.
+    pub separate_windows: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -213,6 +215,7 @@ impl Default for ViewerSettings {
             bitrate_kbps: 0,
             sync_clipboard: true,
             play_audio: false,
+            separate_windows: false,
         }
     }
 }
@@ -414,9 +417,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("slipstream-test-{}", std::process::id()));
         let store = Store::open(&dir).unwrap();
         let mut s = store.load_settings();
+        assert!(!s.viewer.separate_windows);
+        s.viewer.separate_windows = true;
         s.host.set_permanent_password(Some("hunter2"));
         store.save_settings(&s).unwrap();
         let loaded = store.load_settings();
+        assert!(loaded.viewer.separate_windows);
         assert_eq!(loaded.host.permanent_secret(), Some(crate::auth::password_secret("hunter2")));
         let k1 = store.identity().unwrap();
         let k2 = store.identity().unwrap();

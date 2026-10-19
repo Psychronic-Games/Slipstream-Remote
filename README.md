@@ -18,7 +18,7 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
   loop keeps latency low instead of letting frames queue up.
 - **Full control** — mouse, wheel, keyboard (physical keys, works across
   layouts), Ctrl+Alt+Del and other special keys, multi-monitor switching.
-- **Several workstations at once** — pop desktop links into separate windows,
+- **Several workstations at once** — use reorderable session tabs or separate windows,
   or dock them back into the console without reconnecting.
 - **Clipboard sync, chat, and a two-pane file manager** — copy and paste
   text and files between the computers, browse both, send and receive

@@ -13,6 +13,18 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Session tabs and floating windows
+- Keep desktop links in a switchable tab strip, reorder tabs by dragging, or
+  drag a tab out into its own native window. Drag the floating tab back into
+  the main strip to dock without reconnecting. Tabs and floating sessions can
+  coexist, with Pop out / Dock and a right-click menu as alternate controls.
+- Save a Tabs / Separate windows default for new connections under Config →
+  Viewing. Existing profiles default to tabs and existing links keep their
+  layout. Closing a tab/window ends only that link.
+- Track native pointer movement/release during Windows/X11 tab drags so drops
+  outside the source window work; normalize cross-window targets for display
+  scale and keep drag gestures from sending remote keyboard input.
+
 ## 0.19.1 — 2026-10-19
 
 ### Session identification
