@@ -876,6 +876,10 @@ impl RemoteTab {
         let tools=theme::console_button(ui,if tool_labels {"Tools"} else {""},tools_color,Icon::Tools,true);
         theme::console_menu(&tools).show(|ui|self.tools_menu(ui));
 
+        if self.fullscreen || cfg!(target_os="android") {
+            let gap = Rect::from_min_max(pos2(ui.min_rect().right()+4.0,bar.top()),pos2(right_left-4.0,bar.bottom()));
+            theme::session_rail_label(&painter, gap, &self.info.host_name.to_uppercase());
+        }
         action
     }
 
@@ -907,6 +911,10 @@ impl RemoteTab {
         let console = theme::console_button(&mut left,if left_rect.width()<180.0 {""} else {"Console"},if self.unread {pal::GOLD}else{pal::LAVENDER},Icon::Console,true);
         theme::console_menu(&console).show(|ui| {
             ui.set_min_width(230.0);
+            if self.fullscreen || cfg!(target_os="android") {
+                ui.label(RichText::new(self.info.host_name.to_uppercase()).font(theme::display_bold(18.0)).color(pal::TAN));
+                ui.separator();
+            }
             if !ctx.embed_viewports() && ui.button(if self.detached {"Dock in main console"} else {"Open in separate window"}).clicked() {
                 self.release_keyboard();
                 action = if self.detached {TabAction::Dock} else {TabAction::Detach};
@@ -956,6 +964,10 @@ impl RemoteTab {
             ui.menu_button("Tools", |ui| self.tools_menu(ui));
             ui.menu_button(format!("Quality: {}", PRESETS[self.preset].0), |ui| self.quality_menu(ui));
         });
+        if self.fullscreen || cfg!(target_os="android") {
+            let gap = Rect::from_min_max(pos2(left.min_rect().right()+4.0,inner.top()),pos2(right.min_rect().left()-4.0,inner.bottom()));
+            theme::session_rail_label(ui.painter(), gap, &self.info.host_name.to_uppercase());
+        }
         action
     }
 
