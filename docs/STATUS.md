@@ -1,14 +1,42 @@
 # Project status
 
-*Updated 2026-10-19; latest release 0.18.0. Read this first when
+*Updated 2026-10-19; latest release 0.19.1. Read this first when
 picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-19.md)
-covers tool-window cleanup, proactive screen approval and APK naming.
-**Published clients: 0.18.0, build 90, commit ba3161e**, on
+covers service one-time codes, independent workstation windows, toolbar layout,
+tool-window cleanup, proactive screen approval and APK naming.
+**Published clients: 0.19.1, build 95, commit 491f201**, on
 https://relay.slipstreamremote.com. Later documentation commits do not change
-that deployed build. The mounted client directory and rollback backup are
+that deployed build. The mounted client directory and rollback backups are
 recorded in the handoff.
+
+**0.19.0–0.19.1:** the full and compact Windows apps show the running
+service's actual one-time code alongside its unattended password. Copy and
+New code use the authenticated local pipe; passwords are omitted from service
+stdout. Update the installed service to expose these controls with an older
+installation. Both passwords authenticate the same ID, and regenerating the
+code leaves unattended access and existing sessions intact.
+
+Desktop sessions can **Pop out** into independent native windows, opened or
+focused from **Links**, then **Dock** without reconnecting. Each window owns
+its input focus and shortcuts. Closing it ends only its link; Bridge opens
+the console while the session continues. Reconnection retains the same
+window and display/quality choices. Native title bars show the workstation
+name prominently, and FPS/latency sit beside picture quality. Toolbar labels
+adapt to measured space, with a Console menu at small widths and a screen
+selection menu. Android and full-screen sessions retain the workstation name
+in the toolbar/menu when the native title bar is absent.
+
+119 workspace tests pass (five opt-in tests ignored), including simultaneous
+one-time/permanent authentication, service code updates and two-session input
+routing. Linux/Windows all-target Clippy and arm64 Android Clippy pass.
+Isolated native X11 checks cover two live workstation windows, docking,
+closing only one link, reconnecting in place, three-screen menus, narrow
+layouts and tools with the console hidden. The final phone/full-screen label
+patch compiled for all three targets. Physical Windows service/UI and actual
+window-manager minimization remain confirmation tasks; hidden-console checks
+used X11 unmapping. Release and live HTTPS checks are recorded in the handoff.
 
 **0.18.0:** detached Files, transfer receipts and Network Scan hide immediately
 on close and force their parent to repaint even while occluded. System
@@ -285,7 +313,9 @@ implemented and emulator-tested, alongside the touch viewer. Remaining work
 includes real-phone checks, viewer keyboard polish, hardware encoding and
 host audio/clipboard/files/updates. The steps below carry on alongside it.
 
-1. **Confirm 0.17.1 on the Windows Server VM**: sharp Balanced/Quality motion,
+1. **Confirm 0.19.1 on the Windows Server VM**: service one-time codes beside
+   unattended access, independent workstation windows, closing tools without
+   black remnants, sharp Balanced/Quality motion,
    the pointer on the mouseless VM, service-update recovery, incoming chat,
    peripheral/network-drive inventory, Explorer/Desktop drop destinations,
    scanner browser launching and native frame corners/rails. Use the stats
@@ -319,5 +349,5 @@ host audio/clipboard/files/updates. The steps below carry on alongside it.
 - How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 - User-facing behaviour: [GETTING-STARTED.md](GETTING-STARTED.md).
 - What changed: [CHANGELOG.md](../CHANGELOG.md).
-- Today's handoff and deployed build: [DEVELOPMENT-2026-10-18.md](DEVELOPMENT-2026-10-18.md).
+- Today's handoff and deployed build: [DEVELOPMENT-2026-10-19.md](DEVELOPMENT-2026-10-19.md).
 - Audit findings, regression evidence and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md).
