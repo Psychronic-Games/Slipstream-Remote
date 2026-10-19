@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.20.0 — 2026-10-19
+
 ### Session tabs and floating windows
 - Keep desktop links in a switchable tab strip, reorder tabs by dragging, or
   drag a tab out into its own native window. Drag the floating tab back into
