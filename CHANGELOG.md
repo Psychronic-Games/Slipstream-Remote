@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.15.0 — 2026-10-18
+
 ### Automatic link recovery
 - Detect an unresponsive remote host with bounded performance-probe requests,
   independently of video frame rate, and show a reconnecting overlay over the
