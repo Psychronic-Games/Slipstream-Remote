@@ -6818,6 +6818,8 @@ dependencies = [
  "android-activity",
  "jni 0.21.1",
  "slipstream",
+ "slipstream-core",
+ "slipstream-platform",
  "tracing",
 ]
 
@@ -6881,6 +6883,7 @@ dependencies = [
  "arboard",
  "ashpd",
  "enigo",
+ "jni 0.21.1",
  "keycode",
  "libc",
  "libloading 0.8.9",

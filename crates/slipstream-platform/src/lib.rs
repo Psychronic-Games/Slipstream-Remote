@@ -8,6 +8,10 @@
 //! | Linux X11, Windows, macOS | xcap capture + enigo input ([`generic`]) |
 //! | anything (tests, demos) | synthetic test pattern ([`test_pattern`]) |
 
+#[cfg(target_os = "android")]
+pub mod android;
+#[cfg(any(target_os = "android", test))]
+mod android_frames;
 pub mod clipboard;
 pub mod keymap;
 pub mod machine;
@@ -57,6 +61,9 @@ pub trait Backend: Send {
     /// Must not block for long; implementations queue to a worker.
     fn inject(&mut self, display: u32, event: InputEvent) -> Result<()>;
 
+    /// Whether this backend can currently accept remote input.
+    fn input_supported(&self) -> bool { true }
+
     /// Token that lets the next session skip the permission prompt (Wayland).
     fn restore_token(&self) -> Option<String> {
         None
@@ -102,7 +109,9 @@ pub async fn open(opts: &OpenOptions) -> Result<Box<dyn Backend>> {
     {
         Ok(Box::new(generic::GenericBackend::open()?))
     }
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    { Ok(Box::new(android::AndroidBackend::open()?)) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos", target_os = "android")))]
     {
         anyhow::bail!("screen capture is not supported on this platform yet")
     }

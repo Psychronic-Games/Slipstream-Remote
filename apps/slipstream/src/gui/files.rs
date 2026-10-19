@@ -29,6 +29,7 @@ pub enum JobState {
 /// One transfer (a file, or a folder with everything in it).
 pub struct Job {
     pub label: String,
+    destination: Mutex<Option<String>>,
     pub upload: bool,
     pub total: AtomicU64,
     pub done: AtomicU64,
@@ -46,11 +47,25 @@ impl Job {
         matches!(*self.state.lock().unwrap(), JobState::Preparing | JobState::Running)
     }
 
-    fn cancel(&self) {
-        if let Some(t) = self.task.lock().unwrap().take() {
-            t.abort();
+    fn cancel(&self) {self.stop(JobState::Cancelled);}
+
+    fn stop(&self,outcome:JobState) {
+        let mut state=self.state.lock().unwrap();
+        if matches!(*state,JobState::Preparing|JobState::Running) {
+            if let Some(t)=self.task.lock().unwrap().take() {t.abort();}
+            *state=outcome;
         }
-        *self.state.lock().unwrap() = JobState::Cancelled;
+    }
+
+    fn begin(&self)->bool {
+        let mut state=self.state.lock().unwrap();
+        if *state==JobState::Preparing {*state=JobState::Running;true}else{false}
+    }
+
+    fn finish(&self, result:JobState) {
+        let mut state=self.state.lock().unwrap();
+        // Cancellation/disconnection can race the final remote receipt.
+        if matches!(*state,JobState::Preparing|JobState::Running) {*state=result;}
     }
 }
 
@@ -133,6 +148,7 @@ impl Pane {
 
 pub struct FileManager {
     pub open: bool,
+    pub progress_open: bool,
     fs: RemoteFs,
     remote_name: String,
     local: Pane,
@@ -153,6 +169,7 @@ impl FileManager {
         let (tx, rx) = mpsc::channel();
         Self {
             open: false,
+            progress_open: false,
             fs,
             remote_name,
             local: Pane::default(),
@@ -230,6 +247,7 @@ impl FileManager {
         };
         let job = Arc::new(Job {
             label: format!("↑ {label}"),
+            destination: Mutex::new(None),
             upload: true,
             total: AtomicU64::new(0),
             done: AtomicU64::new(0),
@@ -244,6 +262,12 @@ impl FileManager {
                     Some((x,y)) => fs.drop_target(x,y).await?,
                     None => target,
                 };
+                *j.destination.lock().unwrap() = Some(match &target {
+                    UploadTarget::Folder(path)=>path.clone(),
+                    UploadTarget::Default=>"Remote Desktop".into(),
+                    UploadTarget::UnderCursor=>"Remote folder under the pointer".into(),
+                    UploadTarget::Clipboard {..}=>"Remote clipboard".into(),
+                });
                 let trees = tokio::task::spawn_blocking(move || {
                     items.iter().map(|p| fsops::walk_local_tree(p)).collect::<anyhow::Result<Vec<_>>>()
                 }).await??;
@@ -257,7 +281,7 @@ impl FileManager {
                 let folders = trees.iter().map(|tree| tree.directories.len()).sum::<usize>();
                 let files: Vec<_> = trees.into_iter().flat_map(|tree| tree.files).collect();
                 j.total.store(files.iter().map(|f| f.2).sum(), Ordering::Relaxed);
-                *j.state.lock().unwrap() = JobState::Running;
+                anyhow::ensure!(j.begin(),"Transfer was cancelled before sending files");
                 let mut last = String::new();
                 for (path, rel, _) in &files {
                     last = fs
@@ -275,15 +299,17 @@ impl FileManager {
                 })
             }
             .await;
-            *j.state.lock().unwrap() = match result {
+            j.finish(match result {
                 Ok(m) => JobState::Done(m),
                 Err(e) => JobState::Failed(format!("{e:#}")),
-            };
+            });
             let _ = tx.send(Msg::JobFinished { upload: true });
             ctx2.request_repaint_of(viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
         });
         *job.task.lock().unwrap() = Some(task);
         self.jobs.push(job);
+        self.progress_open = true;
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
     /// Downloads the selected remote items into the current local folder.
@@ -303,6 +329,7 @@ impl FileManager {
         let label = if picks.len() == 1 { picks[0].2.clone() } else { format!("{} items", picks.len()) };
         let job = Arc::new(Job {
             label: format!("↓ {label}"),
+            destination: Mutex::new(Some(dest_dir.display().to_string())),
             upload: false,
             total: AtomicU64::new(0),
             done: AtomicU64::new(0),
@@ -318,7 +345,7 @@ impl FileManager {
                     files.extend(fs.walk(path, is_dir, name, size).await?);
                 }
                 j.total.store(files.iter().map(|f| f.2).sum(), Ordering::Relaxed);
-                *j.state.lock().unwrap() = JobState::Running;
+                anyhow::ensure!(j.begin(),"Transfer was cancelled before sending files");
                 let mut last = PathBuf::new();
                 for (remote, rel, _) in &files {
                     let dest = dest_dir.join(fsops::safe_relative(rel)?);
@@ -336,15 +363,17 @@ impl FileManager {
                 })
             }
             .await;
-            *j.state.lock().unwrap() = match result {
+            j.finish(match result {
                 Ok(m) => JobState::Done(m),
                 Err(e) => JobState::Failed(format!("{e:#}")),
-            };
+            });
             let _ = tx.send(Msg::JobFinished { upload: false });
             ctx2.request_repaint_of(viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
         });
         *job.task.lock().unwrap() = Some(task);
         self.jobs.push(job);
+        self.progress_open = true;
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
     fn handle_messages(&mut self, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
@@ -384,6 +413,7 @@ impl FileManager {
 
     /// Independent desktop window; mobile backends embed the same body.
     pub fn show(shared:&Arc<Mutex<Self>>,ctx:&egui::Context,rt:&Arc<tokio::runtime::Runtime>,id:u64) {
+        Self::show_progress(shared,ctx,rt,id);
         let host={
             let mut files=shared.lock().expect("file window");
             files.handle_messages(rt,ctx);
@@ -433,13 +463,98 @@ impl FileManager {
         });
     }
 
+    /// A small native receipt window for drops, separate from the browser.
+    /// Completion stays visible until dismissed; closing never cancels work.
+    pub(super) fn show_progress(shared:&Arc<Mutex<Self>>,ctx:&egui::Context,rt:&Arc<tokio::runtime::Runtime>,id:u64) {
+        let host={
+            let files=shared.lock().expect("transfer progress");
+            if !files.progress_open {return;}
+            files.remote_name.clone()
+        };
+        let (shared,rt)=(shared.clone(),rt.clone());
+        let viewport=egui::ViewportId::from_hash_of(("transfer-progress",id));
+        let builder=egui::ViewportBuilder::default().with_decorations(false)
+            .with_transparent(theme::transparent_window()).with_app_id("slipstream-remote")
+            .with_title(format!("Transfer progress · {host} · Slipstream Remote")).with_icon(Arc::new(theme::icon(64)))
+            .with_inner_size([520.0,360.0]).with_min_inner_size([360.0,220.0]);
+        ctx.show_viewport_deferred(viewport,builder,move |ui,class| {
+            let mut files=shared.lock().expect("transfer progress");
+            let ctx=ui.ctx().clone();
+            let desktop=class==egui::ViewportClass::Deferred;
+            if !files.progress_open {
+                if desktop {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
+                return;
+            }
+            files.handle_messages(&rt,&ctx);
+            let (body,close)=theme::tool_frame(ui,&format!("Transfers · {host}"),desktop,pal::ORANGE);
+            if close || ctx.input(|i|i.viewport().close_requested()) {
+                files.progress_open=false;
+                if desktop {ctx.send_viewport_cmd(egui::ViewportCommand::Close);}
+                ctx.request_repaint_of(egui::ViewportId::ROOT);return;
+            }
+            let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
+            ui.horizontal(|ui| {
+                if theme::pill(ui,"Files",pal::BLUE).on_hover_text("Open the full file browser and transfer history").clicked() {
+                    files.open=true;ctx.request_repaint_of(egui::ViewportId::ROOT);
+                }
+                if ui.button("Clear finished").clicked() {
+                    files.jobs.retain(|job|job.is_active());
+                    if files.jobs.is_empty() {files.progress_open=false;}
+                }
+            });
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().id_salt(("transfer-cards",id)).auto_shrink([false,false])
+                .max_height(ui.available_height()).show(ui,|ui| {
+                for job in files.jobs.iter().rev() {
+                    let state=job.state.lock().unwrap().clone();
+                    let total=job.total.load(Ordering::Relaxed);
+                    let done=job.done.load(Ordering::Relaxed);
+                    let (status,color)=match &state {
+                        JobState::Preparing=>("PREPARING",pal::GOLD),
+                        JobState::Running if total>0 && done>=total=>("CONFIRMING",pal::GOLD),
+                        JobState::Running=>(if job.upload {"SENDING"}else{"RECEIVING"},pal::BLUE),
+                        JobState::Done(_)=>("COMPLETE",pal::GREEN),
+                        JobState::Failed(_)=>("FAILED",pal::RED),
+                        JobState::Cancelled=>("CANCELLED",pal::DIM),
+                    };
+                    egui::Frame::new().fill(pal::BG).stroke(egui::Stroke::new(1.0,color.gamma_multiply(0.5)))
+                        .corner_radius(8.0).inner_margin(10.0).show(ui,|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let (icon,_)=ui.allocate_exact_size(vec2(20.0,20.0),Sense::hover());
+                            entry_icon(ui.painter(),icon,false);
+                            ui.add(egui::Label::new(RichText::new(&job.label).font(theme::body(16.0)).color(pal::TEXT)).truncate());
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(status).font(theme::display(16.0)).color(color));
+                            if matches!(state,JobState::Preparing|JobState::Running) && ui.small_button("Cancel").clicked() {job.cancel();}
+                        });
+                        if let Some(destination)=job.destination.lock().unwrap().as_ref() {
+                            ui.add(egui::Label::new(RichText::new(format!("To: {destination}")).font(theme::mono(12.0)).color(pal::DIM)).truncate()).on_hover_text(destination);
+                        }
+                        match &state {
+                            JobState::Preparing=>{ui.label(RichText::new("Resolving destination and preparing files…").small().color(pal::DIM));}
+                            JobState::Running=>{
+                                let fraction=if total==0 {0.0}else{done as f32/total as f32};
+                                let text=format!("{} / {} · {:.0}%",human_size(done),human_size(total),fraction*100.0);
+                                theme::progress(ui,fraction,ui.available_width(),pal::BLUE,&text);
+                            }
+                            JobState::Done(message)=>{ui.label(RichText::new(message).small().color(pal::GREEN));}
+                            JobState::Failed(message)=>{ui.label(RichText::new(message).small().color(pal::RED));}
+                            JobState::Cancelled=>{ui.label(RichText::new("Transfer cancelled").small().color(pal::DIM));}
+                        }
+                    });
+                    ui.add_space(6.0);
+                }
+            });
+            ctx.request_repaint_after(std::time::Duration::from_millis(if files.activity().is_some() {100}else{250}));
+        });
+    }
+
     pub fn disconnect(&mut self) {
         self.local.previews.clear();self.remote.previews.clear();
         for job in &self.jobs {
-            if job.is_active() {
-                job.cancel();
-                *job.state.lock().unwrap()=JobState::Failed("Link interrupted; restart this transfer after reconnecting".into());
-            }
+            job.stop(JobState::Failed("Link interrupted; restart this transfer after reconnecting".into()));
         }
     }
 
@@ -791,6 +906,22 @@ mod tests {
         pane.set_listing(DirListing {path:"/test".into(),parent:None,sep:"/".into(),entries});
         assert!(pane.sort.field==SortField::Modified && !pane.sort.descending);
         assert!(pane.rows_key.is_none());
+    }
+
+    #[test]
+    fn late_transfer_receipts_preserve_cancelled_or_disconnected_results() {
+        let job=Job {label:"file.txt".into(),destination:Mutex::new(None),upload:true,total:AtomicU64::new(10),
+            done:AtomicU64::new(10),state:Mutex::new(JobState::Running),task:Mutex::new(None)};
+        // Sending every byte still leaves the job running until the receipt.
+        assert!(job.is_active());
+        job.cancel();assert!(!job.begin());job.finish(JobState::Done("saved remotely".into()));
+        assert_eq!(*job.state.lock().unwrap(),JobState::Cancelled);
+        *job.state.lock().unwrap()=JobState::Failed("Link interrupted".into());
+        job.finish(JobState::Done("late reply".into()));
+        assert_eq!(*job.state.lock().unwrap(),JobState::Failed("Link interrupted".into()));
+        *job.state.lock().unwrap()=JobState::Running;
+        job.finish(JobState::Done("saved remotely".into()));job.cancel();job.stop(JobState::Failed("late disconnect".into()));
+        assert_eq!(*job.state.lock().unwrap(),JobState::Done("saved remotely".into()));
     }
 
     #[test]

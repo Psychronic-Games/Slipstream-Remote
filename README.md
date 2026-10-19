@@ -55,7 +55,7 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 | Linux — X11 | MIT-SHM + XTest | ✅ | in testing |
 | Windows 10/11 | DXGI + SendInput | ✅ | tested |
 | macOS 12+ | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | builds (`scripts/build-macos.sh`); testing on a real Mac next |
-| Android | planned (phase 2) | in development (phase 1) | runs on the emulator |
+| Android 8+ | MediaProjection + accessibility (on-device approval) | touch viewer | Android 16 emulator tested; real phones next |
 
 The Linux app is a single file that runs on any 64-bit distribution from
 2020 on (glibc 2.31+), with no extra packages.
@@ -137,7 +137,7 @@ protocol, the latency control loop and the platform backends.
 ## Roadmap
 
 - Hardware video encoding (NVENC, VA-API, VideoToolbox, Media Foundation)
-- Android app (viewer first, then host)
+- Android real-phone verification, hardware encoding, host audio/clipboard/files and updates
 
 ## License
 

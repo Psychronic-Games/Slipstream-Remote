@@ -253,6 +253,31 @@ The toolbar along the top:
 | Stats | Frames per second, bandwidth (kbit/s below 1 Mbit/s), round-trip time, and **DIRECT** or **RELAY** (whether traffic goes peer-to-peer or through your station). Hover for decode time and, from 0.6.2 hosts, the remote computer's own figures: capture, encoding, and waiting for a new screen frame or for you. Every 30 s the same figures go to this app's log. On a slow remote computer, moving pictures are sent at lower resolution to keep the frame rate, and sharpen once the picture stops. |
 | **End link** | Disconnect. |
 
+**Control an Android phone from a PC:** update both apps, open Slipstream on
+the phone and configure/link its station. Its ID and one-time password appear
+on Bridge. Tap **Enable remote control** and enable **Slipstream Remote
+control** in Android Accessibility settings. If Android blocks the switch,
+open **App info**, use its menu to **Allow restricted settings**, then return
+to Accessibility. This permission is optional for viewing only.
+
+Tap **Start sharing**, approve Android's capture prompt, then connect from
+your PC using the phone's ID and password. After approval Slipstream moves
+to the background; tap its sharing notification to return. Mouse clicks tap; held left-button
+drags swipe/hold, the wheel swipes, and keyboard typing edits a focused field.
+**Keys → Android Back / Home / Recents** navigates the phone. You can switch
+phone apps while sharing. **Stop sharing** in Slipstream or its notification
+ends access and disconnects viewers. A new capture session requires approval
+on the phone; a saved password does not skip that prompt. Protected apps may
+hide their content. Android host audio, clipboard and files are not available
+in this initial host implementation.
+
+Drops onto a remote desktop or folder automatically open a small LCARS
+**Transfers** window. It shows the destination, bytes and progress, then keeps
+**Complete**, **Failed** or **Cancelled** receipts. **Confirming** means the
+bytes have been sent and Slipstream is waiting for the host's save receipt.
+Close hides this window while work continues; **Cancel** stops a job, **Clear
+finished** removes old receipts, and **Files** opens the full browser.
+
 **File Transfer** opens in its own resizable LCARS window. Each pane has
 **Name** and **Modified** sorting; click the active choice again to reverse it.
 Folders stay at the top. Images show mini thumbnails; hover for a larger view.

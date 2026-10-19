@@ -1,7 +1,34 @@
 # Project status
 
-*Updated 2026-10-18; latest release 0.16.0. Read this first when
+*Updated 2026-10-18; latest release 0.17.0. Read this first when
 picking the work back up.*
+
+**0.17.0:** Android now registers a stable host ID and shows its ID/password
+on the main console, with a manufacturer/model name for default identities.
+Start sharing obtains Android consent and runs MediaProjection in a foreground
+service with a Stop notification. The optional accessibility service enables
+PC taps, held-touch drags, wheel swipes, typing/editing and Back/Home/Recents;
+without it, sessions are view-only. Input is gated by an active full-display
+projection, an enabled accessibility service and a live authenticated capture.
+Rotation resizes the existing display/surface; revocation closes capture slots
+and disconnects viewers. Initial capture uses the existing software encoder,
+a 1280-pixel long-edge bound and a 30 fps cap. Android host audio, clipboard,
+files, hardware encoding and capture without fresh approval are not included.
+
+Desktop drops and other transfers open a small native LCARS receipt window.
+It shows the target, bytes and active progress; Complete follows the remote
+save acknowledgement, while cancelled/failed results stay visible. Closing
+hides the panel without cancelling; new work reopens it. Clear finished and
+Files actions expose history/browser controls.
+
+Android 16 emulator checks exercise the visible ID, view-only input denial,
+PC-decoded capture, Home/Back/Recents, mouse taps, keyboard input/backspace,
+held-touch dragging, background capture, rotation and Stop notification
+revocation, including stopping while no viewer is connected and starting a
+fresh approved capture under the same ID. A real phone still needs confirmation. Isolated Linux native-drop
+checks verify saved bytes, live progress, cancellation, source permission
+errors and receipt retention. Physical Windows/Android hardware remains
+outside these local runtime checks.
 
 **0.16.0:** File Transfer has independent Name/Modified sorting in each
 pane, reversible with another click and with folders always first. Choices
@@ -96,7 +123,7 @@ peripheral/printer/network-drive inventory, restored Windows service chat,
 and LCARS desktop title bars. Protocol remains 6: optional name lookup uses
 appended stream variants, preserving 0.10 scan interoperability.
 
-94 workspace tests pass (5 hardware/display tests ignored). Isolated Linux
+98 workspace tests pass (5 hardware/display tests ignored). Isolated Linux
 GUI checks also cover image/text thumbnails, hover previews, independent
 Name/Modified sorting and direction toggles, selected-file Send/Receive
 bytes after reordering, and native file/folder drops. Linux GUI checks
@@ -145,7 +172,7 @@ The verification table below also records earlier releases.
 | Host pace in the viewer (stats tooltip, 30 s log line) | ✅ local sessions and the live Server 2016 VM |
 | X11 host | ⚠️ implemented, lightly tested |
 | macOS | ⚠️ type-checks for Apple Silicon (cross-checked from Linux); `scripts/build-macos.sh` packages it; not yet run on a Mac |
-| Android app (phase 0) | ⚠️ emulator only (Android 16): starts, goes online, soft-keyboard typing, `slipstream://` links (refused bad code from the live station), a 60 fps session to a test-pattern host. Desktop layout, no touch control yet; not on a real phone |
+| Android viewer and host | ⚠️ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; real phones still need confirmation. Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
 `cargo test --workspace` passes: unit tests plus in-process sessions
@@ -195,10 +222,10 @@ and port forwarding.
 Each step is written up as an issue with tasks and pointers into the code
 in [issues/](issues/README.md).
 
-**In progress: Android** (issue 09), in phases: 0 build and run the app
-on Android, 1 control PCs from a phone or tablet, 2 control an Android
-device from a PC, 3 sound, clipboard, files and updates. The steps below
-carry on alongside it.
+**In progress: Android** (issue 09). Initial PC-to-phone hosting is now
+implemented and emulator-tested, alongside the touch viewer. Remaining work
+includes real-phone checks, viewer keyboard polish, hardware encoding and
+host audio/clipboard/files/updates. The steps below carry on alongside it.
 
 1. **Measure 0.7.x on the Server 2016 VM**: the viewer's 30-second log
    line shows frame rate, round trip, decode time and the host's capture

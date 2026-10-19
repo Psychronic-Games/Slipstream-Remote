@@ -136,7 +136,7 @@ pub struct RemoteTab {
 impl Drop for RemoteTab {
     fn drop(&mut self) {
         self.reconnect=None;
-        let mut files=self.files.lock().unwrap();files.disconnect();files.open=false;
+        let mut files=self.files.lock().unwrap();files.disconnect();files.open=false;files.progress_open=false;
         self.network.lock().unwrap().close();
     }
 }
@@ -567,7 +567,7 @@ impl RemoteTab {
             self.notice = Some(("Drop onto the remote picture or the Files window's remote pane".into(), Instant::now()));
             return;
         }
-        self.notice = Some((format!("Sending {n} item{} — progress in Files", if n == 1 { "" } else { "s" }), Instant::now()));
+        self.notice = Some((format!("Sending {n} item{} — transfer panel opened", if n == 1 { "" } else { "s" }), Instant::now()));
     }
 
     fn draw_video(&mut self, ui: &mut Ui, area: Rect, t: f64) {
@@ -921,6 +921,14 @@ impl RemoteTab {
 
     /// Key combinations to send.
     fn keys_menu(&mut self, ui: &mut Ui) {
+        if self.info.os.eq_ignore_ascii_case("android") {
+            for (label,code) in [("Android · Back","AndroidBack"),("Android · Home","AndroidHome"),("Android · Recents","AndroidRecents")] {
+                if ui.add_enabled(self.info.capabilities.input,egui::Button::new(label)).clicked() {
+                    self.send_combo(&[code]);ui.close();
+                }
+            }
+            return;
+        }
         for (label, keys) in [
             ("Ctrl + Alt + Del", &["ControlLeft", "AltLeft", "Delete"][..]),
             ("Alt + Tab", &["AltLeft", "Tab"][..]),

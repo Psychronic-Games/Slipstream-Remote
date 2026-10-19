@@ -140,3 +140,30 @@ pub fn hold_keyboard(ctx: &egui::Context) {
         (None, false) => *last = None,
     });
 }
+
+/// LCARS setup stays in the main console; Android owns the permission screens.
+pub fn hosting_panel(ui:&mut egui::Ui) {
+    use super::theme::{self,pal};
+    let (sharing,control,message)=slipstream_platform::android::status();
+    ui.label(egui::RichText::new(if sharing {"SCREEN SHARING ACTIVE"}else{"PHONE HOST · READY TO SET UP"})
+        .font(theme::display(18.0)).color(if sharing {pal::GREEN}else{pal::CYAN}));
+    ui.label(egui::RichText::new(if control {"Remote input enabled. Connect again after changing this permission."}
+        else {"1 · Enable Slipstream Remote control in Accessibility for taps, swipes and typing."}).color(pal::DIM));
+    let mut action=None;
+    if !control && theme::pill(ui,"Enable remote control",pal::BLUE).clicked() {action=Some(0);}
+    if !control {
+        ui.label(egui::RichText::new("If Android blocks the switch: App info → menu → Allow restricted settings, then return to Accessibility.").small().color(pal::DIM));
+        if theme::pill(ui,"App info",pal::LAVENDER).clicked() {action=Some(3);}
+    }
+    ui.label(egui::RichText::new("2 · Start sharing, approve Android's prompt, then connect from your PC with the ID and password above. Without accessibility, sharing is view-only.").color(pal::TEXT));
+    if theme::pill(ui,if sharing {"Stop sharing"}else{"Start sharing"},if sharing {pal::RED}else{pal::GREEN}).clicked() {
+        action=Some(if sharing {2}else{1});
+    }
+    ui.label(egui::RichText::new("Sharing runs in the background. Tap its notification to return.").small().color(pal::DIM));
+    if let Some(action)=action && let Err(e)=slipstream_platform::android::action(action) {
+        ui.label(egui::RichText::new(format!("Could not open phone setup: {e}")).color(pal::RED));
+    }
+    if !message.is_empty() {ui.label(egui::RichText::new(message).small().color(pal::DIM));}
+    ui.add_space(10.0);
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+}

@@ -11,6 +11,8 @@ crate-type = ["cdylib"]
 
 [target.'cfg(target_os = "android")'.dependencies]
 slipstream = { path = "../slipstream" }
+slipstream-core.workspace = true
+slipstream-platform.workspace = true
 android-activity = { version = "0.6.1", features = ["game-activity"] }
 jni = "0.21.1"
 tracing.workspace = true

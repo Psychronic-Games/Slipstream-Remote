@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- allowBackup: never restore this device's identity onto another
          (two devices with one key push each other off the station). -->
     <application
@@ -12,6 +16,13 @@
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Slipstream"
         android:allowBackup="false">
+
+        <service android:name=".ScreenShareService" android:exported="false" android:foregroundServiceType="mediaProjection" />
+        <service android:name=".RemoteInputService" android:exported="true"
+            android:label="Slipstream Remote control" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/remote_input" />
+        </service>
 
         <!-- configChanges: rotating or folding the screen resizes the
              running app instead of restarting the activity (and with it the

@@ -48,8 +48,7 @@ ARCHITECTURE.md, "The Android app", and BUILDING.md, "Android").
       Alt, Win, Esc, Tab, arrows, F-keys, Ctrl+Alt+Del).
 - [x] Session toolbar sized for a phone (Console menu).
 - [ ] Landscape full screen without the system bars.
-- [ ] Device name from the phone's model (it's empty now: Android has no
-      host name).
+- [x] Device name from manufacturer/model for default identities (0.17.0).
 - [x] Station: Android on the download page (picked for phones), the
       arm64 APK in `clients/`, served untouched (0.8.0).
 - [ ] A QR code of the `slipstream://link` URL on the page for desktop
@@ -62,18 +61,26 @@ ARCHITECTURE.md, "The Android app", and BUILDING.md, "Android").
 
 ## Phase 2: control an Android device from a PC
 
+Initial host shipped in 0.17.0: a persistent ID/password, explicit capture
+consent, MediaProjection foreground service, accessibility input and desktop
+Android navigation. Android 16 emulator runtime checks cover view-only access,
+PC input/typing/dragging, background capture, rotation and notification stop.
+Real phones still need confirmation. Capture currently uses bounded RGBA
+ImageReader output and the existing software H.264 encoder.
+
+
 - [ ] Screen capture with MediaProjection into the hardware H.264 encoder
       (MediaCodec with an input surface: no copies through the CPU),
       OpenH264 as a fallback.
-- [ ] Input through an AccessibilityService: taps and swipes
+- [x] Input through an AccessibilityService: taps and swipes
       (`dispatchGesture`), Back/Home/Recents (`performGlobalAction`), text
       into the focused field.
-- [ ] A foreground service (type `mediaProjection`) keeps the host
+- [x] A foreground service (type `mediaProjection`) keeps the host
       reachable with the app in the background.
-- [ ] Guided setup screen: Android 13+ greys out the accessibility switch
+- [x] Guided setup screen: Android 13+ greys out the accessibility switch
       for apps installed from a browser until *App info → ⋮ → Allow
       restricted settings*. Without it a session can only watch.
-- [ ] Viewer side: Back/Home/Recents buttons for an Android host, screen
+- [x] Viewer side: Back/Home/Recents actions for an Android host, screen
       rotation. Protocol v6.
 
 Limits to explain to users: the person at the device taps *Allow* when
@@ -95,6 +102,6 @@ manufacturer agreements (Samsung Knox and others).
   callbacks; `app/`: the activity, manifest, icons)
 - `apps/slipstream/src/gui/android.rs` (insets, typing, focus in view)
 - `apps/slipstream/src/gui/single.rs` (`inbox`: links)
-- `crates/slipstream-platform/` (capture and input backends; Android has
-  none yet)
+- `crates/slipstream-platform/` (capture and input backends; `android.rs` bridges JNI and
+  `android_frames.rs` owns the tested bounded capture handoff)
 - `server/station/index.php` (download page and OS detection)

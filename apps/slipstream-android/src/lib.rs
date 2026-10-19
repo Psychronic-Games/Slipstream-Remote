@@ -13,6 +13,24 @@ fn android_main(app: AndroidApp) {
         // SAFETY: nothing else runs yet.
         unsafe { std::env::set_var("SLIPSTREAM_HOME", dir) };
     }
+    // Retain the activity class (not the activity) for calls from session threads.
+    let vm=unsafe {jni::JavaVM::from_raw(app.vm_as_ptr().cast())}.expect("Android VM");
+    let class={
+        let env=vm.attach_current_thread().expect("attach Android thread");
+        let activity=unsafe {jni::objects::JObject::from_raw(app.activity_as_ptr().cast())};
+        let class=env.get_object_class(&activity).expect("activity class");
+        env.new_global_ref(class).expect("retain activity class")
+    };
+    slipstream_platform::android::install(vm,class);
+    if let Ok(name)=slipstream_platform::android::device_name() {
+        unsafe {std::env::set_var("SLIPSTREAM_DEVICE_NAME",&name)};
+        if let Ok(store)=slipstream_core::config::Store::open_default() {
+            let mut settings=store.load_settings();
+            if settings.device_name.trim().is_empty() || settings.device_name=="My Computer" {
+                settings.device_name=name;let _=store.save_settings(&settings);
+            }
+        }
+    }
     slipstream::logging::init();
     let result = slipstream::gui::run(slipstream::gui::GuiOptions { android_app: Some(app), ..Default::default() });
     if let Err(e) = result {
@@ -49,3 +67,37 @@ extern "system" fn Java_com_slipstreamremote_app_MainActivity_onInsets(
 extern "system" fn Java_com_slipstreamremote_app_MainActivity_onImeAction(_env: jni::JNIEnv, _class: jni::objects::JClass) {
     slipstream::gui::editor_action();
 }
+
+/// Screen data stays valid only for this JNI call: Rust copies it into bounded slots.
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_ScreenShareService_onFrame(
+    env:jni::JNIEnv,_class:jni::objects::JClass,buffer:jni::objects::JByteBuffer,
+    width:i32,height:i32,row:i32,pixel:i32,
+) {
+    if width<2 || height<2 || row<0 || pixel<4 {return;}
+    if let (Ok(ptr),Ok(len))=(env.get_direct_buffer_address(&buffer),env.get_direct_buffer_capacity(&buffer)) {
+        // ImageReader keeps its direct plane buffer alive until this callback returns.
+        let data=unsafe {std::slice::from_raw_parts(ptr,len)};
+        slipstream_platform::android::frame(data,width as u32,height as u32,row as usize,pixel as usize);
+    }
+}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_ScreenShareService_onCaptureStarted(
+    _env:jni::JNIEnv,_class:jni::objects::JClass,width:i32,height:i32,full:u8,
+) {if width>0 && height>0 {slipstream_platform::android::started(width as u32,height as u32,full!=0);}}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_ScreenShareService_onFullDisplay(
+    _env:jni::JNIEnv,_class:jni::objects::JClass,full:u8,
+) {slipstream_platform::android::set_full_display(full!=0);}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_ScreenShareService_onCaptureStopped(
+    mut env:jni::JNIEnv,_class:jni::objects::JClass,message:jni::objects::JString,
+) {let message=env.get_string(&message).map(String::from).unwrap_or_else(|_|"Screen sharing stopped".into());slipstream_platform::android::stopped(message);}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_RemoteInputService_onAvailability(
+    _env:jni::JNIEnv,_class:jni::objects::JClass,enabled:u8,
+) {slipstream_platform::android::set_accessibility(enabled!=0);}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_RemoteInputService_inputAllowed(
+    _env:jni::JNIEnv,_class:jni::objects::JClass,
+)->u8 {u8::from(slipstream_platform::android::input_allowed())}

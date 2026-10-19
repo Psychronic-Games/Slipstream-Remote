@@ -433,6 +433,65 @@ The Android build needs `libc++_shared.so` beside the app's library, since
 OpenH264 is C++. Backups are off: restoring the device identity onto
 another phone would put two devices on the station with one key.
 
+### Android hosting
+
+Android starts `Client` with incoming sessions enabled and its stored identity,
+so directory registration produces a stable ID. `android_main` initializes the
+JNI bridge from the actual activity class/VM, names default identities from
+`Build.MANUFACTURER`/`MODEL`, and keeps identity/settings in private storage.
+The home console shows ID/password before the setup controls, and Config
+exposes incoming-access/control/password preferences.
+
+`MainActivity` launches the capture consent prompt from a visible user action.
+Only its successful result starts the non-exported `ScreenShareService`:
+foreground notification first, then `getMediaProjection`, registered callbacks
+and one virtual display. Only after the foreground service/display are ready
+does the activity move its task to the background, revealing the shared phone
+and avoiding an initially stalled/self-referential app view. Its ImageReader emits RGBA planes through a bounded
+JNI handoff into `CaptureHub`; row/pixel strides are checked and copied while
+the Java image remains open. A process-wide latest image seeds new viewers;
+up to four weak frame slots receive fresh frames with recycled buffers.
+The existing software H.264 pipeline consumes these slots. Capture is limited
+to an even-sized 1280-pixel long edge and at most 30 fps. Hardware MediaCodec
+encoding remains a later optimization.
+
+Android 14+ requests the default full display. Resize callbacks replace the
+ImageReader surface and resize the existing virtual display rather than
+reusing a consent token. Older Android uses display-change notifications.
+When the system captures a partial app instead of the physical display, input
+is disabled to avoid applying cropped coordinates to the whole device.
+Stop/revocation clears the latest image, fails all slots, releases held input
+and shuts down the foreground service. Capture failure follows the normal
+host Bye path, so deliberate revocation does not auto-reconnect. Tokens are
+never persisted; app/phone restarts require fresh approval.
+
+`RemoteInputService` is exported only under Android's
+`BIND_ACCESSIBILITY_SERVICE` permission and requires explicit user enablement.
+The Rust backend forwards authenticated input only with an active full-screen
+capture, a live viewer and the accessibility service connected. The Java main
+handler rechecks these conditions before applying queued events. Continued
+strokes keep a touch down for drags/long presses, but stationary continuations
+are skipped: they generate no events and Android cancels them. Release emits
+a final up stroke. Pointer coordinates use the current physical display size;
+wheel events create short swipes. Keys use accessibility input connections on
+API 33+ and editable-node actions on older versions. Desktop Keys menus expose
+Android navigation without changing protocol 6. Android host file/clipboard
+and network-scan capabilities are withheld until those backends are ready.
+
+### Transfer receipts
+
+Each `FileManager` owns a separate progress viewport per remote tab, shared by
+its job list and native file browser. New work opens this compact LCARS panel;
+dismissal hides it without cancelling, while later work opens it again.
+The callback reads live atomic byte counts/job state independently of the
+parent's rendering and repaints itself during transfer. Desktop root logic
+registers it even when a folder-pane drop occurs with the parent minimized.
+Destinations are
+recorded once remote drop resolution completes. Sending all bytes remains
+Running/Confirming until each remote Saved reply arrives; terminal results
+are retained until cleared. Begin/finish transitions cannot overwrite a
+cancelled or disconnected state. Ending the tab closes both file viewports.
+
 ## The Windows service
 
 The service (`apps/slipstream/src/service.rs`) runs as LocalSystem in

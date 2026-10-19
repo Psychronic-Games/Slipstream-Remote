@@ -111,9 +111,9 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     }
     #[cfg(not(windows))]
     let via_service = false;
-    // Android can't be controlled yet (no screen capture or input there,
-    // issue 09), so it only connects out.
-    let accept_sessions = !via_service && cfg!(not(target_os = "android"));
+    // Android registers a persistent host identity too; capture still
+    // requires an explicit MediaProjection grant on the phone.
+    let accept_sessions = !via_service;
     let (client, events) = rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions, ..Default::default() }))?;
 
     // Graphics wgpu can't use (Windows Server 2016's Direct3D 12 can't run
@@ -1413,6 +1413,10 @@ impl eframe::App for App {
         for tab in &mut self.tabs {
             tab.poll(ctx);
             if tab.maintain_connection(ctx,&self.rt,&self.client) {restored.push(tab.id);}
+            // A drop in Files can create a receipt while the parent is minimized.
+            if ctx.viewport_id()==egui::ViewportId::ROOT && !ctx.embed_viewports() {
+                files::FileManager::show_progress(&tab.files,ctx,&self.rt,tab.id);
+            }
         }
         // Frame serials restart on a new session; discard cached old textures.
         if !restored.is_empty() {video::retain_streams(&self.render_state,|id|!restored.contains(&id));}

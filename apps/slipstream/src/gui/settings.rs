@@ -100,7 +100,10 @@ fn text_field_sized(ui: &mut Ui, value: &mut String, hint: &str, password: bool,
 }
 
 pub fn ui(app: &mut App, ui: &mut Ui) {
+    #[cfg(not(target_os="android"))]
     let mut reset_permission = false;
+    #[cfg(target_os="android")]
+    let reset_permission = false;
     let mut link_now = false;
     let linking = app.linking();
     #[cfg(windows)]
@@ -150,18 +153,20 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     });
     ui.add_space(14.0);
 
-    // Android can't be controlled yet (issue 09): nothing to set up here.
-    if cfg!(not(target_os = "android")) {
+    {
         theme::panel(ui, "Incoming access", pal::ORANGE, |ui| {
             row(ui, "Accept connections", |ui| {
                 ui.checkbox(&mut f.accept, "Allow others to connect to this device");
             });
             row(ui, "Permissions", |ui| {
                 ui.checkbox(&mut f.allow_input, "Control");
+                #[cfg(not(target_os="android"))]
+                {
                 ui.checkbox(&mut f.allow_clipboard, "Clipboard");
                 ui.checkbox(&mut f.allow_files, "Files");
                 ui.checkbox(&mut f.allow_audio, "Sound");
                 ui.checkbox(&mut f.allow_network_scan, "Network scan").on_hover_text("Let authenticated viewers discover devices and open TCP ports on this computer's connected IPv4 networks");
+                }
                 ui.checkbox(&mut f.allow_tunnels, "Port forwarding").on_hover_text(
                     "Let the person connecting reach services on this computer and its network through the link (e.g. Remote Desktop). Off unless you need it.",
                 );
@@ -177,18 +182,21 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 }
             });
             ui.label(
-                RichText::new("A permanent password lets you reach this device when nobody is at it. Use a long one — it is never stored in plain text.")
+                RichText::new(if cfg!(target_os="android") {"A saved password still requires Start sharing and Android approval on the phone. It does not bypass screen-sharing consent."}else{"A permanent password lets you reach this device when nobody is at it. Use a long one — it is never stored in plain text."})
                     .small()
                     .color(pal::DIM),
             );
+            #[cfg(not(target_os="android"))]
             row(ui, "Start with system", |ui| {
                 if ui.checkbox(&mut f.autostart, "Launch hidden in the tray when you log in").changed() && f.autostart {
                     f.run_in_tray = true; // autostart only makes sense if it keeps running
                 }
             });
+            #[cfg(not(target_os="android"))]
             row(ui, "Close button", |ui| {
                 ui.checkbox(&mut f.run_in_tray, "Keep running in the tray when the window is closed (stay reachable)");
             });
+            #[cfg(not(target_os="android"))]
             row(ui, "Screen permission", |ui| {
                 if theme::pill(ui, "Reset", pal::VIOLET).clicked() {
                     reset_permission = true;

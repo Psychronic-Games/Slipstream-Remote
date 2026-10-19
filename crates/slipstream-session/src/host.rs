@@ -105,8 +105,11 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
 
     // Open (or reuse) the screen session. On Wayland the first time this
     // shows the desktop's "allow screen sharing" dialog on this machine.
-    let (displays, cursor_in_video, privacy) = {
+    let (displays, cursor_in_video, privacy, input_supported) = {
         let mut backend = inner.backend.lock().await;
+        // Android may revoke a projection while no viewer owns a pipeline;
+        // there is then no capture-error event to evict the cached backend.
+        if backend.as_ref().is_some_and(|b|b.displays().is_empty()) {*backend=None;}
         if backend.is_none() {
             let opts = OpenOptions {
                 test_pattern: inner.opts.test_pattern,
@@ -139,17 +142,25 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
                 }
             }
         }
-        backend.as_ref().map(|b| (b.displays(), b.cursor_in_video(), b.privacy_supported())).unwrap_or_default()
+        backend.as_ref().map(|b| (b.displays(), b.cursor_in_video(), b.privacy_supported(), b.input_supported())).unwrap_or_default()
     };
 
+    if displays.is_empty() {
+        let reason=if cfg!(target_os="android") {
+            "On the phone, tap Start sharing and approve Android's screen-sharing prompt"
+        } else {"No screen is currently available on the remote device"};
+        fail(&mut send,reason,0).await?;
+        return Ok(());
+    }
+
     let capabilities = Capabilities {
-        input: settings.host.allow_input,
-        clipboard: settings.host.allow_clipboard,
-        file_transfer: settings.host.allow_file_transfer,
+        input: settings.host.allow_input && input_supported,
+        clipboard: settings.host.allow_clipboard && !cfg!(target_os="android"),
+        file_transfer: settings.host.allow_file_transfer && !cfg!(target_os="android"),
         audio: settings.host.allow_audio && (inner.opts.test_pattern || slipstream_audio::capture_supported()),
         privacy,
         tunnels: settings.host.allow_tunnels,
-        network_scan: settings.host.allow_network_scan,
+        network_scan: settings.host.allow_network_scan && !cfg!(target_os="android"),
         chat: true,
         cursor_in_video,
     };

@@ -13,6 +13,35 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Android hosting and device ID
+- Register Android as a persistent host, show its ID and password on the home
+  console, and name new phones from the manufacturer/model instead of leaving
+  Android in viewer-only mode with no ID.
+- Add Start sharing / Stop sharing controls, Android's screen-capture consent
+  flow, and a media-projection foreground service with a visible Stop action.
+  Capture survives backgrounding, handles rotation without reusing consent
+  tokens, and ends connected sessions when the phone revokes sharing.
+- Add an explicitly enabled AccessibilityService for remote taps, held-touch
+  drags/long presses, wheel swipes, basic typing/editing and Android navigation.
+  Guide sideloaded-phone users through Accessibility/App info setup, retain a
+  view-only mode, and add Android Back/Home/Recents actions to the PC Keys menu.
+- Bound capture to 1280 pixels on the long edge and 30 fps, copy padded RGBA
+  planes into reusable latest-frame slots and use the existing H.264 encoder.
+  Seed new viewers from the latest still image and reject revoked cached
+  capture sessions until the phone approves sharing again.
+  Hardware encoding, Android host audio/clipboard/files and unattended capture
+  without on-device approval remain future work.
+
+### Drop-transfer receipts
+- Automatically open a compact, independent LCARS progress window for file
+  transfers, including desktop drops onto the remote screen or a folder pane.
+- Show file/batch names, resolved destinations, byte counts, progress and
+  preparing/sending/confirming states. Mark Complete only after remote save
+  receipts; retain completed, failed and cancelled results until dismissed.
+- Let users cancel active work, clear finished history or open the full file
+  browser. Dismissing the panel leaves transfers running and a new transfer
+  opens it again. Preserve cancelled/interrupted outcomes against late replies.
+
 ## 0.16.0 — 2026-10-18
 
 ### File previews and sorting

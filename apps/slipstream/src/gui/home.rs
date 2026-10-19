@@ -6,7 +6,6 @@ use slipstream_session::DirStatus;
 use super::{App, Page, files, theme, theme::pal};
 
 /// Whether the Windows service is running, and its state in words.
-#[cfg(not(target_os = "android"))]
 fn service_state() -> (bool, &'static str) {
     #[cfg(windows)]
     {
@@ -18,7 +17,6 @@ fn service_state() -> (bool, &'static str) {
 }
 
 /// The ID the Windows service hosts this computer as, while it does.
-#[cfg(not(target_os = "android"))]
 fn service_id(app: &App) -> Option<slipstream_core::directory::DeviceId> {
     #[cfg(windows)]
     if app.via_service {
@@ -59,37 +57,6 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     recent_panel(app, ui);
 }
 
-/// Android: the phone controls others, but can't be controlled yet (no
-/// screen capture or input there; issue 09), so it has no ID to give out.
-#[cfg(target_os = "android")]
-fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
-    theme::panel(ui, "This device", pal::LAVENDER, |ui| {
-        ui.label(
-            RichText::new("This phone controls other devices. Being controlled from a computer comes in a later version.")
-                .color(pal::DIM),
-        );
-        ui.add_space(8.0);
-        let (status, color) = match &app.dir_status {
-            DirStatus::NotConfigured => {
-                link_form(app, ui, t);
-                return;
-            }
-            DirStatus::Online { .. } | DirStatus::Ready => ("STATION LINK READY", pal::GREEN),
-            DirStatus::Connecting => ("CONTACTING SERVER…", pal::GOLD),
-            DirStatus::Error(_) => ("SERVER CONNECTION FAILED", pal::RED),
-        };
-        ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
-            theme::lamp(ui.painter(), rect.center(), color, t);
-            ui.label(RichText::new(status).font(theme::display(17.0)).color(color));
-        });
-        if let DirStatus::Error(e) = &app.dir_status {
-            ui.label(RichText::new(e).font(theme::body(16.0)).color(pal::PEACH));
-        }
-    });
-}
-
-#[cfg(not(target_os = "android"))]
 fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
     theme::panel(ui, "This device", pal::LAVENDER, |ui| {
         ui.label(RichText::new("Give your partner this ID and password to let them in.").color(pal::DIM));
@@ -111,7 +78,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
 
         ui.label(RichText::new("YOUR ID").font(theme::display(15.0)).color(pal::LAVENDER));
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&id_text).font(theme::mono(44.0)).color(pal::TAN));
+            ui.label(RichText::new(&id_text).font(theme::mono(if ui.available_width()<420.0 {32.0}else{44.0})).color(pal::TAN));
             ui.add_space(8.0);
             if theme::pill_sized(ui, "Copy", pal::LAVENDER, vec2(70.0, 28.0)).clicked() {
                 ui.ctx().copy_text(id_text.replace(' ', ""));
@@ -162,7 +129,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         }
         ui.label(RichText::new("ONE-TIME PASSWORD").font(theme::display(15.0)).color(pal::LAVENDER));
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&app.password).font(theme::mono(34.0)).color(pal::GOLD));
+            ui.label(RichText::new(&app.password).font(theme::mono(if ui.available_width()<420.0 {26.0}else{34.0})).color(pal::GOLD));
             ui.add_space(8.0);
             if theme::pill_sized(ui, "Copy", pal::LAVENDER, vec2(70.0, 28.0)).clicked() {
                 ui.ctx().copy_text(app.password.clone());
@@ -191,8 +158,10 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
                     .on_hover_text(&log);
             }
         }
+        #[cfg(target_os="android")]
+        super::android::hosting_panel(ui);
         if app.client.settings().host.permanent_password_secret.is_some() {
-            ui.label(RichText::new("Unattended access enabled — your permanent password also works.").small().color(pal::DIM));
+            ui.label(RichText::new(if cfg!(target_os="android") {"Your saved password also works while screen sharing is active."}else{"Unattended access enabled — your permanent password also works."}).small().color(pal::DIM));
         }
     });
 }

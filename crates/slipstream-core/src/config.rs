@@ -249,8 +249,9 @@ impl Settings {
 }
 
 fn default_device_name() -> String {
-    std::env::var("HOSTNAME")
+    std::env::var("SLIPSTREAM_DEVICE_NAME")
         .ok()
+        .or_else(|| std::env::var("HOSTNAME").ok())
         .or_else(|| fs::read_to_string("/etc/hostname").ok())
         .or_else(|| std::env::var("COMPUTERNAME").ok())
         .map(|s| s.trim().to_string())

@@ -1104,6 +1104,27 @@ mod tests {
         std::fs::remove_dir_all(work).ok();
     }
 
+    /// A projection can be revoked after its last viewer leaves. No encoder
+    /// then exists to report capture failure, so do not trust the cached backend.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn empty_cached_screen_backend_is_reopened() {
+        struct Revoked;
+        impl slipstream_platform::Backend for Revoked {
+            fn name(&self)->&'static str {"revoked-screen"}
+            fn displays(&self)->Vec<slipstream_core::proto::DisplayInfo> {Vec::new()}
+            fn capture(&mut self,_display:u32,_fps:u32)->anyhow::Result<slipstream_platform::FrameStream> {anyhow::bail!("revoked")}
+            fn inject(&mut self,_display:u32,_event:InputEvent)->anyhow::Result<()> {Ok(())}
+        }
+        let (host,_events,hdir)=client("revokedhost",true).await;
+        let (viewer,_events,vdir)=client("revokedviewer",false).await;
+        *host.inner.backend.lock().await=Some(Box::new(Revoked));
+        let (session,_events)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
+        assert_eq!(session.info().displays.len(),1);
+        assert_eq!(session.info().displays[0].width,1280);
+        drop(session);viewer.shutdown().await;host.shutdown().await;
+        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+    }
+
     /// With file transfer disabled on the host, nothing gets through.
     #[tokio::test(flavor = "multi_thread")]
     async fn file_transfer_can_be_disabled() {
