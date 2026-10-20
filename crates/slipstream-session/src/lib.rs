@@ -970,6 +970,10 @@ mod tests {
         let (viewer, _ev, vd) = client("supportviewer", false).await;
         for (name, control, scan, tunnels, wake) in [
             ("supportfull", true, true, true, true),
+            ("supportnocontrol", false, true, true, true),
+            ("supportnoscan", true, false, true, true),
+            ("supportnowake", true, true, true, false),
+            ("supportnotunnels", true, true, false, true),
             ("supportreadonly", false, false, false, false),
         ] {
             let (host, mut events, hd) = client_with(name, true, Default::default(), |s| {
@@ -987,7 +991,7 @@ mod tests {
                 assert!(format!("{:#}",fs.support_status("Checking".into()).await.unwrap_err()).contains("not allowed"));
             }
             let wake_error=fs.wake_on_lan(Ipv4Addr::LOCALHOST,"ff:ff:ff:ff:ff:ff".into()).await.unwrap_err();
-            assert!(format!("{wake_error:#}").contains(if wake {"unicast"}else{"not allowed"}));
+            assert!(format!("{wake_error:#}").contains(if wake && scan && control {"unicast"}else{"not allowed"}));
             let diagnostic=fs.network_diagnostics(Ipv4Addr::LOCALHOST,"invalid name!".into(),None).await.unwrap_err();
             assert!(format!("{diagnostic:#}").contains(if scan {"DNS name"}else{"not allowed"}));
             let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

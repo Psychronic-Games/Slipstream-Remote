@@ -76,6 +76,13 @@ fn sections(sections: &[slipstream_core::proto::InfoSection]) -> String {
 }
 
 impl Report {
+    pub fn cancel_requests(&mut self) {
+        let pending = self.fetch.take().is_some() | self.status_rx.take().is_some();
+        if let Some(job) = self.fetch_job.take() {job.abort();}
+        if let Some(job) = self.status_job.take() {job.abort();}
+        if pending {self.notice=Some(Err("Pending requests cancelled; a status already sent cannot be recalled".into()));}
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime, source: Source<'_>) {
         if !self.open {
             return;
@@ -188,7 +195,11 @@ impl Report {
             chrome.footer(ui);
         });
         self.open = open;
-        if !open {theme::repaint_console(ctx);ctx.request_discard("Support report closed");}
+        if !open {
+            self.cancel_requests();
+            theme::repaint_console(ctx);ctx.request_discard("Support report closed");
+            return;
+        }
         if let Some(text) = status_send {
             let (tx, rx) = tokio::sync::oneshot::channel();
             let fs = source.fs.clone();
@@ -323,6 +334,45 @@ fn save_report(parent: &Path, text: &str, frame: Option<Arc<YuvFrame>>) -> anyho
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn closing_cancels_remote_requests_and_keeps_reviewed_data() {
+        let mut report=Report::default();
+        report.inventory.replace("retained inventory".into());
+        report.notes.push_str("technician note");
+        let (started,ready)=tokio::sync::oneshot::channel();
+        let (tx,rx)=tokio::sync::oneshot::channel();
+        report.fetch=Some(rx);
+        report.fetch_job=Some(tokio::spawn(async move {
+            let _=started.send(());
+            std::future::pending::<()>().await;
+            let _=tx.send(Ok("stale response".into()));
+        }));
+        ready.await.unwrap();
+        let handle=report.fetch_job.as_ref().unwrap().abort_handle();
+        report.cancel_requests();
+        tokio::time::timeout(std::time::Duration::from_secs(2),async {
+            while !handle.is_finished() {tokio::task::yield_now().await;}
+        }).await.unwrap();
+        assert!(report.fetch.is_none() && report.fetch_job.is_none());
+        assert_eq!(report.inventory.as_deref(),Some("retained inventory"));
+        assert_eq!(report.notes,"technician note");
+    }
+
+    #[test]
+    fn screenshot_export_contains_the_received_pixels_and_failed_exports_leave_no_folder() {
+        let base=tempfile::tempdir().unwrap();
+        let frame=Arc::new(YuvFrame {width:2,height:2,y:vec![16,235,81,145],u:vec![128],v:vec![128],y_stride:2,uv_stride:1});
+        let saved=save_report(base.path(),"reviewed notes",Some(frame.clone())).unwrap();
+        let decoder=png::Decoder::new(std::io::BufReader::new(std::fs::File::open(saved.join("screen.png")).unwrap()));
+        let mut reader=decoder.read_info().unwrap();
+        let mut pixels=vec![0;reader.output_buffer_size().unwrap()];
+        let info=reader.next_frame(&mut pixels).unwrap();
+        assert_eq!((info.width,info.height),(2,2));
+        assert_eq!(&pixels[..info.buffer_size()],frame.to_rgba());
+        let invalid=Arc::new(YuvFrame {width:0,..(*frame).clone()});
+        assert!(save_report(base.path(),"unfinished",Some(invalid)).is_err());
+        assert_eq!(std::fs::read_dir(base.path()).unwrap().count(),1);
+    }
     #[test]
     fn report_saves_unique_private_folders_without_overwriting() {
         let base = tempfile::tempdir().unwrap();

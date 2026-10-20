@@ -13,6 +13,19 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Support tool reliability
+- Cancel pending scanner and report requests when their window closes or the
+  link drops, discard late tunnel replies, and release scanner-owned tunnels
+  immediately on interruption while retaining established tunnels on window close.
+- Give compact Windows hosts session-specific Dismiss / Stop support controls;
+  clear ended/cleared messages without hiding another technician's status.
+- Keep retained Windows service command senders in step with service restarts,
+  fixing compact-window code rotation and support actions created before sign-in.
+- Limit DNS diagnostic results to the queried name's IPv4 answers and CNAME
+  chain; reject wrong-class replies and alias loops.
+- Add regressions for request cancellation, tunnel lifetime, screenshot PNGs
+  and failed exports, independent wake permissions, and service command epochs.
+
 ## 0.21.0 — 2026-10-19
 
 ### Support tools

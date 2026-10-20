@@ -266,6 +266,8 @@ impl RemoteTab {
                     tracing::info!(peer=%self.peer,retryable,"viewer link ended: {reason}");
                     self.release_keyboard();
                     self.files.lock().unwrap().disconnect();
+                    self.network.lock().unwrap().disconnect();
+                    self.report.cancel_requests();
                     self.tunnels.clear();
                     self.closed = Some(reason);
                     self.stats=ViewerStats::default();

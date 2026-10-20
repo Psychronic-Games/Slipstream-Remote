@@ -54,6 +54,7 @@ struct View {
     status: String,
     online: bool,
     note: String,
+    support: super::support_status::SupportStatuses,
     update: Option<UpdateInfo>,
     /// The update (or the software renderer) is installed: relaunch from here.
     relaunch: Option<PathBuf>,
@@ -73,6 +74,8 @@ const BTN_QUIT: i32 = 204;
 const BTN_FULL: i32 = 205;
 const BTN_MIN: i32 = 206;
 const BTN_CLOSE: i32 = 207;
+const BTN_DISMISS: i32 = 208;
+const BTN_STOP: i32 = 209;
 
 /// "Something changed": refresh the texts.
 const WM_REFRESH: u32 = WM_APP + 1;
@@ -188,8 +191,8 @@ pub fn run(
                         ClientEvent::Directory(_) => {}
                         ClientEvent::Org(Some(o)) => v.title = format!("SLIPSTREAM REMOTE · {}", o.to_uppercase()),
                         ClientEvent::HostSessionStarted { peer, .. } => v.status = format!("{} IS CONNECTED", peer.to_uppercase()),
-                        ClientEvent::HostSessionEnded { .. } => v.status = "ONLINE · READY FOR LINK".into(),
-                        ClientEvent::HostStatus { text, .. } => {v.note = format!("Support: {text}");wake(WM_APP+3);},
+                        ClientEvent::HostSessionEnded { session, .. } => {v.support.remove(session);v.status = "ONLINE · READY FOR LINK".into();},
+                        ClientEvent::HostStatus { session, text } => {let show=!text.is_empty();v.support.update(session,text);if show {wake(WM_APP+3);}},
                         ClientEvent::HostChat { text, .. } => v.note = format!("Message: {text}"),
                         ClientEvent::Notice(n) | ClientEvent::Motd(n) => v.note = n,
                         ClientEvent::UpdateAvailable(u) => {
@@ -215,9 +218,9 @@ pub fn run(
                     let mut v=view.lock().unwrap();
                     match event {
                         Event::Password(password) => v.password = password.unwrap_or_default(),
-                        Event::Status{text,..}=>{v.note=format!("Support: {text}");wake(WM_APP+3);},
+                        Event::Status{session,text}=>{let show=!text.is_empty();v.support.update(session,text);if show {wake(WM_APP+3);}},
                         Event::Started{peer,..}=>v.status=format!("{} IS CONNECTED",peer.to_uppercase()),
-                        Event::Ended{..}=>v.status="ONLINE · READY FOR LINK".into(),
+                        Event::Ended{session}=>{v.support.remove(session);v.status="ONLINE · READY FOR LINK".into();},
                         Event::Message{ours:false,text,..}=>{v.note=format!("Message: {text}");wake(WM_APP+3);},
                         _=>{},
                     }
@@ -398,6 +401,8 @@ unsafe fn build(hwnd: HWND) -> Vec<(i32, HWND)> {
         add(&button, BTN_UPDATE, pill, (262, 318, 128, 34), btn);
         add(&button, BTN_FULL, pill, (262, 318, 128, 34), btn);
         add(&button, BTN_QUIT, pill, (398, 318, 82, 34), btn);
+        add(&button, BTN_STOP, pill, (20, 360, 174, 30), btn);
+        add(&button, BTN_DISMISS, pill, (202, 360, 110, 30), btn);
         add(&button,BTN_MIN,pill,(350,-31,62,28),btn);
         add(&button,BTN_CLOSE,pill,(418,-31,70,28),btn);
         // Edit boxes pad their text; line it up with the labels.
@@ -433,9 +438,11 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
             view.status = if view.online {"SERVICE RUNNING".into()} else {format!("SERVICE {}", crate::service::status_text().to_uppercase())};
         }
     }
-    let (title, id, pw, status, online, note, update) = {
+    let (title, id, pw, status, online, note, update, support) = {
         let v = ui.view.lock().unwrap();
-        (v.title.clone(), v.id.clone(), v.password.clone(), v.status.clone(), v.online, v.note.clone(), v.update.is_some())
+        (v.title.clone(), v.id.clone(), v.password.clone(), v.status.clone(), v.online,
+         v.support.current().map(|(_,text)|format!("Support: {text}")).unwrap_or_else(||v.note.clone()),
+         v.update.is_some(), v.support.current().is_some())
     };
     // In the update's slot (an update comes first): after the software
     // renderer failed to start, a way to give it another go.
@@ -456,6 +463,8 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     set_text(ui, BTN_UPDATE, "Install update");
     set_text(ui, BTN_FULL, "Try full window");
     set_text(ui, BTN_QUIT, "Quit");
+    set_text(ui, BTN_STOP, "Stop support");
+    set_text(ui, BTN_DISMISS, "Dismiss");
     set_text(ui,BTN_MIN,"Minimize");
     set_text(ui,BTN_CLOSE,"Close");
     // SAFETY: live controls of our window.
@@ -464,6 +473,9 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
         EnableWindow(control(ui, BTN_COPY), i32::from(!pw.is_empty() && id.chars().filter(char::is_ascii_digit).count() == 9));
         ShowWindow(control(ui, BTN_UPDATE), if update { SW_SHOW } else { SW_HIDE });
         ShowWindow(control(ui, BTN_FULL), if full { SW_SHOW } else { SW_HIDE });
+        ShowWindow(control(ui, BTN_STOP), if support { SW_SHOW } else { SW_HIDE });
+        ShowWindow(control(ui, BTN_DISMISS), if support { SW_SHOW } else { SW_HIDE });
+        EnableWindow(control(ui, BTN_STOP), i32::from(ui.service_sender.as_ref().is_none_or(|s|s.connected())));
         if online != ui.online {
             ui.online = online;
             ONLINE.store(online, Ordering::Relaxed);
@@ -587,6 +599,8 @@ unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
         BTN_UPDATE => ("INSTALL UPDATE", GREEN),
         BTN_FULL => ("FULL WINDOW", BLUE),
         BTN_QUIT => ("QUIT", RED),
+        BTN_STOP => ("STOP SUPPORT", RED),
+        BTN_DISMISS => ("DISMISS", BLUE),
         BTN_MIN => ("", BLUE),
         BTN_CLOSE => ("", PEACH),
         _ => ("", DIM),
@@ -758,6 +772,18 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     BTN_COPY => {
                         let v = ui.view.lock().unwrap();
                         copy(hwnd, &format!("ID: {}\r\nPassword: {}", v.id, v.password));
+                    }
+                    BTN_DISMISS | BTN_STOP => {
+                        let mut v=ui.view.lock().unwrap();
+                        if let Some((session,_))=v.support.current() {
+                            if (wparam & 0xffff) as i32 == BTN_STOP {
+                                if let Some(sender)=&ui.service_sender {sender.disconnect(session);}
+                                else {ui.client.disconnect_host_session(session);}
+                            }
+                            v.support.remove(session);
+                        }
+                        drop(v);
+                        refresh(ui, hwnd);
                     }
                     BTN_UPDATE => install_update(ui),
                     BTN_FULL => retry_full_window(ui),

@@ -56,14 +56,14 @@ impl Snapshot {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Action {
     Chat { session: u64, text: String },
     Disconnect { session: u64 },
     RegeneratePassword,
 }
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Command {
     epoch: u64,
@@ -142,6 +142,44 @@ impl Cursor {
         }
         self.epoch = Some(snapshot.epoch);
         events
+    }
+}
+
+#[cfg(any(windows, test))]
+#[derive(Clone)]
+pub struct Sender {
+    tx: tokio::sync::mpsc::UnboundedSender<Command>,
+    epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+#[cfg(any(windows, test))]
+impl Sender {
+    pub fn regenerate_password(&self) -> bool {
+        self.connected() && self.tx.send(Command {
+            epoch: self.epoch.load(std::sync::atomic::Ordering::Acquire),
+            action: Action::RegeneratePassword,
+        }).is_ok()
+    }
+    pub fn connected(&self) -> bool {
+        self.connected.load(std::sync::atomic::Ordering::Acquire)
+    }
+    pub fn chat(&self, session: u64, text: String) -> bool {
+        self.connected()
+            && self
+                .tx
+                .send(Command {
+                    epoch: self.epoch.load(std::sync::atomic::Ordering::Acquire),
+                    action: Action::Chat { session, text },
+                })
+                .is_ok()
+    }
+    pub fn disconnect(&self, session: u64) {
+        if self.connected() {
+            let _ = self.tx.send(Command {
+                epoch: self.epoch.load(std::sync::atomic::Ordering::Acquire),
+                action: Action::Disconnect { session },
+            });
+        }
     }
 }
 
@@ -424,41 +462,6 @@ mod native {
         tokio::select! {r=receive=>r,r=transmit=>r}
     }
 
-    #[derive(Clone)]
-    pub struct Sender {
-        tx: mpsc::UnboundedSender<Command>,
-        epoch: u64,
-        connected: Arc<AtomicBool>,
-    }
-    impl Sender {
-        pub fn regenerate_password(&self) -> bool {
-            self.connected() && self.tx.send(Command {
-                epoch: self.epoch,
-                action: Action::RegeneratePassword,
-            }).is_ok()
-        }
-        pub fn connected(&self) -> bool {
-            self.connected.load(Ordering::Acquire)
-        }
-        pub fn chat(&self, session: u64, text: String) -> bool {
-            self.connected()
-                && self
-                    .tx
-                    .send(Command {
-                        epoch: self.epoch,
-                        action: Action::Chat { session, text },
-                    })
-                    .is_ok()
-        }
-        pub fn disconnect(&self, session: u64) {
-            if self.connected() {
-                let _ = self.tx.send(Command {
-                    epoch: self.epoch,
-                    action: Action::Disconnect { session },
-                });
-            }
-        }
-    }
     pub struct Gui {
         pub events: mpsc::UnboundedReceiver<Event>,
         commands: mpsc::UnboundedSender<Command>,
@@ -475,7 +478,7 @@ mod native {
         pub fn sender(&self) -> Sender {
             Sender {
                 tx: self.commands.clone(),
-                epoch: self.epoch.load(Ordering::Acquire),
+                epoch: self.epoch.clone(),
                 connected: self.connected.clone(),
             }
         }
@@ -549,11 +552,40 @@ mod native {
 }
 
 #[cfg(windows)]
-pub use native::{Gui, Sender, Server};
+pub use native::{Gui, Server};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_sender_uses_the_current_service_epoch_for_each_command() {
+        use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let epoch = Arc::new(AtomicU64::new(0));
+        let connected = Arc::new(AtomicBool::new(false));
+        let sender = Sender {tx, epoch: epoch.clone(), connected: connected.clone()};
+        assert!(!sender.regenerate_password());
+        assert!(!sender.chat(7, "offline".into()));
+        sender.disconnect(7);
+        assert!(rx.try_recv().is_err());
+        epoch.store(41, Ordering::Release);
+        connected.store(true, Ordering::Release);
+        assert!(sender.regenerate_password());
+        let first = rx.try_recv().unwrap();
+        assert_eq!(first.epoch, 41);
+        assert!(matches!(first.action, Action::RegeneratePassword));
+        epoch.store(42, Ordering::Release);
+        assert!(sender.chat(7, "hello".into()));
+        let chat = rx.try_recv().unwrap();
+        assert_eq!(chat.epoch, 42);
+        assert!(matches!(chat.action, Action::Chat {session: 7, ..}));
+        sender.disconnect(7);
+        let stop = rx.try_recv().unwrap();
+        assert_eq!(stop.epoch, 42);
+        assert!(matches!(stop.action, Action::Disconnect {session: 7}));
+        // Commands already queued for an old service retain their old epoch.
+        assert_eq!(first.epoch, 41);
+    }
     #[test]
     fn service_codes_rotate_without_replaying_chat_and_older_snapshots_still_load() {
         let mut snapshot: Snapshot = serde_json::from_str(r#"{"epoch":1,"sequence":0,"sessions":[]}"#).unwrap();

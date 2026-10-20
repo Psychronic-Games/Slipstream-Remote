@@ -16,6 +16,8 @@ mod remote;
 mod session_windows;
 mod session_tabs;
 mod support_report;
+#[cfg(any(windows, test))]
+mod support_status;
 mod saved;
 #[cfg(windows)]
 mod scheme;

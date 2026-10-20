@@ -72,19 +72,34 @@ impl Drop for NetworkScanner {
 
 impl NetworkScanner {
     pub fn close(&mut self) {
-        self.open=false;self.stop();self.tunnels.clear();
-        if let Some(job)=self.support_job.take() {job.abort();}self.support_rx=None;
+        self.open=false;
+        self.disconnect();
+    }
+    fn cancel_requests(&mut self, reason: &str) {
+        self.stop();
+        self.cancel_support(reason);
         if let Some(job)=self.adapter_job.take() {job.abort();}
+        self.adapter_rx=None;
         if let Some(job)=self.web_job.take() {job.abort();}
+        if self.web_rx.take().is_some() {self.web_notice=Some(Err(reason.into()));}
+    }
+    fn cancel_support(&mut self, reason: &str) {
+        if let Some(job)=self.support_job.take() {job.abort();}
+        if self.support_rx.take().is_some() {self.support_notice=Some(Err(reason.into()));}
+    }
+    fn hide(&mut self) {
+        self.open=false;
+        // Existing tunnels belong to the session. One-shot requests belong to
+        // this window and must not open a browser later when it is reopened.
+        self.cancel_requests("Window closed; pending requests cancelled. Already-sent actions cannot be recalled");
+    }
+    pub fn disconnect(&mut self) {
+        self.cancel_requests("Link interrupted; the request was not confirmed");
+        self.tunnels.clear();
     }
     pub fn reconnect(&mut self,fs:RemoteFs,can_open_web:bool,can_tunnel:bool) {
-        self.stop();self.tunnels.clear();
-        if let Some(job)=self.support_job.take() {job.abort();}
-        if self.support_rx.take().is_some() {self.support_notice=Some(Err("Link interrupted; the support request was not confirmed".into()));}
-        if let Some(job)=self.adapter_job.take() {job.abort();}
-        if let Some(job)=self.web_job.take() {job.abort();}
-        if self.web_rx.take().is_some() {self.web_notice=Some(Err("Link interrupted; browser launch was not confirmed".into()));}
-        self.adapter_rx=None;self.adapters.clear();self.loaded=false;
+        self.disconnect();
+        self.adapters.clear();self.loaded=false;
         self.fs=fs;self.can_open_web=can_open_web;self.can_tunnel=can_tunnel;
     }
 
@@ -303,7 +318,7 @@ impl NetworkScanner {
             let (body, close)=theme::tool_frame(ui,&format!("Network scan · {host}"),class == egui::ViewportClass::Deferred,pal::CYAN);
             let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
             if close || ui.input(|i|i.viewport().close_requested()) {
-                scanner.open=false;scanner.stop();
+                scanner.hide();
                 theme::dismiss_tool_viewport(&ctx, class==egui::ViewportClass::Deferred);
                 return;
             }
@@ -313,8 +328,8 @@ impl NetworkScanner {
     }
 
     fn tick(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime, connected: bool) {
-        if !connected && (self.scan.is_some() || self.names_rx.is_some()) {
-            self.stop(); self.status = "Session ended · results retained".into();
+        if !connected {
+            self.disconnect(); self.status = "Session ended · results retained".into();
         }
         if !self.loaded && self.adapter_rx.is_none() && connected { self.load(ctx,rt); }
         self.poll();
@@ -677,7 +692,7 @@ impl NetworkScanner {
             for section in &self.diagnostic {for (key,value) in &section.rows {ui.label(format!("{key}: {value}"));}}
             if !self.diagnostic.is_empty() && ui.button("Copy diagnostics").clicked() {ctx.copy_text(self.diagnostic_text());}
         });
-        if busy {ui.horizontal(|ui| {ui.spinner();ui.label("Running support request…");if ui.button("Stop waiting").clicked() {if let Some(job)=self.support_job.take(){job.abort();}self.support_rx=None;self.support_notice=Some(Err("Stopped waiting; an already-sent wake packet or browser launch cannot be recalled".into()));}});}
+        if busy {ui.horizontal(|ui| {ui.spinner();ui.label("Running support request…");if ui.button("Stop waiting").clicked() {self.cancel_support("Stopped waiting; an already-sent action cannot be recalled");}});}
         if let Some(result)=&self.support_notice {match result {Ok(text)=>{ui.label(RichText::new(text).color(pal::GREEN));},Err(text)=>{ui.label(RichText::new(text).color(pal::RED));}}}
         if let Some((address,port))=connect {let fs=self.fs.clone();self.start_tool(ctx,rt,async move {Ok(ToolReply::Tunnel(fs.connect_through(address,port).await?,port))});}
         if wake || diagnose {
@@ -848,6 +863,71 @@ fn ports_text(ports: &[u16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test(flavor="multi_thread")]
+    async fn closing_cancels_pending_work_preserves_tunnels_and_disconnect_releases_them() {
+        use slipstream_core::config::Store;
+        use slipstream_session::{Client, ClientOptions, AudioOut};
+        use std::time::Duration;
+        let work=tempfile::tempdir().unwrap();
+        let mut clients=Vec::new();
+        for (name,host) in [("host",true),("viewer",false)] {
+            let store=Store::open(work.path().join(name)).unwrap();
+            let mut settings=store.load_settings();
+            settings.server.use_public_relays=false;
+            settings.host.allow_tunnels=true;
+            settings.host.set_permanent_password(Some("scanner-test"));
+            store.save_settings(&settings).unwrap();
+            clients.push(Client::start(store,ClientOptions {
+                test_pattern:host,accept_sessions:host,
+                clipboard:slipstream_platform::clipboard::ClipboardSource::Memory(Default::default()),
+                audio_out:AudioOut::Memory(Default::default()),
+            }).await.unwrap().0);
+        }
+        let (session,_)=clients[1].connect_direct(clients[0].endpoint_addr(),"scanner-test",|_|{}).await.unwrap();
+        let mut scanner=NetworkScanner::new(session.fs(),true,true);
+        scanner.open=true;
+        let tunnel=session.tunnel(0,"127.0.0.1".into(),1).await.unwrap();
+        let port=tunnel.local_port;
+        scanner.tunnels.push(tunnel);
+        let (started,ready)=tokio::sync::oneshot::channel();
+        let (held,cancelled)=tokio::sync::oneshot::channel::<()>();
+        let rt=tokio::runtime::Handle::current();
+        let (tx,rx)=tokio::sync::oneshot::channel();
+        scanner.support_rx=Some(rx);
+        scanner.support_job=Some(rt.spawn(async move {
+            let _held=held;
+            let _=started.send(());
+            std::future::pending::<()>().await;
+            let _=tx.send(Ok(ToolReply::Message(String::new())));
+        }));
+        ready.await.unwrap();
+        scanner.hide();
+        assert!(!scanner.open && scanner.support_rx.is_none());
+        assert!(tokio::time::timeout(Duration::from_secs(2),cancelled).await.unwrap().is_err());
+        assert!(scanner.support_notice.as_ref().unwrap().is_err());
+        assert_eq!(scanner.tunnels.len(),1);
+        assert!(tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST,port)).await.is_err());
+        // Even a completed request must be discarded on close, so reopening
+        // cannot launch its browser or keep its unreviewed new tunnel alive.
+        let pending=session.tunnel(0,"127.0.0.1".into(),1).await.unwrap();
+        let pending_port=pending.local_port;
+        let (tx,rx)=tokio::sync::oneshot::channel();
+        scanner.support_rx=Some(rx);
+        assert!(tx.send(Ok(ToolReply::Tunnel(pending,80))).is_ok());
+        scanner.hide();
+        scanner.disconnect();
+        assert!(scanner.tunnels.is_empty());
+        for port in [port,pending_port] {
+            tokio::time::timeout(Duration::from_secs(2),async {
+                loop {
+                    if tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST,port)).await.is_ok() {break;}
+                    tokio::task::yield_now().await;
+                }
+            }).await.expect("closed tunnel retained its listener");
+        }
+        drop(scanner);drop(session);
+        for client in clients {client.shutdown().await;}
+    }
     #[test]
     fn gateway_is_not_duplicated_among_members() {
         let gateway=Ipv4Addr::new(192,168,1,1);

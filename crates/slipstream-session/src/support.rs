@@ -208,7 +208,11 @@ async fn dns(source: Ipv4Addr, server: SocketAddr, name: &str) -> Result<String>
     let bytes = crate::network_names::exchange(source, server, &query.build_bytes_vec()?)
         .await
         .ok_or_else(|| anyhow::anyhow!("No UDP DNS answer (timeout or blocked)"))?;
-    let response = Packet::parse(&bytes)?;
+    dns_answer(&bytes, id, name)
+}
+
+fn dns_answer(bytes: &[u8], id: u16, name: &str) -> Result<String> {
+    let response = Packet::parse(bytes)?;
     ensure!(
         response.id() == id
             && response.has_flags(PacketFlag::RESPONSE)
@@ -218,7 +222,8 @@ async fn dns(source: Ipv4Addr, server: SocketAddr, name: &str) -> Result<String>
                 .to_string()
                 .trim_end_matches('.')
                 .eq_ignore_ascii_case(name.trim_end_matches('.'))
-            && response.questions[0].qtype == QTYPE::TYPE(TYPE::A),
+            && response.questions[0].qtype == QTYPE::TYPE(TYPE::A)
+            && response.questions[0].qclass == QCLASS::CLASS(CLASS::IN),
         "DNS answer did not match the query"
     );
     ensure!(
@@ -230,9 +235,25 @@ async fn dns(source: Ipv4Addr, server: SocketAddr, name: &str) -> Result<String>
         "DNS returned {:?}",
         response.rcode()
     );
+    // Resolvers can include other records in the answer section. Only the
+    // queried name and its CNAME chain describe this diagnostic's result.
+    let normalize = |name: &str| name.trim_end_matches('.').to_ascii_lowercase();
+    let mut target = normalize(name);
+    let mut visited = std::collections::BTreeSet::new();
+    loop {
+        ensure!(visited.insert(target.clone()), "DNS answer contains a CNAME loop");
+        let alias = response.answers.iter().find_map(|record| {
+            if record.class == CLASS::IN && normalize(&record.name.to_string()) == target
+                && let RData::CNAME(alias) = &record.rdata {
+                Some(normalize(&alias.0.to_string()))
+            } else {None}
+        });
+        match alias {Some(alias) => target=alias, None => break}
+    }
     let mut addresses: Vec<_> = response
         .answers
         .iter()
+        .filter(|record| record.class == CLASS::IN && normalize(&record.name.to_string()) == target)
         .filter_map(|r| match &r.rdata {
             RData::A(a) => Some(Ipv4Addr::from(a.address).to_string()),
             _ => None,
@@ -347,6 +368,24 @@ pub(crate) async fn diagnose(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn diagnostics_follow_aliases_and_ignore_unrelated_or_wrong_class_addresses() {
+        use simple_dns::{ResourceRecord, rdata::{A,CNAME}};
+        let mut response=Packet::new_reply(17);
+        response.questions.push(Question::new(Name::new("example.com").unwrap(),QTYPE::TYPE(TYPE::A),QCLASS::CLASS(CLASS::IN),false));
+        let address=|name: &'static str,class,ip|ResourceRecord::new(Name::new(name).unwrap(),class,30,RData::A(A {address:u32::from(ip)}));
+        response.answers.push(address("unrelated.example",CLASS::IN,Ipv4Addr::new(203,0,113,9)));
+        response.answers.push(address("example.com",CLASS::CH,Ipv4Addr::new(203,0,113,10)));
+        assert_eq!(dns_answer(&response.build_bytes_vec().unwrap(),17,"EXAMPLE.COM.").unwrap(),"No IPv4 answer");
+        response.answers.push(ResourceRecord::new(Name::new("example.com").unwrap(),CLASS::IN,30,RData::CNAME(CNAME(Name::new("target.example").unwrap()))));
+        response.answers.push(address("target.example",CLASS::IN,Ipv4Addr::new(192,0,2,5)));
+        assert_eq!(dns_answer(&response.build_bytes_vec().unwrap(),17,"example.com").unwrap(),"192.0.2.5");
+        response.questions[0].qclass=QCLASS::CLASS(CLASS::CH);
+        assert!(dns_answer(&response.build_bytes_vec().unwrap(),17,"example.com").is_err());
+        response.questions[0].qclass=QCLASS::CLASS(CLASS::IN);
+        response.answers.push(ResourceRecord::new(Name::new("target.example").unwrap(),CLASS::IN,30,RData::CNAME(CNAME(Name::new("example.com").unwrap()))));
+        assert!(dns_answer(&response.build_bytes_vec().unwrap(),17,"example.com").unwrap_err().to_string().contains("CNAME loop"));
+    }
     #[test]
     fn wake_packet_and_status_validation() {
         let packet = magic_packet("00:11:22:33:44:55").unwrap();
