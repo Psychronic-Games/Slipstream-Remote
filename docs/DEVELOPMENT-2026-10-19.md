@@ -1,5 +1,101 @@
 # Development handoff — 2026-10-19
 
+## Release preparation: 0.21.0
+
+Implementation: **509c51c**. Release: **1dc6836**, version **0.21.0**,
+build **101**. Linux, Windows and Android packages are built and verified in
+`dist/slipstream-station/clients/`. Publication is pending; the last verified
+live release is 0.20.0 below. The initial packaging run was interrupted;
+the resumed run completed with Zig and NASM on PATH. Later documentation
+commits do not change the packaged build.
+
+### Changes in 0.21.0
+
+- Network Scan can connect to a selected discovered TCP service through the
+  workstation, retain loopback tunnels with the session, and open standard
+  HTTP/HTTPS endpoints locally. Existing port-forwarding permissions apply.
+- Tools → Support report collects inventory/public IP, connection and retained
+  scan/diagnostic results, and technician notes into a reviewed local report.
+  A remote screenshot requires explicitly selecting its checkbox. Each export
+  creates a unique folder; credentials, chat and raw logs are omitted.
+- Network diagnostics check gateway ICMP, configured/comparison DNS resolvers
+  and the host's station API. Checks are bounded and cancellable; results do
+  not establish video-relay health. Wake-on-LAN uses the selected adapter's
+  broadcast and strict MAC validation, with a separate disabled-by-default
+  permission and a two-second request limit.
+- A plain-language support status appears on the host with Dismiss / Stop
+  support. Stop ends only that session without automatic recovery. Windows
+  service hosts use the authenticated desktop bridge; the compact app shows
+  the status too. Incoming events wake occluded/hidden host consoles.
+- Desktop profiles bind their identity to locally hashed firmware evidence.
+  Moving a bound image to different hardware generates a fresh identity and
+  clears cached/public IDs while preserving station, unattended and service
+  configuration. Concurrent starts agree on one identity; missing evidence
+  retains it. Service updates preserve the machine profile's existing identity.
+  **Run the updated master app/service before imaging** to record the baseline.
+  Duplicate firmware IDs and images without a baseline limit detection.
+
+### Verification for 0.21.0
+
+- The completed feature test run passed **131 tests, zero failed, five
+  ignored**. Coverage includes clone rekeying/preserved settings/concurrent
+  startup, bounded firmware parsing, support permissions and tunnel bytes,
+  report folder isolation, exact wake packets, and mismatched DNS replies.
+- Linux/Windows all-target workspace Clippy and arm64 Android Clippy passed
+  with `-D warnings`. Windows and Android checks were completed after resuming
+  the interrupted release preparation. These are compile checks, not physical
+  Windows/Android runtime checks.
+- Prior isolated Xvfb/X11 fixtures retained report exports and screenshots
+  of the support panel, network diagnostics and tunnel controls. A host log
+  and viewer log confirm that Stop support ended the session without recovery.
+  [Host status preview](screenshots/support-status-0.21.0.png) uses synthetic
+  hosts. Real firmware-based Windows imaging/service behavior, LAN wake and
+  physical-device UI checks remain open. This Linux user cannot read usable
+  firmware identifiers; clone tests inject distinct evidence.
+- Session protocol remains **6**; support operations append optional stream
+  variants. Ordinary sessions remain compatible with older peers, while new
+  optional requests require a sufficiently recent host.
+- Packaged desktop hashes, Ed25519 signatures and embedded update keys match
+  the existing release key, also checked against the 0.20.0 build log.
+  The Windows file/product resources identify 0.21.0 / 101 and include the
+  pinned Mesa 26.2.4 libraries. Portable Linux starts with isolated settings
+  and requires glibc no newer than 2.31. The arm64 APK is release mode with
+  versionName 0.21.0, versionCode 101 and the same valid signing certificate
+  as the previous APK. Packaging completed with nonfatal linker messages
+  about Zig's deprecated optimization option and missing MSVC debug symbols.
+- No authenticated live 0.21.0 offer/download verification has occurred.
+  An unauthenticated HTTPS API probe returned 403 as expected for a private
+  station; it cannot establish the deployed version.
+
+### Deployment blocker and continuation
+
+The station mount at `/home/doug/WebServer` returned **Transport endpoint is
+not connected** on resumption. A batch SSH check to its existing host also
+failed authentication. No station files were changed. Reconnect the mount
+before backing up and atomically publishing the new clients, with the signed
+manifest last; then verify authenticated HTTPS offers and full downloads.
+PHP and the relay do not need updating for these client features.
+
+Prepared temporary scripts, in order after reconnecting the mount:
+`python3 /tmp/slipstream-verify-021.py`,
+`python3 /tmp/slipstream-publish-021.py`, then
+`python3 /tmp/slipstream-live-check-021.py`. The first already passed locally.
+The publisher requires the prior manifest to identify 0.20.0 / 98 / 98e84e0,
+checks its signer and client hashes, backs up existing clients, stages and
+checks replacements, and publishes the signed manifest last. Publication
+and live-check scripts have been syntax-checked but not run. If temporary
+files are gone, reconstruct this procedure from the release checklist and
+the 0.20.0 deployment notes below.
+
+Temporary evidence (not committed): `/tmp/slipstream-support-tests-final.log`,
+`/tmp/slipstream-0.21.0-clippy-linux.log`,
+`/tmp/slipstream-0.21.0-clippy-windows-resumed.log`,
+`/tmp/slipstream-0.21.0-clippy-android-resumed.log`,
+`/tmp/slipstream-0.21.0-build-resumed.log` and
+`/tmp/slipstream-0.21.0-artifact-verification.log`.
+
+## Published release: 0.20.0
+
 Published **0.20.0, build 98, commit 98e84e0** at
 https://relay.slipstreamremote.com. Implementation commit: **85bf92f**.
 Later documentation commits do not change the deployed build.

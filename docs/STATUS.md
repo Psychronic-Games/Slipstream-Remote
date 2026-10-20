@@ -1,15 +1,30 @@
 # Project status
 
-*Updated 2026-10-19; latest release 0.20.0. Read this first when
-picking the work back up.*
+*Updated 2026-10-19; latest published release 0.20.0; 0.21.0 built and verified.
+Read this first when picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-19.md)
-covers draggable tabs, configurable windows, service one-time codes, toolbar layout,
+covers 0.21.0 support tools and cloned-device identity detection, plus
+draggable tabs, configurable windows, service one-time codes, toolbar layout,
 tool-window cleanup, proactive screen approval and APK naming.
 **Published clients: 0.20.0, build 98, commit 98e84e0**, on
 https://relay.slipstreamremote.com. Later documentation commits do not change
 that deployed build. The mounted client directory and rollback backups are
 recorded in the handoff.
+
+**0.21.0 ready to publish:** committed as 1dc6836, build 101. Adds reviewed support
+reports, host status with Stop support, discovered-service tunnels, peer-assisted
+LAN wake and bounded gateway/DNS/station diagnostics. Desktop hardware bindings
+give imaged profiles a fresh identity on different firmware while retaining
+station/unattended settings; run the updated master app/service before imaging.
+Missing or duplicate firmware evidence limits detection. The feature test run
+passed 131 tests (five ignored); Linux/Windows all-target and arm64 Android
+Clippy passed. Linux/Windows/Android packages and the signed manifest are in
+`dist/slipstream-station/clients/`. Artifact hashes/signatures, update-key
+continuity, Windows resources/Mesa, Linux startup/glibc and Android version /
+signing certificate were verified. Deployment and live HTTPS verification
+await reconnection of `/home/doug/WebServer`; no station files were changed.
+See the handoff for verification evidence and remaining checks.
 
 **0.20.0:** a session strip switches workstations and returns to Bridge.
 Drag tabs to reorder, release outside the strip to create a floating window,
@@ -334,7 +349,12 @@ implemented and emulator-tested, alongside the touch viewer. Remaining work
 includes real-phone checks, viewer keyboard polish, hardware encoding and
 host audio/clipboard/files/updates. The steps below carry on alongside it.
 
-1. **Confirm 0.20.0 on the Windows Server VM**: tab reorder/tear-out/dock-back
+1. **Publish the verified 0.21.0 release**: reconnect the WebServer mount,
+   back up and publish clients with the manifest last, and
+   verify live signed offers/downloads. Confirm clone/service identity on
+   differently identified Windows hardware; exercise reports, status/Stop,
+   discovered-service tunnels, permitted LAN wake and network diagnostics.
+   **Confirm 0.20.0 on the Windows Server VM**: tab reorder/tear-out/dock-back
    and the saved new-link default, service one-time codes beside
    unattended access, independent workstation windows, closing tools without
    black remnants, sharp Balanced/Quality motion,
