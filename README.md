@@ -26,7 +26,8 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
   retaining station and unattended settings. Run the updated master/service
   before imaging; unavailable or duplicated firmware identifiers limit detection.
 - **Several workstations at once** — use reorderable session tabs or separate windows,
-  or dock them back into the console without reconnecting.
+  or dock them back into the console without reconnecting. The tab strip's
+  **+** finds recent links and station-saved/shared devices, or connects by ID.
 - **Clipboard sync, chat, and a two-pane file manager** — copy and paste
   text and files between the computers, browse both, send and receive
   folders, or drag files from your desktop straight onto the remote screen.

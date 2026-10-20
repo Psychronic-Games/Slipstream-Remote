@@ -100,8 +100,19 @@ pub(super) fn show(
     let screen_rect = |r: Rect| origin.map(|p| r.translate(p.to_vec2()) * scale);
     let bar = area.with_max_y(area.top() + 35.0);
     ui.painter().rect_filled(bar, 5.0, pal::PANEL);
-    let mut child = ui.new_child(UiBuilder::new().max_rect(bar.shrink2(vec2(4.0, 2.0))));
     let mut actions = Vec::new();
+    let plus = Rect::from_min_max(egui::pos2(bar.right() - 37.0, bar.top() + 2.0), bar.right_bottom() - vec2(4.0, 2.0));
+    let add = ui.interact(plus, ui.scope_id().with("new-link"), Sense::click())
+        .on_hover_text("New link · recent and saved systems");
+    ui.painter().rect_filled(plus, 9.0, if add.hovered() {pal::TAN} else {pal::GREEN});
+    for offset in [vec2(7.0,0.0), vec2(0.0,7.0)] {
+        ui.painter().line_segment([plus.center()-offset, plus.center()+offset], Stroke::new(2.0,pal::BG));
+    }
+    add.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "New link"));
+    if add.clicked() {
+        actions.push((0, TabAction::NewLink));
+    }
+    let mut child = ui.new_child(UiBuilder::new().max_rect(bar.with_max_x(plus.left() - 4.0).shrink2(vec2(4.0, 2.0))));
     let mut slots = Vec::new();
     let mut local_slots = Vec::new();
     let mut started = None;
@@ -143,7 +154,7 @@ pub(super) fn show(
                     local_slots.push((*id, rect.intersect(ui.clip_rect())));
                     if let Some(rect) = screen_rect(rect.intersect(ui.clip_rect())) && rect.is_positive() { slots.push((*id, rect)); }
                 }
-                if root && entries.is_empty() { ui.label(egui::RichText::new("DROP A SESSION TAB HERE").color(pal::DIM)); }
+                if root && entries.is_empty() { ui.label(egui::RichText::new("RECENT AND SAVED SYSTEMS").color(pal::DIM)); }
             });
         });
     let mut state = shared.lock().unwrap();
@@ -304,5 +315,27 @@ mod tests {
         let actions = f.frame(true, origin, 1.0, vec![Event::PointerMoved(drop), button(drop, false)]);
         assert!(actions.iter().any(|(id, a)| *id == 3 && matches!(a, TabAction::PlaceTab(Some(1)))));
         assert!(!f.tabs.lock().unwrap().dragging());
+    }
+
+    #[test]
+    fn new_link_stays_clickable_with_overflowing_tabs_in_both_windows() {
+        for root in [true, false] {
+            let ctx = egui::Context::default();
+            ctx.set_embed_viewports(false);
+            theme::install(&ctx);
+            let shared = Default::default();
+            let area = Rect::from_min_size(Pos2::ZERO, vec2(520.0,360.0));
+            let entries: Vec<_> = (1..20).map(|id| (id,format!("Workstation {id}"))).collect();
+            let point = pos2(500.0,15.0);
+            let mut actions = Vec::new();
+            for events in [vec![],vec![],vec![Event::PointerMoved(point),button(point,true)],vec![button(point,false)]] {
+                let mut output = ctx.run_ui(RawInput {screen_rect:Some(area),events,..Default::default()}, |ui| {
+                    actions.extend(show(&shared,ui,area,&entries,Some(1),root,true).1);
+                });
+                output.textures_delta.clear();
+            }
+            assert_eq!(actions.iter().filter(|(_,action)|matches!(action,TabAction::NewLink)).count(),1);
+            assert!(!shared.lock().unwrap().dragging());
+        }
     }
 }

@@ -1,5 +1,47 @@
 # Development handoff — 2026-10-20
 
+## In progress after 0.21.1 publication
+
+The real Linux approval failure was KDE's running portal retaining deleted Qt
+6.11.2 libraries after Qt 6.12.0 was installed. Its RemoteDesktopDialog could
+not load the new QtQuick Layouts plugin. Restarting the KDE/frontend portal
+services fixed the dialog; the user confirmed a successful Windows→Linux
+connection. Existing approval settings were preserved.
+
+Implementation for 0.22.0:
+
+- Direct + Group, empty-group persistence on each technician account,
+  per-group Add device and removal of empty groups; update the station API
+  along with clients, preserving older-client/device/password behavior.
+- Detect that exact stale Qt condition, repair only an idle portal, bound
+  approval waits, clean incomplete sessions and notice revoked grants.
+- Recognize the downloaded Linux executable with a stable ELF note and a
+  per-user MIME icon after its first normal launch.
+- Add a fixed + tab button with a searchable recent/saved/shared-device
+  picker, existing saved-password prompts and correct station routes.
+- Clip the animated menu-bar pulse to the actual rounded segments.
+- Tighten menus/dialogs for smaller screens and draw transfer Delta arrows
+  and the recent-link save star without platform font glyphs.
+- Correct both file-browser and transfer-progress caption flicker: native
+  frame suppression, single registration, and guarded asynchronous repaints.
+
+Native Xvfb checks passed: a live test-pattern session, recent/private/shared
+picker, actual byte-exact file transfer, progress receipt, 640×360 file window,
+720×480 compact Bridge, and + Group form saving an empty group to a real isolated
+PHP station. Qt's MIME database recognizes the executable and a renamed copy
+with a provisioning trailer; an unrelated executable keeps its own MIME type.
+PHP account tests also cover group isolation, legacy edits and encrypted secrets.
+Evidence is under /tmp/slipstream-022-native-dd9k97fe and
+/tmp/slipstream-022-native-qoo9qm7t. Final workspace checks: 143 tests passed, zero failed, five ignored;
+Linux and Windows all-target workspace Clippy and Android arm64 Clippy passed
+with warnings denied. Packaging and publication are next.
+
+Screenshots: [picker](screenshots/new-link-0.22.0.png),
+[640×360 file browser](screenshots/files-compact-0.22.0.png),
+[720×480 Bridge](screenshots/bridge-compact-0.22.0.png),
+[empty group](screenshots/groups-0.22.0.png).
+Heavy commands must use codex-check serially.
+
 ## Published release: 0.21.1
 
 Published **0.21.1, build 106, commit 2d1a128** at

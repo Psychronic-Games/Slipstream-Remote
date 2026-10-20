@@ -5,6 +5,7 @@ pub(super) fn update() {
     use std::{cell::RefCell, collections::BTreeMap};
     use windows_sys::Win32::{
         Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_NCRENDERING_POLICY, DWMNCRP_DISABLED},
         Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, SetWindowRgn},
         System::Threading::GetCurrentThreadId,
         UI::{
@@ -12,7 +13,7 @@ pub(super) fn update() {
             Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{EnumThreadWindows, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsWindow, IsWindowVisible, IsZoomed,
                 SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-                WM_NCCALCSIZE, WM_NCDESTROY, WS_CAPTION},
+                WM_NCCALCSIZE, WM_NCDESTROY, WM_NCPAINT, WM_NCACTIVATE, WS_CAPTION},
         },
     };
     const FRAME_SUBCLASS: usize = 0x534c4341;
@@ -25,6 +26,8 @@ pub(super) fn update() {
             if msg == WM_NCCALCSIZE && wparam != 0 && IsZoomed(window) == 0 {
                 return 0;
             }
+            if msg == WM_NCPAINT { return 0; }
+            if msg == WM_NCACTIVATE { return 1; }
             if msg == WM_NCDESTROY {
                 RemoveWindowSubclass(window, Some(client_frame), id);
             }
@@ -47,6 +50,11 @@ pub(super) fn update() {
                 && GetWindowSubclass(window, Some(client_frame), FRAME_SUBCLASS, &mut data) == 0
                 && SetWindowSubclass(window, Some(client_frame), FRAME_SUBCLASS, 0) != 0
             {
+                // Keep caption styles for snapping/resizing, but prevent Windows
+                // from flashing a native caption over our console title strip.
+                let policy = DWMNCRP_DISABLED;
+                DwmSetWindowAttribute(window, DWMWA_NCRENDERING_POLICY as u32,
+                    (&policy as *const i32).cast(), std::mem::size_of_val(&policy) as u32);
                 // No RefCell borrow is held while Windows recalculates the frame.
                 SetWindowPos(window, std::ptr::null_mut(), 0, 0, 0, 0,
                     SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);

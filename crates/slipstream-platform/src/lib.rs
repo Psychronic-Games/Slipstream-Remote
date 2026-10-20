@@ -27,6 +27,8 @@ mod privacy;
 #[cfg(target_os = "linux")]
 mod pw;
 #[cfg(target_os = "linux")]
+mod portal_health;
+#[cfg(target_os = "linux")]
 mod x11;
 #[cfg(target_os = "linux")]
 pub mod wayland;
@@ -96,7 +98,8 @@ pub struct OpenOptions {
 
 /// Opens the best backend for this system. On Wayland this shows the
 /// desktop's screen-sharing permission dialog (unless a valid restore token
-/// is supplied), so it can take as long as the user takes to click.
+/// is supplied). Approval has a bounded wait so a broken desktop cannot
+/// leave local preparation and incoming sessions waiting forever.
 pub async fn open(opts: &OpenOptions) -> Result<Box<dyn Backend>> {
     if opts.test_pattern {
         return Ok(Box::new(test_pattern::TestPattern::new(1280, 720)));

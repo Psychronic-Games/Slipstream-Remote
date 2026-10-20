@@ -58,6 +58,8 @@ pub struct AccountState {
     #[serde(default)]
     pub devices: Vec<SavedDevice>,
     #[serde(default)]
+    pub groups: Vec<String>,
+    #[serde(default)]
     pub shared: Vec<SavedDevice>,
     pub vault_salt: String,
     /// The station's current address and access key (they can change).
@@ -89,6 +91,14 @@ impl DirectoryClient {
 
     pub async fn delete_device(&self, token: &str, id: DeviceId) -> Result<AccountState> {
         self.call(serde_json::json!({ "op": "device_delete", "token": token, "id": id.0 })).await
+    }
+
+    pub async fn save_group(&self, token: &str, group: &str) -> Result<AccountState> {
+        self.call(serde_json::json!({"op":"group_save","token":token,"group":group})).await
+    }
+
+    pub async fn delete_group(&self, token: &str, group: &str) -> Result<AccountState> {
+        self.call(serde_json::json!({"op":"group_delete","token":token,"group":group})).await
     }
 
     /// Station admins: adds or replaces a device everyone sees.

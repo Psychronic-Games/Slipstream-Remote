@@ -63,6 +63,7 @@ impl Client {
             a.org = state.station.org;
             a.user = state.user;
             a.devices = state.devices;
+            a.groups = state.groups;
             a.shared = state.shared;
             a.signed_out = false;
         });
@@ -168,6 +169,26 @@ impl Client {
         Ok(())
     }
 
+    pub async fn save_group(&self, r: &AccountRef, name: &str) -> Result<()> {
+        let name: String = name.trim().chars().take(64).collect();
+        if name.is_empty() { bail!("Enter a group name"); }
+        let a = self.account(r)?;
+        let state = Self::station_client(&a)?.save_group(&a.token, &name).await
+            .map_err(|e| self.note_error(r, e))?;
+        let saved = state.groups.contains(&name);
+        self.apply_state(r,state);
+        if !saved { bail!("Update the station to create empty groups"); }
+        Ok(())
+    }
+
+    pub async fn delete_group(&self, r: &AccountRef, name: &str) -> Result<()> {
+        let a = self.account(r)?;
+        let state = Self::station_client(&a)?.delete_group(&a.token,name).await
+            .map_err(|e| self.note_error(r,e))?;
+        self.apply_state(r,state);
+        Ok(())
+    }
+
     /// The password saved for a device in this account, if any.
     pub fn saved_password(&self, r: &AccountRef, id: DeviceId) -> Result<Option<String>> {
         let a = self.account(r)?;
@@ -208,6 +229,6 @@ impl Client {
         };
         on_progress(format!("Locating {id} on {}…", a.label()));
         let found = Self::station_client(&a)?.lookup(id).await?;
-        self.connect_found(id, found, &password, on_progress).await
+        self.connect_found(id, found, &password, on_progress, Some(a.server)).await
     }
 }

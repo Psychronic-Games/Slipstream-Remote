@@ -76,8 +76,9 @@ fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
         return;
     }
     ui.horizontal(|ui| {
-        ui.allocate_ui(vec2(210.0, 30.0), |ui| {
-            ui.set_width(210.0);
+        let label_width = (ui.available_width() * 0.3).clamp(145.0, 180.0);
+        ui.allocate_ui(vec2(label_width, 28.0), |ui| {
+            ui.set_width(label_width);
             ui.label(RichText::new(label.to_uppercase()).font(theme::display(16.0)).color(pal::LAVENDER));
         });
         add(ui);
@@ -210,6 +211,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             row(ui, "Screen permission", |ui| { ui.vertical(|ui| {
                 if std::env::var_os("WAYLAND_DISPLAY").is_some() {
                     let busy = app.screen_access.busy();
+                    if busy && theme::pill(ui, "Cancel request", pal::PEACH).clicked() {
+                        app.screen_access.cancel();
+                    }
                     ui.add_enabled_ui(!busy && f.accept && app.incoming.is_empty(), |ui| { ui.horizontal_wrapped(|ui| {
                         if theme::pill(ui, "Approve now", pal::GREEN).clicked() {
                             approve_screen = Some(false);

@@ -181,6 +181,19 @@ Ubuntu 20.04, Fedora, Arch…) and needs no extra packages.
   token; some desktops require approval again after a restart or reboot.
 - **X11**: works without any prompt.
 
+On KDE, an update can leave the desktop's screen-sharing process running
+against old Qt libraries. Slipstream detects that mismatch and refreshes the
+portal automatically when it reports no active sessions or dialogs. If
+another application is using it, close that sharing session and choose
+**Approve now**, or sign out and back in. A stalled approval now times out
+with recovery instructions; **Cancel request** releases it immediately.
+
+After its first normal launch, Slipstream installs a per-user file icon as
+well as its application-menu/tray icons. Supporting file managers recognize
+the executable even when the station renames it. A fresh download on a new
+Linux account may show a generic executable icon until it has run once;
+refresh the folder if its icon is cached.
+
 ### macOS (12 or newer, Apple Silicon or Intel)
 
 1. Download the zip, open it and move **Slipstream** to *Applications*.
@@ -258,6 +271,23 @@ separate native windows require desktop support. On systems that withhold
 cross-window pointer positions, use the Dock action if dragging back is
 unavailable. The title bar identifies the workstation; picture quality and
 FPS/latency sit together on the session toolbar.
+
+The fixed **+** at the right of the strip opens **New link** in the console
+or from a floating session window. Search recent links and your stations'
+saved/shared devices by name, ID, group or station. Online lamps show cached
+presence; **Refresh devices** fetches the lists again. Saved passwords use
+the existing one-click connection; other devices ask for their password.
+You can also enter an ID/password directly and choose a signed-in station.
+New recent links remember their station, including identical IDs on different
+stations; older recent entries use this app's station.
+
+On Bridge, each signed-in station's **Saved devices** panel has **+ Group**
+and **+ Device** controls. New groups can be empty and follow your technician
+account to other computers. Expand a group and choose **Add device** to start
+with that group selected. **Remove empty group** removes an unused group;
+move its devices elsewhere first. Shared-device editing still requires a
+station administrator. Configuring a relay address alone does not sign in a
+technician; use **Config → Stations** if its saved list is not visible.
 
 1. Open Slipstream on your own computer. You download it from the same
    station page.
@@ -502,7 +532,7 @@ broken session.
 | Connection works but is slow, stats say **RELAY** | Both sides are behind strict firewalls, so traffic goes through your station. Try the *Speed* or *Low bandwidth* preset. |
 | A direct link authenticates but stalls as video or a large transfer starts | Update both ends. Android uses individual UDP datagrams for compatibility. On other platforms, starting the affected app with `SLIPSTREAM_DISABLE_GSO=1` disables UDP segmentation offload for drivers that mishandle it. |
 | Low frame rate, stats say **DIRECT** | Hover over the stats. Long *video encoding* times mean the remote computer's processor is the limit. Long *screen capture* times point at capture. Long *waiting for the viewer* times mean the network. The 30-second lines in the log show the same, over time. |
-| Black or frozen screen from a Wayland computer | The screen-sharing prompt on that computer wasn't approved. Approve it, or reset it under *Config → Screen permission*. |
+| Black or frozen screen from a Wayland computer | Check *Config → Screen permission*. Approve the desktop dialog, use *Cancel request* / *Approve now* for a stalled request, or reset the selection. KDE's stale Qt services are refreshed automatically only when idle; if another sharing session prevents repair, close it or sign out and back in. |
 | Mac shows a black screen or ignores the mouse | Grant **Screen Recording** and **Accessibility** to Slipstream in *System Settings → Privacy & Security*, then restart the app. |
 | Update fails: "installed in a protected folder" | The app can't replace itself there. Download the new version from the station page instead. |
 | Station relay is red | See [Step 4](#step-4-check-the-status-page). The relay log on the admin page usually says why. |

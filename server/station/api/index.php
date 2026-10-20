@@ -71,7 +71,7 @@ if ($op === 'login') {
     $token = slip_token_issue($u, slip_clip(trim((string)($req['device'] ?? '')), 64));
     reply(['ok' => true, 'token' => $token, 'user' => slip_user_public($acct), 'station' => slip_client_config(), 'vault_salt' => $acct['vault_salt']]);
 }
-if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'shared_save', 'shared_delete'], true)) try {
+if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'group_save', 'group_delete', 'shared_save', 'shared_delete'], true)) try {
     if (!slip_rate_ok('account', 120)) {
         fail('too many requests, slow down', 429);
     }
@@ -110,6 +110,35 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'shared_
                 return $a;
             });
             break;
+        case 'group_save':
+        case 'group_delete':
+            $group = $req['group'] ?? null;
+            if (!is_string($group) || trim($group) === '') {
+                fail('enter a group name');
+            }
+            $group = slip_clip(trim($group), 64);
+            $acct = slip_user_update($u, function (array $a) use ($group, $op) {
+                $groups = array_values(array_filter($a['groups'] ?? [], 'is_string'));
+                if ($op === 'group_save') {
+                    if (!in_array($group, $groups, true)) {
+                        if (count($groups) >= 100) {
+                            throw new InvalidArgumentException('your list is full (100 groups)');
+                        }
+                        $groups[] = $group;
+                    }
+                } else {
+                    foreach ($a['devices'] ?? [] as $device) {
+                        if (($device['group'] ?? '') === $group) {
+                            throw new InvalidArgumentException('move devices out of this group before removing it');
+                        }
+                    }
+                    $groups = array_values(array_filter($groups, fn($name) => $name !== $group));
+                }
+                natcasesort($groups);
+                $a['groups'] = array_values($groups);
+                return $a;
+            });
+            break;
         case 'shared_save':
         case 'shared_delete':
             if (!$isAdmin) {
@@ -136,6 +165,7 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'shared_
         'ok' => true,
         'user' => slip_user_public($acct),
         'devices' => array_values($acct['devices'] ?? []),
+        'groups' => array_values($acct['groups'] ?? []),
         'shared' => slip_shared(),
         'vault_salt' => $acct['vault_salt'],
         'station' => slip_client_config(),

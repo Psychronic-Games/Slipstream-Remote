@@ -6886,6 +6886,7 @@ dependencies = [
  "arboard",
  "ashpd",
  "enigo",
+ "futures-core",
  "jni 0.21.1",
  "keycode",
  "libc",

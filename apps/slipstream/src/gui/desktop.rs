@@ -10,6 +10,41 @@ use anyhow::{Context, Result};
 
 pub const APP_ID: &str = "slipstream-remote";
 
+// File managers identify an ELF file through MIME magic, not its window icon.
+// A real ELF note keeps this stable marker near the start across builds, names,
+// station provisioning trailers and self-updates.
+#[repr(C, align(4))]
+struct ExecutableNote {
+    name_len: u32,
+    description_len: u32,
+    kind: u32,
+    name: [u8; 12],
+    description: [u8; 32],
+}
+
+#[used]
+#[unsafe(link_section = ".note.slipstream")]
+static EXECUTABLE_NOTE: ExecutableNote = ExecutableNote {
+    name_len: 11, description_len: 32, kind: 0x534c4950,
+    name: *b"SLIPSTREAM\0\0",
+    description: *b"slipstream-remote-executable-v1\0",
+};
+
+const FILE_MIME: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-slipstream-remote">
+    <comment>Slipstream Remote application</comment>
+    <sub-class-of type="application/x-executable"/>
+    <icon name="application-x-slipstream-remote"/>
+    <magic priority="80">
+      <match type="string" value="\x7fELF" offset="0">
+        <match type="string" value="slipstream-remote-executable-v1" offset="0:65536"/>
+      </match>
+    </magic>
+  </mime-type>
+</mime-info>
+"#;
+
 fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
     if fs::read(path).is_ok_and(|cur| cur == bytes) {
         return Ok(false);
@@ -20,6 +55,7 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
 }
 
 pub fn integrate() -> Result<()> {
+    std::hint::black_box(&EXECUTABLE_NOTE);
     // A system-wide install (package, install script) already provides it.
     if Path::new(&format!("/usr/share/applications/{APP_ID}.desktop")).exists() {
         return Ok(());
@@ -40,7 +76,14 @@ pub fn integrate() -> Result<()> {
         enc.write_header()?.write_image_data(&icon.rgba)?;
         let path = data.join(format!("icons/hicolor/{size}x{size}/apps/{APP_ID}.png"));
         changed |= write_if_changed(&path, &png)?;
+        changed |= write_if_changed(&data.join(format!("icons/hicolor/{size}x{size}/mimetypes/application-x-slipstream-remote.png")), &png)?;
     }
+    let mime_changed = write_if_changed(&data.join("mime/packages/slipstream-remote.xml"), FILE_MIME.as_bytes())?;
+    if mime_changed || !data.join("mime/mime.cache").exists() {
+        let result = std::process::Command::new("update-mime-database").arg(data.join("mime")).status();
+        if !result.is_ok_and(|s| s.success()) { tracing::warn!("could not refresh the downloaded application's file icon"); }
+    }
+    changed |= mime_changed;
     let entry = format!(
         "[Desktop Entry]\nType=Application\nName=Slipstream Remote\nGenericName=Remote Desktop\n\
          Comment=Fast, free, open-source remote desktop\nExec=\"{}\" %U\nIcon={APP_ID}\nTerminal=false\n\
@@ -60,4 +103,18 @@ pub fn integrate() -> Result<()> {
         let _ = std::process::Command::new("gtk-update-icon-cache").args(["-q", "-t"]).arg(data.join("icons/hicolor")).status();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn executable_marker_survives_linking_in_the_mime_probe_region() {
+        let mut prefix = Vec::new();
+        fs::File::open(std::env::current_exe().unwrap()).unwrap().take(65536).read_to_end(&mut prefix).unwrap();
+        let marker = b"slipstream-remote-executable-v1";
+        assert!(prefix.windows(marker.len()).any(|bytes| bytes == marker), "ELF branding note missing from the first 64 KiB");
+    }
 }

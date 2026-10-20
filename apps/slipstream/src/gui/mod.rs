@@ -26,6 +26,7 @@ mod softgl;
 mod settings;
 #[cfg(target_os = "linux")]
 mod screen_access;
+mod quick_connect;
 mod single;
 pub mod theme;
 mod window_shape;
@@ -42,7 +43,7 @@ use std::{
 
 use anyhow::Result;
 use eframe::{
-    egui::{self, Align2, Color32, Pos2, Rect, Ui, UiBuilder, pos2, vec2},
+    egui::{self, Align2, Color32, Rect, Ui, UiBuilder, pos2, vec2},
     egui_wgpu,
 };
 use slipstream_core::{
@@ -153,8 +154,8 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             .with_transparent(theme::transparent_window())
             .with_title("Slipstream Remote")
             .with_app_id("slipstream-remote") // must match the .desktop file name (Wayland icons)
-            .with_inner_size(opts.window_size.unwrap_or([1180.0, 760.0]))
-            .with_min_inner_size([820.0, 560.0])
+            .with_inner_size(opts.window_size.unwrap_or([1080.0, 700.0]))
+            .with_min_inner_size([720.0, 480.0])
             .with_icon(theme::icon(128))
             .with_drag_and_drop(true),
         // winit 0.30 has no native Wayland file-drop events. Keep capture
@@ -333,6 +334,7 @@ pub struct App {
     pub tabs: Vec<Arc<Mutex<remote::RemoteTab>>>,
     session_actions: SessionActionQueue,
     session_tabs: Arc<Mutex<session_tabs::Tabs>>,
+    quick_connect: quick_connect::QuickConnect,
     next_tab: u64,
     pub incoming: Vec<IncomingSession>,
     toasts: Vec<Toast>,
@@ -425,6 +427,7 @@ impl App {
             tabs: Vec::new(),
             session_actions: mpsc::channel(),
             session_tabs: Arc::new(Mutex::new(session_tabs::Tabs::default())),
+            quick_connect: Default::default(),
             next_tab: 1,
             incoming: Vec::new(),
             toasts: Vec::new(),
@@ -889,6 +892,14 @@ impl App {
     fn session_action(&mut self, ctx: &egui::Context, id: u64, action: remote::TabAction) {
         match action {
             remote::TabAction::None => {},
+            remote::TabAction::NewLink => {
+                for tab in &self.tabs {tab.lock().unwrap().release_keyboard();}
+                self.quick_connect.open = true;
+                self.quick_connect.focus = true;
+                self.set_visible(ctx, true);
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+            },
             remote::TabAction::Bridge => {
                 for tab in &self.tabs {tab.lock().unwrap().release_keyboard();}
                 self.page = Page::Home;
@@ -943,6 +954,9 @@ impl App {
         theme::backdrop(&painter, full, t);
         if full.width() < NARROW {
             return self.draw_frame_narrow(ui, full, t);
+        }
+        if !cfg!(target_os="android") && (full.width() < 1000.0 || full.height() < 600.0) {
+            return self.draw_frame_compact(ui, full);
         }
 
         let m = 10.0;
@@ -1058,6 +1072,41 @@ impl App {
         Rect::from_min_max(pos2(l + arm_w + 22.0, content_top), pos2(r, b - bar_h - 16.0))
     }
 
+    /// A smaller console frame for short or narrow desktop windows.
+    fn draw_frame_compact(&mut self, ui: &mut Ui, full: Rect) -> Rect {
+        let frame = full.shrink(5.0);
+        let p = ui.painter().clone();
+        let top = frame.with_max_y(frame.top()+31.0);
+        p.rect_filled(top, 10.0, pal::PANEL);
+        p.rect_filled(top.with_max_x(top.left()+12.0), 6.0, pal::ORANGE);
+        p.text(top.left_center()+vec2(21.0,0.0), Align2::LEFT_CENTER, "SLIPSTREAM", theme::display_bold(17.0), pal::ORANGE);
+        let start = top.left()+128.0;
+        let width = (top.right()-start-3.0*4.0) / NAV.len() as f32;
+        for (i,(label,page,color)) in NAV.iter().enumerate() {
+            let rect = Rect::from_min_size(pos2(start+i as f32*(width+4.0),top.top()),vec2(width,31.0));
+            let active = self.page == *page || (*page == Page::Links && matches!(self.page, Page::Remote(_)));
+            let response = ui.interact(rect, ui.scope_id().with(("compact-nav",i)),egui::Sense::click());
+            p.rect_filled(rect, 8.0, if active || response.hovered() {*color} else {color.gamma_multiply(0.6)});
+            let label = if *page == Page::Links && !self.tabs.is_empty() {format!("{label} · {}",self.tabs.len())} else {label.to_string()};
+            p.text(rect.center(),Align2::CENTER_CENTER,label,theme::display(17.0),pal::BG);
+            if response.clicked() { self.navigate(*page); }
+        }
+        let footer = frame.with_min_y(frame.bottom()-21.0);
+        p.rect_filled(footer,6.0,pal::PANEL);
+        p.rect_filled(footer.with_max_x(footer.left()+45.0),6.0,pal::LAVENDER);
+        let (text,color) = self.status_line();
+        p.with_clip_rect(footer.shrink(4.0)).text(footer.right_center()-vec2(6.0,0.0),Align2::RIGHT_CENTER,text,theme::display(14.0),color);
+        Rect::from_min_max(pos2(frame.left()+3.0,top.bottom()+7.0),pos2(frame.right()-3.0,footer.top()-6.0))
+    }
+
+    fn navigate(&mut self, page: Page) {
+        let single = self.tabs.first().filter(|_| self.tabs.len() == 1).and_then(|tab| {
+            let tab = tab.lock().unwrap();
+            (!tab.detached).then_some(tab.id)
+        });
+        self.page = if page == Page::Links { single.map(Page::Remote).unwrap_or(page) } else { page };
+    }
+
     /// Section button `i` of [`NAV`]; `up`: in a row below the content.
     fn nav_button(&mut self, ui: &mut Ui, i: usize, rect: Rect, up: bool) {
         let (label, page, color) = NAV[i];
@@ -1067,11 +1116,7 @@ impl App {
             text = format!("{label} · {}", self.tabs.len());
         }
         if theme::block_button_pointing(ui, rect, &text, &format!("{:02}-{}", i + 1, 40 + i * 13), color, active, up).clicked() {
-            let single = self.tabs.first().filter(|_| self.tabs.len() == 1).and_then(|tab| {
-                let tab = tab.lock().unwrap();
-                (!tab.detached).then_some(tab.id)
-            });
-            self.page = if page == Page::Links { single.map(Page::Remote).unwrap_or(page) } else { page };
+            self.navigate(page);
         }
     }
 
@@ -1485,6 +1530,10 @@ fn bar_segments(
     if width < 40.0 {
         return;
     }
+    let packet = pulse.then(|| {
+        let px = left + ((t * 0.18).fract() as f32) * (right - left);
+        Rect::from_center_size(pos2(px, top + h / 2.0), vec2(28.0, h))
+    });
     let mut x = left;
     for (i, (frac, color)) in segs.iter().enumerate() {
         let w = width * frac;
@@ -1492,14 +1541,13 @@ fn bar_segments(
         let last = i == segs.len() - 1;
         let cr = if last { egui::CornerRadius { ne: (h / 2.0) as u8, se: (h / 2.0) as u8, ..Default::default() } } else { egui::CornerRadius::ZERO };
         painter.rect_filled(rect, cr, *color);
+        if let Some(packet) = packet {
+            // Clip a copy of the actual segment, including its rounded cap.
+            // Painting the packet itself leaks square corners past the cap.
+            painter.with_clip_rect(packet.intersect(painter.clip_rect()))
+                .rect_filled(rect, cr, Color32::WHITE.gamma_multiply(0.25));
+        }
         x += w + gap;
-    }
-    if pulse {
-        // A bright packet sliding along the bar.
-        let span = right - left;
-        let px = left + ((t * 0.18).fract() as f32) * span;
-        let packet = Rect::from_center_size(Pos2::new(px, top + h / 2.0), vec2(28.0, h));
-        painter.rect_filled(packet.intersect(Rect::from_min_max(pos2(left, top), pos2(right, top + h))), 0.0, Color32::WHITE.gamma_multiply(0.25));
     }
 }
 
@@ -1589,6 +1637,7 @@ impl eframe::App for App {
         self.update_tray();
         home::incoming_windows(self, ctx);
         saved::windows(self, ctx);
+        quick_connect::window(self, ctx);
         if self.start_hidden {
             self.start_hidden = false;
             self.set_visible(ctx, false);
@@ -1649,7 +1698,7 @@ impl eframe::App for App {
         if root_input { self.window_focused = focused_now; }
         let target = route_session_input(&self.tabs, self.page, raw.viewport_id, focused_now);
         let dragging = self.session_tabs.lock().unwrap().dragging();
-        let captured = !dragging && focused_now && target.as_ref().is_some_and(|tab| tab.lock().unwrap().keyboard_captured());
+        let captured = !self.quick_connect.open && !dragging && focused_now && target.as_ref().is_some_and(|tab| tab.lock().unwrap().keyboard_captured());
         if !captured {
             // Ours: the usual clipboard shortcuts for egui's text fields.
             for ev in &mut raw.events {
@@ -1729,23 +1778,23 @@ impl eframe::App for App {
         saved::poll(self, &ctx);
         for shared in &self.tabs {
             let tab = shared.lock().unwrap();
-            tab.network_window(&ctx, &self.rt);
-            files::FileManager::show(&tab.files,&ctx,&self.rt,tab.id);
+            // Native tools are registered in logic, including while hidden.
+            if ctx.embed_viewports() {
+                tab.network_window(&ctx, &self.rt);
+                files::FileManager::show(&tab.files,&ctx,&self.rt,tab.id);
+            }
         }
 
         let entries: Vec<_> = self.tabs.iter().filter_map(|tab| {
             let tab = tab.lock().unwrap();
             (!tab.detached).then(|| (tab.id, tab.info.host_name.clone()))
         }).collect();
-        let mut content_ui = if !self.tabs.is_empty() {
+        let mut content_ui = {
             let active = if let Page::Remote(id) = self.page {Some(id)} else {None};
             let visible = !self.hidden && ctx.input(|i| i.viewport().minimized != Some(true));
             let (body, actions) = session_tabs::show(&self.session_tabs, ui, ui.max_rect(), &entries, active, true, visible);
             for (id, action) in actions { self.session_action(&ctx, id, action); }
             ui.new_child(UiBuilder::new().max_rect(body))
-        } else {
-            self.session_tabs.lock().unwrap().hide_target();
-            ui.new_child(UiBuilder::new().max_rect(ui.max_rect()))
         };
         let ui = &mut content_ui;
 

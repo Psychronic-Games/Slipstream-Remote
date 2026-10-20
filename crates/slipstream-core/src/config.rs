@@ -43,6 +43,8 @@ pub struct StationAccount {
     pub vault_key: Option<String>,
     /// The lists as last fetched, shown before the station answers.
     pub devices: Vec<crate::account::SavedDevice>,
+    /// Explicit empty groups, in addition to the groups used by devices.
+    pub groups: Vec<String>,
     pub shared: Vec<crate::account::SavedDevice>,
     /// The station ended this sign-in (password reset, signed out on the
     /// admin page): sign in again.
@@ -162,6 +164,9 @@ pub struct RecentConnection {
     pub os: String,
     /// Unix seconds.
     pub last_used: u64,
+    /// Station used for this link. Older profiles used the app's own station.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub station: Option<String>,
 }
 
 impl Default for Settings {
@@ -236,14 +241,17 @@ impl HostSettings {
 }
 
 impl Settings {
-    pub fn remember_connection(&mut self, id: DeviceId, name: &str, os: &str) {
-        self.recent.retain(|r| r.id != id);
+    pub fn remember_connection(&mut self, id: DeviceId, name: &str, os: &str, station: Option<String>) {
+        let normalize = |s: Option<&str>| s.map(|s| crate::directory::normalize_server_url(s).map(|u| u.to_string()).unwrap_or_else(|_| s.to_lowercase()));
+        let key = normalize(station.as_deref());
+        self.recent.retain(|r| r.id != id || normalize(r.station.as_deref().or(self.server.url.as_deref())) != key);
         self.recent.insert(
             0,
             RecentConnection {
                 id,
                 name: name.to_string(),
                 os: os.to_string(),
+                station,
                 last_used: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
@@ -541,5 +549,20 @@ mod tests {
         let k2 = store.identity().unwrap();
         assert_eq!(k1.public(), k2.public());
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn recent_links_preserve_station_routes_and_read_older_profiles() {
+        let old: RecentConnection = toml::from_str("id=123456789\nname='Old'\nos='Linux'\nlast_used=0").unwrap();
+        assert!(old.station.is_none());
+        let mut settings = Settings::default();
+        settings.server.url = Some("first.example".into());
+        settings.recent.push(old);
+        settings.remember_connection(DeviceId(123456789),"First","Linux",Some("https://first.example/".into()));
+        settings.remember_connection(DeviceId(123456789),"Second","Windows",Some("second.example".into()));
+        assert_eq!(settings.recent.len(),2);
+        let loaded: Settings = toml::from_str(&toml::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(loaded.recent[0].station.as_deref(),Some("second.example"));
+        assert_eq!(loaded.recent[1].name,"First");
     }
 }

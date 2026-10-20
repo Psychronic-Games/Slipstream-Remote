@@ -13,6 +13,34 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Faster linking and compact desktop tools
+- Keep the animated menu-bar pulse inside its rounded segments and gaps.
+- Add + Group on each signed-in station's Saved devices panel, including
+  empty groups synced to the technician account, Add device within a group,
+  and removal of empty groups. Older clients retain the new group metadata.
+- Add a fixed + button to console/floating tabs with a searchable picker for
+  recent links, station-saved/shared devices and manual IDs. Reuse saved
+  passwords and station routes; retain separate recents for the same numeric
+  ID on different stations.
+- Tighten desktop menus, panel gutters and dialog spacing; allow a smaller
+  console and file browser with full-width path fields. Replace transfer
+  arrows and recent-link favourite stars with font-independent vector art.
+- Prevent Windows native captions from flashing over custom tool headers,
+  register native tools once, and ignore late file/preview/progress repaints
+  for closed windows. Covers the browser and transfer-progress window.
+
+### Linux screen sharing and file icons
+- Detect KDE portals still using an old Qt version after a system update
+  and refresh them automatically only when the portal reports no active
+  sessions or requests. Preserve saved approvals and leave other sessions
+  alone; show a useful error when safe automatic recovery is unavailable.
+- Bound portal startup/approval waits, close abandoned sessions, provide
+  Cancel/Retry controls and invalidate cached access when the desktop revokes
+  it, so future connections can prepare fresh access.
+- Identify Linux executables with a stable ELF note and install their MIME
+  icon on first normal launch. Renamed and station-provisioned copies retain
+  the logo in supporting file managers; unrelated executables keep their icons.
+
 ## 0.21.1 — 2026-10-19
 
 ### Support tool reliability

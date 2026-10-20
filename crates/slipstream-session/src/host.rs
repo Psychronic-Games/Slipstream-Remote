@@ -117,7 +117,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
         let opened = tokio::select! {
             r = &mut open => r,
             _ = tokio::time::sleep(Duration::from_millis(700)) => {
-                write_msg(&mut send, &HostMsg::Notice("Waiting for the remote side to allow screen sharing…".into()))
+                write_msg(&mut send, &HostMsg::Notice("Preparing screen sharing on the remote computer…".into()))
                     .await?;
                 open.await
             }

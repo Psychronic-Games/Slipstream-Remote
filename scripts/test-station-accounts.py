@@ -83,11 +83,20 @@ slip_user_create('other','Other','local-other-password',false);
 
                 owner = call('login', username='owner', password='local-owner-password')['token']
                 other = call('login', username='other', password='local-other-password')['token']
+                assert call('group_save', owner, group='  Empty lab  ')['groups'] == ['Empty lab']
+                assert call('group_save', owner, group='Empty lab')['groups'] == ['Empty lab'], 'Duplicate group'
+                assert not call('account', other)['groups'], 'Private empty groups leaked'
+                call('group_save', owner, status=400, group=[])
+                call('group_save', owner, status=400, group='   ')
+                call('group_save', 'invalid-local-token', status=401, group='Unauthorized')
                 device = {'id': 482913077, 'name': 'Server', 'group': 'Servers', 'notes': 'First line\nSecond line', 'secret': {'n': 'ab' * 24, 'c': 'cd' * 16}}
                 state = call('device_save', owner, device=device)
                 assert state['devices'][0]['group'] == 'Servers'
                 assert state['devices'][0]['notes'] == device['notes']
                 assert state['devices'][0]['secret'] == device['secret']
+                assert state['groups'] == ['Empty lab'], 'Device save erased empty groups'
+                call('group_save', owner, group='Servers')
+                call('group_delete', owner, status=400, group='Servers')
                 assert not call('account', other)['devices'], 'Private groups leaked to another account'
 
                 legacy = {k: v for k, v in device.items() if k != 'group'}
@@ -95,9 +104,12 @@ slip_user_create('other','Other','local-other-password',false);
                 state = call('device_save', owner, device=legacy)
                 assert state['devices'][0]['group'] == 'Servers', 'Old client erased group'
                 assert state['devices'][0]['secret'] == device['secret']
+                assert 'Empty lab' in state['groups'], 'Legacy client erased empty groups'
                 moved = {**device, 'group': '  Lab  '}
                 assert call('device_save', owner, device=moved)['devices'][0]['group'] == 'Lab'
                 assert call('device_save', owner, device={**device, 'group': ''})['devices'][0]['group'] == ''
+                assert call('group_delete', owner, group='Servers')['groups'] == ['Empty lab']
+                assert call('group_delete', owner, group='Empty lab')['groups'] == []
                 call('device_save', owner, status=400, device={**device, 'group': []})
                 long_group = '\u00e9' * 80
                 assert call('device_save', owner, device={**device, 'group': long_group})['devices'][0]['group'] == long_group[:64]

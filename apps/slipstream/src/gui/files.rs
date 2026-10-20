@@ -210,7 +210,7 @@ impl FileManager {
         self.local.load_task=Some(ListingTask(rt.spawn(async move {
             let result=fsops::list_async(path).await.map_err(|e|format!("{e:#}"));
             let _=tx.send(Msg::Listing {remote:false,generation,result});
-            ctx.request_repaint_of(viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
+            theme::repaint_existing_viewport(&ctx,viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
         })));
     }
 
@@ -221,7 +221,7 @@ impl FileManager {
         self.remote.load_task=Some(ListingTask(rt.spawn(async move {
             let result = fs.list(path).await.map_err(|e| format!("{e:#}"));
             let _ = tx.send(Msg::Listing {remote:true,generation,result});
-            ctx.request_repaint_of(viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
+            theme::repaint_existing_viewport(&ctx,viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
         })));
     }
 
@@ -235,7 +235,7 @@ impl FileManager {
         rt.spawn(async move {
             if let Ok(places)=tokio::task::spawn_blocking(fsops::places).await {
                 let _=tx.send(Msg::LocalPlaces(places));
-                ctx2.request_repaint_of(viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
+                theme::repaint_existing_viewport(&ctx2,viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
             }
         });
         self.load_remote(None, rt, ctx);
@@ -244,7 +244,7 @@ impl FileManager {
         rt.spawn(async move {
             if let Ok(p) = fs.places().await {
                 let _ = tx.send(Msg::RemotePlaces(p));
-                ctx.request_repaint_of(viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
+                theme::repaint_existing_viewport(&ctx,viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
             }
         });
     }
@@ -277,7 +277,7 @@ impl FileManager {
             many => format!("{} items", many.len()),
         };
         let job = Arc::new(Job {
-            label: format!("↑ {label}"),
+            label,
             destination: Mutex::new(None),
             upload: true,
             total: AtomicU64::new(0),
@@ -318,7 +318,7 @@ impl FileManager {
                     last = fs
                         .upload(path, target.clone(), rel.clone(), |n| {
                             j.done.fetch_add(n, Ordering::Relaxed);
-                            ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),viewport);
+                            theme::repaint_existing_after(&ctx2,viewport,std::time::Duration::from_millis(100));
                             ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),egui::ViewportId::ROOT);
                         })
                         .await?;
@@ -335,7 +335,7 @@ impl FileManager {
                 Err(e) => JobState::Failed(format!("{e:#}")),
             });
             let _ = tx.send(Msg::JobFinished { upload: true });
-            ctx2.request_repaint_of(viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
+            theme::repaint_existing_viewport(&ctx2,viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
         });
         *job.task.lock().unwrap() = Some(task);
         self.jobs.push(job);
@@ -359,7 +359,7 @@ impl FileManager {
         let dest_dir = PathBuf::from(&ll.path);
         let label = if picks.len() == 1 { picks[0].2.clone() } else { format!("{} items", picks.len()) };
         let job = Arc::new(Job {
-            label: format!("↓ {label}"),
+            label,
             destination: Mutex::new(Some(dest_dir.display().to_string())),
             upload: false,
             total: AtomicU64::new(0),
@@ -383,7 +383,7 @@ impl FileManager {
                     last = fs
                         .download(remote.clone(), &dest, |n| {
                             j.done.fetch_add(n, Ordering::Relaxed);
-                            ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),viewport);
+                            theme::repaint_existing_after(&ctx2,viewport,std::time::Duration::from_millis(100));
                             ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),egui::ViewportId::ROOT);
                         })
                         .await?;
@@ -399,7 +399,7 @@ impl FileManager {
                 Err(e) => JobState::Failed(format!("{e:#}")),
             });
             let _ = tx.send(Msg::JobFinished { upload: false });
-            ctx2.request_repaint_of(viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
+            theme::repaint_existing_viewport(&ctx2,viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
         });
         *job.task.lock().unwrap() = Some(task);
         self.jobs.push(job);
@@ -457,7 +457,7 @@ impl FileManager {
             .with_transparent(theme::transparent_window()).with_app_id("slipstream-remote")
             .with_title(format!("File transfer · {host} · Slipstream Remote"))
             .with_icon(Arc::new(theme::icon(64)))
-            .with_inner_size([1100.0,740.0]).with_min_inner_size([720.0,400.0]);
+            .with_inner_size([1000.0,640.0]).with_min_inner_size([640.0,360.0]);
         ctx.show_viewport_deferred(viewport,builder,move |ui,class| {
             let mut files=shared.lock().expect("file window");
             let ctx=ui.ctx().clone();
@@ -613,8 +613,8 @@ impl FileManager {
         // fraction of a pixel, and any overshoot grows the window by that
         // much every frame.
         let pane_h = (avail.y - 2.0).max(160.0);
-        let mid_w = 120.0;
-        let pane_w = ((avail.x - mid_w - 16.0) / 2.0).max(220.0);
+        let mid_w = 104.0;
+        let pane_w = ((avail.x - mid_w - 2.0 * ui.spacing().item_spacing.x) / 2.0).max(140.0);
 
         let (mut go_local, mut go_remote) = (None::<Option<String>>, None::<Option<String>>);
         let (mut send, mut receive) = (false, false);
@@ -628,17 +628,17 @@ impl FileManager {
                 ui.set_width(mid_w);
                 ui.add_space(pane_h / 2.0 - 60.0);
                 ui.add_enabled_ui(!self.local.selected.is_empty() && self.remote.listing.is_some(), |ui| {
-                    send = theme::pill_sized(ui, "Send ▶", pal::ORANGE, vec2(110.0, 36.0))
+                    send = theme::transfer_pill(ui, "Send", pal::ORANGE, true)
                         .on_hover_text("Copy the selected files to the remote folder")
                         .clicked();
                 });
-                ui.add_space(12.0);
+                ui.add_space(6.0);
                 ui.add_enabled_ui(!self.remote.selected.is_empty() && self.local.listing.is_some(), |ui| {
-                    receive = theme::pill_sized(ui, "◀ Receive", pal::BLUE, vec2(110.0, 36.0))
+                    receive = theme::transfer_pill(ui, "Receive", pal::BLUE, false)
                         .on_hover_text("Copy the selected remote files here")
                         .clicked();
                 });
-                ui.add_space(24.0);
+                ui.add_space(14.0);
                 if ui.checkbox(&mut self.show_hidden, "Show hidden").changed() {
                     self.local.selected.clear();
                     self.remote.selected.clear();
@@ -773,11 +773,13 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
         if ui.button("⟳").on_hover_text("Refresh").clicked() {
             nav = Some(pane.listing.as_ref().map(|l| l.path.clone()));
         }
+    });
+    {
         let r = ui.add(egui::TextEdit::singleline(&mut pane.path_edit).align(egui::Align2::LEFT_CENTER).desired_width(ui.available_width()).font(theme::mono(14.0)));
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             nav = Some(Some(pane.path_edit.clone()));
         }
-    });
+    }
     ui.push_id(("sort",id),|ui|ui.horizontal(|ui| {
         ui.label(RichText::new("SORT").font(theme::mono(11.0)).color(pal::DIM));
         for (field,label) in [(SortField::Name,"Name"),(SortField::Modified,"Modified")] {

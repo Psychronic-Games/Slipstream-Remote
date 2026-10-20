@@ -40,8 +40,23 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         update_banner(app, ui);
         ui.add_space(10.0);
     }
+    #[cfg(target_os="linux")]
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() && app.client.settings().host.enabled {
+        if let Some(Err(error)) = app.screen_access.result.clone() {
+            ui.label(RichText::new(error).color(pal::GOLD));
+            ui.horizontal(|ui| {
+                if theme::pill(ui, "Retry screen access", pal::GREEN).clicked() {
+                    app.screen_access.start(&app.rt, &app.client, ui.ctx(), false);
+                }
+                if theme::pill(ui, "Screen permission…", pal::BLUE).clicked() { app.page = Page::Settings; }
+            });
+            ui.add_space(6.0);
+        } else if app.screen_access.busy() {
+            ui.label(RichText::new("Preparing screen access · approve the desktop dialog if shown").color(pal::GOLD));
+        }
+    }
 
-    if ui.available_width() > 820.0 {
+    if ui.available_width() > 660.0 {
         ui.columns(2, |cols| {
             station_panel(app, &mut cols[0], t);
             connect_panel(app, &mut cols[1]);
@@ -322,13 +337,8 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
                 // ★: keep it in a signed-in station's list.
                 let star = egui::Rect::from_center_size(rect.right_top() + vec2(-18.0, 18.0), vec2(26.0, 26.0));
                 let star_resp = ui.interact(star, resp.id.with("save"), Sense::click()).on_hover_text("Save in my devices");
-                painter.text(
-                    star.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "★",
-                    theme::body(18.0),
-                    if star_resp.hovered() { pal::GOLD } else { pal::DIM },
-                );
+                theme::star(painter, star.shrink(5.0), if star_resp.hovered() { pal::GOLD } else { pal::DIM });
+                star_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Save in my devices"));
                 if star_resp.clicked() {
                     super::saved::save_recent(app, r.id, &r.name);
                 } else if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {

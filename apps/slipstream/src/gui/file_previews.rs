@@ -194,7 +194,7 @@ impl PreviewCache {
                 result,
                 remote: is_remote,
             });
-            ctx.request_repaint_of(viewport);
+            theme::repaint_existing_viewport(&ctx,viewport);
         });
         self.tasks.insert(index, task);
         false

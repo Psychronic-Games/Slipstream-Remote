@@ -2,7 +2,7 @@
 //! both screen streams (frames arrive over PipeWire) and input injection.
 //! Works on KDE Plasma, GNOME and wlroots desktops with a portal backend.
 
-use std::{os::fd::OwnedFd, time::Duration};
+use std::{future::poll_fn, os::fd::OwnedFd, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail};
 use ashpd::desktop::{
@@ -11,6 +11,7 @@ use ashpd::desktop::{
     screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType},
 };
 use slipstream_core::proto::{DisplayInfo, InputEvent, MouseButton};
+use futures_core::Stream;
 use tokio::sync::mpsc;
 
 use crate::{Backend, FrameSlot, FrameStream, HeldInputs, keymap, pw};
@@ -25,6 +26,18 @@ pub struct WaylandBackend {
     pipewire_fd: OwnedFd,
     input: mpsc::UnboundedSender<InputCmd>,
     restore_token: Option<String>,
+    live: Arc<AtomicBool>,
+}
+
+/// Close incomplete requests when setup fails, times out, or is cancelled.
+struct PendingSession(Option<Arc<Session<RemoteDesktop>>>);
+
+impl Drop for PendingSession {
+    fn drop(&mut self) {
+        if let Some(session) = self.0.take() && let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async move { let _ = tokio::time::timeout(Duration::from_secs(3), session.close()).await; });
+        }
+    }
 }
 
 struct InputCmd {
@@ -40,9 +53,35 @@ impl WaylandBackend {
     pub async fn open(restore_token: Option<&str>) -> Result<Self> {
         // Check before asking the user for permission we couldn't use.
         pw::available()?;
-        let rd = RemoteDesktop::new().await.context("RemoteDesktop portal unavailable")?;
-        let sc = Screencast::new().await.context("ScreenCast portal unavailable")?;
-        let session = rd.create_session(Default::default()).await.context("creating portal session")?;
+        crate::portal_health::prepare().await?;
+        let (rd, sc, session) = tokio::time::timeout(Duration::from_secs(15), async {
+            let rd = RemoteDesktop::new().await.context("RemoteDesktop portal unavailable")?;
+            let sc = Screencast::new().await.context("ScreenCast portal unavailable")?;
+            let session = rd.create_session(Default::default()).await.context("creating portal session")?;
+            anyhow::Ok((rd, sc, Arc::new(session)))
+        }).await.context("The desktop screen-sharing service did not respond. Sign out and back in, then choose Config → Screen permission → Approve now")??;
+        let mut pending = PendingSession(Some(session));
+        let session = pending.0.as_ref().unwrap();
+        // Subscribe before Start: closing/revoking access must invalidate the
+        // cached backend even when nobody is currently watching the screen.
+        let live = Arc::new(AtomicBool::new(true));
+        let (watch, ended) = (session.clone(), live.clone());
+        let (ready, subscribed) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            match watch.receive_closed().await {
+                Ok(closed) => {
+                    let _ = ready.send(Ok(()));
+                    let mut closed = Box::pin(closed);
+                    poll_fn(|cx| closed.as_mut().poll_next(cx)).await;
+                    tracing::info!("desktop revoked or closed the screen-sharing session");
+                },
+                Err(error) => { let _ = ready.send(Err(error)); },
+            }
+            ended.store(false, Ordering::Release);
+        });
+        tokio::time::timeout(Duration::from_secs(3), subscribed).await
+            .context("desktop session monitoring timed out")???;
+        let (streams, pipewire_fd, token) = tokio::time::timeout(Duration::from_secs(120), async {
 
         let mut devices = SelectDevicesOptions::default()
             .set_devices(DeviceType::Keyboard | DeviceType::Pointer)
@@ -50,9 +89,9 @@ impl WaylandBackend {
         if let Some(token) = restore_token {
             devices = devices.set_restore_token(token);
         }
-        rd.select_devices(&session, devices).await?.response().context("selecting input devices")?;
+        rd.select_devices(session, devices).await?.response().context("selecting input devices")?;
         sc.select_sources(
-            &session,
+            session,
             SelectSourcesOptions::default()
                 .set_cursor_mode(CursorMode::Embedded)
                 .set_sources(ashpd::enumflags2::BitFlags::from(SourceType::Monitor))
@@ -63,7 +102,7 @@ impl WaylandBackend {
         .context("selecting screens")?;
 
         let started = rd
-            .start(&session, None, Default::default())
+            .start(session, None, Default::default())
             .await?
             .response()
             .context("screen sharing was declined")?;
@@ -95,12 +134,15 @@ impl WaylandBackend {
         if streams.is_empty() {
             bail!("no screens were shared");
         }
-        let pipewire_fd = sc.open_pipe_wire_remote(&session, Default::default()).await?;
+        let pipewire_fd = sc.open_pipe_wire_remote(session, Default::default()).await?;
+        anyhow::Ok((streams, pipewire_fd, token))
+        }).await.context("Screen-sharing approval timed out. Choose Config → Screen permission → Approve now. If no dialog appears, sign out and back in to refresh the desktop")??;
 
         let (tx, rx) = mpsc::unbounded_channel();
+        let session = pending.0.take().unwrap();
         tokio::spawn(input_task(rd, session, rx));
         tracing::info!("portal session started with {} screen(s)", streams.len());
-        Ok(Self { streams, pipewire_fd, input: tx, restore_token: token })
+        Ok(Self { streams, pipewire_fd, input: tx, restore_token: token, live })
     }
 }
 
@@ -110,6 +152,7 @@ impl Backend for WaylandBackend {
     }
 
     fn displays(&self) -> Vec<DisplayInfo> {
+        if !self.live.load(Ordering::Acquire) { return Vec::new(); }
         self.streams.iter().map(|s| s.info.clone()).collect()
     }
 
@@ -146,7 +189,7 @@ const BTN_MIDDLE: i32 = 0x112;
 const BTN_SIDE: i32 = 0x113;
 const BTN_EXTRA: i32 = 0x114;
 
-async fn input_task(rd: RemoteDesktop, session: Session<RemoteDesktop>, mut rx: mpsc::UnboundedReceiver<InputCmd>) {
+async fn input_task(rd: RemoteDesktop, session: Arc<Session<RemoteDesktop>>, mut rx: mpsc::UnboundedReceiver<InputCmd>) {
     let mut held = HeldInputs::default();
     let mut wheel = (0.0f32, 0.0f32);
     let mut last_node = 0;

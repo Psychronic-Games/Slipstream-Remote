@@ -56,6 +56,7 @@ impl Drop for Reconnecting {fn drop(&mut self) {self.task.abort();}}
 pub enum TabAction {
     None,
     Bridge,
+    NewLink,
     Close,
     Detach,
     Dock,
@@ -1467,8 +1468,10 @@ mod window_tests {
         // Video callbacks run between UI passes, too. Requesting an unknown
         // viewport then sends the backend an event for a nonexistent window.
         theme::repaint_existing_viewport(&ctx,floating);
+        theme::repaint_existing_after(&ctx,floating,std::time::Duration::from_millis(100));
         let mut output=ctx.run_ui(egui::RawInput::default(),|ui| {
             theme::repaint_existing_viewport(ui.ctx(),floating);
+            theme::repaint_existing_after(ui.ctx(),floating,std::time::Duration::from_millis(100));
         });
         output.textures_delta.clear();
         assert!(!output.viewport_output.contains_key(&floating));

@@ -8,6 +8,7 @@ use tokio::sync::oneshot;
 #[derive(Default)]
 pub(super) struct ScreenAccess {
     job: Option<oneshot::Receiver<Result<bool, String>>>,
+    task: Option<tokio::task::AbortHandle>,
     pub result: Option<Result<bool, String>>,
 }
 
@@ -24,7 +25,7 @@ impl ScreenAccess {
         self.job = Some(rx);
         self.result = None;
         let (client, ctx) = (client.clone(), ctx.clone());
-        rt.spawn(async move {
+        let task = rt.spawn(async move {
             let result = async {
                 if reset {
                     client.reset_screen_access().await?;
@@ -34,6 +35,13 @@ impl ScreenAccess {
             let _ = tx.send(result);
             ctx.request_repaint_of(egui::ViewportId::ROOT);
         });
+        self.task = Some(task.abort_handle());
+    }
+
+    pub fn cancel(&mut self) {
+        if let Some(task) = self.task.take() { task.abort(); }
+        self.job = None;
+        self.result = Some(Err("Screen approval cancelled; choose Approve now to try again".into()));
     }
 
     pub fn poll(&mut self) {
@@ -42,10 +50,12 @@ impl ScreenAccess {
             Ok(result) => {
                 self.result = Some(result);
                 self.job = None;
+                self.task = None;
             }
             Err(oneshot::error::TryRecvError::Closed) => {
                 self.result = Some(Err("Screen approval ended; choose Approve now to try again".into()));
                 self.job = None;
+                self.task = None;
             }
             Err(oneshot::error::TryRecvError::Empty) => {}
         }

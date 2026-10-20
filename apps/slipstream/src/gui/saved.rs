@@ -37,7 +37,13 @@ pub struct Saved {
     last_presence: Option<Instant>,
     last_sync: Option<Instant>,
     editor: Option<Editor>,
+    group_editor: Option<GroupEditor>,
     prompt: Option<Prompt>,
+}
+
+struct GroupEditor {
+    account: AccountRef,
+    name: String,
 }
 
 /// Adding or editing a saved device.
@@ -120,7 +126,7 @@ pub fn poll(app: &mut App, ctx: &egui::Context) {
     }
     let due = |t: Option<Instant>, every| t.is_none_or(|t: Instant| t.elapsed() >= every);
     let sync = due(app.saved.last_sync, SYNC_EVERY);
-    let presence = app.page == Page::Home && due(app.saved.last_presence, PRESENCE_EVERY);
+    let presence = (app.page == Page::Home || app.quick_connect.open) && due(app.saved.last_presence, PRESENCE_EVERY);
     if !sync && !presence {
         ctx.request_repaint_after(Duration::from_secs(5));
         return;
@@ -147,6 +153,15 @@ pub fn poll(app: &mut App, ctx: &egui::Context) {
         busy.store(false, Ordering::Relaxed);
         wake.request_repaint();
     });
+}
+
+pub(super) fn refresh(app: &mut App) {
+    app.saved.last_sync = None;
+    app.saved.last_presence = None;
+}
+
+pub(super) fn presence(app: &App, account: &AccountRef, id: DeviceId) -> Option<Presence> {
+    app.saved.presence.lock().unwrap().get(&(account.clone(), id)).cloned()
 }
 
 /// The Bridge's list of saved devices, per station.
@@ -181,12 +196,15 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
                     ui.label(RichText::new("SIGNED OUT: sign in again under Config → Stations").font(theme::display(14.0)).color(pal::RED));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if !a.signed_out && theme::pill(ui, "+ Add device", pal::VIOLET).clicked() {
+                    if !a.signed_out && theme::pill(ui, "+ Group", pal::BLUE).clicked() {
+                        app.saved.group_editor = Some(GroupEditor {account:r.clone(),name:String::new()});
+                    }
+                    if !a.signed_out && theme::pill(ui, "+ Device", pal::VIOLET).clicked() {
                         open_editor(app, &r, None, false);
                     }
                     if !a.signed_out {
                         let own = own_device(app, a);
-                        let button = ui.add_enabled_ui(own.is_some(), |ui| theme::pill(ui, "Add this device", pal::BLUE)).inner
+                        let button = ui.add_enabled_ui(own.is_some(), |ui| theme::pill(ui, "This device", pal::BLUE)).inner
                             .on_hover_text("Fill in this computer's ID and name; choose a group before saving")
                             .on_disabled_hover_text("This device needs an ID on this station. Its ID is shown in This device above.");
                         if button.clicked() && let Some(device) = own {
@@ -197,8 +215,8 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
                     }
                 });
             });
-            if a.devices.is_empty() && a.shared.is_empty() {
-                ui.label(RichText::new("Nothing saved yet: add a device, or press ★ on a recent link.").color(pal::DIM));
+            if a.devices.is_empty() && a.shared.is_empty() && a.groups.is_empty() {
+                ui.label(RichText::new("Nothing saved yet: add a device, or use the star on a recent link.").color(pal::DIM));
             }
             grouped_devices(app, ui, &ctx, &r, a, &a.devices, false, t);
             if !a.shared.is_empty() {
@@ -236,14 +254,30 @@ fn own_device_entry(account: &StationAccount, server: &str, id: Option<DeviceId>
 #[allow(clippy::too_many_arguments)]
 fn grouped_devices(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef,
     account: &StationAccount, devices: &[SavedDevice], shared: bool, t: f64) {
-    let mut groups = BTreeMap::<&str, Vec<&SavedDevice>>::new();
-    for device in devices { groups.entry(&device.group).or_default().push(device); }
+    let mut groups = BTreeMap::<String, Vec<&SavedDevice>>::new();
+    for device in devices { groups.entry(device.group.clone()).or_default().push(device); }
+    if !shared { for group in &account.groups { groups.entry(group.clone()).or_default(); } }
     for (group, mut devices) in groups {
         devices.sort_by_key(|d| d.name.to_lowercase());
         let title = format!("{}  ·  {}", if group.is_empty() { "UNGROUPED".into() } else { group.to_uppercase() }, devices.len());
         egui::CollapsingHeader::new(RichText::new(title).font(theme::display_bold(17.0)).color(if shared { pal::GOLD } else { pal::LAVENDER }))
-            .id_salt(("saved-group", &account.server, &account.user.username, shared, group))
+            .id_salt(("saved-group", &account.server, &account.user.username, shared, &group))
             .default_open(true).show(ui, |ui| {
+                if !account.signed_out && (!shared || account.user.admin) {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("+ Add device").clicked() {
+                            open_editor(app,r,None,shared);
+                            if let Some(editor) = &mut app.saved.editor {editor.group=group.clone();}
+                        }
+                        if devices.is_empty() && !shared && ui.small_button("Remove empty group").clicked() {
+                            let (client,r,name)=(app.client.clone(),r.clone(),group.clone());
+                            spawn_job(app,ctx,"Remove group",async move {
+                                client.delete_group(&r,&name).await?; Ok("Empty group removed".into())
+                            });
+                        }
+                    });
+                }
+                if devices.is_empty() {ui.label(RichText::new("No devices yet").color(pal::DIM));}
                 for device in devices { device_row(app, ui, ctx, r, account, device, shared, t); }
             });
     }
@@ -282,7 +316,7 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
     });
 }
 
-fn connect(app: &mut App, ctx: &egui::Context, r: &AccountRef, d: &SavedDevice, shared: bool) {
+pub(super) fn connect(app: &mut App, ctx: &egui::Context, r: &AccountRef, d: &SavedDevice, shared: bool) {
     if !shared && d.secret.is_some() {
         match app.client.saved_password(r, d.id) {
             Ok(Some(pw)) => {
@@ -342,8 +376,32 @@ fn field(ui: &mut Ui, value: &mut String, hint: &str, password: bool, width: f32
 
 /// The add/edit and password dialogs (every frame).
 pub fn windows(app: &mut App, ctx: &egui::Context) {
+    group_window(app,ctx);
     editor_window(app, ctx);
     prompt_window(app, ctx);
+}
+
+fn group_window(app: &mut App, ctx: &egui::Context) {
+    let Some(mut editor)=app.saved.group_editor.take() else {return};
+    let mut open=true;
+    let mut save=false;
+    theme::window("new-device-group",pal::BLUE).collapsible(false).resizable(false)
+        .default_width(330.0).anchor(egui::Align2::CENTER_CENTER,vec2(0.0,0.0)).show(ctx,|ui| {
+            let chrome=theme::window_header_with_close(ui,"New group",pal::BLUE,pal::PEACH);
+            if chrome.close {open=false;}
+            ui.label(RichText::new("Saved on your technician account, available on your other computers.").small().color(pal::DIM));
+            let input=field(ui,&mut editor.name,"Group name",false,280.0);
+            let valid=!editor.name.trim().is_empty() && app.saved.job.is_none();
+            save=ui.add_enabled_ui(valid,|ui|theme::pill(ui,"Create group",pal::GREEN)).inner.clicked()
+                || (valid && input.lost_focus() && ui.input(|i|i.key_pressed(egui::Key::Enter)));
+            chrome.footer(ui);
+        });
+    if save {
+        let client=app.client.clone();
+        spawn_job(app,ctx,"Create group",async move {
+            client.save_group(&editor.account,&editor.name).await?; Ok("Group created".into())
+        });
+    } else if open {app.saved.group_editor=Some(editor);}
 }
 
 fn editor_window(app: &mut App, ctx: &egui::Context) {
@@ -395,7 +453,8 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                             .char_limit(64).frame(egui::Frame::NONE).desired_width(175.0));
                     });
                     let groups: BTreeSet<_> = account.devices.iter().chain(&account.shared)
-                        .map(|d| d.group.as_str()).filter(|g| !g.is_empty()).collect();
+                        .map(|d| d.group.as_str()).chain(account.groups.iter().map(String::as_str))
+                        .filter(|g| !g.is_empty()).collect();
                     egui::ComboBox::from_id_salt("saved-editor-group").width(90.0).selected_text("Choose…").show_ui(ui, |ui| {
                         theme::console_menu_style(ui.style_mut());
                         if ui.selectable_label(e.group.is_empty(), "Ungrouped").clicked() { e.group.clear(); }

@@ -89,16 +89,16 @@ pub fn install(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         use egui::TextStyle::*;
         style.text_styles = [
-            (Heading, display_bold(26.0)),
-            (Body, body(17.0)),
-            (Button, display(17.0)),
-            (Monospace, mono(16.0)),
+            (Heading, display_bold(24.0)),
+            (Body, body(16.0)),
+            (Button, display(16.0)),
+            (Monospace, mono(15.0)),
             (Small, body(13.0)),
         ]
         .into();
-        style.spacing.item_spacing = vec2(8.0, 8.0);
-        style.spacing.button_padding = vec2(14.0, 6.0);
-        style.spacing.interact_size.y = 30.0;
+        style.spacing.item_spacing = if cfg!(target_os="android") {vec2(8.0,8.0)} else {vec2(6.0,5.0)};
+        style.spacing.button_padding = if cfg!(target_os="android") {vec2(14.0,6.0)} else {vec2(10.0,4.0)};
+        style.spacing.interact_size.y = if cfg!(target_os="android") {32.0} else {28.0};
 
         let v = &mut style.visuals;
         *v = egui::Visuals::dark();
@@ -325,7 +325,7 @@ pub fn progress(ui: &mut Ui, fraction: f32, width: f32, color: Color32, text: &s
 
 /// A pill button sized to its label.
 pub fn pill(ui: &mut Ui, label: &str, color: Color32) -> Response {
-    pill_sized(ui, label, color, vec2(0.0, 32.0))
+    pill_sized(ui, label, color, vec2(0.0, if cfg!(target_os="android") {32.0} else {29.0}))
 }
 
 pub fn pill_sized(ui: &mut Ui, label: &str, color: Color32, min: Vec2) -> Response {
@@ -338,16 +338,44 @@ pub fn back_pill(ui: &mut Ui, label: &str, color: Color32) -> Response {
     pill_with(ui, label, color, vec2(0.0, 32.0), Some(back_delta))
 }
 
+pub fn transfer_pill(ui: &mut Ui, label: &str, color: Color32, send: bool) -> Response {
+    pill_with(ui, label, color, vec2(0.0, 30.0), Some(if send {forward_delta} else {back_delta}))
+}
+
+fn forward_delta(painter: &egui::Painter, rect: Rect, ink: Color32, bg: Color32) {
+    delta(painter, rect, ink, bg, true);
+}
+
 /// Draws the logo pointing left into `rect`, in `ink`, with the slash cut
 /// out in `bg`.
 fn back_delta(painter: &egui::Painter, rect: Rect, ink: Color32, bg: Color32) {
+    delta(painter, rect, ink, bg, false);
+}
+
+pub fn delta(painter: &egui::Painter, rect: Rect, ink: Color32, bg: Color32, right: bool) {
     // Logo space (pointing up) → pointing left: (x, y) ↦ (y, 1 − x).
-    let at = |(x, y): (f32, f32)| pos2(rect.left() + y * rect.width(), rect.top() + (1.0 - x) * rect.height());
+    let at = |(x, y): (f32, f32)| {
+        let (x,y) = if right {(1.0-y,x)} else {(y,1.0-x)};
+        pos2(rect.left() + x * rect.width(), rect.top() + y * rect.height())
+    };
     for half in [&LOGO_LEFT, &LOGO_RIGHT] {
         painter.add(egui::Shape::convex_polygon(half.iter().copied().map(at).collect(), ink, Stroke::NONE));
     }
     let ((x0, y0), (x1, y1), half_width) = LOGO_SLASH;
     painter.line_segment([at((x0, y0)), at((x1, y1))], Stroke::new(half_width * 2.0 * rect.width(), bg));
+}
+
+/// A font-independent save/favourite star, including on older Windows fonts.
+pub fn star(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let mut mesh = Mesh::default();
+    mesh.colored_vertex(rect.center(), color);
+    for i in 0..10 {
+        let angle = -FRAC_PI_2 + i as f32 * PI / 5.0;
+        let radius = rect.width().min(rect.height()) * if i % 2 == 0 {0.5} else {0.23};
+        mesh.colored_vertex(rect.center() + vec2(angle.cos(),angle.sin()) * radius, color);
+    }
+    for i in 0..10 { mesh.add_triangle(0, i+1, (i+1)%10+1); }
+    painter.add(Shape::mesh(mesh));
 }
 
 type PillIcon = fn(&egui::Painter, Rect, Color32, Color32);
@@ -483,9 +511,9 @@ pub fn console_menu(response: &Response) -> egui::Popup<'_> {
 /// Shared selection and spacing for console menus and form choice lists.
 pub fn console_menu_style(style: &mut egui::Style) {
     egui::containers::menu::menu_style(style);
-    style.spacing.button_padding = vec2(10.0, 5.0);
+    style.spacing.button_padding = if cfg!(target_os="android") {vec2(10.0,5.0)} else {vec2(8.0,3.0)};
     style.spacing.item_spacing = vec2(4.0, 4.0);
-    style.spacing.interact_size.y = 32.0;
+    style.spacing.interact_size.y = if cfg!(target_os="android") {32.0} else {28.0};
     style.visuals.override_text_color = Some(pal::BLUE);
     style.visuals.selection.bg_fill = Color32::from_rgb(24, 44, 64);
     style.visuals.selection.stroke = Stroke::new(1.0, pal::BLUE);
@@ -725,8 +753,8 @@ pub fn header(ui: &mut Ui, title: &str, color: Color32) {
 // A floating window's console frame: a header band with the title and a
 // Close segment, a rail down the left joined to it by an elbow, and a
 // footer band joined by another (see `window_header`, `WindowChrome::footer`).
-const RAIL: f32 = 20.0;
-const RAIL_GAP: f32 = 14.0;
+const RAIL: f32 = 16.0;
+const RAIL_GAP: f32 = 10.0;
 const BAND: f32 = 30.0;
 const FOOT: f32 = 12.0;
 const ELBOW: f32 = 12.0;
@@ -754,6 +782,12 @@ pub fn repaint_console(ctx: &egui::Context) {
 pub fn repaint_existing_viewport(ctx: &egui::Context, id: egui::ViewportId) {
     if id == egui::ViewportId::ROOT || ctx.input(|i| i.raw.viewports.contains_key(&id)) {
         ctx.request_repaint_of(id);
+    }
+}
+
+pub fn repaint_existing_after(ctx: &egui::Context, id: egui::ViewportId, after: std::time::Duration) {
+    if id == egui::ViewportId::ROOT || ctx.input(|i| i.raw.viewports.contains_key(&id)) {
+        ctx.request_repaint_after_for(after, id);
     }
 }
 
@@ -893,8 +927,8 @@ pub fn tool_frame(ui:&mut Ui,title:&str,desktop:bool,color:Color32)->(Rect,bool)
     p.rect_filled(area,if square{0.0}else{18.0},pal::BG);
     let frame=area.shrink(5.0);
     p.rect_filled(frame,16.0,pal::PANEL);
-    let bar=Rect::from_min_max(frame.min,pos2(frame.right(),frame.top()+40.0));
-    let rail_right=frame.left()+18.0;
+    let bar=Rect::from_min_max(frame.min,pos2(frame.right(),frame.top()+34.0));
+    let rail_right=frame.left()+14.0;
     let foot_top=frame.bottom()-12.0;
     let split=bar.bottom()+(foot_top-bar.bottom())*0.65;
     p.rect_filled(bar,CornerRadius{nw:18,ne:18,..Default::default()},color);
@@ -914,9 +948,9 @@ pub fn tool_frame(ui:&mut Ui,title:&str,desktop:bool,color:Color32)->(Rect,bool)
     }
     let (right,close)=native_window_controls(ui,bar,true,maximized,desktop);
     let title_rect=Rect::from_min_max(bar.min+vec2(42.0,0.0),pos2(right-8.0,bar.bottom()));
-    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title.to_uppercase(),display_bold(21.0),pal::BG);
+    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title.to_uppercase(),display_bold(19.0),pal::BG);
     if desktop {native_window_interactions(ui,area,title_rect,maximized);}
-    (Rect::from_min_max(pos2(rail_right+24.0,bar.bottom()+14.0),pos2(frame.right()-14.0,foot_top-14.0)),close)
+    (Rect::from_min_max(pos2(rail_right+16.0,bar.bottom()+8.0),pos2(frame.right()-10.0,foot_top-8.0)),close)
 }
 
 /// A floating window in the console style: no grey title bar; start its
@@ -1008,7 +1042,7 @@ impl WindowChrome {
 pub fn panel<R>(ui: &mut Ui, title: &str, color: Color32, add: impl FnOnce(&mut Ui) -> R) -> R {
     let frame = egui::Frame::new()
         .fill(pal::PANEL.gamma_multiply(0.85))
-        .inner_margin(egui::Margin::same(16))
+        .inner_margin(egui::Margin::same(12))
         .corner_radius(CornerRadius::same(4));
     let out = frame.show(ui, |ui| {
         header(ui, title, color);

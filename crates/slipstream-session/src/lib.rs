@@ -308,8 +308,10 @@ impl Client {
         on_progress: impl Fn(String) + Send + Sync + 'static,
     ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
         on_progress(format!("Locating {id}…"));
-        let found = self.lookup(id).await?;
-        self.connect_found(id, found, password, on_progress).await
+        let directory = self.directory().await?;
+        let station = Some(directory.base_url().to_string());
+        let found = directory.lookup(id).await?;
+        self.connect_found(id, found, password, on_progress, station).await
     }
 
     /// The rest of [`connect`](Self::connect), once `id` is looked up (on
@@ -320,6 +322,7 @@ impl Client {
         found: Lookup,
         password: &str,
         on_progress: impl Fn(String) + Send + Sync + 'static,
+        station: Option<String>,
     ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
         let addr = match found {
             Lookup::Online { addr, .. } => addr,
@@ -346,7 +349,7 @@ impl Client {
         )
         .await?;
         let info = session.info().clone();
-        self.update_settings(|s| s.remember_connection(id, &info.host_name, &info.os));
+        self.update_settings(|s| s.remember_connection(id, &info.host_name, &info.os, station));
         Ok((session, events))
     }
 
