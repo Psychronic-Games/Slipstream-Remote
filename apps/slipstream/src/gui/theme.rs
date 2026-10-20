@@ -748,6 +748,15 @@ pub fn repaint_console(ctx: &egui::Context) {
     ctx.request_repaint_of(egui::ViewportId::ROOT);
 }
 
+/// Repainting an unknown viewport creates a default native window in egui.
+/// A video worker can outlive a floating window, or run while its session is
+/// docked, so only target windows reported by the backend as currently alive.
+pub fn repaint_existing_viewport(ctx: &egui::Context, id: egui::ViewportId) {
+    if id == egui::ViewportId::ROOT || ctx.input(|i| i.raw.viewports.contains_key(&id)) {
+        ctx.request_repaint_of(id);
+    }
+}
+
 /// Height [`WindowChrome::footer`] takes: what a window's scrolling body
 /// must leave free below it, or the window grows by that much every frame.
 pub const FOOTER_SPACE: f32 = FOOT + 4.0 + 8.0 + 2.0;

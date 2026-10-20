@@ -16,6 +16,8 @@ show in small print: `0.6.0 (build N · commit)`.
 ## 0.21.1 — 2026-10-19
 
 ### Support tool reliability
+- Repaint floating session windows only while they exist, preventing video
+  updates from repeatedly creating blank native windows over the console/tools.
 - Cancel pending scanner and report requests when their window closes or the
   link drops, discard late tunnel replies, and release scanner-owned tunnels
   immediately on interruption while retaining established tunnels on window close.

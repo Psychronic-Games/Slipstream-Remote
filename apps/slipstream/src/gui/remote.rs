@@ -175,7 +175,7 @@ impl RemoteTab {
         let wake = ctx.clone();
         frames.set_repaint(move || {
             wake.request_repaint_of(egui::ViewportId::ROOT);
-            wake.request_repaint_of(Self::window_id(id));
+            theme::repaint_existing_viewport(&wake, Self::window_id(id));
         });
         let info = session.info().clone();
         let files = Arc::new(Mutex::new(FileManager::new(session.fs(), info.host_name.clone())));
@@ -320,7 +320,7 @@ impl RemoteTab {
         let (wake, viewport) = (ctx.clone(), Self::window_id(self.id));
         self.frames.set_repaint(move || {
             wake.request_repaint_of(egui::ViewportId::ROOT);
-            wake.request_repaint_of(viewport);
+            theme::repaint_existing_viewport(&wake, viewport);
         });
         self.events=events;self.session=session;
         self.forward_repeats=self.info.os!="Linux";
@@ -1455,6 +1455,37 @@ mod window_tests {
     use super::*;
     use slipstream_core::config::Store;
     use slipstream_session::{Client, ClientOptions, AudioOut};
+
+    #[test]
+    fn video_repaint_for_a_docked_or_closed_window_creates_no_native_viewport() {
+        let ctx=egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let floating=RemoteTab::window_id(7);
+        let requests=Arc::new(Mutex::new(Vec::new()));
+        let sink=requests.clone();
+        ctx.set_repaint_observer(move |request|sink.lock().unwrap().push(request.viewport_id));
+        // Video callbacks run between UI passes, too. Requesting an unknown
+        // viewport then sends the backend an event for a nonexistent window.
+        theme::repaint_existing_viewport(&ctx,floating);
+        let mut output=ctx.run_ui(egui::RawInput::default(),|ui| {
+            theme::repaint_existing_viewport(ui.ctx(),floating);
+        });
+        output.textures_delta.clear();
+        assert!(!output.viewport_output.contains_key(&floating));
+        assert!(!requests.lock().unwrap().contains(&floating));
+        // A live floating viewport still receives a repaint request.
+        let mut input=egui::RawInput::default();
+        input.viewports.insert(floating,egui::ViewportInfo::default());
+        let mut output=ctx.run_ui(input,|ui| {
+            ui.ctx().show_viewport_deferred(floating,egui::ViewportBuilder::default().with_title("Workstation"),|_,_|{});
+            theme::repaint_existing_viewport(ui.ctx(),floating);
+        });
+        output.textures_delta.clear();
+        assert_eq!(output.viewport_output[&floating].repaint_delay,std::time::Duration::ZERO);
+        requests.lock().unwrap().clear();
+        theme::repaint_existing_viewport(&ctx,floating);
+        assert!(requests.lock().unwrap().contains(&floating));
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn window_focus_routes_to_one_live_session_and_background_tools_keep_control() {
