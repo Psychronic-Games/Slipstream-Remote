@@ -1,6 +1,109 @@
 # Development handoff — 2026-10-19
 
-## Release preparation: 0.21.0
+## Support-tool audit and stabilization: 0.21.1
+
+The interrupted feature work is reconstructed from implementation commit
+509c51c and its five support-tool changelog entries. All five had code in
+0.21.0; packaging was interrupted and deployment remained blocked. A second
+review found workflow bugs beyond the original passing tests. Corrections
+are in 7e5b8bb, native-window repaint fix 9afe3aa and compact layout fix
+**2d1a128**, build **106**. The verified **0.21.1** packages supersede the
+unpublished 0.21.0 candidate below. Linux, Windows, Android and the signed
+manifest are in `dist/slipstream-station/clients/`. Later documentation
+commits do not change that packaged build.
+
+| First-pass feature | Implemented scope | Further work from the original ideas |
+|---|---|---|
+| Agent as a jump host | Select a discovered TCP service, create a local loopback tunnel, copy its endpoint or open standard HTTP/HTTPS locally | Serial console bridging and services needing hostname/redirect adaptation |
+| Wake-on-LAN by peer | Send through the connected workstation's selected LAN adapter, with separate wake/control/scan permissions | Automatic peer selection and saved wake targets; physical sleeping-device confirmation |
+| Network diagnostics | Gateway ICMP, configured/comparison DNS IPv4 answers and the host's station API | Path/MTU/captive-portal/Wi-Fi surveys and relay throughput tests |
+| Support report | Review inventory/public IP, connection/retained network results and notes; explicitly choose a screenshot; export a unique local folder | Get Help capture before connecting, historical flight recording and automatic/AI ticket summaries |
+| Plain-language narration | Send a manual status to the host; Dismiss / Stop support in full and compact Windows consoles | Automatic action narration and saved walkthroughs |
+
+### Bugs corrected in the audit
+
+- Closing Network Scan cancels pending one-shot requests and discards late
+  tunnel replies, while established tunnels remain with the session. Link
+  loss cancels scanner/report work and immediately clears scanner-owned
+  tunnels even when the tool window is hidden. Closing a report cancels its
+  remote requests while local exports finish in their own directory.
+- Compact Windows status is tracked per session. Clearing/ending one message
+  preserves another technician's message; Dismiss and Stop support act on
+  the displayed session. The original compact implementation displayed text
+  without these controls and left stale text after the session ended.
+- Retained service command senders read the current service epoch when each
+  command is queued. Previously a sender created before pipe connection could
+  retain epoch zero indefinitely, silently losing code rotation and actions.
+  Already-queued commands keep their original epoch for restart protection.
+- DNS diagnostics validate the question class and return only addresses
+  belonging to the queried name's CNAME chain. Unrelated answer records and
+  wrong-class addresses no longer appear as the requested lookup's result;
+  alias loops fail visibly.
+- The native Linux smoke check found repeated blank 800×600 "egui window"
+  windows above the scanner. Video callbacks repainted a detached-session
+  viewport even while its session was docked. Those callbacks now repaint a
+  child viewport only while the backend reports that it exists, including
+  after reconnect. The regression checks both absent and live viewports.
+
+### Verification and remaining work
+
+The final workspace suite passed **138 tests, zero failed, five ignored**.
+Linux/Windows all-target workspace and arm64 Android Clippy passed with
+`-D warnings`. Regressions cover cancellation and discarded late tunnel
+replies, retained/closed listeners, screenshot PNG pixels and failed-export
+cleanup, independent wake permissions, service epochs and absent/live native
+viewport repaints. All final desktop hashes, Ed25519 signatures and embedded
+update keys were verified, with trust continuity from 0.20.0. Windows resources
+identify 0.21.1 / 106 and include pinned Mesa 26.2.4. Portable Linux starts
+with an isolated profile and meets the glibc 2.31 bound. The arm64 APK is
+release mode, versionName 0.21.1 / versionCode 106, signed by the existing
+Android certificate.
+
+Native Linux fixtures verified reviewed report notes, separate text-only /
+screenshot exports, and retention after closing/reopening the report. After
+the repaint fix, repeated scanner use retained just the intended windows,
+with no blank "egui window" and no scale-factor/window-creation log flood.
+Closing during diagnostics then reopening displayed a cancellation notice
+with form values retained; a second request completed normally with gateway,
+DNS and verified local station API results. These use private fixture hosts
+and a temporary local station. No production accounts were used.
+
+Floating-session video kept updating after the repaint fix and docking
+removed its native window without introducing a placeholder. The Windows
+release under an isolated Wine prefix hosted a synthetic screen to the Linux
+viewer. Its compact status displayed the message, Dismiss retained the live
+link, and Stop support ended it with `retryable=false`; the separate Linux
+fixture session remained alive. That smoke check also found footer overlap,
+fixed by increasing the compact client height to 464 pixels. The final
+packaged layout was checked at 500×464 with both controls fully visible
+above the footer: [compact preview](screenshots/compact-support-0.21.1.png).
+This exercises the direct
+desktop host, not a physical Windows machine or the SYSTEM service bridge.
+
+The station mount is still disconnected. No production deployment occurred.
+Use the final 0.21.1 artifacts after verification, with clients first and the
+signed manifest last; the 0.21.0 publication scripts below are superseded.
+Physical Windows service/compact behavior, actual LAN wake, real Android and
+macOS remain separate runtime checks. Clone detection is an additional 0.21.0
+feature; its Windows imaging checks are unchanged by this support-tool audit.
+
+Prepared continuation scripts: `python3 /tmp/slipstream-verify-0211.py`
+(passed), `python3 /tmp/slipstream-publish-0211.py`, then
+`python3 /tmp/slipstream-live-check-0211.py`. Publication/live scripts were
+syntax-checked only; they expect the station's prior 0.20.0 / 98 / 98e84e0
+manifest and back up/stage/check clients before publishing the manifest last.
+They have not been run. PHP and the relay require no update.
+
+Temporary evidence: `/tmp/slipstream-support-audit-final-tests.log`,
+`/tmp/slipstream-support-audit-final-{linux,windows,android}.log`,
+`/tmp/slipstream-0.21.1-build-final.log`,
+`/tmp/slipstream-0.21.1-artifact-verification.log` and fixture directories
+`/tmp/slipstream-native-support-tmlb90v5` / `...-1o_0aiyv`.
+The later interruption stopped the fixture processes; cleanup confirmed no
+owned fixture processes remained. Their logs, exports and screenshots are
+retained. The final screenshot is also committed above.
+
+## Historical release preparation: 0.21.0 (superseded)
 
 Implementation: **509c51c**. Release: **1dc6836**, version **0.21.0**,
 build **101**. Linux, Windows and Android packages are built and verified in

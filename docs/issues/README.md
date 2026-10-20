@@ -1,6 +1,6 @@
 # Open issues
 
-The work queue, reviewed 2026-10-19 during 0.21.0 release preparation. Each
+The work queue, reviewed 2026-10-19 during the 0.21.1 support-tool audit. Each
 file is one issue: background, tasks or a test checklist, a "done when" where
 it applies, and pointers into the code.
 Once the repository is on GitHub, `scripts/file-issues.sh` files them all as

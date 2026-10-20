@@ -550,7 +550,9 @@ export has its own folder and `report.txt`; the screenshot checkbox adds
 `screen.png` from the latest received frame. Screenshots are off by default
 and may be stale after an interruption. Reports omit credentials, chat and
 raw logs. Network scan/filter results and completed diagnostics are retained
-snapshots, not an automatic fresh scan.
+snapshots, not an automatic fresh scan. Closing the report cancels pending
+remote collection/status requests; a local export already started finishes
+in its own report folder.
 
 The same panel has **Message shown to the person being helped**. Choose a
 message or type up to 160 characters, then Show status / Clear status. The
@@ -559,8 +561,11 @@ ends that session without automatic reconnect. Remote control permission is
 required. The host app must be running in the signed-in desktop; updated
 Windows service hosts can launch it through the authenticated local bridge.
 A headless CLI host cannot display a desktop banner. The compact Windows app
-shows the message in its note area. Closing a service session clears its
-status. A message neither grants consent nor executes a change.
+shows the message in its note area with Dismiss / Stop support for that
+session; when several technicians send statuses, it shows the newest one.
+Clearing or ending one message retains another session's status. Closing a
+service session clears its status. A message neither grants consent nor
+executes a change.
 
 In **Tools → Network scan…**, select a discovered device and expand
 **Connect through / Wake-on-LAN / Diagnostics**:

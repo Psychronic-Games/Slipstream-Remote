@@ -1,10 +1,10 @@
 # Project status
 
-*Updated 2026-10-19; latest published release 0.20.0; 0.21.0 built and verified.
+*Updated 2026-10-19; latest published release 0.20.0; 0.21.1 built and verified.
 Read this first when picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-19.md)
-covers 0.21.0 support tools and cloned-device identity detection, plus
+covers the 0.21.1 support-tool audit, cloned-device identity detection, plus
 draggable tabs, configurable windows, service one-time codes, toolbar layout,
 tool-window cleanup, proactive screen approval and APK naming.
 **Published clients: 0.20.0, build 98, commit 98e84e0**, on
@@ -12,19 +12,38 @@ https://relay.slipstreamremote.com. Later documentation commits do not change
 that deployed build. The mounted client directory and rollback backups are
 recorded in the handoff.
 
-**0.21.0 ready to publish:** committed as 1dc6836, build 101. Adds reviewed support
+**0.21.1 ready to publish:** final implementation 2d1a128, build 106. Audits the
+five support-tool features below. Fixes pending requests surviving window
+close/link loss, late tunnel replies, compact-host status cleanup and missing
+Dismiss / Stop controls, stale Windows service command epochs and unrelated
+DNS answers. Video repaints no longer create blank native windows for docked
+sessions. Compact controls have enough room above the footer.
+
+138 workspace tests pass (five ignored); Linux/Windows all-target and arm64
+Android Clippy pass. Native Linux checks verify report exports, cancelled
+diagnostics/reopening, live floating video and docking with no placeholder
+windows. The Windows release under Wine verifies compact status, Dismiss
+retaining the link and Stop ending it without recovery. The final packaged
+compact layout has both controls above the footer ([preview](screenshots/compact-support-0.21.1.png)).
+Linux/Windows/Android artifacts are in `dist/slipstream-station/clients/`;
+hashes/signatures, update trust continuity, Windows resources/Mesa, Linux
+startup/glibc and Android version/certificate checks passed. Publication and
+authenticated live download checks await the disconnected WebServer mount.
+Physical Windows service, LAN wake and real
+Android/macOS checks remain open. The handoff maps each first-pass feature
+to its implemented scope and the larger ideas still on the roadmap.
+
+**0.21.0 (superseded unpublished candidate):** 1dc6836, build 101. Adds reviewed support
 reports, host status with Stop support, discovered-service tunnels, peer-assisted
 LAN wake and bounded gateway/DNS/station diagnostics. Desktop hardware bindings
 give imaged profiles a fresh identity on different firmware while retaining
 station/unattended settings; run the updated master app/service before imaging.
 Missing or duplicate firmware evidence limits detection. The feature test run
 passed 131 tests (five ignored); Linux/Windows all-target and arm64 Android
-Clippy passed. Linux/Windows/Android packages and the signed manifest are in
-`dist/slipstream-station/clients/`. Artifact hashes/signatures, update-key
-continuity, Windows resources/Mesa, Linux startup/glibc and Android version /
-signing certificate were verified. Deployment and live HTTPS verification
-await reconnection of `/home/doug/WebServer`; no station files were changed.
-See the handoff for verification evidence and remaining checks.
+Clippy passed in its initial preparation. Its artifacts were checked before
+the subsequent workflow audit found the bugs corrected in 0.21.1. Deployment
+and live HTTPS verification await reconnection of `/home/doug/WebServer`;
+no station files were changed. Use the final 0.21.1 candidate.
 
 **0.20.0:** a session strip switches workstations and returns to Bridge.
 Drag tabs to reorder, release outside the strip to create a floating window,
@@ -349,7 +368,7 @@ implemented and emulator-tested, alongside the touch viewer. Remaining work
 includes real-phone checks, viewer keyboard polish, hardware encoding and
 host audio/clipboard/files/updates. The steps below carry on alongside it.
 
-1. **Publish the verified 0.21.0 release**: reconnect the WebServer mount,
+1. **Publish the verified 0.21.1 release**: reconnect the WebServer mount,
    back up and publish clients with the manifest last, and
    verify live signed offers/downloads. Confirm clone/service identity on
    differently identified Windows hardware; exercise reports, status/Stop,
