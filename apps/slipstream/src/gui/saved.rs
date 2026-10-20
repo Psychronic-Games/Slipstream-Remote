@@ -189,13 +189,12 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
                 ui.add_space(10.0);
             }
             let r = AccountRef::of(a);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(a.label().to_uppercase()).font(theme::display(18.0)).color(pal::LAVENDER));
                 ui.label(RichText::new(format!("· {}", a.user.name)).color(pal::DIM));
                 if a.signed_out {
                     ui.label(RichText::new("SIGNED OUT: sign in again under Config → Stations").font(theme::display(14.0)).color(pal::RED));
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if !a.signed_out && theme::pill(ui, "+ Group", pal::BLUE).clicked() {
                         app.saved.group_editor = Some(GroupEditor {account:r.clone(),name:String::new()});
                     }
@@ -213,7 +212,6 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
                             if !existing && let Some(editor) = &mut app.saved.editor { editor.original = None; }
                         }
                     }
-                });
             });
             if a.devices.is_empty() && a.shared.is_empty() && a.groups.is_empty() {
                 ui.label(RichText::new("Nothing saved yet: add a device, or use the star on a recent link.").color(pal::DIM));
@@ -286,32 +284,32 @@ fn grouped_devices(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountR
 #[allow(clippy::too_many_arguments)]
 fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a: &StationAccount, d: &SavedDevice, shared: bool, t: f64) {
     let presence = app.saved.presence.lock().unwrap().get(&(r.clone(), d.id)).cloned();
+    let (color,tip)=match presence {
+        Some(Presence::Online)=>(pal::GREEN,"online"),
+        Some(Presence::Offline)=>(pal::DIM,"offline"),
+        _=>(pal::GOLD,"checking…"),
+    };
+    let name=if d.name.is_empty() {d.id.to_string()} else {d.name.clone()};
+    // Reserve the actions first; long names and notes truncate in the space
+    // left for the system rather than pushing Connect/Edit out of the panel.
     ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(vec2(20.0, 22.0), Sense::hover());
-        let (color, tip) = match presence {
-            Some(Presence::Online) => (pal::GREEN, "online"),
-            Some(Presence::Offline) => (pal::DIM, "offline"),
-            _ => (pal::GOLD, "checking…"),
-        };
-        theme::lamp(ui.painter(), rect.center(), color, t);
-        let name = if d.name.is_empty() { d.id.to_string() } else { d.name.clone() };
-        ui.label(RichText::new(name.to_uppercase()).font(theme::display(18.0)).color(pal::TAN)).on_hover_text(tip);
-        ui.label(RichText::new(d.id.to_string()).font(theme::mono(15.0)).color(pal::BLUE));
-        if d.secret.is_some() {
-            ui.label(RichText::new("🔑").color(pal::GOLD)).on_hover_text("Password saved: connects in one click");
-        }
-        if !d.notes.is_empty() {
-            ui.add(egui::Label::new(RichText::new(&d.notes).color(pal::DIM)).truncate()).on_hover_text(&d.notes);
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let can_edit = !a.signed_out && (!shared || a.user.admin);
-            if can_edit && theme::pill_sized(ui, "Edit", pal::LAVENDER, vec2(58.0, 26.0)).clicked() {
-                open_editor(app, r, Some(d), shared);
-            }
-            let busy = app.attempt.is_some();
-            if ui.add_enabled_ui(!busy && !a.signed_out, |ui| theme::pill(ui, "Connect", pal::ORANGE)).inner.clicked() {
-                connect(app, ctx, r, d, shared);
-            }
+        ui.with_layout(Layout::right_to_left(Align::Center),|ui| {
+            let can_edit=!a.signed_out && (!shared || a.user.admin);
+            if can_edit && theme::pill_sized(ui,"Edit",pal::LAVENDER,vec2(58.0,28.0)).clicked() {open_editor(app,r,Some(d),shared);}
+            if ui.add_enabled_ui(app.attempt.is_none() && !a.signed_out,|ui|theme::pill(ui,"Connect",pal::ORANGE)).inner.clicked() {connect(app,ctx,r,d,shared);}
+            ui.allocate_ui_with_layout(vec2(ui.available_width(),44.0),Layout::top_down(Align::Min),|ui| {
+                ui.horizontal(|ui| {
+                    let (rect,_)=ui.allocate_exact_size(vec2(20.0,21.0),Sense::hover());
+                    theme::lamp(ui.painter(),rect.center(),color,t);
+                    ui.add(egui::Label::new(RichText::new(name.to_uppercase()).font(theme::display(18.0)).color(pal::TAN)).truncate())
+                        .on_hover_text(format!("{name} · {tip}"));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(d.id.to_string()).font(theme::mono(13.0)).color(pal::BLUE));
+                    if d.secret.is_some() {ui.label(RichText::new("PASSWORD SAVED").font(theme::display(12.0)).color(pal::GOLD));}
+                    if !d.notes.is_empty() {ui.add(egui::Label::new(RichText::new(&d.notes).small().color(pal::DIM)).truncate()).on_hover_text(&d.notes);}
+                });
+            });
         });
     });
 }
@@ -369,9 +367,37 @@ fn open_editor(app: &mut App, r: &AccountRef, d: Option<&SavedDevice>, shared: b
 }
 
 fn field(ui: &mut Ui, value: &mut String, hint: &str, password: bool, width: f32) -> egui::Response {
+    let width=width.min((ui.available_width()-28.0).max(40.0));
     theme::input_frame()
         .show(ui, |ui| ui.add(egui::TextEdit::singleline(value).align(egui::Align2::LEFT_CENTER).hint_text(hint).password(password).frame(egui::Frame::NONE).desired_width(width)))
         .inner
+}
+
+/// An editable group name with its chooser integrated into the same field.
+fn group_field(ui: &mut Ui, value: &mut String, groups: BTreeSet<&str>) {
+    let frame=theme::input_frame().show(ui,|ui| {
+        ui.horizontal(|ui| {
+            let input=ui.add(egui::TextEdit::singleline(value).hint_text("Ungrouped or new group")
+                .char_limit(64).frame(egui::Frame::NONE).desired_width(246.0));
+            ui.allocate_exact_size(vec2(28.0,input.rect.height()),Sense::hover());
+        });
+    });
+    let rect=frame.response.rect;
+    let cap=egui::Rect::from_min_max(egui::pos2(rect.right()-34.0,rect.top()+2.0),rect.max-vec2(2.0,2.0));
+    let response=ui.interact(cap,ui.make_persistent_id("group-choices"),Sense::click()).on_hover_text("Choose a group, or type a new name");
+    let color=if response.hovered() {pal::TAN} else {pal::ORANGE};
+    ui.painter().rect_filled(cap,egui::CornerRadius {ne:14,se:14,..Default::default()},color);
+    let center=cap.center();
+    ui.painter().line_segment([center+vec2(-5.0,-2.0),center+vec2(0.0,3.0)],egui::Stroke::new(2.0,pal::BG));
+    ui.painter().line_segment([center+vec2(0.0,3.0),center+vec2(5.0,-2.0)],egui::Stroke::new(2.0,pal::BG));
+    response.widget_info(||egui::WidgetInfo::labeled(egui::Role::Button,true,"Choose group"));
+    theme::console_menu(&response).anchor(rect).width(rect.width()).show(|ui| {
+        ui.set_min_width((rect.width()-12.0).max(120.0));
+        if ui.add_sized(vec2(ui.available_width(),28.0),egui::Button::selectable(value.is_empty(),"Ungrouped")).clicked() {value.clear();ui.close();}
+        for group in groups {
+            if ui.add_sized(vec2(ui.available_width(),28.0),egui::Button::selectable(value==group,group).truncate()).on_hover_text(group).clicked() {*value=group.to_string();ui.close();}
+        }
+    });
 }
 
 /// The add/edit and password dialogs (every frame).
@@ -429,6 +455,7 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                 ui.label(RichText::new("STATION").font(theme::display(15.0)).color(pal::LAVENDER));
                 if e.original.is_none() && all.iter().filter(|a| !a.signed_out).count() > 1 {
                     egui::ComboBox::from_id_salt("saved-editor-station").selected_text(account.label()).show_ui(ui, |ui| {
+                        theme::console_menu_style(ui.style_mut());
                         for a in all.iter().filter(|a| !a.signed_out) {
                             let r = AccountRef::of(a);
                             if ui.selectable_label(r == e.account, a.label()).clicked() {
@@ -447,22 +474,10 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                 field(ui, &mut e.name, "Front desk PC", false, 280.0);
                 ui.end_row();
                 ui.label(RichText::new("GROUP").font(theme::display(15.0)).color(pal::LAVENDER));
-                ui.horizontal_top(|ui| {
-                    theme::input_frame().show(ui, |ui| {
-                        ui.add(egui::TextEdit::singleline(&mut e.group).hint_text("Ungrouped / new group")
-                            .char_limit(64).frame(egui::Frame::NONE).desired_width(175.0));
-                    });
-                    let groups: BTreeSet<_> = account.devices.iter().chain(&account.shared)
-                        .map(|d| d.group.as_str()).chain(account.groups.iter().map(String::as_str))
-                        .filter(|g| !g.is_empty()).collect();
-                    egui::ComboBox::from_id_salt("saved-editor-group").width(90.0).selected_text("Choose…").show_ui(ui, |ui| {
-                        theme::console_menu_style(ui.style_mut());
-                        if ui.selectable_label(e.group.is_empty(), "Ungrouped").clicked() { e.group.clear(); }
-                        for group in groups {
-                            if ui.selectable_label(e.group == group, group).clicked() { e.group = group.to_string(); }
-                        }
-                    });
-                });
+                let groups: BTreeSet<_> = account.devices.iter().chain(&account.shared)
+                    .map(|d|d.group.as_str()).chain(account.groups.iter().map(String::as_str))
+                    .filter(|g|!g.is_empty()).collect();
+                group_field(ui,&mut e.group,groups);
                 ui.end_row();
                 ui.label(RichText::new("NOTES").font(theme::display(15.0)).color(pal::LAVENDER));
                 // Keep the text editor out of the grid layout: a frame that
@@ -617,7 +632,7 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
         );
         ui.add_space(6.0);
         for a in &accounts {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(a.label().to_uppercase()).font(theme::display(17.0)).color(pal::LAVENDER));
                 ui.label(RichText::new(&a.server).font(theme::mono(14.0)).color(pal::BLUE));
                 let who = format!("{}{}", a.user.name, if a.user.admin { " · station admin" } else { "" });
@@ -625,7 +640,6 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
                 if a.signed_out {
                     ui.label(RichText::new("SIGNED OUT").font(theme::display(14.0)).color(pal::RED));
                 }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::pill_sized(ui, "Sign out", pal::LAVENDER, vec2(84.0, 26.0)).clicked() {
                         sign_out = Some(AccountRef::of(a));
                     }
@@ -633,31 +647,36 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
                         app.saved.station = a.server.clone();
                         app.saved.username = a.user.username.clone();
                     }
-                });
             });
         }
         ui.add_space(6.0);
         ui.label(RichText::new("SIGN IN TO A STATION").font(theme::display(15.0)).color(pal::VIOLET));
-        let mut go = false;
-        // On a phone, one field under another.
-        let narrow = ui.available_width() < 600.0;
-        let mut form = |ui: &mut Ui| {
-            let full = ui.available_width() - 24.0;
-            let w = |wide: f32| if narrow { full } else { wide };
-            let own = app.client.settings().server.url.unwrap_or_default();
-            let a = field(ui, &mut app.saved.station, if own.is_empty() { "support.example.com" } else { own.as_str() }, false, w(210.0));
-            let b = field(ui, &mut app.saved.username, "username", false, w(140.0));
-            let c = field(ui, &mut app.saved.password, "password", true, w(160.0));
-            let mut go = (a.lost_focus() || b.lost_focus() || c.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let busy = app.saved.job.is_some();
-            let label = if busy { "Signing in…" } else { "Sign in" };
-            go |= ui.add_enabled_ui(!busy, |ui| theme::pill(ui, label, pal::VIOLET)).inner.clicked();
-            go
-        };
-        if narrow {
-            go = ui.vertical(form).inner;
+        let busy=app.saved.job.is_some();
+        let label=if busy {"Signing in…"} else {"Sign in"};
+        let own=app.client.settings().server.url.unwrap_or_default();
+        let hint=if own.is_empty() {"support.example.com"} else {own.as_str()};
+        let mut go=false;
+        let width=ui.available_width();
+        let pressed_enter=ui.input(|i|i.key_pressed(egui::Key::Enter));
+        let enter=|response: &egui::Response|response.lost_focus() && pressed_enter;
+        if width<480.0 {
+            let a=field(ui,&mut app.saved.station,hint,false,width-28.0);
+            let b=field(ui,&mut app.saved.username,"Username",false,width-28.0);
+            let c=field(ui,&mut app.saved.password,"Password",true,width-28.0);
+            go=enter(&a) || enter(&b) || enter(&c);
+            go|=ui.add_enabled_ui(!busy,|ui|theme::pill(ui,label,pal::VIOLET)).inner.clicked();
         } else {
-            ui.horizontal_wrapped(|ui| go = form(ui));
+            let a=field(ui,&mut app.saved.station,hint,false,width-28.0);
+            go|=enter(&a);
+            ui.horizontal(|ui| {ui.with_layout(Layout::right_to_left(Align::Center),|ui| {
+                go|=ui.add_enabled_ui(!busy,|ui|theme::pill_sized(ui,label,pal::VIOLET,vec2(0.0,42.0))).inner.clicked();
+                let field_width=(ui.available_width()-6.0)/2.0-28.0;
+                ui.with_layout(Layout::left_to_right(Align::Center),|ui| {
+                    let b=field(ui,&mut app.saved.username,"Username",false,field_width);
+                    let c=field(ui,&mut app.saved.password,"Password",true,field_width);
+                    go|=(b.lost_focus() || c.lost_focus()) && ui.input(|i|i.key_pressed(egui::Key::Enter));
+                });
+            });});
         }
         if go {
             // An empty address means this app's own station.

@@ -741,9 +741,11 @@ pub fn header(ui: &mut Ui, title: &str, color: Color32) {
     let cap = Rect::from_min_size(rect.min, vec2(26.0, 26.0));
     painter.rect_filled(cap, CornerRadius { nw: 13, sw: 13, ..Default::default() }, color);
     let title_pos = pos2(cap.right() + 10.0, rect.center().y);
-    let galley = painter.layout_no_wrap(title.to_uppercase(), display_bold(20.0), color);
+    let mut job=egui::text::LayoutJob::simple(title.to_uppercase(),display_bold(20.0),color,(rect.right()-title_pos.x).max(1.0));
+    job.wrap.max_rows=1;
+    let galley = painter.layout_job(job);
     let tw = galley.size().x;
-    painter.galley(pos2(title_pos.x, rect.center().y - galley.size().y / 2.0), galley, color);
+    painter.with_clip_rect(rect).galley(pos2(title_pos.x, rect.center().y - galley.size().y / 2.0), galley, color);
     let bar = Rect::from_min_max(pos2(title_pos.x + tw + 12.0, rect.top() + 7.0), pos2(rect.right(), rect.bottom() - 7.0));
     if bar.width() > 8.0 {
         painter.rect_filled(bar, CornerRadius { ne: 6, se: 6, ..Default::default() }, color.gamma_multiply(0.85));
@@ -957,14 +959,26 @@ pub fn tool_frame(ui:&mut Ui,title:&str,desktop:bool,color:Color32)->(Rect,bool)
 /// contents with [`window_header`] and end them with
 /// [`WindowChrome::footer`]. It's dragged by its background.
 pub fn window(id: &str, color: Color32) -> egui::Window<'static> {
-    egui::Window::new(id.to_string()).title_bar(false).frame(
-        egui::Frame::new()
+    egui::Window::new(id.to_string()).title_bar(false).frame(console_window_frame(color))
+}
+
+fn console_window_frame(color: Color32) -> egui::Frame {
+    egui::Frame::new()
             .fill(pal::PANEL)
             .stroke(Stroke::new(1.0, color.gamma_multiply(0.35)))
             .corner_radius(CornerRadius::same(20))
             .inner_margin(egui::Margin { left: (12.0 + RAIL + RAIL_GAP) as i8, right: 14, top: 12, bottom: 12 })
-            .shadow(egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(170) }),
-    )
+            .shadow(egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(170) })
+}
+
+/// Modal dialogs reserve the same rail gutter as floating LCARS panels.
+pub fn modal(id: &str, color: Color32) -> egui::Modal {
+    egui::Modal::new(egui::Id::unique(id)).frame(console_window_frame(color))
+}
+
+/// Content width, leaving room for the frame and space around the dialog.
+pub fn dialog_width(ctx: &egui::Context, preferred: f32) -> f32 {
+    (ctx.content_rect().width() - 76.0).clamp(160.0, preferred)
 }
 
 /// Where a window's frame goes, from its header to its footer.
@@ -994,7 +1008,12 @@ pub fn window_header_with_close(ui: &mut Ui, title: &str, color: Color32, close_
     let close_rect = Rect::from_min_max(pos2(row.right() - close_w, row.top()), row.max);
     let band = Rect::from_min_max(pos2(x0, row.top()), pos2(close_rect.left() - 4.0, row.bottom()));
     p.rect_filled(band, CornerRadius { nw: 22, ..Default::default() }, color);
-    p.text(pos2(row.left() + 2.0, row.center().y), egui::Align2::LEFT_CENTER, title.to_uppercase(), display_bold(21.0), pal::BG);
+    let text_rect = Rect::from_min_max(row.min+vec2(2.0,0.0),pos2(band.right()-8.0,row.bottom()));
+    let mut job=egui::text::LayoutJob::simple(title.to_uppercase(),display_bold(21.0),pal::BG,text_rect.width().max(1.0));
+    job.wrap.max_rows=1;
+    let galley=p.layout_job(job);
+    p.with_clip_rect(text_rect).galley(pos2(text_rect.left(),text_rect.center().y-galley.size().y/2.0),galley,pal::BG);
+    ui.interact(text_rect,ui.scope_id().with(("window-title",title)),Sense::hover()).on_hover_text(title);
     let resp = ui.interact(close_rect, ui.scope_id().with(("window-close", title)), Sense::click());
     let fill = if resp.hovered() { pal::TAN } else { close_color };
     p.rect_filled(close_rect, CornerRadius { ne: 15, se: 15, ..Default::default() }, fill);

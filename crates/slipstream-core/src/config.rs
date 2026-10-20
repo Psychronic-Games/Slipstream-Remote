@@ -262,8 +262,11 @@ impl Settings {
     }
 }
 
-/// Whether this process can read reliable per-device firmware evidence.
-pub fn clone_detection_available() -> bool {!crate::hardware_id::current().is_empty()}
+/// Whether this process can recognize stable hardware for this device.
+pub fn unique_device_detection_available() -> bool {!crate::hardware_id::current().is_empty()}
+
+/// Compatibility alias for callers using the original feature name.
+pub fn clone_detection_available() -> bool {unique_device_detection_available()}
 
 fn default_device_name() -> String {
     std::env::var("SLIPSTREAM_DEVICE_NAME")
@@ -360,21 +363,16 @@ impl Store {
         let mut changed_device=false;
         if let Some(binding)=&previous {
             if binding.version!=1 {tracing::warn!("unknown device-binding version; retaining the existing identity");return Ok(key);}
-            // Prefer the firmware UUID; use a serial only when no comparable
-            // UUID is available. A generic/repeated serial must not override a
-            // changed UUID on two laptops of the same model.
-            let different=["system-uuid","system-serial"].into_iter().find_map(|kind| {
-                binding.evidence.get(kind).zip(evidence.get(kind)).map(|(old,new)| old!=new)
-            }).unwrap_or(false);
+            let different=crate::hardware_id::changed(&binding.evidence,evidence);
             if different {
                 changed_device=true;
                 key=SecretKey::generate();
                 write_private(&self.dir.join("identity.key"),&key.to_bytes())?;
                 let settings_path=self.dir.join("settings.toml");
                 let mut settings=match fs::read_to_string(&settings_path) {
-                    Ok(text)=>toml::from_str::<Settings>(&text).context("settings are damaged; cannot finish cloned-device identity initialization")?,
+                    Ok(text)=>toml::from_str::<Settings>(&text).context("settings are damaged; cannot finish device identity initialization")?,
                     Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Settings::default(),
-                    Err(e)=>return Err(e).context("reading cloned-device settings"),
+                    Err(e)=>return Err(e).context("reading device settings"),
                 };
                 settings.host.last_device_id=None;
                 if settings.device_name.eq_ignore_ascii_case(&binding.system_name) {settings.device_name=default_device_name();}
@@ -521,6 +519,26 @@ mod tests {
             jobs.into_iter().map(|job|job.join().unwrap()).collect::<Vec<_>>()
         });
         assert!(results.iter().all(|k|k==&results[0]));assert_ne!(results[0],key);
+    }
+
+    #[test]
+    fn learning_adapter_fallback_preserves_existing_id_and_only_rekeys_a_different_device() {
+        use crate::hardware_id::Evidence;
+        let temp=tempfile::tempdir().unwrap();let store=Store::open(temp.path()).unwrap();
+        let mut settings=Settings::default();settings.host.last_device_id=Some(DeviceId(123456789));
+        settings.server.url=Some("station.example".into());store.save_settings(&settings).unwrap();
+        let key=store.identity_for_hardware(&Evidence::new()).unwrap().to_bytes();
+        let first=Evidence::from([("network-adapter:first".into(),"first".into())]);
+        assert_eq!(key,store.identity_for_hardware(&first).unwrap().to_bytes());
+        assert_eq!(store.load_settings().host.last_device_id,settings.host.last_device_id);
+        let both=Evidence::from([("network-adapter:first".into(),"first".into()),("network-adapter:second".into(),"second".into())]);
+        assert_eq!(key,store.identity_for_hardware(&both).unwrap().to_bytes());
+        assert_eq!(key,store.identity_for_hardware(&first).unwrap().to_bytes());
+        let other=Evidence::from([("network-adapter:third".into(),"third".into())]);
+        let new_key=store.identity_for_hardware(&other).unwrap().to_bytes();
+        assert_ne!(key,new_key);assert_eq!(new_key,store.identity_for_hardware(&other).unwrap().to_bytes());
+        assert!(store.load_settings().host.last_device_id.is_none());
+        assert_eq!(store.load_settings().server.url,settings.server.url);
     }
 
     #[test]

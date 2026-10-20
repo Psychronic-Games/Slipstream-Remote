@@ -272,9 +272,11 @@ cross-window pointer positions, use the Dock action if dragging back is
 unavailable. The title bar identifies the workstation; picture quality and
 FPS/latency sit together on the session toolbar.
 
-The fixed **+** at the right of the strip opens **New link** in the console
-or from a floating session window. Search recent links and your stations'
-saved/shared devices by name, ID, group or station. Online lamps show cached
+The **+** follows the last session tab, or sits beside **Bridge** when no
+sessions are open. It opens **New link** in the console or from a floating
+session window. Saved systems appear in their private/shared groups, including
+empty groups; expand **Recent links** or **Link by ID** for other connections.
+Search systems by name, ID, group or station. Online lamps show cached
 presence; **Refresh devices** fetches the lists again. Saved passwords use
 the existing one-click connection; other devices ask for their password.
 You can also enter an ID/password directly and choose a signed-in station.
@@ -633,13 +635,18 @@ sessions; new optional support requests may require updating the host.
 Update Slipstream on the master laptop, **update/start its installed Windows
 service**, and run the updated app/service once **before capturing the image**.
 This records a hardware binding. Config → Device identity shows whether the
-app can read firmware identifiers. Both the service's machine profile and
-any user profile included in the image need their baseline established.
+app can recognize stable hardware, under **Unique device detection**. Both the
+service's machine profile and any user profile included in the image need
+their baseline established.
 
 At startup, a profile compares locally hashed firmware evidence. Windows uses
 the SMBIOS system UUID, with a system serial fallback; Linux uses readable
-DMI UUID/serial files and macOS uses platform firmware identifiers. The model,
-hostname, MAC address and cloned Windows installation ID are not the binding.
+DMI UUID/serial files and macOS uses platform firmware identifiers. When
+Linux firmware files require root, a locally hashed permanent built-in PCI
+network-adapter address provides a fallback. Randomized/user-assigned addresses,
+virtual network interfaces and removable USB adapters are ignored. Firmware
+still takes priority when readable. Model names, hostnames and OS installation
+IDs are not the binding.
 On different hardware, Slipstream creates a fresh random private key, clears
 the cached station ID and stale public service ID/pin, and registers a new ID.
 The original laptop retains its identity. Repeated starts on the clone keep
@@ -652,6 +659,10 @@ Missing/unreadable identifiers retain the current ID instead of guessing.
 Duplicated firmware identifiers, VMs cloned with the same hardware UUID, and
 old images with no recorded binding cannot reliably establish a different
 device. Some Linux systems restrict DMI identifiers to privileged processes.
-Changing/replacing firmware identity (including a motherboard) can trigger a
-new ID. Android has no desktop firmware binding in this implementation. Real
-Windows clone/service behavior still needs confirmation on the intended laptops.
+Adding/removing an adapter preserves the ID while any recognized built-in
+adapter remains. Learning this fallback for an existing profile also preserves
+its current ID. Changing/replacing firmware identity (including a motherboard),
+or replacing all recognized built-in adapters when firmware is unreadable, can
+trigger a new ID. Android has no desktop firmware binding in this
+implementation. Real Windows clone/service behavior still needs confirmation
+on the intended laptops.

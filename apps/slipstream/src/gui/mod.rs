@@ -1220,17 +1220,21 @@ impl App {
             return;
         }
         let (mut hide, mut quit) = (false, false);
-        egui::Modal::new(egui::Id::unique("tray-hint")).show(ctx, |ui| {
-            ui.set_width(460.0);
-            theme::header(ui, "Keep running in the tray?", pal::LAVENDER);
+        let mut close=false;
+        let result=theme::modal("tray-hint",pal::LAVENDER).show(ctx, |ui| {
+            ui.set_width(theme::dialog_width(ctx,460.0));
+            let chrome=theme::window_header(ui,"Keep running in the tray?",pal::LAVENDER);
+            close=chrome.close;
             ui.add_space(8.0);
             ui.label("Slipstream is set to keep running in the system tray when its window is closed, so this computer stays reachable. Use the tray icon to open it again or to quit.");
             ui.add_space(12.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 hide = theme::pill(ui, "Hide to tray", pal::LAVENDER).clicked();
                 quit = theme::pill(ui, "Quit Slipstream", pal::RED).clicked();
             });
+            chrome.footer(ui);
         });
+        if close || result.should_close() {self.tray_hint=false;}
         if hide || quit {
             self.tray_hint = false;
             self.client.update_settings(|s| s.app.tray_hint_shown = true);
@@ -1250,14 +1254,16 @@ impl App {
         let id = a.id;
         let t = self.time();
         let mut cancel = false;
-        egui::Modal::new(egui::Id::unique("connecting")).show(ctx, |ui| {
-            ui.set_width(420.0);
-            theme::header(ui, &format!("Establishing link · {id}"), pal::BLUE);
+        let result=theme::modal("connecting",pal::BLUE).show(ctx, |ui| {
+            ui.set_width(theme::dialog_width(ctx,420.0));
+            let chrome=theme::window_header(ui,"Establishing link",pal::BLUE);
+            cancel=chrome.close;
+            ui.label(egui::RichText::new(format!("PARTNER {id}")).font(theme::mono(15.0)).color(pal::BLUE));
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(40.0, 40.0), egui::Sense::hover());
                 theme::spinner(ui.painter(), rect.center(), 14.0, pal::CYAN, t);
-                ui.label(egui::RichText::new(progress).font(theme::body(18.0)));
+                ui.add(egui::Label::new(egui::RichText::new(progress).font(theme::body(18.0))).wrap());
             });
             ui.add_space(12.0);
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 36.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1265,8 +1271,9 @@ impl App {
                     cancel = true;
                 }
             });
+            chrome.footer(ui);
         });
-        if cancel {
+        if cancel || result.should_close() {
             self.cancel_attempt();
         }
         ctx.request_repaint_after(self.frame_interval().max(Duration::from_millis(33)));

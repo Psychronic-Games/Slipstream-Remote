@@ -13,6 +13,23 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### LCARS interface polish and automatic device recognition
+- Place the new-link + after the last tab, or immediately beside Bridge when
+  there are no sessions. Remove the empty-strip description and keep overflow
+  scrolling within the tab rail.
+- Give New Link the full LCARS header, left rail and footer used by styled
+  panels. Show private/shared groups and empty groups, with searchable system
+  cards, saved-password indicators and an expandable manual link form.
+- Integrate the device editor's group chooser into the group field; align its
+  menu with the field. Use consistent frames for connection/tray dialogs,
+  clip long headings and keep device actions visible beside long names.
+  Keep settings fields and station sign-in controls within compact panels;
+  draw file-browser refresh icons without platform-dependent glyphs.
+- Rename the settings status to Unique device detection and remove imaging
+  instructions from the interface. On Linux, recognize permanent built-in PCI
+  network hardware when firmware files are restricted to root; preserve
+  existing identities when learning this fallback or adding/removing adapters.
+
 ## 0.22.0 — 2026-10-20
 
 ### Faster linking and compact desktop tools

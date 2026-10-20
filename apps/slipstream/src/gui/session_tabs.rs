@@ -98,21 +98,14 @@ pub(super) fn show(
     let scale = ctx.pixels_per_point();
     let origin = ctx.input(|i| i.viewport().inner_rect.map(|r| r.min));
     let screen_rect = |r: Rect| origin.map(|p| r.translate(p.to_vec2()) * scale);
-    let bar = area.with_max_y(area.top() + 35.0);
+    let bar = area.with_max_y(area.top() + 37.0);
     ui.painter().rect_filled(bar, 5.0, pal::PANEL);
     let mut actions = Vec::new();
-    let plus = Rect::from_min_max(egui::pos2(bar.right() - 37.0, bar.top() + 2.0), bar.right_bottom() - vec2(4.0, 2.0));
-    let add = ui.interact(plus, ui.scope_id().with("new-link"), Sense::click())
-        .on_hover_text("New link · recent and saved systems");
-    ui.painter().rect_filled(plus, 9.0, if add.hovered() {pal::TAN} else {pal::GREEN});
-    for offset in [vec2(7.0,0.0), vec2(0.0,7.0)] {
-        ui.painter().line_segment([plus.center()-offset, plus.center()+offset], Stroke::new(2.0,pal::BG));
-    }
-    add.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "New link"));
-    if add.clicked() {
-        actions.push((0, TabAction::NewLink));
-    }
-    let mut child = ui.new_child(UiBuilder::new().max_rect(bar.with_max_x(plus.left() - 4.0).shrink2(vec2(4.0, 2.0))));
+    let mut child = ui.new_child(UiBuilder::new().max_rect(bar.shrink2(vec2(4.0, 2.0))));
+    // A slim scroll rail leaves the tab height intact when many links overflow.
+    child.spacing_mut().scroll.bar_width=4.0;
+    child.spacing_mut().scroll.bar_inner_margin=0.0;
+    child.spacing_mut().scroll.bar_outer_margin=0.0;
     let mut slots = Vec::new();
     let mut local_slots = Vec::new();
     let mut started = None;
@@ -154,7 +147,16 @@ pub(super) fn show(
                     local_slots.push((*id, rect.intersect(ui.clip_rect())));
                     if let Some(rect) = screen_rect(rect.intersect(ui.clip_rect())) && rect.is_positive() { slots.push((*id, rect)); }
                 }
-                if root && entries.is_empty() { ui.label(egui::RichText::new("RECENT AND SAVED SYSTEMS").color(pal::DIM)); }
+                // The next tab belongs beside the existing tabs, including
+                // directly after Bridge when the strip has no sessions.
+                let (plus, add) = ui.allocate_exact_size(vec2(33.0, 29.0), Sense::click());
+                let add = add.on_hover_text("New link · recent and saved systems");
+                ui.painter().rect_filled(plus, 9.0, if add.hovered() {pal::TAN} else {pal::GREEN});
+                for offset in [vec2(7.0,0.0), vec2(0.0,7.0)] {
+                    ui.painter().line_segment([plus.center()-offset,plus.center()+offset],Stroke::new(2.0,pal::BG));
+                }
+                add.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button,true,"New link"));
+                if add.clicked() { actions.push((0,TabAction::NewLink)); }
             });
         });
     let mut state = shared.lock().unwrap();
@@ -318,24 +320,40 @@ mod tests {
     }
 
     #[test]
-    fn new_link_stays_clickable_with_overflowing_tabs_in_both_windows() {
+    fn new_link_follows_tabs_and_bridge_when_empty() {
         for root in [true, false] {
-            let ctx = egui::Context::default();
-            ctx.set_embed_viewports(false);
-            theme::install(&ctx);
-            let shared = Default::default();
-            let area = Rect::from_min_size(Pos2::ZERO, vec2(520.0,360.0));
-            let entries: Vec<_> = (1..20).map(|id| (id,format!("Workstation {id}"))).collect();
-            let point = pos2(500.0,15.0);
-            let mut actions = Vec::new();
-            for events in [vec![],vec![],vec![Event::PointerMoved(point),button(point,true)],vec![button(point,false)]] {
-                let mut output = ctx.run_ui(RawInput {screen_rect:Some(area),events,..Default::default()}, |ui| {
-                    actions.extend(show(&shared,ui,area,&entries,Some(1),root,true).1);
-                });
-                output.textures_delta.clear();
+            for count in [0, 1, 2] {
+                let ctx = egui::Context::default();
+                ctx.set_embed_viewports(false);
+                theme::install(&ctx);
+                let shared = Default::default();
+                let area = Rect::from_min_size(Pos2::ZERO, vec2(800.0,360.0));
+                let entries: Vec<_> = (1..=count).map(|id| (id,format!("Workstation {id}"))).collect();
+                let mut point = Pos2::ZERO;
+                let mut actions = Vec::new();
+                for frame in 0..4 {
+                    let events = match frame {
+                        2 => vec![Event::PointerMoved(point),button(point,true)],
+                        3 => vec![button(point,false)],
+                        _ => vec![],
+                    };
+                    let mut raw=RawInput {screen_rect:Some(area),events,..Default::default()};
+                    raw.viewports.get_mut(&ViewportId::ROOT).unwrap().inner_rect=Some(area);
+                    let mut output = ctx.run_ui(raw, |ui| {
+                        actions.extend(show(&shared,ui,area,&entries,Some(1),root,true).1);
+                        // Root slots locate the last tab without depending on font widths.
+                        point = if let Some((_,last))=shared.lock().unwrap().target.as_ref().and_then(|t|t.slots.last()) {
+                            pos2(last.right()+20.0,15.0)
+                        } else {
+                            let bridge = if root {ui.painter().layout_no_wrap("BRIDGE".into(),theme::display(17.0),pal::BG).size().x+32.0+4.0} else {0.0};
+                            pos2(4.0+bridge+count as f32*184.0+16.0,15.0)
+                        };
+                    });
+                    output.textures_delta.clear();
+                }
+                assert_eq!(actions.iter().filter(|(_,a)|matches!(a,TabAction::NewLink)).count(),1,"root={root}, tabs={count}");
+                assert!(!shared.lock().unwrap().dragging());
             }
-            assert_eq!(actions.iter().filter(|(_,action)|matches!(action,TabAction::NewLink)).count(),1);
-            assert!(!shared.lock().unwrap().dragging());
         }
     }
 }

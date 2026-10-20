@@ -81,7 +81,12 @@ fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
             ui.set_width(label_width);
             ui.label(RichText::new(label.to_uppercase()).font(theme::display(16.0)).color(pal::LAVENDER));
         });
-        add(ui);
+        let width=ui.available_width();
+        ui.allocate_ui_with_layout(vec2(width,28.0),egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),|ui| {
+            ui.set_width(width);
+            ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
+            add(ui);
+        });
     });
 }
 
@@ -91,6 +96,7 @@ fn text_field(ui: &mut Ui, value: &mut String, hint: &str, password: bool) -> eg
 }
 
 fn text_field_sized(ui: &mut Ui, value: &mut String, hint: &str, password: bool, width: f32) -> egui::Response {
+    let width=width.min((ui.available_width()-28.0).max(40.0));
     theme::input_frame()
         .show(ui, |ui| {
             ui.add(
@@ -129,12 +135,10 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             text_field(ui, &mut f.device_name, "My Computer", false);
         });
         #[cfg(not(target_os="android"))]
-        row(ui, "Cloned-device detection", |ui| {
-            let ready=slipstream_core::config::clone_detection_available();
-            ui.label(RichText::new(if ready {"Automatic · firmware UUID/serial available"}else{"Unavailable · no reliable firmware UUID/serial readable; existing ID retained"}).small().color(if ready {pal::GREEN}else{pal::GOLD}));
+        row(ui, "Unique device detection", |ui| {
+            let ready=slipstream_core::config::unique_device_detection_available();
+            ui.label(RichText::new(if ready {"Automatic"}else{"Using saved identity"}).small().color(if ready {pal::GREEN}else{pal::GOLD}));
         });
-        #[cfg(not(target_os="android"))]
-        ui.label(RichText::new("Before capturing a master image, run this updated app and update/start its installed service once. A clone with different firmware identifiers gets a new ID at startup while retaining station/unattended settings. Identical or unavailable firmware identifiers cannot establish a different device.").small().color(pal::DIM));
     });
     ui.add_space(14.0);
 
@@ -344,6 +348,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             egui::ComboBox::from_id_salt("new-link-layout")
                 .selected_text(if f.separate_windows {"Separate windows"} else {"Tabs"})
                 .show_ui(ui, |ui| {
+                    theme::console_menu_style(ui.style_mut());
                     ui.selectable_value(&mut f.separate_windows, false, "Tabs");
                     ui.selectable_value(&mut f.separate_windows, true, "Separate windows");
                 });

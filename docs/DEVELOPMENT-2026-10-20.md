@@ -1,5 +1,42 @@
 # Development handoff — 2026-10-20
 
+## Quality pass after 0.22.0 (validated; release pending)
+
+The + now follows the last session tab, or Bridge when empty. New Link uses
+complete LCARS framing and shows private/shared and empty groups before recent
+links, with a collapsible manual link form. The device editor integrates its
+group chooser into the field with a full-width popup. Settings fields and
+station sign-in controls fit compact panels; long titles/device names no
+longer overlap actions. Connection/tray dialogs share the same frame, and file
+browser refresh is drawn with vectors.
+
+Settings now says **Unique device detection — Automatic** without imaging
+instructions. This desktop's DMI UUID/serial files are root-only; its enp9s0
+permanent PCI adapter is readable by the normal user. A locally hashed adapter
+fallback preserves an existing ID on migration and adapter additions/removals
+while a known adapter remains. Firmware still takes priority. Virtual,
+randomized, user-assigned and removable USB addresses are excluded. No system
+permissions or real user identity/settings were changed.
+
+Workspace tests: **148 passed, zero failed, five ignored**. Linux/Windows
+all-target workspace Clippy and Android arm64 Clippy pass with warnings denied.
+Native isolated PHP/Xvfb checks verified saved-password connection, the inline
++ after a live tab, private/shared/empty groups, compact New Link/manual forms,
+a group selection actually saved to the account, and unchanged profile identity
+when learning this desktop's adapter fallback. Compact configuration fields,
+group popup and Automatic status were visually checked again after final edits.
+Native evidence: /tmp/slipstream-0221-quality-3gm2qqpv and
+/tmp/slipstream-0221-final-o252jbel. All fixture processes were closed.
+
+Screenshots: [New Link](screenshots/new-link-0.22.1.png),
+[group chooser](screenshots/group-menu-0.22.1.png),
+[automatic device recognition](screenshots/unique-device-0.22.1.png).
+
+Continue with scripts/check.sh serially: package 0.22.1, verify signatures,
+portable Linux/Windows resources/Android certificate, packaged Windows transfer,
+then publish clients with expected live 0.22.0/110/9dbae20 and check live HTTPS.
+No PHP API change is needed. Latest published clients remain 0.22.0/110/9dbae20.
+
 ## Published release: 0.22.0
 
 Published **0.22.0, build 110, commit 9dbae20** at

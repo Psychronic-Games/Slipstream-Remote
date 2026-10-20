@@ -760,6 +760,7 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
             .selected_text("Places")
             .width(110.0)
             .show_ui(ui, |ui| {
+                theme::console_menu_style(ui.style_mut());
                 for p in &pane.places {
                     if ui.selectable_label(false, &p.label).on_hover_text(&p.path).clicked() {
                         nav = Some(Some(p.path.clone()));
@@ -770,7 +771,17 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
         if ui.add_enabled(parent.is_some(), egui::Button::new("▲ Up")).clicked() {
             nav = Some(parent);
         }
-        if ui.button("⟳").on_hover_text("Refresh").clicked() {
+        let refresh=ui.add_sized(vec2(28.0,28.0),egui::Button::new("")).on_hover_text("Refresh");
+        refresh.widget_info(||egui::WidgetInfo::labeled(egui::Role::Button,ui.is_enabled(),"Refresh"));
+        let center=refresh.rect.center();
+        let stroke=ui.style().interact(&refresh).fg_stroke;
+        let angles=(0..=16).map(|i|-std::f32::consts::FRAC_PI_2+i as f32*std::f32::consts::PI*1.55/16.0);
+        let points:Vec<_>=angles.map(|a|center+vec2(a.cos(),a.sin())*7.0).collect();
+        let end=*points.last().unwrap();
+        ui.painter().add(egui::Shape::line(points,stroke));
+        ui.painter().line_segment([end,end+vec2(-3.0,3.0)],stroke);
+        ui.painter().line_segment([end,end+vec2(3.0,3.0)],stroke);
+        if refresh.clicked() {
             nav = Some(pane.listing.as_ref().map(|l| l.path.clone()));
         }
     });
