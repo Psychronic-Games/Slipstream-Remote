@@ -17,6 +17,9 @@
 # new key.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+if [[ ${CODEX_CHECK_ACTIVE:-} != 1 && -x "$HOME/.local/bin/codex-check" ]]; then
+  exec "$HOME/.local/bin/codex-check" bash "$0" "$@"
+fi
 
 # The software renderer built into the Windows app, for machines whose
 # graphics can't run the full window (Windows Server 2016…): the Mesa DLLs
@@ -71,6 +74,7 @@ if [ "${1:-}" = "--from-release" ]; then
   [ -f "$FROM/release.json" ] || { echo "error: $FROM/release.json not found: download every file of the release" >&2; exit 1; }
 fi
 
+scripts/clean.sh --if-large
 echo "==> Release signing key"
 cargo build --release -p slipstream-release
 RELEASE=target/release/slipstream-release
@@ -181,7 +185,7 @@ else
   # release key. It's not in the update manifest: it can't update itself yet.
   if [ -d "${ANDROID_HOME:-$HOME/Android/Sdk}/ndk" ] && command -v cargo-ndk >/dev/null; then
     echo "==> Android app"
-    ABIS=arm64-v8a scripts/build-android.sh
+    SLIPSTREAM_STATION_BUILD=1 ABIS=arm64-v8a scripts/build-android.sh
     cp "dist/android/slipstream-remote-$VERSION.apk" "$OUT/clients/slipstream-android.apk"
   else
     echo "==> Skipping the Android app (needs the Android SDK and cargo-ndk: docs/BUILDING.md, Android)"
@@ -210,3 +214,4 @@ echo "==> Signed manifest: version $VERSION build $BUILD ($COMMIT)"
 chmod 755 "$OUT"/bin/* "$OUT"/clients/slipstream-linux-x86_64 2>/dev/null || true
 echo "==> Station assembled in $OUT:"
 ls -la "$OUT/bin" "$OUT/clients" | grep -v "^total"
+scripts/clean.sh --if-large

@@ -1,20 +1,26 @@
 # Project status
 
-*Updated 2026-10-20; latest published release 0.21.1.
+*Updated 2026-10-20; latest published release 0.22.0.
 Read this first when picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-20.md)
-covers completed 0.21.1 publication and durable release tooling. The
-[October 19 handoff](DEVELOPMENT-2026-10-19.md) covers the support-tool audit,
-cloned-device identity detection, plus
-draggable tabs, configurable windows, service one-time codes, toolbar layout,
-tool-window cleanup, proactive screen approval and APK naming.
-**Published clients: 0.21.1, build 106, commit 2d1a128**, on
-https://relay.slipstreamremote.com. Later documentation commits do not change
-that deployed build. The mounted client directory and rollback backups are
-recorded in the handoff.
+records **0.22.0, build 110, commit 9dbae20**, published on
+https://relay.slipstreamremote.com with verified live update offers/downloads.
+Includes the + tab link picker, direct relay-synced groups, compact layouts,
+vector Delta arrows/stars, rounded-bar pulse clipping, Windows tool-caption
+and late-repaint fixes, Linux portal recovery/timeouts and executable MIME icon.
+143 tests pass (five ignored); Linux/Windows/Android Clippy and native Linux /
+packaged Windows Wine transfer checks pass. Physical Windows DWM and future
+KDE-upgrade recovery remain real-device follow-ups.
 
-**0.21.1 published:** final implementation 2d1a128, build 106. Audits the
+Workspace cleanup reduced about 183 GiB to 29 GiB. Build/check scripts now
+trim caches automatically at 12 GiB development/test and 32 GiB release, with
+incremental caching off and two generated Android package versions per variant.
+Use `scripts/check.sh` for development checks. Details and rollback paths are
+in the latest handoff; previous support-tool scope remains in the
+[October 19 handoff](DEVELOPMENT-2026-10-19.md).
+
+**0.21.1 (previous release):** final implementation 2d1a128, build 106. Audits the
 five support-tool features below. Fixes pending requests surviving window
 close/link loss, late tunnel replies, compact-host status cleanup and missing
 Dismiss / Stop controls, stale Windows service command epochs and unrelated

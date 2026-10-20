@@ -1,46 +1,114 @@
 # Development handoff — 2026-10-20
 
-## In progress after 0.21.1 publication
+## Published release: 0.22.0
 
-The real Linux approval failure was KDE's running portal retaining deleted Qt
-6.11.2 libraries after Qt 6.12.0 was installed. Its RemoteDesktopDialog could
-not load the new QtQuick Layouts plugin. Restarting the KDE/frontend portal
-services fixed the dialog; the user confirmed a successful Windows→Linux
-connection. Existing approval settings were preserved.
+Published **0.22.0, build 110, commit 9dbae20** at
+https://relay.slipstreamremote.com. Implementation is daa28c2. Later build-cache
+and handoff changes do not change the deployed client build. All requested
+client changes are included:
 
-Implementation for 0.22.0:
+- Fixed + tab button: searchable recent/private/shared systems, manual IDs,
+  saved passwords and remembered station routes, including duplicate IDs
+  across different stations.
+- Direct + Group and + Device in Saved devices; empty groups sync to the
+  technician account, with per-group Add device and removal of empty groups.
+  Shared-device editing retains its existing administrator requirement.
+- More compact desktop menus/dialogs, a 720×480 console frame and 640×360
+  file browser, vector Delta transfer arrows and a vector recent-link star.
+- Clip the animated menu-bar pulse to each actual rounded segment and gap.
+- Suppress native Windows captions over custom frames, register native
+  tools once, and guard late browser/progress/preview viewport repaints.
+- Bound Linux portal startup/approval waits, close abandoned requests,
+  Cancel/Retry, monitor revoked sessions and invalidate stale access.
+- Recognize downloaded Linux executables through an ELF note and per-user
+  MIME icon after first normal launch, including renamed/provisioned copies.
 
-- Direct + Group, empty-group persistence on each technician account,
-  per-group Add device and removal of empty groups; update the station API
-  along with clients, preserving older-client/device/password behavior.
-- Detect that exact stale Qt condition, repair only an idle portal, bound
-  approval waits, clean incomplete sessions and notice revoked grants.
-- Recognize the downloaded Linux executable with a stable ELF note and a
-  per-user MIME icon after its first normal launch.
-- Add a fixed + tab button with a searchable recent/saved/shared-device
-  picker, existing saved-password prompts and correct station routes.
-- Clip the animated menu-bar pulse to the actual rounded segments.
-- Tighten menus/dialogs for smaller screens and draw transfer Delta arrows
-  and the recent-link save star without platform font glyphs.
-- Correct both file-browser and transfer-progress caption flicker: native
-  frame suppression, single registration, and guarded asynchronous repaints.
+The real Linux approval failure was KDE's running portal retaining deleted
+Qt 6.11.2 libraries after Qt 6.12.0 was installed. Its RemoteDesktopDialog
+could not load the new QtQuick Layouts plugin. Restarting the KDE/frontend
+portal services restored the dialog; the user confirmed Windows→Linux worked.
+The new recovery detects that exact version mismatch and refreshes services
+only when the portal reports no active requests or sessions. Saved approvals
+are preserved; busy/unknown state produces a useful error rather than
+interrupting another application's share. The user's running app/session was
+not upgraded or restarted during publication.
 
-Native Xvfb checks passed: a live test-pattern session, recent/private/shared
-picker, actual byte-exact file transfer, progress receipt, 640×360 file window,
-720×480 compact Bridge, and + Group form saving an empty group to a real isolated
-PHP station. Qt's MIME database recognizes the executable and a renamed copy
-with a provisioning trailer; an unrelated executable keeps its own MIME type.
-PHP account tests also cover group isolation, legacy edits and encrypted secrets.
-Evidence is under /tmp/slipstream-022-native-dd9k97fe and
-/tmp/slipstream-022-native-qoo9qm7t. Final workspace checks: 143 tests passed, zero failed, five ignored;
-Linux and Windows all-target workspace Clippy and Android arm64 Clippy passed
-with warnings denied. Packaging and publication are next.
+### Verification
+
+- Workspace: **143 passed, zero failed, five ignored**. Linux/Windows
+  all-target workspace Clippy and Android arm64 Clippy pass with warnings denied.
+- PHP account integration covers empty groups, duplicates, isolation,
+  populated-group deletion refusal, legacy edits and encrypted secret retention.
+- Native Xvfb: actual byte-exact file transfer, progress receipt, compact
+  file/Bridge layouts, recent/private/shared picker and a + Group form saving
+  to an isolated PHP station. Qt MIME recognition passes for original and
+  renamed/provisioned executables, while an unrelated executable is unaffected.
+- Packaged Windows under Wine: actual byte-exact transfer, browser/progress
+  windows, + picker, 640×360 layout and no default egui placeholder window.
+  X11 automation must raise/focus Wine windows before activating them; otherwise
+  keystrokes hit the root window. Final evidence:
+  /tmp/slipstream-022-native-dewzalo4; Linux/group evidence:
+  /tmp/slipstream-022-native-dd9k97fe and /tmp/slipstream-022-native-qoo9qm7t.
+- Release sizes, SHA-256 hashes, Ed25519 signatures and update trust continuity
+  pass. Portable Linux starts, reports the correct build, retains the ELF note
+  and requires glibc no newer than 2.31. Windows version/icon resources and
+  software-renderer inclusion pass. Android is arm64/non-debuggable,
+  versionCode 110, signed by the existing certificate
+  d6ae3771378e9c00a82902e728012992834b9bf7e234fefed80dc85a4b879c6c.
+- Authenticated live HTTPS offers identify **0.22.0 / 110 / 9dbae20**.
+  Full Linux/Windows downloads match signed prefixes and valid station
+  provisioning trailers. Android's full download is unchanged and has the
+  APK MIME type and filename. Read-only account API returns groups/legacy fields.
+- Physical Windows DWM caption behavior and the new automatic KDE recovery
+  after a future system upgrade remain separate real-device checks. Wine
+  cannot reproduce Windows DWM exactly. No real Android/macOS runtime was used.
 
 Screenshots: [picker](screenshots/new-link-0.22.0.png),
 [640×360 file browser](screenshots/files-compact-0.22.0.png),
 [720×480 Bridge](screenshots/bridge-compact-0.22.0.png),
 [empty group](screenshots/groups-0.22.0.png).
-Heavy commands must use codex-check serially.
+
+### Deployment and rollback
+
+Only backward-compatible api/index.php and the Linux/Windows/Android clients
+plus manifest changed on the mount. Existing ownership/modes were preserved.
+API deployed first; staged/verified clients followed, manifest last. No relay
+service restart or production account mutation was performed.
+
+Private backups outside the public web root:
+
+- API: /home/doug/WebServer/home/relay/tmp/slipstream-api-0.22.0-7n1lc5ci
+  (old index.php and rollback.json with hashes/owner/mode).
+- Clients: /home/doug/WebServer/home/relay/tmp/slipstream-rollback-0.21.1-to-0.22.0-wpkpzgex
+  (old clients/manifest plus rollback.json).
+
+Restore client files atomically with deployed ownership/modes, then the saved
+manifest last. Restore the API index.php if rolling that change back as well;
+the API is also compatible with 0.21.1 clients. Publication used
+scripts/publish-station-clients.py with expected 0.21.1/106/2d1a128.
+
+### Build disk usage
+
+The user reported a 183 GiB workspace: target/ accounted for 182 GiB,
+including 85 GiB incremental state and 57 GiB native debug dependencies/tests.
+Cleanup removed all development/test caches, including cross targets, and
+pruned generated Android APKs to the newest two release/debug versions each.
+The workspace is now about **29 GiB**, with **27.55 GiB reusable release
+caches**, zero development caches, source/keys/settings/assembled packages and
+production rollback backups preserved. Signed package verification passed
+again after cleanup.
+
+Incremental development caching is now disabled, local debug info reduced while
+retaining line-number backtraces, with automatic pre/post housekeeping in station/Android builds
+and scripts/check.sh: 12 GiB combined development/test budget and 32 GiB
+combined release budget. They are cleanup thresholds, not filesystem quotas;
+a command can exceed them until the post-build pass. Nested Android assembly
+defers cleanup until station signing finishes. Gradle uses no persistent daemon
+and two workers. AGENTS.md preserves resource/cache instructions. See
+[BUILDING](BUILDING.md#disk-space) for commands and overrides. Shell syntax,
+Cargo metadata/profile validation, actual cache trimming, package preservation
+and check-command failure-status propagation were verified. Future substantial
+checks use scripts/check.sh, which runs codex-check serially on this machine.
 
 ## Published release: 0.21.1
 

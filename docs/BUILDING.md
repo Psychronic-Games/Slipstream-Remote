@@ -21,10 +21,10 @@ loaded on demand (`dlopen`) for Wayland screen sharing, and X11 is spoken
 in pure Rust.
 
 ```sh
-cargo build                     # debug build of everything
-cargo test --workspace          # unit + end-to-end session tests
-cargo clippy --workspace
-cargo run -p slipstream         # the app
+scripts/check.sh cargo build --workspace --locked
+scripts/check.sh                # unit + end-to-end session tests
+scripts/check.sh cargo clippy --workspace --all-targets --locked -- -D warnings
+scripts/check.sh cargo run -p slipstream         # the app
 scripts/try-local.sh            # one-machine trial: local server + host + viewer
 ```
 
@@ -37,13 +37,13 @@ CLI required). It copies the PHP site into a temporary directory and uses
 fixture accounts, without touching a running station or real settings:
 
 ```sh
-python3 scripts/test-station-accounts.py --client target/debug/slipstream
+scripts/check.sh python3 scripts/test-station-accounts.py --client target/debug/slipstream
 # Set SLIPSTREAM_TEST_PHP=/path/to/php if PHP is not on PATH.
 ```
 
 Some tests touch real hardware or the network and are `#[ignore]`d by
 default (for example the real clipboard round-trip). Run them with
-`cargo test -- --ignored`.
+`scripts/check.sh cargo test -- --ignored`.
 
 Linux desktop file drops need X11/Xwayland: the app selects X11 for its
 windows when `DISPLAY` is available, including inside a Wayland session.
@@ -52,11 +52,39 @@ Native Wayland file drops are unavailable in [winit 0.30's feature matrix](https
 
 ### Disk space
 
-Cargo's build cache, `target/`, grows with every build because it keeps old
-copies of compiled crates. `scripts/clean.sh` clears the development and
-test builds; `scripts/clean.sh --all` clears release builds too. Everything
-in `target/` can be rebuilt. Dependencies are built without debug info
-(`Cargo.toml`), which keeps a full test build to about 6 GB.
+Cargo keeps compiled dependencies and previous build outputs in `target/`.
+Development builds use line-number debug information and disable incremental
+compilation by default: the old incremental snapshots alone grew to 85 GiB.
+Dependencies still omit debug information.
+
+Station and standalone Android builds run cache housekeeping before and after
+packaging. For development, tests, Clippy and native checks, use
+`scripts/check.sh COMMAND [ARG ...]` (no arguments runs workspace tests).
+It uses the workstation's `codex-check` resource/serialization wrapper when
+available, then enforces the same budgets before and after the command.
+Direct ad-hoc Cargo commands bypass housekeeping.
+
+- All development/test caches combined: **12 GiB**. Crossing the budget
+  clears those caches on the next housekeeping pass.
+- All release caches combined: **32 GiB**. Crossing that budget clears the
+  release caches after packaging, or before the next build. Subsequent builds
+  recompile dependencies; ready-to-download apps remain in `dist/`.
+- `dist/android/`: retain the **two newest versions per release/debug variant**.
+  Assembled station clients, unknown files and deployed rollback backups remain.
+
+These are cleanup thresholds, not filesystem quotas: one running command may
+exceed them until it finishes. Override them with positive whole-GiB values in
+`SLIPSTREAM_DEV_CACHE_GIB` and `SLIPSTREAM_RELEASE_CACHE_GIB` if necessary.
+Housekeeping runs between builds under the same check lock. During station
+assembly, the nested Android build defers housekeeping to the outer build so
+it cannot remove the still-needed release-signing tool.
+
+`scripts/clean.sh --status` reports sizes without changes.
+`scripts/clean.sh` explicitly clears development/test output;
+`scripts/clean.sh --all` clears all local Cargo caches. Only the workspace's
+own `target/` is cleaned; symlinked target roots are refused. Source, settings,
+signing keys and deployed backups are preserved. Both cleanup modes also
+prune old generated APKs. Everything removed can be rebuilt.
 
 ## Release builds (the station package)
 

@@ -18,6 +18,10 @@
 # targets: see docs/BUILDING.md, "Android".
 set -euo pipefail
 cd "$(dirname "$0")/.."
+if [[ ${CODEX_CHECK_ACTIVE:-} != 1 && -x "$HOME/.local/bin/codex-check" ]]; then
+  exec "$HOME/.local/bin/codex-check" bash "$0" "$@"
+fi
+if [[ ${SLIPSTREAM_STATION_BUILD:-} != 1 ]]; then scripts/clean.sh --if-large; fi
 
 install=
 variant=release
@@ -78,7 +82,7 @@ fi
 echo "==> APK"
 # The Rust library is a release build either way.
 task=assemble${variant^}
-(cd "$app" && ./gradlew --quiet "$task" -PslipstreamVersion="$version" -PslipstreamBuild="$build")
+(cd "$app" && ./gradlew --no-daemon --max-workers=2 --quiet "$task" -PslipstreamVersion="$version" -PslipstreamBuild="$build")
 apk="dist/android/slipstream-remote-$version.apk"
 [ "$variant" = release ] || apk="dist/android/slipstream-remote-$version-$variant.apk"
 cp "$app/app/build/outputs/apk/$variant/app-$variant.apk" "$apk"
@@ -90,3 +94,4 @@ if [ -n "$install" ]; then
   echo "==> Installing"
   "$ANDROID_HOME/platform-tools/adb" install -r "$apk"
 fi
+if [[ ${SLIPSTREAM_STATION_BUILD:-} != 1 ]]; then scripts/clean.sh --if-large; fi
