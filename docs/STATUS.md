@@ -1,24 +1,31 @@
 # Project status
 
-*Updated 2026-10-20; latest published release 0.22.0.
+*Updated 2026-10-20; latest published release 0.22.1.
 Read this first when picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-20.md)
-records **0.22.0, build 110, commit 9dbae20**, published on
+records **0.22.1, build 113, commit 61367b6**, published on
 https://relay.slipstreamremote.com with verified live update offers/downloads.
-Includes the + tab link picker, direct relay-synced groups, compact layouts,
-vector Delta arrows/stars, rounded-bar pulse clipping, Windows tool-caption
-and late-repaint fixes, Linux portal recovery/timeouts and executable MIME icon.
-143 tests pass (five ignored); Linux/Windows/Android Clippy and native Linux /
-packaged Windows Wine transfer checks pass. Physical Windows DWM and future
-KDE-upgrade recovery remain real-device follow-ups.
+The + follows the last tab or Bridge when empty; New Link has complete LCARS
+framing and private/shared/empty groups. Group editing has an integrated
+full-width chooser, and compact settings/sign-in controls stay inside panels.
+Unique device detection is automatic on this Linux desktop using readable,
+locally hashed built-in PCI network hardware when firmware is root-only;
+learning the fallback preserves existing identities. 148 tests pass (five
+ignored); Linux/Windows/Android Clippy, native Linux UI/account checks and
+packaged Windows Wine file transfer/compact window checks pass.
 
-Workspace cleanup reduced about 183 GiB to 29 GiB. Build/check scripts now
-trim caches automatically at 12 GiB development/test and 32 GiB release, with
-incremental caching off and two generated Android package versions per variant.
-Use `scripts/check.sh` for development checks. Details and rollback paths are
-in the latest handoff; previous support-tool scope remains in the
-[October 19 handoff](DEVELOPMENT-2026-10-19.md).
+0.22.0 also added direct relay-synced groups, vector Delta arrows/stars,
+rounded-bar pulse clipping, Windows tool-caption and late-repaint fixes,
+Linux portal recovery/timeouts and executable MIME recognition. Physical
+Windows DWM and future KDE-upgrade recovery remain real-device follow-ups.
+
+Build/check scripts trim caches automatically at 12 GiB development/test and
+32 GiB release, with incremental caching off and two generated Android package
+versions per variant. Latest sizes are 5.60 / 27.87 GiB; the earlier cleanup
+removed about 154 GiB. Use `scripts/check.sh` for substantial development checks.
+Details and rollback paths are in the latest handoff; previous support-tool
+scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).
 
 **0.21.1 (previous release):** final implementation 2d1a128, build 106. Audits the
 five support-tool features below. Fixes pending requests surviving window

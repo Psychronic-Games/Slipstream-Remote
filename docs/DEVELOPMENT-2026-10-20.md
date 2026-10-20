@@ -1,6 +1,10 @@
 # Development handoff — 2026-10-20
 
-## Quality pass after 0.22.0 (validated; release pending)
+## Published release: 0.22.1
+
+Published **0.22.1, build 113, commit 61367b6** at
+https://relay.slipstreamremote.com. Implementation is bfd072e. Later handoff
+commits do not change deployed client metadata.
 
 The + now follows the last session tab, or Bridge when empty. New Link uses
 complete LCARS framing and shows private/shared and empty groups before recent
@@ -30,12 +34,40 @@ Native evidence: /tmp/slipstream-0221-quality-3gm2qqpv and
 
 Screenshots: [New Link](screenshots/new-link-0.22.1.png),
 [group chooser](screenshots/group-menu-0.22.1.png),
-[automatic device recognition](screenshots/unique-device-0.22.1.png).
+[automatic device recognition](screenshots/unique-device-0.22.1.png),
+[+ following an active tab](screenshots/tab-following-plus-0.22.1.png).
 
-Continue with scripts/check.sh serially: package 0.22.1, verify signatures,
-portable Linux/Windows resources/Android certificate, packaged Windows transfer,
-then publish clients with expected live 0.22.0/110/9dbae20 and check live HTTPS.
-No PHP API change is needed. Latest published clients remain 0.22.0/110/9dbae20.
+### Package and live verification
+
+- Release signatures, SHA-256 hashes and sizes pass; update signing key is
+  unchanged. Portable Linux starts with the correct build, requires no glibc
+  newer than 2.31, and retains the executable MIME note. Windows version
+  resources and bundled software renderer pass. Android is arm64,
+  non-debuggable, versionCode 113, signed by the existing certificate.
+- Packaged Windows under Wine connects to an isolated Linux host, transfers
+  byte-exact files, and shows the progress receipt and compact 640×360 file
+  browser without default placeholder windows. The new vector Refresh icon
+  is visible. Evidence: /tmp/slipstream-0221-windows-4n6aa79u. All fixture
+  processes stopped; the disposable Wine prefix was removed, keeping evidence.
+  Physical Windows DWM caption behavior still needs its real-device check.
+- Authenticated live update offers and full Linux/Windows/Android HTTPS
+  downloads pass for **0.22.1/113/61367b6**, including provisioning trailers
+  for desktop downloads and APK bytes/content headers.
+
+Only client files/manifest changed on the mount; no PHP/API or relay service
+change was needed. Publication preserved ownership/modes, staged and verified
+files, and replaced the manifest last, expecting 0.22.0/110/9dbae20.
+Private rollback backup:
+/home/doug/WebServer/home/relay/tmp/slipstream-rollback-0.22.0-to-0.22.1-91kpummm.
+Restore client files atomically with saved metadata, then the old manifest last.
+The user's running app/session and real identity/settings were not replaced.
+
+All substantial checks/builds used scripts/check.sh serially. Post-build
+housekeeping removed the oldest generated release APK. Current Cargo caches:
+**5.60 GiB development/test** and **27.87 GiB release**, within the 12/32 GiB
+budgets; incremental compilation remains disabled. Logs are under
+/tmp/slipstream-0221-{tests-final,clippy-linux-final,clippy-windows-final,
+clippy-android,release-build,verify,wine,publish,live}.log.
 
 ## Published release: 0.22.0
 
