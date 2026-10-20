@@ -32,6 +32,17 @@ show in small print: `0.6.0 (build N · commit)`.
   network hardware when firmware files are restricted to root; preserve
   existing identities when learning this fallback or adding/removing adapters.
 
+### Build cache housekeeping
+
+- Run cache housekeeping before and after station/Android builds and commands
+  run through `scripts/check.sh`: 12 GiB for combined development/test caches,
+  32 GiB for combined release caches, and two generated APK versions per variant.
+  These are cleanup thresholds; a running command may exceed them until it ends.
+- Disable incremental compilation, reduce development debug information and
+  run Gradle without a persistent daemon, with two workers. Preserve sources,
+  signing keys, profiles, assembled station clients and deployed rollback backups.
+  See [BUILDING](docs/BUILDING.md#disk-space) for inspection and cleanup commands.
+
 ## 0.22.0 — 2026-10-20
 
 ### Faster linking and compact desktop tools

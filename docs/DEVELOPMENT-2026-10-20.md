@@ -69,6 +69,21 @@ budgets; incremental compilation remains disabled. Logs are under
 /tmp/slipstream-0221-{tests-final,clippy-linux-final,clippy-windows-final,
 clippy-android,release-build,verify,wine,publish,live}.log.
 
+### Updating clients and source history
+
+Desktop clients can use **About → Check for updates**, then **Install & restart**
+when offered. Android users install the new APK from the station. Publication
+updates the downloads; it does not replace already-running client processes.
+The Linux hardware fallback is learned automatically on normal startup and
+preserves the existing device ID, without resetting the profile.
+
+Source history: 42f56f3 adds bounded build caches, bfd072e implements the LCARS
+quality pass and Linux recognition fallback, and 61367b6 versions release
+0.22.1. The initial verified deployment handoff is 83d6f04. Subsequent
+documentation commits do not change the published build 113 artifacts.
+The changelog, getting-started guide, build guide, status page and screenshots
+cover the changes; real-device verification limits are recorded above.
+
 ## Published release: 0.22.0
 
 Published **0.22.0, build 110, commit 9dbae20** at
