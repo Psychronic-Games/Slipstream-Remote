@@ -1,18 +1,20 @@
 # Project status
 
-*Updated 2026-10-19; latest published release 0.20.0; 0.21.1 built and verified.
+*Updated 2026-10-20; latest published release 0.21.1.
 Read this first when picking the work back up.*
 
-The latest [development and deployment handoff](DEVELOPMENT-2026-10-19.md)
-covers the 0.21.1 support-tool audit, cloned-device identity detection, plus
+The latest [development and deployment handoff](DEVELOPMENT-2026-10-20.md)
+covers completed 0.21.1 publication and durable release tooling. The
+[October 19 handoff](DEVELOPMENT-2026-10-19.md) covers the support-tool audit,
+cloned-device identity detection, plus
 draggable tabs, configurable windows, service one-time codes, toolbar layout,
 tool-window cleanup, proactive screen approval and APK naming.
-**Published clients: 0.20.0, build 98, commit 98e84e0**, on
+**Published clients: 0.21.1, build 106, commit 2d1a128**, on
 https://relay.slipstreamremote.com. Later documentation commits do not change
 that deployed build. The mounted client directory and rollback backups are
 recorded in the handoff.
 
-**0.21.1 ready to publish:** final implementation 2d1a128, build 106. Audits the
+**0.21.1 published:** final implementation 2d1a128, build 106. Audits the
 five support-tool features below. Fixes pending requests surviving window
 close/link loss, late tunnel replies, compact-host status cleanup and missing
 Dismiss / Stop controls, stale Windows service command epochs and unrelated
@@ -27,8 +29,11 @@ retaining the link and Stop ending it without recovery. The final packaged
 compact layout has both controls above the footer ([preview](screenshots/compact-support-0.21.1.png)).
 Linux/Windows/Android artifacts are in `dist/slipstream-station/clients/`;
 hashes/signatures, update trust continuity, Windows resources/Mesa, Linux
-startup/glibc and Android version/certificate checks passed. Publication and
-authenticated live download checks await the disconnected WebServer mount.
+startup/glibc and Android version/certificate checks passed. The mount was
+reconnected October 20: clients were backed up and published with the manifest
+last. Authenticated live offers and full Linux/Windows/Android HTTPS downloads
+passed. Today's workspace run again passed 138 tests; Linux Clippy and six
+isolated publication regressions passed. See the latest handoff for rollback.
 Physical Windows service, LAN wake and real
 Android/macOS checks remain open. The handoff maps each first-pass feature
 to its implemented scope and the larger ideas still on the roadmap.
@@ -41,9 +46,8 @@ station/unattended settings; run the updated master app/service before imaging.
 Missing or duplicate firmware evidence limits detection. The feature test run
 passed 131 tests (five ignored); Linux/Windows all-target and arm64 Android
 Clippy passed in its initial preparation. Its artifacts were checked before
-the subsequent workflow audit found the bugs corrected in 0.21.1. Deployment
-and live HTTPS verification await reconnection of `/home/doug/WebServer`;
-no station files were changed. Use the final 0.21.1 candidate.
+the subsequent workflow audit found the bugs corrected in 0.21.1. This
+intermediate candidate was never published; 0.21.1 is now live.
 
 **0.20.0:** a session strip switches workstations and returns to Bridge.
 Drag tabs to reorder, release outside the strip to create a floating window,
@@ -368,9 +372,8 @@ implemented and emulator-tested, alongside the touch viewer. Remaining work
 includes real-phone checks, viewer keyboard polish, hardware encoding and
 host audio/clipboard/files/updates. The steps below carry on alongside it.
 
-1. **Publish the verified 0.21.1 release**: reconnect the WebServer mount,
-   back up and publish clients with the manifest last, and
-   verify live signed offers/downloads. Confirm clone/service identity on
+1. **Confirm 0.21.1 on real machines**: publication and signed HTTPS checks
+   are complete. Confirm clone/service identity on
    differently identified Windows hardware; exercise reports, status/Stop,
    discovered-service tunnels, permitted LAN wake and network diagnostics.
    **Confirm 0.20.0 on the Windows Server VM**: tab reorder/tear-out/dock-back
@@ -410,5 +413,5 @@ host audio/clipboard/files/updates. The steps below carry on alongside it.
 - How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 - User-facing behaviour: [GETTING-STARTED.md](GETTING-STARTED.md).
 - What changed: [CHANGELOG.md](../CHANGELOG.md).
-- Today's handoff and deployed build: [DEVELOPMENT-2026-10-19.md](DEVELOPMENT-2026-10-19.md).
+- Latest handoff and deployed build: [DEVELOPMENT-2026-10-20.md](DEVELOPMENT-2026-10-20.md).
 - Audit findings, regression evidence and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md).

@@ -171,6 +171,53 @@ rebuilds every platform it lists.
 Running apps pick the update up within 6 hours, or about 20 seconds after
 they next start.
 
+### Publishing clients through a mounted station
+
+`scripts/publish-station-clients.py` preserves the release procedure in the
+repository. It requires Python 3.11+ and the `cryptography` package. Use the
+previously trusted public release key, rather than trusting a key from a new
+manifest. These commands use an already built release; they do not rebuild
+clients or update PHP/the relay:
+
+```sh
+python3 scripts/publish-station-clients.py --trusted-key PUBLIC_KEY verify
+python3 scripts/publish-station-clients.py --trusted-key PUBLIC_KEY publish \
+  --root /path/to/station/public_html --expect VERSION/BUILD/COMMIT
+python3 scripts/publish-station-clients.py --trusted-key PUBLIC_KEY check-live
+```
+
+Use the workstation's `codex-check` wrapper for these commands where local
+resource rules require it. `verify` checks desktop sizes, SHA-256 hashes and
+Ed25519 signatures, and records the APK checksum. Verify the Android signing
+certificate separately with the SDK's `apksigner verify --print-certs` before
+publishing an APK; it is outside the desktop update manifest.
+
+`publish` verifies the previous release and requires its exact
+`version/build/commit`. It refuses an unavailable station root, an older
+candidate, or a candidate missing deployed platforms. It creates a rollback
+backup under the station account's existing private `tmp/` directory, stages
+and checks every replacement, preserves ownership/modes, replaces clients
+atomically, then publishes the manifest last. Ordinary replacement failures
+restore the prior files. If the mount disconnects during publication, the
+printed backup remains available for manual recovery. Restore its saved
+clients using temporary filenames and atomic renames, preserving deployed
+ownership/modes; restore `manifest.json` last. `rollback.json` records saved
+hashes and any new files to remove.
+
+`check-live` reads the station URL/access key from the local
+`~/.config/slipstream/settings.toml` without printing credentials. Use
+`--settings PATH` for another profile. It checks authenticated HTTPS update
+offers and complete downloads, including desktop provisioning trailers and
+unchanged APK bytes, MIME type and filename. Redirects are refused so the
+access key is not forwarded elsewhere.
+
+The isolated publication regression check uses generated keys and temporary
+files, without touching a real station:
+
+```sh
+python3 scripts/test-publish-station-clients.py
+```
+
 ### The macOS app
 
 On a Mac with the Xcode command line tools, Rust and `brew install nasm`:

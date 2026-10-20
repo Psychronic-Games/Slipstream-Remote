@@ -1,6 +1,6 @@
 # Open issues
 
-The work queue, reviewed 2026-10-19 during the 0.21.1 support-tool audit. Each
+The work queue, reviewed 2026-10-20 after 0.21.1 publication. Each
 file is one issue: background, tasks or a test checklist, a "done when" where
 it applies, and pointers into the code.
 Once the repository is on GitHub, `scripts/file-issues.sh` files them all as
@@ -26,7 +26,7 @@ track them.
 | 16 | [Try the new session tools on real machines](16-session-tools-real-machines.md) | testing |
 
 Start with the current priorities in [status](../STATUS.md#next-steps-suggested-order)
-and the [2026-10-19 handoff](../DEVELOPMENT-2026-10-19.md). Issues 09 and 16
+and the [2026-10-20 handoff](../DEVELOPMENT-2026-10-20.md). Issues 09 and 16
 cover the latest Android-host and Windows-service/tool runtime checks. Issue 01
 retains older checks for the laptop and Debian server; 02 and 03 cover GitHub/CI
 and macOS. Original version numbers in older checklists describe when the work

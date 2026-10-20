@@ -1,5 +1,10 @@
 # Development handoff — 2026-10-19
 
+**Continuation:** [October 20](DEVELOPMENT-2026-10-20.md) completed publication
+of the verified 0.21.1 candidate and authenticated HTTPS download checks. The
+deployment blocker and temporary scripts below are historical; use the
+repository's `scripts/publish-station-clients.py` for future publication.
+
 ## Support-tool audit and stabilization: 0.21.1
 
 The interrupted feature work is reconstructed from implementation commit
