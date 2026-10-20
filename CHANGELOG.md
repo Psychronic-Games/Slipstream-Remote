@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.21.0 — 2026-10-19
+
 ### Support tools
 - Connect to selected discovered TCP services through the remote workstation;
   retain loopback tunnels with the session and open standard HTTP/HTTPS locally.
