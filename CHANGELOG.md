@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.21.1 — 2026-10-19
+
 ### Support tool reliability
 - Cancel pending scanner and report requests when their window closes or the
   link drops, discard late tunnel replies, and release scanner-owned tunnels
