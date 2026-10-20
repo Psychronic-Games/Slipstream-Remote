@@ -136,6 +136,7 @@ pub struct RemoteTab {
     public_ip: Option<Result<std::net::IpAddr, String>>,
     public_ip_rx: Option<tokio::sync::oneshot::Receiver<Result<std::net::IpAddr, String>>>,
     public_ip_at: Option<Instant>,
+    report: super::support_report::Report,
 }
 
 impl Drop for RemoteTab {
@@ -178,7 +179,7 @@ impl RemoteTab {
         });
         let info = session.info().clone();
         let files = Arc::new(Mutex::new(FileManager::new(session.fs(), info.host_name.clone())));
-        let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(session.fs(), info.capabilities.input)));
+        let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(session.fs(), info.capabilities.input, info.capabilities.tunnels)));
         // Wayland apps repeat held keys themselves; Windows/macOS need repeats sent.
         let forward_repeats = info.os != "Linux";
         let display = info.displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
@@ -232,6 +233,7 @@ impl RemoteTab {
             sysinfo_at: None,
             sysinfo: Arc::default(),
             public_ip: None, public_ip_rx: None, public_ip_at: None,
+            report: Default::default(),
             files,
             network,
         }
@@ -330,7 +332,7 @@ impl RemoteTab {
         self.send(ViewerCmd::Settings(PRESETS[self.preset].1));
         if self.audio!=default_audio {self.send(ViewerCmd::Audio(self.audio));}
         self.files.lock().unwrap().reconnect(self.session.fs(),self.info.host_name.clone());
-        self.network.lock().unwrap().reconnect(self.session.fs(),self.info.capabilities.input);
+        self.network.lock().unwrap().reconnect(self.session.fs(),self.info.capabilities.input,self.info.capabilities.tunnels);
         self.repaint_tools(ctx);
         self.pasting=None;self.sysinfo=Arc::default();self.sysinfo_busy=Arc::default();self.sysinfo_at=None;
         self.sysinfo_fetch=self.show_sysinfo;
@@ -538,6 +540,15 @@ impl RemoteTab {
 
         self.tunnels_window(&ctx, rt);
         self.sysinfo_window(&ctx, rt);
+        if self.report.open {
+            let scanner=self.network.lock().unwrap();
+            let network=format!("{}\n{}",scanner.export(&self.info.host_name),scanner.diagnostic_text());
+            drop(scanner);
+            self.report.show(&ctx, rt, super::support_report::Source {
+                id:self.id,host:&self.info.host_name,connected:self.closed.is_none(),can_control:self.info.capabilities.input,
+                fs:self.session.fs(),stats:&self.stats,network,frame:self.frames.latest().1,
+            });
+        }
         self.handle_drops(ui, &ctx, video_area, rt);
 
         if let Some(reason) = self.closed.clone() {
@@ -1003,6 +1014,11 @@ impl RemoteTab {
 
     /// Privacy mode, port forwarding, system information.
     fn tools_menu(&mut self, ui: &mut Ui) {
+        if ui.button("Support report…").clicked() {
+            self.report.open = true;
+            self.release_keyboard();
+            ui.close();
+        }
         if ui.add_enabled(self.info.capabilities.network_scan, egui::Button::new("Network scan…"))
             .on_hover_text("Discover devices and open TCP ports on the remote computer's network")
             .on_disabled_hover_text("Not allowed on that computer (Config → Permissions → Network scan)")

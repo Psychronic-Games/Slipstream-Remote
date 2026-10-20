@@ -15,6 +15,7 @@ mod lite;
 mod remote;
 mod session_windows;
 mod session_tabs;
+mod support_report;
 mod saved;
 #[cfg(windows)]
 mod scheme;
@@ -303,6 +304,8 @@ pub struct HostChat {
     pub open: bool,
     /// A message arrived: flash the chat window.
     pub ping: bool,
+    pub status: String,
+    pub status_open: bool,
 }
 
 pub struct IncomingSession {
@@ -389,7 +392,8 @@ impl App {
                 if tx.send(ev).is_err() {
                     break;
                 }
-                wake.request_repaint();
+                wake.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::RequestPaintWhileHidden);
+                wake.request_repaint_of(egui::ViewportId::ROOT);
             }
         });
         let settings_form = settings::SettingsForm::from(&client.settings());
@@ -492,6 +496,9 @@ impl App {
                     Event::Started{session,peer}=> {
                         if !self.incoming.iter().any(|s|s.id==session) {self.incoming.push(IncomingSession{id:session,peer,chat:Default::default(),started:Instant::now()});}
                     },
+                    Event::Status{session,text} => if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
+                        let mut chat = s.chat.lock().unwrap();chat.status_open = !text.is_empty();chat.status = text;
+                    },
                     Event::Ended{session}=>self.incoming.retain(|s|s.id!=session),
                     Event::Message{session,ours,text}=>if let Some(session)=self.incoming.iter_mut().find(|s|s.id==session){
                         let mut chat=session.chat.lock().expect("chat lock");chat.log.push((ours,text));if !ours{chat.open=true;chat.ping=true;}
@@ -530,6 +537,9 @@ impl App {
                         chat.ping = true;
                     }
                 }
+                ClientEvent::HostStatus { session, text } => if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
+                    let mut chat = s.chat.lock().unwrap();chat.status_open = !text.is_empty();chat.status = text;
+                },
                 ClientEvent::FileReceived { path, .. } => {
                     self.toast(format!("Received {}", path.display()), pal::GREEN);
                 }

@@ -18,6 +18,7 @@ pub struct SettingsForm {
     allow_audio: bool,
     allow_tunnels: bool,
     allow_network_scan: bool,
+    allow_wake_on_lan: bool,
     password_len: usize,
     new_permanent: String,
     has_permanent: bool,
@@ -45,6 +46,7 @@ impl From<&Settings> for SettingsForm {
             allow_audio: s.host.allow_audio,
             allow_tunnels: s.host.allow_tunnels,
             allow_network_scan: s.host.allow_network_scan,
+            allow_wake_on_lan: s.host.allow_wake_on_lan,
             password_len: s.host.one_time_password_len,
             new_permanent: String::new(),
             has_permanent: s.host.permanent_password_secret.is_some(),
@@ -125,6 +127,13 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         row(ui, "Device name", |ui| {
             text_field(ui, &mut f.device_name, "My Computer", false);
         });
+        #[cfg(not(target_os="android"))]
+        row(ui, "Cloned-device detection", |ui| {
+            let ready=slipstream_core::config::clone_detection_available();
+            ui.label(RichText::new(if ready {"Automatic · firmware UUID/serial available"}else{"Unavailable · no reliable firmware UUID/serial readable; existing ID retained"}).small().color(if ready {pal::GREEN}else{pal::GOLD}));
+        });
+        #[cfg(not(target_os="android"))]
+        ui.label(RichText::new("Before capturing a master image, run this updated app and update/start its installed service once. A clone with different firmware identifiers gets a new ID at startup while retaining station/unattended settings. Identical or unavailable firmware identifiers cannot establish a different device.").small().color(pal::DIM));
     });
     ui.add_space(14.0);
 
@@ -158,19 +167,20 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             row(ui, "Accept connections", |ui| {
                 ui.checkbox(&mut f.accept, "Allow others to connect to this device");
             });
-            row(ui, "Permissions", |ui| {
+            row(ui, "Permissions", |ui| { ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut f.allow_input, "Control");
                 #[cfg(not(target_os="android"))]
                 {
                 ui.checkbox(&mut f.allow_clipboard, "Clipboard");
                 ui.checkbox(&mut f.allow_files, "Files");
                 ui.checkbox(&mut f.allow_audio, "Sound");
+                ui.checkbox(&mut f.allow_wake_on_lan, "Wake-on-LAN").on_hover_text("Let authenticated controllers wake other devices through a selected LAN adapter; also requires Network scan and Control");
                 ui.checkbox(&mut f.allow_network_scan, "Network scan").on_hover_text("Let authenticated viewers discover devices and open TCP ports on this computer's connected IPv4 networks");
                 }
                 ui.checkbox(&mut f.allow_tunnels, "Port forwarding").on_hover_text(
                     "Let the person connecting reach services on this computer and its network through the link (e.g. Remote Desktop). Off unless you need it.",
                 );
-            });
+            }); });
             row(ui, "One-time password length", |ui| {
                 ui.add(egui::Slider::new(&mut f.password_len, 4..=12));
             });
@@ -424,6 +434,7 @@ fn save(app: &mut App) {
         s.host.allow_audio = allow_audio;
         s.host.allow_tunnels = allow_tunnels;
         s.host.allow_network_scan = f.allow_network_scan;
+        s.host.allow_wake_on_lan = f.allow_wake_on_lan;
         s.host.one_time_password_len = len;
         if !new_permanent.is_empty() {
             s.host.set_permanent_password(Some(&new_permanent));

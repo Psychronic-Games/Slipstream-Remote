@@ -11,6 +11,7 @@ pub mod fsops;
 pub mod preview;
 mod host;
 pub mod network;
+pub mod support;
 mod network_names;
 pub mod tunnel;
 pub mod update;
@@ -67,6 +68,7 @@ pub enum ClientEvent {
     HostSessionStarted { session: u64, peer: String },
     HostSessionEnded { session: u64, reason: String },
     HostChat { session: u64, text: String },
+    HostStatus { session: u64, text: String },
     FileReceived { session: u64, path: std::path::PathBuf },
     Notice(String),
     /// The station offers a newer version of the app.
@@ -144,13 +146,16 @@ impl Client {
     /// Loads settings and identity from `store`, binds the network endpoint
     /// and starts background tasks. Must be called inside a tokio runtime.
     pub async fn start(store: Store, opts: ClientOptions) -> Result<(Self, mpsc::UnboundedReceiver<ClientEvent>)> {
+        // Bind the persistent profile before loading settings: clone detection
+        // may clear a stale station ID. Viewers still use a throwaway network key.
+        let persistent = store.identity()?;
         let settings = store.load_settings();
         // The stored identity is this computer's ID, and only the one
         // process that hosts it may use it: two endpoints with one key push
         // each other off the relay. A client that only connects out (the
         // app while the Windows service hosts, command-line tools) gets a
         // throwaway key; nothing relies on a viewer's key staying the same.
-        let secret = if opts.accept_sessions { store.identity()? } else { iroh::SecretKey::generate() };
+        let secret = if opts.accept_sessions { persistent } else { iroh::SecretKey::generate() };
         let endpoint = net::bind_client(secret, &settings.server, opts.accept_sessions).await?;
         info!(endpoint = %endpoint.id(), "endpoint bound");
         let (events, rx) = mpsc::unbounded_channel();
@@ -956,6 +961,54 @@ mod tests {
         }
         viewer.shutdown().await;
         let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn support_requests_enforce_permissions_and_keep_sessions_usable() {
+        use slipstream_core::proto::StreamOpen;
+        use std::net::Ipv4Addr;
+        let (viewer, _ev, vd) = client("supportviewer", false).await;
+        for (name, control, scan, tunnels, wake) in [
+            ("supportfull", true, true, true, true),
+            ("supportreadonly", false, false, false, false),
+        ] {
+            let (host, mut events, hd) = client_with(name, true, Default::default(), |s| {
+                s.host.allow_input = control;s.host.allow_network_scan=scan;s.host.allow_tunnels=tunnels;s.host.allow_wake_on_lan=wake;
+            }).await;
+            let (session, _ev)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery", |_|{}).await.unwrap();
+            let fs=session.fs();
+            if control {
+                fs.support_status("Checking the printer".into()).await.unwrap();
+                assert!(wait_for(&mut events,|e| matches!(e,ClientEvent::HostStatus{text,..} if text=="Checking the printer")).await);
+                fs.support_status(String::new()).await.unwrap();
+                assert!(wait_for(&mut events,|e| matches!(e,ClientEvent::HostStatus{text,..} if text.is_empty())).await);
+                assert!(fs.ask(StreamOpen::SupportStatus{text:"bad\nstatus".into()}).await.is_err());
+            } else {
+                assert!(format!("{:#}",fs.support_status("Checking".into()).await.unwrap_err()).contains("not allowed"));
+            }
+            let wake_error=fs.wake_on_lan(Ipv4Addr::LOCALHOST,"ff:ff:ff:ff:ff:ff".into()).await.unwrap_err();
+            assert!(format!("{wake_error:#}").contains(if wake {"unicast"}else{"not allowed"}));
+            let diagnostic=fs.network_diagnostics(Ipv4Addr::LOCALHOST,"invalid name!".into(),None).await.unwrap_err();
+            assert!(format!("{diagnostic:#}").contains(if scan {"DNS name"}else{"not allowed"}));
+            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port=listener.local_addr().unwrap().port();
+            let server=tokio::spawn(async move {
+                while let Ok((mut stream,_))=listener.accept().await {
+                    tokio::spawn(async move {let (mut r,mut w)=stream.split();let _=tokio::io::copy(&mut r,&mut w).await;});
+                }
+            });
+            if tunnels {
+                use tokio::io::{AsyncReadExt,AsyncWriteExt};
+                let tunnel=fs.connect_through(Ipv4Addr::LOCALHOST,port).await.unwrap();
+                let mut socket=tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST,tunnel.local_port)).await.unwrap();
+                socket.write_all(b"support tunnel").await.unwrap();let mut echoed=[0;14];socket.read_exact(&mut echoed).await.unwrap();assert_eq!(&echoed,b"support tunnel");
+                drop(tunnel);
+            } else {assert!(format!("{:#}",fs.connect_through(Ipv4Addr::LOCALHOST,port).await.err().unwrap()).contains("not allowed"));}
+            server.abort();
+            assert!(!fs.support_inventory().await.unwrap().is_empty());
+            drop(session);host.shutdown().await;let _=std::fs::remove_dir_all(hd);
+        }
+        viewer.shutdown().await;let _=std::fs::remove_dir_all(vd);
     }
 
     /// Port forwarding carries a TCP connection both ways, and is refused

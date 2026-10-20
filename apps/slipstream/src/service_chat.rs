@@ -16,6 +16,8 @@ struct Session {
     id: u64,
     peer: String,
     lines: Vec<Line>,
+    #[serde(default)]
+    status: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Snapshot {
@@ -84,6 +86,7 @@ pub enum Event {
     Ended { session: u64 },
     Message { session: u64, ours: bool, text: String },
     Password(Option<String>),
+    Status { session: u64, text: String },
 }
 
 #[derive(Default)]
@@ -91,6 +94,7 @@ struct Cursor {
     epoch: Option<u64>,
     sessions: BTreeMap<u64, u64>,
     password: Option<String>,
+    statuses: BTreeMap<u64, String>,
 }
 impl Cursor {
     fn update(&mut self, snapshot: &Snapshot) -> Vec<Event> {
@@ -100,6 +104,7 @@ impl Cursor {
             events.push(Event::Password(self.password.clone()));
         }
         let old = std::mem::take(&mut self.sessions);
+        let previous_statuses = std::mem::take(&mut self.statuses);
         for &id in old.keys() {
             if self.epoch != Some(snapshot.epoch) || !snapshot.sessions.iter().any(|s| s.id == id) {
                 events.push(Event::Ended { session: id });
@@ -117,6 +122,11 @@ impl Cursor {
                     peer: session.peer.clone(),
                 });
             }
+            if (!session.status.is_empty() || previous_statuses.get(&session.id).is_some_and(|s| !s.is_empty()))
+                && (previous.is_none() || previous_statuses.get(&session.id) != Some(&session.status)) {
+                events.push(Event::Status {session: session.id, text: session.status.clone()});
+            }
+            self.statuses.insert(session.id, session.status.clone());
             let mut seen = previous.unwrap_or(0);
             for line in &session.lines {
                 if line.sequence > seen {
@@ -334,15 +344,19 @@ mod native {
                         id: *session,
                         peer: peer.clone(),
                         lines: Vec::new(),
+                        status: String::new(),
                     });
                 }
                 ClientEvent::HostSessionEnded { session, .. } => state.sessions.retain(|s| s.id != *session),
+                ClientEvent::HostStatus { session, text } => {
+                    if let Some(s) = state.sessions.iter_mut().find(|s| s.id == *session) {s.status = text.clone();}
+                }
                 ClientEvent::HostChat { session, text } => state.message(*session, false, text.clone()),
                 _ => return,
             }
             self.changes.send_replace(state.clone());
             drop(state);
-            if matches!(event, ClientEvent::HostChat { .. })
+            if (matches!(event, ClientEvent::HostChat { .. }) || matches!(event, ClientEvent::HostStatus { text, .. } if !text.is_empty()))
                 && self.clients.load(Ordering::Acquire) == 0
                 && self.last_launch.is_none_or(|t| t.elapsed() > Duration::from_secs(10))
             {
@@ -496,6 +510,7 @@ mod native {
                                         bail!("GUI closed");
                                     }
                                 }
+                                ctx.send_viewport_cmd_to(eframe::egui::ViewportId::ROOT, eframe::egui::ViewportCommand::RequestPaintWhileHidden);
                                 ctx.request_repaint();
                             }
                             #[allow(unreachable_code)]
@@ -517,7 +532,8 @@ mod native {
                     if let Err(e) = result {
                         tracing::debug!("waiting for host-chat service: {e:#}");
                     }
-                    ctx.request_repaint();
+                    ctx.send_viewport_cmd_to(eframe::egui::ViewportId::ROOT, eframe::egui::ViewportCommand::RequestPaintWhileHidden);
+                ctx.request_repaint();
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             });
@@ -553,6 +569,20 @@ mod tests {
     }
 
     #[test]
+    fn service_status_is_optional_and_changes_clear_without_replaying() {
+        let mut snapshot: Snapshot = serde_json::from_str(r#"{"epoch":1,"sequence":0,"sessions":[{"id":7,"peer":"Tech","lines":[]}]}"#).unwrap();
+        let mut cursor=Cursor::default();
+        assert_eq!(cursor.update(&snapshot),vec![Event::Started{session:7,peer:"Tech".into()}]);
+        snapshot.sessions[0].status="Checking the printer".into();
+        assert_eq!(cursor.update(&snapshot),vec![Event::Status{session:7,text:"Checking the printer".into()}]);
+        assert!(cursor.update(&snapshot).is_empty());
+        snapshot.sessions[0].status.clear();
+        assert_eq!(cursor.update(&snapshot),vec![Event::Status{session:7,text:String::new()}]);
+        snapshot.sessions.clear();
+        assert_eq!(cursor.update(&snapshot),vec![Event::Ended{session:7}]);
+    }
+
+    #[test]
     fn reconnect_does_not_repeat_messages_and_restart_resets_sessions() {
         let mut snapshot = Snapshot {
             epoch: 1,
@@ -561,6 +591,7 @@ mod tests {
                 id: 0,
                 peer: "Technician".into(),
                 lines: Vec::new(),
+                status: String::new(),
             }],
             password: None,
         };

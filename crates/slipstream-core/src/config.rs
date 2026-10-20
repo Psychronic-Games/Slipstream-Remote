@@ -120,6 +120,8 @@ pub struct HostSettings {
     pub allow_tunnels: bool,
     /// Let authenticated viewers discover devices on connected IPv4 subnets.
     pub allow_network_scan: bool,
+    /// Permit authenticated controllers to send LAN wake packets.
+    pub allow_wake_on_lan: bool,
     /// Last numeric ID the server gave us (display only; the server is authoritative).
     pub last_device_id: Option<DeviceId>,
     /// Wayland portal token so screen-sharing permission survives restarts.
@@ -202,6 +204,7 @@ impl Default for HostSettings {
             allow_audio: true,
             allow_tunnels: false,
             allow_network_scan: true,
+            allow_wake_on_lan: false,
             last_device_id: None,
             portal_restore_token: None,
         }
@@ -250,6 +253,9 @@ impl Settings {
         self.recent.truncate(20);
     }
 }
+
+/// Whether this process can read reliable per-device firmware evidence.
+pub fn clone_detection_available() -> bool {!crate::hardware_id::current().is_empty()}
 
 fn default_device_name() -> String {
     std::env::var("SLIPSTREAM_DEVICE_NAME")
@@ -320,12 +326,68 @@ impl Store {
         write_private(&self.dir.join("settings.toml"), toml::to_string_pretty(settings)?.as_bytes())
     }
 
-    /// Loads this device's keypair, creating one on first run. The key is
-    /// the device's ID on its station, so it's only ever made when there is
-    /// none: a key that can't be read right now (Windows antivirus scanning
-    /// a freshly copied one, say) is retried, then an error. Replacing it
-    /// would quietly give the computer a new ID.
+    /// Loads the persistent key, creating it on first run or when reliable
+    /// firmware evidence proves this profile was moved to a different device.
+    /// Unreadable/damaged keys are never silently replaced.
     pub fn identity(&self) -> Result<SecretKey> {
+        self.identity_for_hardware(crate::hardware_id::current())
+    }
+
+    fn identity_for_hardware(&self, evidence: &crate::hardware_id::Evidence) -> Result<SecretKey> {
+        if evidence.is_empty() {return self.identity_unbound();}
+        let mut options=fs::OpenOptions::new();options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)] {use std::os::unix::fs::OpenOptionsExt;options.mode(0o600);}
+        let lock=options.open(self.dir.join("identity.lock"))?;
+        lock.lock().context("locking the device identity")?;
+        let binding_path=self.dir.join("device-binding.json");
+        let previous=match fs::read(&binding_path) {
+            Ok(bytes)=>match serde_json::from_slice::<DeviceBinding>(&bytes) {
+                Ok(binding)=>Some(binding),
+                Err(_)=>{tracing::warn!("device hardware binding is damaged; retaining the existing identity");return self.identity_unbound();}
+            },
+            Err(e) if e.kind()==std::io::ErrorKind::NotFound=>None,
+            Err(e)=>return Err(e).context("reading device hardware binding"),
+        };
+        let mut key=self.identity_unbound()?;
+        let mut changed_device=false;
+        if let Some(binding)=&previous {
+            if binding.version!=1 {tracing::warn!("unknown device-binding version; retaining the existing identity");return Ok(key);}
+            // Prefer the firmware UUID; use a serial only when no comparable
+            // UUID is available. A generic/repeated serial must not override a
+            // changed UUID on two laptops of the same model.
+            let different=["system-uuid","system-serial"].into_iter().find_map(|kind| {
+                binding.evidence.get(kind).zip(evidence.get(kind)).map(|(old,new)| old!=new)
+            }).unwrap_or(false);
+            if different {
+                changed_device=true;
+                key=SecretKey::generate();
+                write_private(&self.dir.join("identity.key"),&key.to_bytes())?;
+                let settings_path=self.dir.join("settings.toml");
+                let mut settings=match fs::read_to_string(&settings_path) {
+                    Ok(text)=>toml::from_str::<Settings>(&text).context("settings are damaged; cannot finish cloned-device identity initialization")?,
+                    Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Settings::default(),
+                    Err(e)=>return Err(e).context("reading cloned-device settings"),
+                };
+                settings.host.last_device_id=None;
+                if settings.device_name.eq_ignore_ascii_case(&binding.system_name) {settings.device_name=default_device_name();}
+                self.save_settings(&settings)?;
+                for name in ["device-id.txt","chat-identity.txt"] {
+                    match fs::remove_file(self.dir.join("public").join(name)) {
+                        Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e).context("clearing the previous service's public identity"),
+                    }
+                }
+                tracing::info!("different physical device detected; generated a fresh identity and cleared the cached station ID while preserving configuration");
+            }
+        }
+        let mut evidence=evidence.clone();
+        // Keep earlier evidence if today's permissions temporarily hide it.
+        if !changed_device && let Some(previous)=&previous {for (kind,value) in &previous.evidence {evidence.entry(kind.clone()).or_insert_with(||value.clone());}}
+        let next=DeviceBinding {version:1,evidence,system_name:default_device_name()};
+        if previous.as_ref()!=Some(&next) {write_private(&binding_path,&serde_json::to_vec(&next)?)?;}
+        Ok(key)
+    }
+
+    fn identity_unbound(&self) -> Result<SecretKey> {
         let path = self.dir.join("identity.key");
         let mut attempt = 0;
         let bytes = loop {
@@ -355,6 +417,13 @@ impl Store {
             Err(_) => anyhow::bail!("{} is damaged ({} bytes instead of 32): restore it, or delete it to give this device a new ID", path.display(), bytes.len()),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct DeviceBinding {
+    version: u32,
+    evidence: crate::hardware_id::Evidence,
+    system_name: String,
 }
 
 /// Writes a file readable only by the current user.
@@ -399,7 +468,51 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             for file in ["settings.toml","identity.key"] {assert_eq!(fs::metadata(dir.path().join(file)).unwrap().permissions().mode() & 0o777,0o600);}
         }
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(),2);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(),if crate::hardware_id::current().is_empty(){2}else{4});
+    }
+
+    #[test]
+    fn cloned_profile_rekeys_once_preserving_settings_and_removing_cached_identity() {
+        use crate::hardware_id::Evidence;
+        let master=tempfile::tempdir().unwrap();let source=Store::open(master.path()).unwrap();
+        let mut settings=Settings {device_name:"Custom workstation label".into(),..Default::default()};
+        settings.server.url=Some("station.example".into());settings.server.key=Some("fixture-key".into());
+        settings.host.set_permanent_password(Some("fixture unattended password"));settings.host.last_device_id=Some(DeviceId(123456789));
+        source.save_settings(&settings).unwrap();
+        let evidence=|id:&str| Evidence::from([("system-uuid".into(),id.into())]);
+        let original=source.identity_for_hardware(&evidence("device-a")).unwrap().to_bytes();
+        assert_eq!(source.identity_for_hardware(&evidence("device-a")).unwrap().to_bytes(),original);
+        for n in 0..2 {
+            let clone=tempfile::tempdir().unwrap();let store=Store::open(clone.path()).unwrap();
+            for name in ["settings.toml","identity.key","device-binding.json"] {fs::copy(master.path().join(name),clone.path().join(name)).unwrap();}
+            fs::create_dir(clone.path().join("public")).unwrap();
+            for name in ["device-id.txt","chat-identity.txt"] {fs::write(clone.path().join("public").join(name),"old identity").unwrap();}
+            let cloned=store.identity_for_hardware(&evidence(&format!("device-{n}"))).unwrap().to_bytes();
+            assert_ne!(cloned,original);assert_eq!(cloned,store.identity_for_hardware(&evidence(&format!("device-{n}"))).unwrap().to_bytes());
+            let actual=store.load_settings();assert_eq!(actual.device_name,settings.device_name);assert_eq!(actual.server.key,settings.server.key);assert_eq!(actual.server.url,settings.server.url);
+            assert_eq!(actual.host.permanent_secret(),settings.host.permanent_secret());assert!(actual.host.last_device_id.is_none());
+            assert!(!clone.path().join("public/device-id.txt").exists());assert!(!clone.path().join("public/chat-identity.txt").exists());
+            // No usable evidence is not evidence of another device.
+            assert_eq!(cloned,store.identity_for_hardware(&Evidence::new()).unwrap().to_bytes());
+            fs::write(clone.path().join("device-binding.json"),b"invalid metadata").unwrap();
+            assert_eq!(cloned,store.identity_for_hardware(&evidence("device-new")).unwrap().to_bytes());
+        }
+        assert_eq!(original,source.identity_for_hardware(&evidence("device-a")).unwrap().to_bytes());
+    }
+
+    #[test]
+    fn partial_hardware_reads_preserve_identity_and_concurrent_clone_starts_agree() {
+        use crate::hardware_id::Evidence;
+        let dir=tempfile::tempdir().unwrap();let store=Store::open(dir.path()).unwrap();
+        let original=Evidence::from([("system-uuid".into(),"uuid-a".into()),("system-serial".into(),"serial-a".into())]);
+        let key=store.identity_for_hardware(&original).unwrap().to_bytes();
+        assert_eq!(key,store.identity_for_hardware(&Evidence::from([("system-serial".into(),"serial-a".into())])).unwrap().to_bytes());
+        let new=Evidence::from([("system-uuid".into(),"uuid-b".into()),("system-serial".into(),"serial-b".into())]);
+        let results=std::thread::scope(|scope| {
+            let jobs:Vec<_>=(0..8).map(|_| {let (store,new)=(&store,&new);scope.spawn(move ||store.identity_for_hardware(new).unwrap().to_bytes())}).collect();
+            jobs.into_iter().map(|job|job.join().unwrap()).collect::<Vec<_>>()
+        });
+        assert!(results.iter().all(|k|k==&results[0]));assert_ne!(results[0],key);
     }
 
     #[test]

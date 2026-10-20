@@ -18,6 +18,13 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
   loop keeps latency low instead of letting frames queue up.
 - **Full control** — mouse, wheel, keyboard (physical keys, works across
   layouts), Ctrl+Alt+Del and other special keys, multi-monitor switching.
+- **Support tools** — connect to discovered TCP services through a workstation,
+  export reviewed diagnostic reports, send LAN wake packets, compare DNS and
+  gateway/station checks, and show the user a plain-language support status.
+- **Cloned-device detection** — desktop firmware UUID/serial binding gives an
+  imaged machine a fresh identity when it starts on different hardware, while
+  retaining station and unattended settings. Run the updated master/service
+  before imaging; unavailable or duplicated firmware identifiers limit detection.
 - **Several workstations at once** — use reorderable session tabs or separate windows,
   or dock them back into the console without reconnecting.
 - **Clipboard sync, chat, and a two-pane file manager** — copy and paste

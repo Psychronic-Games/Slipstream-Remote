@@ -31,3 +31,6 @@ webpki-roots = "1"
 [target."cfg(unix)".dependencies]
 plist = { version = "1.10.1", default-features = false }
 xattr = "1.6.1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }

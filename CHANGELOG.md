@@ -13,6 +13,29 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+### Support tools
+- Connect to selected discovered TCP services through the remote workstation;
+  retain loopback tunnels with the session and open standard HTTP/HTTPS locally.
+- Review/export a support report with inventory, public IP, connection/network
+  results, technician notes and an explicitly selected remote screenshot.
+- Send peer-assisted LAN wake packets with a separate opt-in host permission,
+  adapter-derived broadcasts, strict MAC checks and a bounded request rate.
+- Check gateway ICMP, configured/comparison DNS answers and the host's station
+  API with bounded, cancellable diagnostics and copyable results.
+- Show a plain-language host status with Dismiss / Stop support, including the
+  Windows service bridge and compact app. Wake occluded/hidden host consoles
+  for incoming events so status does not wait for a click.
+
+### Automatic cloned-device identities
+- Bind desktop profiles to locally hashed firmware UUID/serial evidence.
+  An imaged profile starting on different hardware generates a fresh random
+  key and station ID while retaining station/unattended/service configuration.
+- Clear stale cached/public IDs, serialize concurrent starts, retain identity
+  on missing evidence, and show firmware availability in Config. An updated
+  master app/service must run once before capture to establish the baseline.
+- Keep existing service identity during updates/reinstalls, including when a
+  clone's user and machine profiles have independently rekeyed.
+
 ## 0.20.0 — 2026-10-19
 
 ### Session tabs and floating windows

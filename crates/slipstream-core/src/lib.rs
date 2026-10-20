@@ -4,6 +4,7 @@ pub mod account;
 pub mod auth;
 pub mod clock;
 pub mod config;
+mod hardware_id;
 pub mod directory;
 pub mod framing;
 pub mod net;

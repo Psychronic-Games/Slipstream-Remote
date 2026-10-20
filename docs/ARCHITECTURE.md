@@ -681,3 +681,49 @@ around its content. The shared chat UI fills a bounded scrolling log with
 framed messages, leaving space for the composer at the bottom. Service-chat
 messages still wait for the service echo; unsuccessful sends retain the
 input. Closing that viewport only closes chat, not the host session.
+
+
+### Support tools and device binding (0.21.0)
+
+Three appended protocol-6 request variants add WakeOnLan, NetworkDiagnostics
+and SupportStatus, plus an appended diagnostic reply. Host file-stream policy
+enforces existing network/control permissions and a new opt-in wake setting.
+Requests have deadlines; scans/diagnostics share a session semaphore, DNS UDP
+replies are bounded and matched to the request, and closing a request cancels
+pending async work. Wake targets are adapter-derived subnet broadcasts, with
+strict unicast MAC validation and a host-wide two-second throttle. A loopback
+UDP test checks all three exact packets without waking a real machine.
+
+Scanner-created TCP tunnels preflight the target using the existing host tunnel
+policy, bind locally to loopback, and live with the session's scanner state.
+They survive closing the scanner UI and close with interruption/disconnection.
+The UI only constructs numeric loopback HTTP/HTTPS URLs; scanned names never
+become executable commands. The support report copies an allowlist of inventory,
+network and viewer statistics with explicit notes. Local exports use unique
+private temporary directories retained only on success, with optional PNG
+conversion off the UI thread. No settings/credential object or raw log is
+serialized into a report.
+
+Host status emits an in-memory session event, bridged to full/compact Windows
+apps through an optional snapshot field on the authenticated local pipe. The
+full app registers a deferred status viewport independently of chat, with a
+local disconnect action. Client events and pipe updates request root paint even
+while hidden; otherwise an occluded host can defer the notification until click.
+CLI hosts record only a generic status event, not the potentially sensitive text.
+
+Store::identity reads firmware evidence once per process. Windows uses the
+bounded RawSMBIOSData API ([Microsoft documentation](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemfirmwaretable));
+SMBIOS 2.6+ UUID bytes are normalized to canonical order. Linux/macOS use their
+firmware UUID and serial sources. Only context-separated hashes are persisted
+in device-binding.json. An exclusive OS file lock serializes binding/identity
+updates across processes. UUID comparison takes priority; serial is a fallback.
+A proven change creates a fresh random key, clears cached/public IDs and saves
+the new binding after configuration cleanup. Missing evidence and damaged or
+unknown binding metadata never silently replace the key. Client startup binds
+before loading settings so stale cached IDs cannot be republished. Viewer
+network endpoints remain ephemeral even though their persistent profiles are
+checked. Windows installation retains an existing machine key instead of
+copying an independently rekeyed user profile over it. First installation still
+adopts the user's key and establishes a machine binding. Service registration
+and unattended settings are preserved; actual cloned Windows hardware remains
+a runtime confirmation task.

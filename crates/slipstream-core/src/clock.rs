@@ -197,6 +197,13 @@ pub async fn sync_from(url: &reqwest::Url) -> Result<()> {
     Ok(())
 }
 
+/// A readable UTC timestamp for exported reports and their preview.
+pub fn format_utc(seconds: u64) -> String {
+    if seconds == 0 {return "Not collected".into();}
+    std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds))
+        .map(httpdate::fmt_http_date).unwrap_or_else(|| "Unavailable".into())
+}
+
 #[cfg(test)]
 pub(crate) fn set_offset_for_test(off: i64) {
     OFFSET.store(off, Ordering::Relaxed);

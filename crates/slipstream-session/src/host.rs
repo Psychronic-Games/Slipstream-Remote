@@ -360,7 +360,14 @@ async fn session_loop(
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();
     let clipboard = if caps.clipboard { Clipboard::start(clip_tx, &inner.opts.clipboard) } else { None };
     // Pasted files go onto this clipboard (only when clipboard sharing is on).
-    let _files_guard = AbortOnDrop(tokio::spawn(files::serve(conn.clone(), policy, on_saved, clipboard.clone())));
+    let status_inner = inner.clone();
+    let support_settings = inner.settings.lock().unwrap().clone();
+    let tools = Arc::new(crate::support::HostTools {
+        station: support_settings.server,
+        allow_wake: support_settings.host.allow_wake_on_lan,
+        status: Arc::new(move |text| status_inner.emit(ClientEvent::HostStatus { session: id, text })),
+    });
+    let _files_guard = AbortOnDrop(tokio::spawn(files::serve(conn.clone(), policy, on_saved, clipboard.clone(), tools)));
 
     let flow = Flow::new();
     let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();

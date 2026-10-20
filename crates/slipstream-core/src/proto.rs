@@ -247,6 +247,10 @@ pub enum StreamOpen {
     PublicIp { refresh: bool },
     /// Small passive preview; requires the same permission as file browsing.
     FilePreview { path: String },
+    /// Optional support tools; appended to retain protocol-6 compatibility.
+    WakeOnLan { interface: std::net::Ipv4Addr, mac: String },
+    NetworkDiagnostics { interface: std::net::Ipv4Addr, name: String, comparison_dns: Option<std::net::IpAddr> },
+    SupportStatus { text: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +270,7 @@ pub enum StreamReply {
     DropTarget { path: String },
     PublicIp(std::net::IpAddr),
     FilePreview(Option<FilePreview>),
+    NetworkDiagnostics(Vec<InfoSection>),
 }
 
 /// Bounded passive data, never an executable document or an original image.

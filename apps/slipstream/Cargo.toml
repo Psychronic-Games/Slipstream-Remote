@@ -20,6 +20,7 @@ directories = "6.0.0"
 serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
+tempfile.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 # GameActivity (not NativeActivity): it has soft keyboard and IME support.
@@ -44,6 +45,3 @@ wgpu-hal = { version = "30.0.1", default-features = false, features = ["gles"] }
 
 [build-dependencies]
 embed-resource = "3"
-
-[dev-dependencies]
-tempfile.workspace = true

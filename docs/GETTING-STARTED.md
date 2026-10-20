@@ -539,3 +539,84 @@ preserve full picture resolution; on a slow VM the frame rate may be lower.
 **Speed** and **Low bandwidth** can reduce resolution while moving and
 sharpen the picture when still. Hover the session statistics to see the
 encoded picture dimensions. Both computers need session protocol 6.
+
+
+## Support tools
+
+Under a live session's **Tools → Support report…**, you can collect system
+inventory/public IP, add technician notes, review the text and copy it or
+save a new local report folder. Pick an existing destination folder. Each
+export has its own folder and `report.txt`; the screenshot checkbox adds
+`screen.png` from the latest received frame. Screenshots are off by default
+and may be stale after an interruption. Reports omit credentials, chat and
+raw logs. Network scan/filter results and completed diagnostics are retained
+snapshots, not an automatic fresh scan.
+
+The same panel has **Message shown to the person being helped**. Choose a
+message or type up to 160 characters, then Show status / Clear status. The
+host app shows a small support window with Dismiss and Stop support. Stop
+ends that session without automatic reconnect. Remote control permission is
+required. The host app must be running in the signed-in desktop; updated
+Windows service hosts can launch it through the authenticated local bridge.
+A headless CLI host cannot display a desktop banner. The compact Windows app
+shows the message in its note area. Closing a service session clears its
+status. A message neither grants consent nor executes a change.
+
+In **Tools → Network scan…**, select a discovered device and expand
+**Connect through / Wake-on-LAN / Diagnostics**:
+
+- **Connect from my computer** checks the selected TCP service, then creates
+  a loopback endpoint on your computer through the workstation. Port forwarding
+  must be enabled on the host. TCP 80/443 open in your local browser; for other
+  ports, Copy endpoint into the appropriate client. Web interfaces using their
+  original hostnames, certificates, absolute redirects or multiple ports may
+  need additional configuration. Closing the scanner retains tunnels; closing
+  a tunnel or ending/interruption of its link closes its forwarded connections.
+- **Send wake packet** broadcasts three magic packets through the selected
+  remote adapter. Enter a MAC, or use a discovered device's MAC. The remote
+  host must allow Wake-on-LAN, Network scan and Control. Wake-on-LAN is off
+  by default. Configure firmware/adapter wake support on the sleeping device;
+  a sent packet is not confirmation it woke. /31 and /32 interfaces have no
+  supported broadcast, and requests are limited to one every two seconds.
+  This first version uses the connected workstation; it does not automatically
+  find another awake peer or save wake targets to the station.
+- **Run diagnostics** checks gateway ICMP, IPv4/A answers from configured DNS
+  resolvers, an optional numeric comparison resolver, and a verified station
+  API hello from the host. Your query name is sent to those resolvers. ICMP
+  silence may be filtering, and DNS/CDN answers may differ legitimately.
+  Gateway/DNS probes use the selected adapter where supported; station HTTPS
+  uses OS routing. This is not a relay throughput or video-relay health test.
+  Copy diagnostics exports the results. Closing/stopping a request cancels
+  pending checks; an already-sent packet or launch cannot be recalled.
+
+Save host permissions and update an installed Windows service, then reconnect
+so the new session uses those permissions. Older hosts can continue ordinary
+sessions; new optional support requests may require updating the host.
+
+## Imaging and automatic device IDs
+
+Update Slipstream on the master laptop, **update/start its installed Windows
+service**, and run the updated app/service once **before capturing the image**.
+This records a hardware binding. Config → Device identity shows whether the
+app can read firmware identifiers. Both the service's machine profile and
+any user profile included in the image need their baseline established.
+
+At startup, a profile compares locally hashed firmware evidence. Windows uses
+the SMBIOS system UUID, with a system serial fallback; Linux uses readable
+DMI UUID/serial files and macOS uses platform firmware identifiers. The model,
+hostname, MAC address and cloned Windows installation ID are not the binding.
+On different hardware, Slipstream creates a fresh random private key, clears
+the cached station ID and stale public service ID/pin, and registers a new ID.
+The original laptop retains its identity. Repeated starts on the clone keep
+its new identity. Station settings, unattended password and service installation
+are preserved. Custom device labels remain; a label matching the old system
+hostname follows the new host name. Ordinary service updates/reinstalls retain
+the service's identity even if its user profile has a separate key.
+
+Missing/unreadable identifiers retain the current ID instead of guessing.
+Duplicated firmware identifiers, VMs cloned with the same hardware UUID, and
+old images with no recorded binding cannot reliably establish a different
+device. Some Linux systems restrict DMI identifiers to privileged processes.
+Changing/replacing firmware identity (including a motherboard) can trigger a
+new ID. Android has no desktop firmware binding in this implementation. Real
+Windows clone/service behavior still needs confirmation on the intended laptops.

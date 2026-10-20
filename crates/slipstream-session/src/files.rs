@@ -36,11 +36,12 @@ pub struct FilePolicy {
 
 /// Serves file requests arriving on `conn` until it closes. `on_saved` is
 /// told about each received file.
-pub async fn serve(
+pub(crate) async fn serve(
     conn: Connection,
     policy: FilePolicy,
     on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>,
     clipboard: Option<slipstream_platform::clipboard::Clipboard>,
+    tools: Arc<crate::support::HostTools>,
 ) {
     let scans = Arc::new(tokio::sync::Semaphore::new(1));
     let mut requests = tokio::task::JoinSet::new();
@@ -49,9 +50,9 @@ pub async fn serve(
             _ = requests.join_next(), if !requests.is_empty() => {},
             incoming = conn.accept_bi(), if requests.len() < 64 => {
                 let Ok((send,recv)) = incoming else {break};
-                let (on_saved, clipboard, scans) = (on_saved.clone(), clipboard.clone(), scans.clone());
+                let (on_saved, clipboard, scans, tools) = (on_saved.clone(), clipboard.clone(), scans.clone(), tools.clone());
                 requests.spawn(async move {
-                    if let Err(e) = handle(send, recv, policy, on_saved, clipboard, scans).await {
+                    if let Err(e) = handle(send, recv, policy, on_saved, clipboard, scans, tools).await {
                         tracing::debug!("file request failed: {e:#}");
                     }
                 });
@@ -74,10 +75,45 @@ async fn handle(
     on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>,
     clipboard: Option<slipstream_platform::clipboard::Clipboard>,
     scans: Arc<tokio::sync::Semaphore>,
+    tools: Arc<crate::support::HostTools>,
 ) -> Result<()> {
     let req: StreamOpen = tokio::time::timeout(std::time::Duration::from_secs(10), expect_msg(&mut recv)).await.context("file request header timed out")??;
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
+        StreamOpen::WakeOnLan { interface, mac } => {
+            if !policy.network_scan || !policy.remote_input || !tools.allow_wake {
+                return reply(&mut send, &denied("Wake-on-LAN (enable it in the host's Config → Permissions)")).await;
+            }
+            let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
+            let response = match crate::support::wake(interface, &mac, &interfaces).await {
+                Ok(()) => StreamReply::Done,
+                Err(e) => StreamReply::Error(e.to_string()),
+            };
+            reply(&mut send, &response).await?;
+        }
+        StreamOpen::NetworkDiagnostics { interface, name, comparison_dns } => {
+            if !policy.network_scan {return reply(&mut send, &denied("Network diagnostics")).await;}
+            let Ok(_permit) = scans.try_acquire_owned() else {
+                return reply(&mut send, &StreamReply::Error("A scan or diagnostic is already running in this session".into())).await;
+            };
+            tokio::select! {
+                result = crate::support::diagnose(interface, name, comparison_dns, &tools.station) => {
+                    let response = match result {
+                        Ok(sections) => StreamReply::NetworkDiagnostics(sections),
+                        Err(e) => StreamReply::Error(e.to_string()),
+                    };
+                    reply(&mut send, &response).await?;
+                }
+                _ = send.stopped() => {},
+            }
+        }
+        StreamOpen::SupportStatus { text } => {
+            if !policy.remote_input {return reply(&mut send, &denied("Support status (remote control)")).await;}
+            match crate::support::status_text(&text) {
+                Ok(text) => { (tools.status)(text); reply(&mut send, &StreamReply::Done).await?; }
+                Err(e) => reply(&mut send, &StreamReply::Error(e.to_string())).await?,
+            }
+        }
         StreamOpen::FilePreview { path } => {
             if !policy.browse { return reply(&mut send, &denied("Browsing files")).await; }
             // Ordinary unreadable/unsupported files keep their generic icon.
@@ -307,7 +343,7 @@ async fn open_regular(path: &Path) -> Result<(tokio::fs::File, u64)> {
 /// The remote computer's files, as seen from the viewer.
 #[derive(Debug, Clone)]
 pub struct RemoteFs {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl RemoteFs {

@@ -245,7 +245,7 @@ fn command(program: &str) -> tokio::process::Command {
 }
 
 #[cfg(windows)]
-async fn ping(address: Ipv4Addr, source: Ipv4Addr) -> bool {
+pub(crate) async fn ping(address: Ipv4Addr, source: Ipv4Addr) -> bool {
     // Windows ping.exe can exit successfully for an ICMP unreachable reply.
     // Inspect the native reply status instead, without localized text or a
     // console process. The call is bounded even if its scan is cancelled.
@@ -292,7 +292,7 @@ async fn ping(address: Ipv4Addr, source: Ipv4Addr) -> bool {
 }
 
 #[cfg(not(windows))]
-async fn ping(address: Ipv4Addr, source: Ipv4Addr) -> bool {
+pub(crate) async fn ping(address: Ipv4Addr, source: Ipv4Addr) -> bool {
     let mut cmd = command("ping");
     #[cfg(target_os = "macos")]
     cmd.args([

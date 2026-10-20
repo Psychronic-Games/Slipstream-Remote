@@ -99,7 +99,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             {
                 ui.label(
                     RichText::new(format!(
-                        "The service has its own ID, shown above; this app's is {own}. Config → Windows service → Reinstall gives the service this app's ID."
+                        "The service has its own ID, shown above; this app's is {own}. Service updates and reinstalls preserve the service's ID."
                     ))
                     .color(pal::PEACH),
                 );
@@ -440,6 +440,41 @@ fn incoming_banner(app: &mut App, ui: &mut Ui, t: f64) {
 pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
     static ICON: std::sync::OnceLock<std::sync::Arc<egui::IconData>> = std::sync::OnceLock::new();
     for s in &app.incoming {
+        if s.chat.lock().unwrap().status_open {
+            let (chat, client, session, peer) = (s.chat.clone(), app.client.clone(), s.id, s.peer.clone());
+            #[cfg(windows)]
+            let service_sender = app.service_chat.as_ref().map(|g| g.sender());
+            let builder = egui::ViewportBuilder::default().with_title(format!("Support status · {}", s.peer))
+                .with_decorations(false).with_transparent(theme::transparent_window())
+                .with_window_level(egui::WindowLevel::AlwaysOnTop).with_active(false)
+                .with_icon(ICON.get_or_init(|| std::sync::Arc::new(theme::icon(64))).clone())
+                .with_inner_size([430.0, 240.0]).with_min_inner_size([330.0, 210.0]);
+            ctx.show_viewport_deferred(egui::ViewportId::from_hash_of(("support-status", session)), builder, move |ui, class| {
+                let ctx = ui.ctx().clone();
+                let mut chat = chat.lock().unwrap();
+                if !chat.status_open {theme::dismiss_tool_viewport(&ctx, class == egui::ViewportClass::Deferred);return;}
+                let (body, close) = theme::tool_frame(ui, "Support in progress", class == egui::ViewportClass::Deferred, pal::CYAN);
+                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(body));
+                egui::ScrollArea::vertical().max_height((body.height() - 60.0).max(40.0)).show(&mut content, |ui| {
+                    ui.label(RichText::new(&peer).color(pal::LAVENDER));
+                    ui.label(RichText::new(&chat.status).size(19.0).color(pal::TAN));
+                });
+                content.add_space(8.0);
+                content.horizontal_wrapped(|ui| {
+                    if theme::pill(ui, "Stop support", pal::RED).clicked() {
+                        #[cfg(windows)]
+                        if let Some(sender) = &service_sender {sender.disconnect(session);} else {client.disconnect_host_session(session);}
+                        #[cfg(not(windows))]
+                        client.disconnect_host_session(session);
+                        chat.status_open = false;
+                    }
+                    if theme::pill(ui, "Dismiss", pal::BLUE).clicked() {chat.status_open = false;}
+                });
+                if close || ctx.input(|i| i.viewport().close_requested()) {chat.status_open = false;}
+                if !chat.status_open {theme::dismiss_tool_viewport(&ctx, class == egui::ViewportClass::Deferred);}
+                ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            });
+        }
         let id = egui::ViewportId::from_hash_of(("incoming-chat", s.id));
         {
             let chat = s.chat.lock().expect("chat lock");

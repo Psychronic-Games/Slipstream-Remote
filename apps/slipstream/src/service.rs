@@ -388,6 +388,7 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
         Some(dir) => Store::open(dir)?,
         None => Store::open_default()?,
     };
+    user.identity()?; // Bind/refresh an imaged user profile before copying its settings.
     let mut settings = user.load_settings();
     if settings.server.url.is_none() {
         bail!("connect Slipstream to your station first (it has no server address)");
@@ -416,12 +417,18 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     let public = ensure_public_dir();
     let _ = std::fs::remove_file(public.join("device-id.txt"));
     let machine = Store::open(&home)?;
-    machine.save_settings(&settings)?;
-    // Same identity, so the computer keeps its ID.
-    let key = user.dir().join("identity.key");
-    if key.exists() {
-        hand_over_identity(&key, &home.join("identity.key"))?;
+    // The installed service owns its existing machine identity. After cloning,
+    // the user and service profiles may have independently rekeyed; a routine
+    // update must not replace the service's new stable ID with the user's key.
+    if home.join("identity.key").exists() {
+        machine.identity()?;
+        settings.host.last_device_id=machine.load_settings().host.last_device_id;
+    } else {
+        hand_over_identity(&user.dir().join("identity.key"), &home.join("identity.key"))?;
+        settings.host.last_device_id=None;
     }
+    machine.save_settings(&settings)?;
+    machine.identity()?; // Establish the machine binding before image capture.
 
     // Every user's sign-in starts the app hidden in the tray, to show the
     // service is there (each user can turn it off under Config).

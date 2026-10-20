@@ -93,7 +93,7 @@ fn clean_name(name: &str) -> Option<String> {
     Some(name.to_string())
 }
 
-async fn exchange(source: Ipv4Addr, server: SocketAddr, query: &[u8]) -> Option<Vec<u8>> {
+pub(crate) async fn exchange(source: Ipv4Addr, server: SocketAddr, query: &[u8]) -> Option<Vec<u8>> {
     tokio::time::timeout(WAIT, async {
         let bind = match server.ip() {
             IpAddr::V4(ip) if ip.is_loopback() => SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),

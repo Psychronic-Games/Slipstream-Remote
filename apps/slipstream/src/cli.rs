@@ -94,6 +94,7 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
                     ClientEvent::HostSessionStarted { session, peer } => println!("session {session} started by {peer}"),
                     ClientEvent::HostSessionEnded { session, reason } => println!("session {session} ended: {reason}"),
                     ClientEvent::HostChat { text, .. } => if service {println!("chat message received");} else {println!("chat: {text}");}
+                    ClientEvent::HostStatus { .. } => println!("support status updated"),
                     ClientEvent::FileReceived { path, .. } => println!("received file {}", path.display()),
                     ClientEvent::Motd(m) => println!("server says: {m}"),
                     ClientEvent::Org(Some(o)) => println!("station  {o}"),

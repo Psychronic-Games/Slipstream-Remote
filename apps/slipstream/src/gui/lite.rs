@@ -189,6 +189,7 @@ pub fn run(
                         ClientEvent::Org(Some(o)) => v.title = format!("SLIPSTREAM REMOTE · {}", o.to_uppercase()),
                         ClientEvent::HostSessionStarted { peer, .. } => v.status = format!("{} IS CONNECTED", peer.to_uppercase()),
                         ClientEvent::HostSessionEnded { .. } => v.status = "ONLINE · READY FOR LINK".into(),
+                        ClientEvent::HostStatus { text, .. } => {v.note = format!("Support: {text}");wake(WM_APP+3);},
                         ClientEvent::HostChat { text, .. } => v.note = format!("Message: {text}"),
                         ClientEvent::Notice(n) | ClientEvent::Motd(n) => v.note = n,
                         ClientEvent::UpdateAvailable(u) => {
@@ -214,6 +215,7 @@ pub fn run(
                     let mut v=view.lock().unwrap();
                     match event {
                         Event::Password(password) => v.password = password.unwrap_or_default(),
+                        Event::Status{text,..}=>{v.note=format!("Support: {text}");wake(WM_APP+3);},
                         Event::Started{peer,..}=>v.status=format!("{} IS CONNECTED",peer.to_uppercase()),
                         Event::Ended{..}=>v.status="ONLINE · READY FOR LINK".into(),
                         Event::Message{ours:false,text,..}=>{v.note=format!("Message: {text}");wake(WM_APP+3);},

@@ -41,10 +41,27 @@ pub struct NetworkScanner {
     web_rx: Option<tokio::sync::oneshot::Receiver<Result<String, String>>>,
     web_job: Option<tokio::task::JoinHandle<()>>,
     web_notice: Option<Result<String, String>>,
+    can_tunnel: bool,
+    support_rx: Option<tokio::sync::oneshot::Receiver<Result<ToolReply, String>>>,
+    support_job: Option<tokio::task::JoinHandle<()>>,
+    support_notice: Option<Result<String, String>>,
+    diagnostic: Vec<slipstream_core::proto::InfoSection>,
+    diagnostic_name: String,
+    comparison_dns: String,
+    wake_mac: String,
+    tunnel_port: u16,
+    tunnels: Vec<slipstream_session::tunnel::Tunnel>,
+}
+
+enum ToolReply {
+    Message(String),
+    Diagnostic(Vec<slipstream_core::proto::InfoSection>),
+    Tunnel(slipstream_session::tunnel::Tunnel, u16),
 }
 
 impl Drop for NetworkScanner {
     fn drop(&mut self) {
+        if let Some(job) = self.support_job.take() { job.abort(); }
         if let Some(job) = self.web_job.take() { job.abort(); }
         if let Some(job) = self.names_job.take() { job.abort(); }
         if let Some(job) = self.adapter_job.take() {
@@ -55,20 +72,23 @@ impl Drop for NetworkScanner {
 
 impl NetworkScanner {
     pub fn close(&mut self) {
-        self.open=false;self.stop();
+        self.open=false;self.stop();self.tunnels.clear();
+        if let Some(job)=self.support_job.take() {job.abort();}self.support_rx=None;
         if let Some(job)=self.adapter_job.take() {job.abort();}
         if let Some(job)=self.web_job.take() {job.abort();}
     }
-    pub fn reconnect(&mut self,fs:RemoteFs,can_open_web:bool) {
-        self.stop();
+    pub fn reconnect(&mut self,fs:RemoteFs,can_open_web:bool,can_tunnel:bool) {
+        self.stop();self.tunnels.clear();
+        if let Some(job)=self.support_job.take() {job.abort();}
+        if self.support_rx.take().is_some() {self.support_notice=Some(Err("Link interrupted; the support request was not confirmed".into()));}
         if let Some(job)=self.adapter_job.take() {job.abort();}
         if let Some(job)=self.web_job.take() {job.abort();}
         if self.web_rx.take().is_some() {self.web_notice=Some(Err("Link interrupted; browser launch was not confirmed".into()));}
         self.adapter_rx=None;self.adapters.clear();self.loaded=false;
-        self.fs=fs;self.can_open_web=can_open_web;
+        self.fs=fs;self.can_open_web=can_open_web;self.can_tunnel=can_tunnel;
     }
 
-    pub fn new(fs: RemoteFs, can_open_web: bool) -> Self {
+    pub fn new(fs: RemoteFs, can_open_web: bool, can_tunnel: bool) -> Self {
         Self {
             open: std::env::var_os("SLIPSTREAM_TEST_NETWORK").is_some(),
             fs,
@@ -95,6 +115,9 @@ impl NetworkScanner {
             names: BTreeMap::new(), names_requested: BTreeSet::new(), names_rx: None,
             names_job: None, names_notice: None,
             can_open_web, web_rx: None, web_job: None, web_notice: None,
+            can_tunnel, support_rx:None,support_job:None,support_notice:None,
+            diagnostic:Vec::new(),diagnostic_name:"example.com".into(),comparison_dns:String::new(),
+            wake_mac:String::new(),tunnel_port:80,tunnels:Vec::new(),
         }
     }
 
@@ -305,8 +328,33 @@ impl NetworkScanner {
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {},
             }
         }
+        if let Some(rx) = &mut self.support_rx {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.support_rx = None;self.support_job = None;
+                    self.support_notice = Some(match result {
+                        Ok(ToolReply::Message(text)) => Ok(text),
+                        Ok(ToolReply::Diagnostic(sections)) => {self.diagnostic = sections;Ok("Diagnostic checks finished; individual results are below".into())},
+                        Ok(ToolReply::Tunnel(tunnel, port)) => {
+                            let endpoint = format!("127.0.0.1:{}", tunnel.local_port);
+                            if matches!(port, 80 | 443) {
+                                let scheme = if port == 443 {"https"} else {"http"};
+                                ctx.open_url(egui::OpenUrl::new_tab(format!("{scheme}://{endpoint}/")));
+                            }
+                            let text = format!("Connected through this workstation: {endpoint} → {}:{port}", tunnel.host);
+                            self.tunnels.push(tunnel);Ok(text)
+                        },
+                        Err(e) => Err(e),
+                    });
+                },
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    self.support_rx=None;self.support_job=None;self.support_notice=Some(Err("The support request ended without an answer".into()));
+                },
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {},
+            }
+        }
         self.poll_names(ctx,rt,connected);
-        if self.scan.is_some() || self.adapter_rx.is_some() || self.names_rx.is_some() || self.web_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(100)); }
+        if self.scan.is_some() || self.adapter_rx.is_some() || self.names_rx.is_some() || self.web_rx.is_some() || self.support_rx.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(100)); }
     }
 
     fn contents(&mut self, ui: &mut Ui, ctx: &egui::Context, rt: &tokio::runtime::Runtime, host: &str, connected: bool) {
@@ -348,6 +396,7 @@ impl NetworkScanner {
                     ui.label(RichText::new(format!("{} · {} · {} · {}", self.names.get(&address).map(|n|n.name.as_str()).unwrap_or("Name not reported"), device.address, device.mac.as_deref().unwrap_or("MAC unavailable"), self.role(address))).color(pal::TAN));
                     open_web = ports_ui(ui, device, web_enabled);
                 }
+                self.support_tools(ui, ctx, rt, connected);
                 ui.add_space(5.0);
                 egui::ScrollArea::both().id_salt("scan-results").auto_shrink([false, false])
                     .max_height((ui.available_height() - 80.0).max(100.0))
@@ -368,7 +417,7 @@ impl NetworkScanner {
         connected: bool,
     ) {
         let busy = self.scan.is_some();
-        ui.add_enabled_ui(!busy && connected, |ui| {
+        ui.add_enabled_ui(!busy && self.support_rx.is_none() && connected, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("REMOTE ADAPTER").color(pal::CYAN));
                 let mut selected = self.selected;
@@ -527,6 +576,16 @@ impl NetworkScanner {
         }
     }
 
+    fn select_device(&mut self,address:Ipv4Addr) {
+        if self.selected_device!=Some(address) {
+            if let Some(device)=self.devices.get(&address) {
+                self.tunnel_port=[80,443,3389,22].into_iter().find(|p|device.open_ports.contains(p))
+                    .or_else(||device.open_ports.first().copied()).unwrap_or(80);
+            }
+            self.selected_device=Some(address);
+        }
+    }
+
     fn table(&mut self, ui: &mut Ui, web_enabled: bool) -> Option<(Ipv4Addr,u16)> {
         let mut open_web = None;
         let devices = self.visible();
@@ -538,7 +597,7 @@ impl NetworkScanner {
             for title in ["IP ADDRESS", "DEVICE NAME", "ROLE", "MAC ADDRESS", "DISCOVERY", "OPEN TCP PORTS"] { ui.label(RichText::new(title).font(theme::display(17.0)).color(pal::CYAN)); }
             ui.end_row();
             for device in devices {
-                if ui.selectable_label(self.selected_device == Some(device.address), RichText::new(device.address.to_string()).monospace().color(pal::TAN)).clicked() { self.selected_device = Some(device.address); }
+                if ui.selectable_label(self.selected_device == Some(device.address), RichText::new(device.address.to_string()).monospace().color(pal::TAN)).clicked() { self.select_device(device.address); }
                 let name = self.names.get(&device.address);
                 ui.label(RichText::new(name.map(|n| n.name.as_str()).unwrap_or("—")).color(pal::TAN))
                     .on_hover_text(name.map(|n| n.source.as_str()).unwrap_or("No name was reported by DNS, NetBIOS or mDNS"));
@@ -567,6 +626,76 @@ impl NetworkScanner {
         }));
     }
 
+    fn start_tool(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime, job: impl std::future::Future<Output=anyhow::Result<ToolReply>> + Send + 'static) {
+        if self.support_rx.is_some() {return;}
+        let (tx, rx) = tokio::sync::oneshot::channel();let ctx=ctx.clone();
+        self.support_rx=Some(rx);self.support_notice=None;
+        self.support_job=Some(rt.spawn(async move {let result=job.await.map_err(|e|format!("{e:#}"));let _=tx.send(result);ctx.request_repaint();}));
+    }
+
+    fn support_tools(&mut self, ui: &mut Ui, ctx: &egui::Context, rt: &tokio::runtime::Runtime, connected: bool) {
+        let busy=self.support_rx.is_some();
+        let mut connect=None;let mut wake=false;let mut diagnose=false;
+        ui.collapsing("Connect through / Wake-on-LAN / Diagnostics", |ui| {
+            if let Some(device)=self.selected_device.and_then(|ip|self.devices.get(&ip)) {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!("Connect to {}",device.address));
+                    egui::ComboBox::from_id_salt("tunnel-service").selected_text(self.tunnel_port.to_string()).show_ui(ui,|ui| {
+                        for port in &device.open_ports {ui.selectable_value(&mut self.tunnel_port,*port,format!("{port} · {}",network::service(*port)));}
+                    });
+                    ui.add(egui::DragValue::new(&mut self.tunnel_port).range(1..=65535).prefix("TCP "));
+                    if ui.add_enabled(connected && self.can_tunnel && !busy,egui::Button::new("Connect from my computer")).on_hover_text("Requires Port forwarding on the remote host. HTTP/HTTPS open locally; other services use the copied loopback endpoint.").clicked() {connect=Some((device.address,self.tunnel_port));}
+                    if let Some(mac)=&device.mac && ui.button("Use MAC for wake").clicked() {self.wake_mac=mac.clone();}
+                });
+            } else {ui.label("Select a discovered device to connect through this workstation.");}
+            if !self.can_tunnel {ui.label(RichText::new("Enable Port forwarding in the remote host's Config to connect through it.").small().color(pal::GOLD));}
+            ui.label(RichText::new("Tunnels listen only on this computer's loopback address and end with this link. Some web interfaces need their original hostname/certificate or redirect configuration.").small().color(pal::DIM));
+            let mut remove=None;
+            for (i,tunnel) in self.tunnels.iter().enumerate() {
+                ui.horizontal_wrapped(|ui| {
+                    let endpoint=format!("127.0.0.1:{}",tunnel.local_port);
+                    ui.label(format!("{endpoint} → {}:{}",tunnel.host,tunnel.port));
+                    if ui.button("Copy endpoint").clicked() {ctx.copy_text(endpoint);}
+                    if ui.button("Close tunnel").clicked() {remove=Some(i);}
+                });
+                if let Some(error)=tunnel.status().last_error {ui.label(RichText::new(error).color(pal::RED));}
+            }
+            if let Some(i)=remove {self.tunnels.remove(i);}
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Wake MAC");ui.add(egui::TextEdit::singleline(&mut self.wake_mac).desired_width(180.0).hint_text("00:11:22:33:44:55"));
+                wake=ui.add_enabled(connected && self.can_open_web && !busy,egui::Button::new("Send wake packet")).clicked();
+            });
+            ui.label(RichText::new("Uses the selected adapter's LAN broadcast. The host must allow Wake-on-LAN, Control and Network scan; the sleeping device must have wake enabled. Packet delivery does not confirm it woke.").small().color(pal::DIM));
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                ui.label("DNS name");ui.add(egui::TextEdit::singleline(&mut self.diagnostic_name).desired_width(190.0));
+                ui.label("Compare resolver");ui.add(egui::TextEdit::singleline(&mut self.comparison_dns).desired_width(160.0).hint_text("optional IP"));
+                diagnose=ui.add_enabled(connected && !busy && self.scan.is_none(),egui::Button::new("Run diagnostics")).clicked();
+            });
+            ui.label(RichText::new("Queries the host's configured resolvers and optional comparison resolver, checks gateway ICMP and verifies its station API. The DNS name is sent to those resolvers.").small().color(pal::DIM));
+            for section in &self.diagnostic {for (key,value) in &section.rows {ui.label(format!("{key}: {value}"));}}
+            if !self.diagnostic.is_empty() && ui.button("Copy diagnostics").clicked() {ctx.copy_text(self.diagnostic_text());}
+        });
+        if busy {ui.horizontal(|ui| {ui.spinner();ui.label("Running support request…");if ui.button("Stop waiting").clicked() {if let Some(job)=self.support_job.take(){job.abort();}self.support_rx=None;self.support_notice=Some(Err("Stopped waiting; an already-sent wake packet or browser launch cannot be recalled".into()));}});}
+        if let Some(result)=&self.support_notice {match result {Ok(text)=>{ui.label(RichText::new(text).color(pal::GREEN));},Err(text)=>{ui.label(RichText::new(text).color(pal::RED));}}}
+        if let Some((address,port))=connect {let fs=self.fs.clone();self.start_tool(ctx,rt,async move {Ok(ToolReply::Tunnel(fs.connect_through(address,port).await?,port))});}
+        if wake || diagnose {
+            let Some(source)=self.adapters.get(self.selected).map(|a|a.address) else {self.support_notice=Some(Err("Choose a connected remote adapter first".into()));return;};
+            let fs=self.fs.clone();
+            if wake {let mac=self.wake_mac.clone();self.start_tool(ctx,rt,async move {fs.wake_on_lan(source,mac).await?;Ok(ToolReply::Message("Sent three LAN wake packets; device startup is not confirmed".into()))});}
+            else {
+                let name=self.diagnostic_name.trim().to_string();
+                let comparison=if self.comparison_dns.trim().is_empty(){None}else{match self.comparison_dns.trim().parse(){Ok(ip)=>Some(ip),Err(_)=>{self.support_notice=Some(Err("Enter a numeric comparison DNS resolver IP".into()));return;}}};
+                self.start_tool(ctx,rt,async move {Ok(ToolReply::Diagnostic(fs.network_diagnostics(source,name,comparison).await?))});
+            }
+        }
+    }
+
+    pub fn diagnostic_text(&self)->String {
+        self.diagnostic.iter().map(|s|format!("{}\n{}",s.title,s.rows.iter().map(|(k,v)|format!("{k}: {v}\n")).collect::<String>())).collect()
+    }
+
     fn topology(&mut self, ui: &mut Ui, host: &str) {
         let Some((interface,cidr)) = self.surveyed.clone() else {
             ui.label(RichText::new("Run a scan to chart the remote network").color(pal::DIM));return;
@@ -590,7 +719,7 @@ impl NetworkScanner {
             gp.text(pos2(center,gateway_rect.top()+59.0),Align2::CENTER_TOP,
                 device.map(|d|format!("{} open TCP ports",d.open_ports.len())).unwrap_or_else(||"Reported by the remote adapter".into()),theme::mono(12.0),pal::BG);
             let detail=device.map(|d|ports_text(&d.open_ports)).unwrap_or_else(||"Gateway not included in scan results".into());
-            if ui.interact(gateway_rect,ui.scope_id().with("gateway"),Sense::click()).on_hover_text(format!("{address}\n{name}\n{detail}")).clicked() { self.selected_device=Some(address); }
+            if ui.interact(gateway_rect,ui.scope_id().with("gateway"),Sense::click()).on_hover_text(format!("{address}\n{name}\n{detail}")).clicked() { self.select_device(address); }
         }
         let bus_y=area.top()+130.0;
         painter.line_segment([pos2(center,gateway_rect.bottom()),pos2(center,bus_y)],Stroke::new(2.0,pal::GOLD));
@@ -621,11 +750,11 @@ impl NetworkScanner {
             cp.text(pos2(card.left()+16.0,card.top()+60.0),Align2::LEFT_TOP,
                 format!("{} · {} OPEN PORT{}",self.role(device.address).to_uppercase(),device.open_ports.len(),if device.open_ports.len()==1{""}else{"S"}),theme::mono(12.0),pal::DIM);
             let hint=format!("{}\n{}\n{}\n{}",name.unwrap_or("Name not reported"),device.address,device.mac.as_deref().unwrap_or("MAC unavailable"),ports_text(&device.open_ports));
-            if ui.interact(card,ui.scope_id().with(device.address),Sense::click()).on_hover_text(hint).clicked(){self.selected_device=Some(device.address);}
+            if ui.interact(card,ui.scope_id().with(device.address),Sense::click()).on_hover_text(hint).clicked(){self.select_device(device.address);}
         }
     }
 
-    fn export(&self, host: &str) -> String {
+    pub fn export(&self, host: &str) -> String {
         let mut text = format!(
             "Network scan from {host}\n{} · {}/{} addresses\n",
             self.status, self.completed, self.total
@@ -644,6 +773,7 @@ impl NetworkScanner {
                 .collect::<Vec<_>>()
                 .join(",")
         ));
+        text.push_str(&format!("Result filter: {}\n", if self.filter.is_empty() {"none"} else {&self.filter}));
         text.push_str("IP\tDevice name\tName source\tRole\tMAC\tDiscovery\tOpen TCP ports\n");
         for d in self.visible() {
             text.push_str(&format!(
