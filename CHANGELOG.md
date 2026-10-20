@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.22.1 — 2026-10-20
+
 ### LCARS interface polish and automatic device recognition
 - Place the new-link + after the last tab, or immediately beside Bridge when
   there are no sessions. Remove the empty-strip description and keep overflow
