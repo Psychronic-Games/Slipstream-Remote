@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.22.0 — 2026-10-20
+
 ### Faster linking and compact desktop tools
 - Keep the animated menu-bar pulse inside its rounded segments and gaps.
 - Add + Group on each signed-in station's Saved devices panel, including
