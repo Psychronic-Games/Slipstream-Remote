@@ -103,7 +103,7 @@ const WHITE: u32 = rgb(255, 255, 255);
 
 /// Client area size.
 const WIDTH: i32 = 500;
-const HEIGHT: i32 = 422;
+const HEIGHT: i32 = 464;
 
 /// Everything the window procedure needs (it runs on the UI thread only).
 struct Ui {
