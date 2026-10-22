@@ -63,6 +63,7 @@ struct Editor {
 
 /// Asking for a password before connecting.
 struct Prompt {
+    destination: Option<egui::ViewportId>,
     account: AccountRef,
     id: DeviceId,
     name: String,
@@ -358,6 +359,7 @@ pub(super) fn connect(app: &mut App, ctx: &egui::Context, r: &AccountRef, d: &Sa
         }
     }
     app.saved.prompt = Some(Prompt {
+        destination:app.connect_destination.take(),
         account: r.clone(),
         id: d.id,
         name: if d.name.is_empty() { d.id.to_string() } else { d.name.clone() },
@@ -640,6 +642,7 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
                 Ok(String::new())
             });
         }
+        app.connect_destination=p.destination;
         app.start_connect_to(ctx, p.id, p.password, Some(p.account));
         return;
     }

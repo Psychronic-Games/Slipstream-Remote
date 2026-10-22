@@ -1,15 +1,16 @@
-//! Native session windows share their existing connection with the Links hub.
-use std::sync::{Arc, Mutex, mpsc};
-
-use eframe::egui::{self, UiBuilder};
-
+//! Native tab groups retain their existing connections while moving windows.
 use super::{
     remote::{RemoteTab, TabAction},
-    theme, session_tabs,
+    session_tabs, theme,
+};
+use eframe::egui::{self, UiBuilder};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex, mpsc},
 };
 
 pub(super) fn show(
-    shared: &Arc<Mutex<RemoteTab>>,
+    all: &[Arc<Mutex<RemoteTab>>],
     ctx: &egui::Context,
     rt: &Arc<tokio::runtime::Runtime>,
     actions: &mpsc::Sender<(u64, TabAction)>,
@@ -17,66 +18,108 @@ pub(super) fn show(
     time: f64,
     app_title: &str,
 ) {
-    let (id, host, position) = {
+    let mut groups = BTreeMap::<egui::ViewportId, Vec<Arc<Mutex<RemoteTab>>>>::new();
+    for shared in all {
         let tab = shared.lock().unwrap();
-        if !tab.detached {
-            return;
+        if tab.detached {
+            groups
+                .entry(tab.viewport_id())
+                .or_default()
+                .push(shared.clone());
         }
-        (tab.id, tab.info.host_name.clone(), tab.window_position)
-    };
-    let (shared, rt, actions, app_title) = (
-        shared.clone(),
-        rt.clone(),
-        actions.clone(),
-        app_title.to_owned(),
-    );
-    let tabs = tabs.clone();
-    let registered = std::time::Instant::now();
-    let mut builder = egui::ViewportBuilder::default()
-        .with_title(format!("{host} · {app_title}"))
-        .with_app_id("slipstream-remote")
-        .with_decorations(false)
-        .with_transparent(theme::transparent_window())
-        .with_icon(Arc::new(theme::icon(64)))
-        .with_inner_size([1180.0, 780.0])
-        .with_min_inner_size([520.0, 360.0]);
-    if let Some(position) = position { builder = builder.with_position(position); }
-    ctx.show_viewport_deferred(RemoteTab::window_id(id), builder, move |ui, class| {
-        let ctx = ui.ctx().clone();
-        let desktop = class == egui::ViewportClass::Deferred;
-        let mut tab = shared.lock().unwrap();
-        if !tab.detached {
-            theme::dismiss_tool_viewport(&ctx, desktop);
-            return;
+    }
+    for (viewport, members) in groups {
+        let active = members
+            .iter()
+            .find(|tab| tab.lock().unwrap().window_active)
+            .cloned()
+            .unwrap_or_else(|| members[0].clone());
+        active.lock().unwrap().window_active = true;
+        let (host, position) = {
+            let mut tab = active.lock().unwrap();
+            (tab.info.host_name.clone(), tab.window_position.take())
+        };
+        let (rt, actions, tabs, app_title) = (
+            rt.clone(),
+            actions.clone(),
+            tabs.clone(),
+            app_title.to_owned(),
+        );
+        let registered = std::time::Instant::now();
+        let mut builder = egui::ViewportBuilder::default()
+            .with_title(format!("{host} · {app_title}"))
+            .with_app_id("slipstream-remote")
+            .with_decorations(false)
+            .with_transparent(theme::transparent_window())
+            .with_icon(Arc::new(theme::icon(64)))
+            .with_inner_size([1180.0, 780.0])
+            .with_min_inner_size([520.0, 360.0]);
+        if let Some(position) = position {
+            builder = builder.with_position(position);
         }
-        if ctx.input(|i| i.viewport().close_requested()) {
-            tab.end_link();
-            let _ = actions.send((id, TabAction::Close));
-            theme::dismiss_tool_viewport(&ctx, desktop);
-            return;
-        }
-        let body = theme::native_session_title_bar(ui, &app_title, Some(&tab.info.host_name));
-        let entries = [(id, tab.info.host_name.clone())];
-        let (body, tab_actions) = session_tabs::show(&tabs, ui, body, &entries, Some(id), false, true);
-        for (id, action) in tab_actions {
-            tab.release_keyboard();
-            let _ = actions.send((id, action));
-            ctx.request_repaint_of(egui::ViewportId::ROOT);
-        }
-        let ui = &mut ui.new_child(UiBuilder::new().max_rect(body));
-        let action = tab.ui(ui, body, time + registered.elapsed().as_secs_f64(), &rt);
-        if matches!(action, TabAction::Close | TabAction::Dock) {
-            tab.release_keyboard();
-            tab.leave_fullscreen(&ctx);
-            tab.detached = false;
-            theme::dismiss_tool_viewport(&ctx, desktop);
-        }
-        if !matches!(action, TabAction::None) {
-            let _ = actions.send((id, action));
-            ctx.request_repaint_of(egui::ViewportId::ROOT);
-        }
-        ctx.request_repaint_after(std::time::Duration::from_millis(
-            if ctx.input(|i| i.focused) { 16 } else { 100 },
-        ));
-    });
+        ctx.show_viewport_deferred(viewport, builder, move |ui, class| {
+            let ctx = ui.ctx().clone();
+            let desktop = class == egui::ViewportClass::Deferred;
+            let members: Vec<_> = members
+                .iter()
+                .filter(|tab| {
+                    let tab = tab.lock().unwrap();
+                    tab.detached && tab.viewport_id() == viewport
+                })
+                .cloned()
+                .collect();
+            if members.is_empty() {
+                theme::dismiss_tool_viewport(&ctx, desktop);
+                return;
+            }
+            if ctx.input(|i| i.viewport().close_requested()) {
+                for tab in &members {
+                    let mut tab = tab.lock().unwrap();
+                    tab.end_link();
+                    let _ = actions.send((tab.id, TabAction::Close));
+                }
+                theme::dismiss_tool_viewport(&ctx, desktop);
+                return;
+            }
+            let active = members
+                .iter()
+                .find(|tab| tab.lock().unwrap().window_active)
+                .cloned()
+                .unwrap_or_else(|| members[0].clone());
+            let entries: Vec<_> = members
+                .iter()
+                .map(|tab| {
+                    let tab = tab.lock().unwrap();
+                    (tab.id, tab.info.host_name.clone())
+                })
+                .collect();
+            let (id, host) = {
+                let tab = active.lock().unwrap();
+                (tab.id, tab.info.host_name.clone())
+            };
+            let body = theme::native_session_title_bar(ui, &app_title, Some(&host));
+            let visible = ctx.input(|i| i.viewport().minimized != Some(true));
+            let (body, tab_actions) =
+                session_tabs::show(&tabs, ui, body, &entries, Some(id), false, visible);
+            for (id, action) in tab_actions {
+                for tab in &members {
+                    tab.lock().unwrap().release_keyboard();
+                }
+                let _ = actions.send((id, action));
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
+            }
+            let mut tab = active.lock().unwrap();
+            let ui = &mut ui.new_child(UiBuilder::new().max_rect(body));
+            let action = tab.ui(ui, body, time + registered.elapsed().as_secs_f64(), &rt);
+            if !matches!(action, TabAction::None) {
+                tab.release_keyboard();
+                tab.leave_fullscreen(&ctx);
+                let _ = actions.send((id, action));
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(
+                if ctx.input(|i| i.focused) { 16 } else { 100 },
+            ));
+        });
+    }
 }

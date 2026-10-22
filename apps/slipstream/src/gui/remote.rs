@@ -56,12 +56,12 @@ impl Drop for Reconnecting {fn drop(&mut self) {self.task.abort();}}
 pub enum TabAction {
     None,
     Bridge,
-    NewLink,
+    NewLink(egui::ViewportId),
     Close,
     Detach,
     Dock,
     Activate,
-    PlaceTab(Option<u64>),
+    PlaceTab(egui::ViewportId, Option<u64>),
     FloatAt(egui::Pos2),
 }
 
@@ -75,6 +75,8 @@ const PRESETS: [(&str, StreamSettings); 4] = [
 pub struct RemoteTab {
     pub id: u64,
     pub detached: bool,
+    pub window_group: Option<egui::ViewportId>,
+    pub window_active: bool,
     pub window_position: Option<egui::Pos2>,
     pub pending_keys: Vec<CapturedKey>,
     session: ViewerSession,
@@ -154,7 +156,12 @@ impl RemoteTab {
     }
 
     pub fn viewport_id(&self) -> egui::ViewportId {
-        if self.detached { Self::window_id(self.id) } else { egui::ViewportId::ROOT }
+        if self.detached { self.window_group.unwrap_or_else(||Self::window_id(self.id)) } else { egui::ViewportId::ROOT }
+    }
+
+    pub fn update_window_repaint(&self,ctx:&egui::Context) {
+        let (wake,viewport)=(ctx.clone(),self.viewport_id());
+        self.frames.set_repaint(move || {wake.request_repaint_of(egui::ViewportId::ROOT);theme::repaint_existing_viewport(&wake,viewport);});
     }
 
     pub fn end_link(&mut self) {
@@ -188,6 +195,8 @@ impl RemoteTab {
         Self {
             id,
             detached: false,
+            window_group: None,
+            window_active: true,
             window_position: None,
             pending_keys: Vec::new(),
             cmds: session.command_sender(),
@@ -318,7 +327,7 @@ impl RemoteTab {
         tracing::info!(peer=%self.peer,"viewer link restored");
         self.info=session.info().clone();
         self.cmds=session.command_sender();self.frames=session.frames();
-        let (wake, viewport) = (ctx.clone(), Self::window_id(self.id));
+        let (wake, viewport) = (ctx.clone(), self.viewport_id());
         self.frames.set_repaint(move || {
             wake.request_repaint_of(egui::ViewportId::ROOT);
             theme::repaint_existing_viewport(&wake, viewport);
@@ -1537,6 +1546,12 @@ mod window_tests {
         route(RemoteTab::window_id(2), false);
         assert!(!tabs[1].lock().unwrap().keyboard_captured());
         assert!(tabs[1].lock().unwrap().pending_keys.is_empty());
+        // Only the selected member of a floating group receives input.
+        let group=RemoteTab::window_id(2);
+        {let mut first=tabs[0].lock().unwrap();first.window_group=Some(group);first.window_active=false;}
+        assert!(Arc::ptr_eq(&route(group,true).unwrap(),&tabs[1]));
+        {tabs[0].lock().unwrap().window_active=true;tabs[1].lock().unwrap().window_active=false;}
+        assert!(Arc::ptr_eq(&route(group,true).unwrap(),&tabs[0]));
         tabs[0].lock().unwrap().detached = false;
         assert!(route(egui::ViewportId::ROOT, true).is_none());
         let docked = super::super::route_session_input(&tabs, super::super::Page::Remote(1), egui::ViewportId::ROOT, true).unwrap();

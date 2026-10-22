@@ -81,7 +81,11 @@ impl Devices {
         }
     }
     pub fn camera(&self, selected: Option<u32>) -> Option<u32> {
-        selected.or_else(|| self.cameras.first().map(|(id, _)| *id))
+        match selected {
+            Some(id) if self.cameras.iter().any(|(index, _)| *index == id) => Some(id),
+            Some(_) if self.cameras.len() != 1 => None,
+            _ => self.cameras.first().map(|(id, _)| *id),
+        }
     }
     pub fn camera_name(&self, selected: Option<u32>) -> String {
         self.camera(selected)

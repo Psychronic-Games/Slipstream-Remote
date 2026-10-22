@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
@@ -24,8 +25,15 @@ from PIL import ImageGrab, Image, ImageOps
 
 
 def main():
+    # Xvfb alone does not isolate KDE's StatusNotifierWatcher or desktop portals.
+    # Never register fixture trays or issue portal requests on the user's bus.
+    if os.environ.get('SLIPSTREAM_QA_PRIVATE_BUS')!='1':
+        runner=shutil.which('dbus-run-session')
+        if not runner: raise RuntimeError('Native UI checks require dbus-run-session for desktop isolation')
+        os.execvpe(runner,[runner,'--',sys.executable,str(Path(__file__).resolve()),*sys.argv[1:]],os.environ|{'SLIPSTREAM_QA_PRIVATE_BUS':'1'})
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--client', type=Path, default=Path('target/debug/slipstream'))
+    parser.add_argument('--tabs', action='store_true', help='Audit native tab groups instead of meetings')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     cached = Path.home() / '.cache/slipstream-qa-tools'
@@ -128,12 +136,20 @@ def main():
         time.sleep(.25)
         return point
 
-    def camera_visible(win,name):
+    def click_point(win,x,y,name):
+        words(win,name)
+        g=geometry(win);xdo('windowfocus',win);xdo('mousemove',g['X']+x,g['Y']+y,'click','1');time.sleep(.3)
+
+    def camera_visible(win,name,preview=False):
         g=geometry(win)
         image=ImageGrab.grab(xdisplay=env['DISPLAY']).crop((g['X'],g['Y'],g['X']+g['WIDTH'],g['Y']+g['HEIGHT']))
         image.save(base/f'{name}.png')
+        if preview:
+            video=image.crop((380,350,min(800,image.width),min(780,image.height))).convert('RGB')
+            pixels=getattr(video,'get_flattened_data',video.getdata)()
+            return sum(r<45 and 35<green<140 and 45<b<180 and b>green for r,green,b in pixels)>100
         video=image.crop((200,360,min(980,image.width),min(920,image.height))).convert('RGB').resize((200,160))
-        return sum(r>200 and green>90 and b<80 for r,green,b in video.getdata())>50
+        return sum(r>200 and green>90 and b<80 for r,green,b in getattr(video,'get_flattened_data',video.getdata)())>50
 
     try:
         # The fixture key authorizes the directory, while its lease authorizes
@@ -173,12 +189,14 @@ def main():
         wait(lambda: Path(f'/tmp/.X11-unix/X{display}').exists(), 'Xvfb')
         windows = []
         profiles = []
-        for index, name in enumerate(['Technician fixture', 'Remote user fixture']):
+        for index, name in enumerate(['Alpha', 'Beta'] if args.tabs else ['Technician fixture', 'Remote user fixture']):
             profile = base / f'profile-{index}'
             profile.mkdir()
             profiles.append(profile)
             (profile / 'settings.toml').write_text(f'device_name = {json.dumps(name)}\n[server]\nurl = "http://127.0.0.1:{port}"\nkey = "fixture-meeting-access"\nuse_public_relays = false\n')
             local = env | {'SLIPSTREAM_HOME': str(profile), 'SLIPSTREAM_TEST_SCREENS':'2'}
+            if args.tabs:
+                subprocess.run([str(args.client.resolve()),'set-password','fixture-tab-password'],env=local,check=True,capture_output=True)
             process = launch([str(args.client.resolve()), '--test-pattern', '--page', 'meetings', '--window-size', '1140x1100'], f'client-{index}', local)
             win = wait(lambda: window(process.pid), f'client {index} window')
             xdo('windowmove', win, index * 1200, 0)
@@ -194,6 +212,63 @@ def main():
             point=wait(lambda:locate(win,phrase,name,last),f'{name}: {phrase}')
             g=geometry(win);xdo('windowfocus',win);xdo('mousemove',g['X']+point[0],g['Y']+point[1],'click','1');time.sleep(.25)
             return point
+        if args.tabs:
+            for win in windows: xdo('windowunmap',win)
+            first=wait(lambda:tomllib.loads((profiles[0]/'settings.toml').read_text()).get('host',{}).get('last_device_id'),'first host ID')
+            profile=base/'profile-viewer';profile.mkdir()
+            (profile/'settings.toml').write_text(f'device_name = "Viewer"\n[server]\nurl = "http://127.0.0.1:{port}"\nkey = "fixture-meeting-access"\nuse_public_relays = false\n[viewer]\nseparate_windows = true\nplay_audio = false\n')
+            viewer=launch([str(args.client.resolve()),'--test-pattern','--connect',str(first),'--password','fixture-tab-password','--window-size','1140x1100'],'viewer',env|{'SLIPSTREAM_HOME':str(profile)})
+            def viewer_windows():
+                result=subprocess.run([xdotool,'search','--onlyvisible','--pid',str(viewer.pid)],env=env,capture_output=True,text=True)
+                return result.stdout.split()
+            root_window=wait(lambda:next((w for w in viewer_windows() if xdo('getwindowname',w).startswith('Slipstream')),None),'viewer root')
+            floating=wait(lambda:next((w for w in viewer_windows() if xdo('getwindowname',w).startswith('Alpha')),None),'first floating group')
+            xdo('windowmove',root_window,0,0);xdo('windowmove',floating,1200,0)
+            def local_click(win,x,y):
+                g=geometry(win);xdo('windowfocus',win);xdo('mousemove',g['X']+x,g['Y']+y,'click','1');time.sleep(.3)
+            def drag(win,x,y,to_x,to_y):
+                g=geometry(win);xdo('windowfocus',win);xdo('mousemove',g['X']+x,g['Y']+y,'mousedown','1');time.sleep(.25)
+                xdo('mousemove',g['X']+x+16,g['Y']+y);time.sleep(.25)
+                for step in range(1,13):
+                    xdo('mousemove',round(g['X']+x+(to_x-g['X']-x)*step/12),round(g['Y']+y+(to_y-g['Y']-y)*step/12));time.sleep(.05)
+                time.sleep(.25);words(win,'drag-in-progress');xdo('mouseup','1');time.sleep(.8)
+            # One tab (180px) followed by + in the floating strip below titlebar.
+            words(floating,'group-one-before-plus')
+            local_click(floating,204,56)
+            click_text(root_window,'LINK BY ID','new-link-manual')
+            station=wait(lambda:locate(root_window,'This station','new-link-fields'),'manual station selector')
+            local_click(root_window,station[0],station[1]+40)
+            xdo('type','--clearmodifiers','--delay','60',str(target));time.sleep(.5)
+            local_click(root_window,station[0]+225,station[1]+40)
+            xdo('type','--clearmodifiers','--delay','60','fixture-tab-password');time.sleep(.5)
+            local_click(root_window,station[0]+430,station[1]+40)
+            words(root_window,'after-manual-connect')
+            wait(lambda:xdo('getwindowname',floating).startswith('Beta'),'second link in original floating group')
+            assert len(viewer_windows())==2,viewer_windows()
+            words(floating,'group-two-tabs')
+            print('Floating + retained destination despite separate_windows=true; two live tabs share one native window',flush=True)
+            # Tear Beta out, then move it back into Alpha's group.
+            drag(floating,250,56,720,450)
+            other=wait(lambda:next((w for w in viewer_windows() if w not in {root_window,floating}),None),'tear-out from floating group')
+            words(other,'torn-out-tab')
+            xdo('windowmove',other,0,0)
+            drag(other,65,56,1500,56)
+            wait(lambda:len(viewer_windows())==2,'floating-to-floating merge closes empty source window')
+            words(floating,'merged-floating-group')
+            assert xdo('getwindowname',floating).startswith('Beta')
+            # Put Beta in the root strip, then drag it back into the group.
+            drag(floating,250,56,250,56)
+            wait(lambda:xdo('getwindowname',floating).startswith('Alpha'),'floating tab docked to root')
+            words(root_window,'root-docked')
+            drag(root_window,160,56,1500,56)
+            words(floating,'root-to-floating-group')
+            assert len(viewer_windows())==2
+            # Closing one selected tab leaves its sibling connected.
+            local_click(floating,350,56)
+            wait(lambda:xdo('getwindowname',floating).startswith('Alpha'),'closing selected tab retains other group member')
+            words(floating,'remaining-group-member')
+            print('Floating tear-out, floating-to-floating merge, root/group moves and closing one member passed',flush=True)
+            return
         click(host, 'Devices', 'host-setup-devices')
         click_text(host,'Test camera','host-camera-picker')
         click_text(host,'Test camera 2','host-second-camera')
@@ -234,12 +309,16 @@ def main():
         click(guest,'Live meeting','guest-live-again')
         wait(lambda:locate(guest,'Cameras','guest-camera-stopped'),'camera stopped on peer')
         click(host,'Share screen','host-screen-chooser-cancel')
+        wait(lambda:camera_visible(host,'host-screen-thumbnails',preview=True),'local chooser thumbnails')
+        assert locate(guest,'Cameras','guest-not-sharing-preview')
         click_text(host,'Screen 2 Test Pattern 2 1280 x 720','host-choose-screen-cancel')
-        click(host,'Cancel','host-cancel-screen')
+        # Fixed 1140×1100/two-screen fixture: Antonio's Cancel caption is
+        # intermittently misread by OCR; click the verified footer hit area.
+        click_point(host,528,810,'host-cancel-screen')
         assert locate(host,'Share screen','host-cancel-kept-off',controls=True)
         click(host,'Share screen','host-screen-chooser')
         click_text(host,'Screen 2 Test Pattern 2 1280 x 720','host-choose-screen-two')
-        click(host,'Share selected screen','host-confirm-screen')
+        click_point(host,400,810,'host-confirm-screen')
         wait(lambda:locate(host,'Test Pattern 2','host-screen-two-shared'),'explicit second screen sharing status')
         wait(lambda:camera_visible(guest,'guest-screen-video'),'selected screen reaches peer')
         xdo('windowsize',guest,480,800)

@@ -1,11 +1,17 @@
 use super::*;
 use slipstream_core::proto::DisplayInfo;
+use std::{collections::BTreeMap, time::Instant};
 
 pub(super) struct Picker {
     job: Option<Pending<Vec<DisplayInfo>>>,
     choices: Vec<DisplayInfo>,
     selected: Option<u32>,
     error: Option<String>,
+    preview: Option<Pending<(u32, slipstream_platform::RawFrame)>>,
+    thumbnails: BTreeMap<u32, egui::TextureHandle>,
+    preview_errors: BTreeMap<u32, String>,
+    cursor: usize,
+    next_preview: Instant,
 }
 impl Picker {
     pub fn new(app: &App, ctx: &egui::Context) -> Self {
@@ -17,9 +23,14 @@ impl Picker {
             choices: Vec::new(),
             selected: None,
             error: None,
+            preview: None,
+            thumbnails: BTreeMap::new(),
+            preview_errors: BTreeMap::new(),
+            cursor: 0,
+            next_preview: Instant::now(),
         }
     }
-    pub fn poll(&mut self) {
+    pub fn poll(&mut self, app: &App, ctx: &egui::Context) {
         if let Some(result) = ready(&mut self.job) {
             match result {
                 Ok(choices) => {
@@ -32,6 +43,56 @@ impl Picker {
                 }
                 Err(error) => self.error = Some(format!("{error:#}")),
             }
+        }
+        if let Some(result) = ready(&mut self.preview) {
+            match result {
+                Ok((index, frame)) => {
+                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                        [frame.width as usize, frame.height as usize],
+                        &frame.data,
+                    );
+                    if let Some(texture) = self.thumbnails.get_mut(&index) {
+                        texture.set(image, egui::TextureOptions::LINEAR);
+                    } else {
+                        self.thumbnails.insert(
+                            index,
+                            ctx.load_texture(
+                                format!("screen-preview-{index}"),
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            ),
+                        );
+                    }
+                    self.preview_errors.remove(&index);
+                }
+                Err(error) => {
+                    if let Some(display) = self.choices.get(
+                        (self.cursor + self.choices.len().saturating_sub(1))
+                            % self.choices.len().max(1),
+                    ) {
+                        self.preview_errors
+                            .insert(display.index, format!("{error:#}"));
+                        self.thumbnails.remove(&display.index);
+                    }
+                }
+            }
+            self.next_preview = Instant::now() + Duration::from_millis(400);
+        }
+        if self.preview.is_none() && !self.choices.is_empty() && Instant::now() >= self.next_preview
+        {
+            let index = self.choices[self.cursor % self.choices.len()].index;
+            self.cursor = (self.cursor + 1) % self.choices.len();
+            let client = app.client.clone();
+            let cancelled = std::sync::Arc::default();
+            let worker_cancel = std::sync::Arc::clone(&cancelled);
+            let mut job = pending(&app.rt, ctx, async move {
+                Ok((
+                    index,
+                    client.meeting_screen_preview(index, worker_cancel).await?,
+                ))
+            });
+            job.cancelled = cancelled;
+            self.preview = Some(job);
         }
     }
 }
@@ -60,7 +121,7 @@ pub(super) fn ui(meetings: &mut Meetings, app: &App, ctx: &egui::Context) {
         if theme::window_header_with_close(ui, "Choose a screen", pal::BLUE, pal::PEACH).close {
             close = true;
         }
-        ui.label("Only the screen you choose will be shared with this meeting.");
+        ui.label("Thumbnails are visible only to you. Choose a screen, then confirm to share it.");
         if picker.job.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -79,14 +140,65 @@ pub(super) fn ui(meetings: &mut Meetings, app: &App, ctx: &egui::Context) {
             .max_height((ctx.content_rect().height() - 380.0).clamp(80.0, 300.0))
             .show(ui, |ui| {
                 for display in &picker.choices {
+                    let selected = picker.selected == Some(display.index);
+                    let response = egui::Frame::new()
+                        .fill(if selected { pal::VIOLET } else { pal::PANEL })
+                        .stroke(egui::Stroke::new(
+                            if selected { 2.0 } else { 1.0 },
+                            pal::BLUE,
+                        ))
+                        .corner_radius(6.0)
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.label(label(display));
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 110.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().rect_filled(rect, 3.0, egui::Color32::BLACK);
+                            if let Some(texture) = picker.thumbnails.get(&display.index) {
+                                let fit = video::fit_rect(
+                                    rect,
+                                    (texture.size()[0] as u32, texture.size()[1] as u32),
+                                );
+                                ui.painter().image(
+                                    texture.id(),
+                                    fit,
+                                    egui::Rect::from_min_max(
+                                        egui::Pos2::ZERO,
+                                        egui::pos2(1.0, 1.0),
+                                    ),
+                                    egui::Color32::WHITE,
+                                );
+                            } else {
+                                ui.painter().text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    if picker.preview_errors.contains_key(&display.index) {
+                                        "Preview unavailable"
+                                    } else {
+                                        "Loading preview…"
+                                    },
+                                    theme::body(14.0),
+                                    pal::TAN,
+                                );
+                            }
+                        })
+                        .response;
                     if ui
-                        .add(
-                            egui::Button::new(label(display))
-                                .selected(picker.selected == Some(display.index))
-                                .wrap()
-                                .min_size(egui::vec2(ui.available_width(), 54.0)),
+                        .interact(
+                            response.rect,
+                            ui.scope_id().with(("screen-choice", display.index)),
+                            egui::Sense::click(),
                         )
-                        .on_hover_text(format!("Desktop position: {}, {}", display.x, display.y))
+                        .on_hover_text(
+                            picker
+                                .preview_errors
+                                .get(&display.index)
+                                .cloned()
+                                .unwrap_or_else(|| format!("Select screen {}", display.index + 1)),
+                        )
                         .clicked()
                     {
                         picker.selected = Some(display.index);
@@ -195,8 +307,23 @@ fn arrangement(picker: &mut Picker, ui: &mut Ui) {
             ),
             egui::StrokeKind::Inside,
         );
+        if let Some(texture) = picker.thumbnails.get(&display.index) {
+            let image_rect = video::fit_rect(
+                rect.shrink(2.0),
+                (texture.size()[0] as u32, texture.size()[1] as u32),
+            );
+            ui.painter().image(
+                texture.id(),
+                image_rect,
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+        let badge =
+            egui::Rect::from_min_size(rect.min + egui::vec2(5.0, 5.0), egui::vec2(26.0, 28.0));
+        ui.painter().rect_filled(badge, 3.0, pal::PANEL);
         ui.painter().text(
-            rect.center(),
+            badge.center(),
             egui::Align2::CENTER_CENTER,
             (display.index + 1).to_string(),
             theme::display(24.0),
@@ -206,7 +333,12 @@ fn arrangement(picker: &mut Picker, ui: &mut Ui) {
                 pal::TAN
             },
         );
-        if response.on_hover_text(label(display)).clicked() {
+        let hint = picker
+            .preview_errors
+            .get(&display.index)
+            .map(|e| format!("{}\nPreview unavailable: {e}", label(display)))
+            .unwrap_or_else(|| label(display));
+        if response.on_hover_text(hint).clicked() {
             picker.selected = Some(display.index);
         }
     }

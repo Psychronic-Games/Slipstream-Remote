@@ -13,6 +13,26 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.23.2 — 2026-10-21
+
+### Meeting previews and tab groups
+
+- Show refreshed, local-only screen thumbnails in the sharing chooser and
+  desktop arrangement map. Preview one screen at a time at low frame rate;
+  stop preview work when the chooser closes and publish only after confirmation.
+- Exclude Linux webcam metadata endpoints from camera choices and repair a saved
+  invalid selection when one usable camera remains. Negotiate advertised camera
+  modes instead of requiring YUYV at 640×480; try supported alternatives.
+- Allow every native session window to contain a group of tabs. Drag tabs into
+  another floating group or the main console, reorder them, or tear them out.
+  Keep the connections alive and send remote input only to the selected tab.
+- Keep new links in the window where + was clicked, including saved-password
+  prompts, even when the separate-windows preference is enabled. Close an empty
+  source window after moving its last tab; retain siblings when one tab closes.
+- Isolate native QA clients on a private D-Bus session as well as Xvfb, preventing
+  fixture icons from appearing in the user's real system tray. Explicitly shut
+  down the Linux tray service when its owner is dropped.
+
 ## 0.23.1 — 2026-10-21
 
 ### Meeting usability

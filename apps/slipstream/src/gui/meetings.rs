@@ -212,8 +212,16 @@ impl Meetings {
             self.camera_index = settings.app.meeting_camera;
         }
         self.devices.poll();
+        if let Some(saved)=self.camera_index
+            && let [(index,_)]=self.devices.cameras.as_slice()
+            && *index!=saved
+        {
+            self.camera_index=Some(*index);
+            app.client.update_settings(|s|s.app.meeting_camera=self.camera_index);
+        }
+        if app.page != Page::Meetings {self.screen_picker=None;}
         if let Some(picker) = &mut self.screen_picker {
-            picker.poll();
+            picker.poll(app, ctx);
         }
         let progress = self
             .outgoing

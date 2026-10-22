@@ -13,6 +13,7 @@ use super::{
 #[derive(Default)]
 pub(super) struct QuickConnect {
     pub open: bool,
+    pub destination: Option<egui::ViewportId>,
     pub focus: bool,
     search: String,
     id: String,
@@ -51,6 +52,7 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
         if chrome.close {
             picker.open = false;
         }
+        if picker.destination.is_some() {ui.label("This link will be added to the window where you clicked +.");}
         let search = theme::input_frame()
             .show(ui, |ui| {
                 ui.add(
@@ -66,7 +68,7 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
         }
         ui.add_space(6.0);
         let filter = picker.search.to_lowercase();
-        let overhead = if picker.manual_open { 365.0 } else { 245.0 };
+        let overhead = if picker.manual_open { 390.0 } else { 270.0 };
         egui::ScrollArea::vertical()
             .id_salt("quick-link-results")
             .auto_shrink([false, true])
@@ -296,6 +298,8 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
     if result.should_close() {
         picker.open = false;
     }
+    let previous_destination=app.connect_destination;
+    app.connect_destination=picker.destination;
     match choice {
         Some(Choice::Saved(r, device, shared)) => {
             picker.open = false;
@@ -357,6 +361,7 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
         }
         None => {}
     }
+    app.connect_destination=previous_destination;
     if refresh {
         saved::refresh(app);
     }

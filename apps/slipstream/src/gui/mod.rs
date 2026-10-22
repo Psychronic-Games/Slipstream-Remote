@@ -285,6 +285,7 @@ type SessionAction = (u64, remote::TabAction);
 type SessionActionQueue = (mpsc::Sender<SessionAction>, mpsc::Receiver<SessionAction>);
 
 pub struct Attempt {
+    destination: Option<egui::ViewportId>,
     pub id: DeviceId,
     pub password: String,
     /// Found on this signed-in station (`None`: the app's own).
@@ -348,6 +349,8 @@ pub struct App {
     quick_connect: quick_connect::QuickConnect,
     meetings: meetings::Meetings,
     next_tab: u64,
+    next_window: u64,
+    connect_destination: Option<egui::ViewportId>,
     pub incoming: Vec<IncomingSession>,
     toasts: Vec<Toast>,
     pub settings_form: settings::SettingsForm,
@@ -442,6 +445,8 @@ impl App {
             quick_connect: Default::default(),
             meetings: Default::default(),
             next_tab: 1,
+            next_window: 1,
+            connect_destination: None,
             incoming: Vec::new(),
             toasts: Vec::new(),
             settings_form,
@@ -615,6 +620,7 @@ impl App {
     /// Connects to `id`, found on this app's station (`via: None`) or a
     /// signed-in one.
     pub fn start_connect_to(&mut self, ctx: &egui::Context, id: DeviceId, password: String, via: Option<slipstream_session::AccountRef>) {
+        let destination=self.connect_destination.take();
         if self.attempt.is_some() {
             return;
         }
@@ -638,7 +644,7 @@ impl App {
             let _ = tx.send(result);
             wake.request_repaint();
         });
-        self.attempt = Some(Attempt { id, password, via, progress, rx, task });
+        self.attempt = Some(Attempt { destination, id, password, via, progress, rx, task });
     }
 
     fn poll_attempt(&mut self, ctx: &egui::Context) {
@@ -660,7 +666,9 @@ impl App {
                 self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
                 self.tabs.push(Arc::new(Mutex::new(tab)));
                 self.page = Page::Remote(id);
-                if self.client.settings().viewer.separate_windows && !ctx.embed_viewports() {
+                if let Some(destination)=attempt.destination {
+                    self.move_session_tab(ctx,id,destination,None);
+                } else if self.client.settings().viewer.separate_windows && !ctx.embed_viewports() {
                     self.open_session_window(ctx, id);
                 }
                 self.connect_pw.clear();
@@ -912,26 +920,58 @@ impl App {
     }
 
     pub fn open_session_window(&mut self, ctx: &egui::Context, id: u64) {
-        if ctx.embed_viewports() { self.page = Page::Remote(id); return; }
-        if let Some(tab) = self.tab(id) {
-            let mut tab = tab.lock().unwrap();
-            if !tab.detached {
-                tab.release_keyboard();
-                tab.leave_fullscreen(ctx);
-                tab.detached = true;
-            }
-            let viewport = tab.viewport_id();
-            ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
+        let existing=self.tab(id).and_then(|tab|{let tab=tab.lock().unwrap();tab.detached.then(||tab.viewport_id())});
+        if let Some(viewport)=existing {
+            self.session_action(ctx,id,remote::TabAction::Activate);
+            ctx.send_viewport_cmd_to(viewport,egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd_to(viewport,egui::ViewportCommand::Focus);return;
         }
-        if self.page == Page::Remote(id) { self.page = Page::Links; }
+        self.detach_session_window(ctx,id);
+    }
+
+    fn detach_session_window(&mut self,ctx:&egui::Context,id:u64) {
+        if ctx.embed_viewports() {self.page=Page::Remote(id);return;}
+        let viewport=egui::ViewportId::from_hash_of(("session-group",self.next_window));
+        self.next_window+=1;
+        self.move_session_tab(ctx,id,viewport,None);
+    }
+
+    fn close_empty_session_window(&self,ctx:&egui::Context,viewport:egui::ViewportId) {
+        if viewport!=egui::ViewportId::ROOT && !self.tabs.iter().any(|t|t.lock().unwrap().viewport_id()==viewport) {
+            ctx.send_viewport_cmd_to(viewport,egui::ViewportCommand::Close);
+        }
+    }
+
+    fn move_session_tab(&mut self,ctx:&egui::Context,id:u64,destination:egui::ViewportId,before:Option<u64>) {
+        let Some(tab)=self.tab(id) else {return;};
+        let old=tab.lock().unwrap().viewport_id();
+        for other in &self.tabs {
+            let mut other=other.lock().unwrap();other.release_keyboard();
+            if other.viewport_id()==destination {other.window_active=false;}
+        }
+        {
+            let mut tab=tab.lock().unwrap();tab.leave_fullscreen(ctx);
+            tab.detached=destination!=egui::ViewportId::ROOT;
+            tab.window_group=tab.detached.then_some(destination);tab.window_active=true;tab.window_position=None;tab.update_window_repaint(ctx);
+        }
+        if let Some(index)=self.tabs.iter().position(|t|Arc::ptr_eq(t,&tab)) {
+            let tab=self.tabs.remove(index);
+            let index=before.and_then(|other|self.tabs.iter().position(|t|t.lock().unwrap().id==other)).unwrap_or(self.tabs.len());
+            self.tabs.insert(index,tab);
+        }
+        if destination==egui::ViewportId::ROOT {self.page=Page::Remote(id);self.set_visible(ctx,true);}
+        else if self.page==Page::Remote(id) {self.page=Page::Links;}
+        self.close_empty_session_window(ctx,old);
+        ctx.send_viewport_cmd_to(destination,egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd_to(destination,egui::ViewportCommand::Focus);
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
     fn session_action(&mut self, ctx: &egui::Context, id: u64, action: remote::TabAction) {
         match action {
             remote::TabAction::None => {},
-            remote::TabAction::NewLink => {
+            remote::TabAction::NewLink(destination) => {
+                self.quick_connect.destination=Some(destination);
                 for tab in &self.tabs {tab.lock().unwrap().release_keyboard();}
                 self.quick_connect.open = true;
                 self.quick_connect.focus = true;
@@ -946,41 +986,29 @@ impl App {
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
             },
-            remote::TabAction::Close => self.close_tab(id),
+            remote::TabAction::Close => {
+                let old=self.tab(id).map(|t|t.lock().unwrap().viewport_id());
+                self.close_tab(id);
+                if let Some(old)=old {self.close_empty_session_window(ctx,old);}
+            },
             remote::TabAction::Detach => self.open_session_window(ctx, id),
             remote::TabAction::Activate => {
                 for tab in &self.tabs { tab.lock().unwrap().release_keyboard(); }
                 if let Some(tab) = self.tab(id) {
-                    if tab.lock().unwrap().detached { return; }
-                    self.page = Page::Remote(id);
+                    let viewport=tab.lock().unwrap().viewport_id();
+                    if viewport!=egui::ViewportId::ROOT {
+                        for other in &self.tabs {let mut other=other.lock().unwrap();if other.viewport_id()==viewport {other.window_active=other.id==id;}}
+                        ctx.request_repaint_of(viewport);
+                    } else {self.page=Page::Remote(id);}
                 }
             },
             remote::TabAction::FloatAt(position) => {
+                self.detach_session_window(ctx, id);
                 if let Some(tab) = self.tab(id) {tab.lock().unwrap().window_position = Some(position);}
-                self.open_session_window(ctx, id);
-                ctx.send_viewport_cmd_to(remote::RemoteTab::window_id(id), egui::ViewportCommand::OuterPosition(position));
+                if let Some(tab)=self.tab(id) {ctx.send_viewport_cmd_to(tab.lock().unwrap().viewport_id(),egui::ViewportCommand::OuterPosition(position));}
             },
-            remote::TabAction::PlaceTab(before) => {
-                if let Some(index) = self.tabs.iter().position(|tab| tab.lock().unwrap().id == id) {
-                    let tab = self.tabs.remove(index);
-                    let index = before.and_then(|other| self.tabs.iter().position(|tab| tab.lock().unwrap().id == other)).unwrap_or(self.tabs.len());
-                    self.tabs.insert(index, tab);
-                    self.session_action(ctx, id, remote::TabAction::Dock);
-                }
-            },
-            remote::TabAction::Dock => {
-                if let Some(tab) = self.tab(id) {
-                    let mut tab = tab.lock().unwrap();
-                    tab.release_keyboard();
-                    tab.detached = false;
-                }
-                ctx.send_viewport_cmd_to(remote::RemoteTab::window_id(id), egui::ViewportCommand::Visible(false));
-                ctx.send_viewport_cmd_to(remote::RemoteTab::window_id(id), egui::ViewportCommand::Close);
-                self.page = Page::Remote(id);
-                self.set_visible(ctx, true);
-                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
-                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
-            },
+            remote::TabAction::PlaceTab(destination,before) => self.move_session_tab(ctx,id,destination,before),
+            remote::TabAction::Dock => self.move_session_tab(ctx,id,egui::ViewportId::ROOT,None),
         }
     }
 
@@ -1625,7 +1653,7 @@ fn route_session_input(
 ) -> Option<Arc<Mutex<remote::RemoteTab>>> {
     let target = tabs.iter().find(|tab| {
         let tab = tab.lock().unwrap();
-        tab.viewport_id() == viewport && (tab.detached || page == Page::Remote(tab.id))
+        tab.viewport_id() == viewport && ((tab.detached && tab.window_active) || (!tab.detached && page == Page::Remote(tab.id)))
     }).cloned();
     for tab in tabs {
         let is_target = target.as_ref().is_some_and(|target| Arc::ptr_eq(tab, target));
@@ -1657,9 +1685,9 @@ impl eframe::App for App {
         if self.hidden || ctx.input(|i| i.raw.viewports.get(&egui::ViewportId::ROOT).is_some_and(|v| v.minimized == Some(true))) {
             self.session_tabs.lock().unwrap().hide_target();
         }
-        for tab in &self.tabs {
-            session_windows::show(tab, ctx, &self.rt, &self.session_actions.0, &self.session_tabs, self.t0.elapsed().as_secs_f64(), &window_title(self.org.as_deref()));
-        }
+        let live:Vec<_>=std::iter::once(egui::ViewportId::ROOT).chain(self.tabs.iter().map(|t|t.lock().unwrap().viewport_id())).collect();
+        self.session_tabs.lock().unwrap().retain_targets(&live);
+        session_windows::show(&self.tabs, ctx, &self.rt, &self.session_actions.0, &self.session_tabs, self.t0.elapsed().as_secs_f64(), &window_title(self.org.as_deref()));
         // Frame serials restart on a new session; discard cached old textures.
         if !restored.is_empty() {video::retain_streams(&self.render_state,|id|!restored.contains(&id));}
         if self.software.is_none()

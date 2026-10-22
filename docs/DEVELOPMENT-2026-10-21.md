@@ -204,3 +204,72 @@ Release log: /tmp/slipstream-0231-release-build.log. Test log:
 30.41 GiB release, within the existing 12/32 GiB budgets. This documentation
 commit follows the packaged source commit and does not change build 121.
 Earlier documentation reconciliation edits remain separate and uncommitted.
+
+## Screen thumbnails, Linux camera correction and session tab groups
+
+The Linux camera report reproduced exactly on this workstation: Nokhwa returned
+[(1, "HD Pro Webcam C920"), (0, "HD Pro Webcam C920")]. Endpoint 1 produced
+"Could not get device property CameraFormat: Failed to Fufill"; endpoint 0
+successfully delivered two 640×480 RGBA frames. This was not a hardware failure:
+the new default picked the webcam's metadata node. Linux discovery now queries
+V4L2 capabilities, excludes metadata-only nodes and sorts real camera IDs. An
+invalid saved choice is repaired when only one actual camera remains. Startup
+also negotiates advertised decodable modes and tries bounded alternatives rather
+than requiring a particular pixel format/resolution. A local camera probe reads
+and discards frames; it does not save or send them.
+
+The screen chooser now refreshes small local thumbnails in its screen cards and
+arrangement map. Only one preview capture runs at a time, throttled separately
+from meeting sharing. RGBA/BGRA stride conversion is bounded to 320×180 and keeps
+aspect ratio. Cancellation propagates to the preview worker, which polls at
+100 ms intervals with a three-second frame deadline. Leaving Meetings, ending
+the room, refreshing or closing the chooser drops pending work/textures. There
+is no publisher/network path from the preview; confirmation still starts sharing
+only the explicit selected screen ID.
+
+The existing tab implementation had a root-only drop target, one remote session
+per native viewport and a + action with no destination. Native session windows
+now render tab groups. Targets are registered per visible viewport in physical
+screen coordinates; tabs reorder/move across root and floating groups or tear
+out from either. Moving keeps the original session and releases input/fullscreen
+state. Only the selected tab receives remote keyboard input. Empty source
+windows close; closing a selected member leaves siblings connected. New-link
+choices and saved-device password prompts carry the clicked window through the
+connection attempt, overriding the separate-window preference for that action.
+
+### Tray report and completed checks
+
+The user saw phantom tray icons during the native audits. Xvfb isolated windows,
+but the fixtures inherited the user's session D-Bus address, so each test client
+registered an identically named Slipstream tray icon on KDE. The audit now
+re-executes itself under dbus-run-session before starting any client or fixture;
+this also isolates desktop-portal traffic. While three fixture clients were
+running, the real KDE StatusNotifierWatcher still listed only the existing main
+Slipstream registration (alongside unrelated applications). Fixture logs confirm
+that their private bus has no StatusNotifierWatcher. No desktop service or real
+client was restarted. Linux Tray::drop also explicitly asks ksni to shut down;
+dropping a ksni handle alone does not close its service.
+
+Workspace tests pass: 161 passed, five existing manual/benchmark tests ignored.
+The local C920 probe lists only video endpoint 0 and reads/discards two valid
+640×480 RGBA frames. No camera image is saved or transmitted by the probe.
+
+Isolated native checks pass:
+
+- Three-client tab audit: + adds to its source floating group despite the global
+  separate-windows preference, floating tear-out, floating-to-floating merge,
+  root/group moves and closing one selected member without ending its sibling.
+  Evidence: /tmp/slipstream-meetings-ui-z35ekatz.
+- Two-client meeting audit: remembered camera, Cancel/Answer, call-status cleanup,
+  real encoded/decoded synthetic video, chat/unread/Enter, local chooser thumbnails
+  with no peer screen published before confirmation, cancelled chooser, explicit
+  second-screen sharing, narrow layout and confirmed teardown. Evidence:
+  /tmp/slipstream-meetings-ui-khqsdazx. Native OCR required slower fixture typing
+  and fixed chooser-footer hit areas; screenshots verify the actual controls.
+
+The cache wrapper enforced its development budget during this work and removed
+only generated Cargo caches when they reached 12 GiB. Subsequent builds remained
+serialized with two Cargo jobs. Pre-existing documentation reconciliation edits
+remain separate from these implementation changes.
+
+Strict Linux workspace/all-target Clippy also passes with warnings denied.

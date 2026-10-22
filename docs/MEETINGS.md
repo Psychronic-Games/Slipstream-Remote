@@ -30,7 +30,9 @@ Enter sends a message and Shift+Enter inserts a new line.
 
 Press **Unmute** to enable your microphone. **Camera** and **Share screen** are
 separate explicit actions. **Share screen** opens a chooser with screen names,
-resolution, main-display labels and a layout map. Choose a screen and confirm
+resolution, main-display labels and a layout map. Refreshed thumbnails show
+each screen’s current contents locally, including inside the map; previewing
+does not send them to the meeting. Choose a screen and confirm
 **Share selected screen**. **Change screen** opens the chooser again; Cancel
 keeps your current sharing unchanged. Up to four selected remote sources and a
 local preview are displayed; screen shares have priority, and a participant can be

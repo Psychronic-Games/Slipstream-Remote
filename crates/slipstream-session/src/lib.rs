@@ -2,6 +2,7 @@
 //! reachable by ID, hosts incoming sessions, and opens outgoing ones.
 
 mod desktop_shell;
+mod meeting_preview;
 mod public_ip;
 mod reconnect;
 mod accounts;
@@ -173,12 +174,15 @@ impl Client {
         Ok(backend.as_ref().context("No screen is available")?.displays())
     }
     pub async fn capture_for_meeting(&self, index:u32) -> Result<slipstream_platform::FrameStream> {
+        self.meeting_capture(index,15).await
+    }
+    async fn meeting_capture(&self,index:u32,fps:u32)->Result<slipstream_platform::FrameStream> {
         let mut backend = host::screen_backend(&self.inner).await?;
         let backend = backend.as_mut().context("No screen is available")?;
         let displays = backend.displays();
         let display = displays.iter().find(|d| d.index==index)
             .context("The selected screen is no longer available; choose a screen again")?;
-        backend.capture(display.index, 15)
+        backend.capture(display.index, fps)
     }
     /// Loads settings and identity from `store`, binds the network endpoint
     /// and starts background tasks. Must be called inside a tokio runtime.

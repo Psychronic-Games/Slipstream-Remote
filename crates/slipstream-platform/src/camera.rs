@@ -3,14 +3,12 @@ use crate::FrameStream;
 use anyhow::{Context, Result};
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+mod desktop;
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub fn devices() -> Result<Vec<(u32, String)>> {
     #[cfg(windows)]
     media_foundation()?;
-    Ok(nokhwa::query(nokhwa::utils::ApiBackend::Auto)?
-        .into_iter()
-        .enumerate()
-        .map(|(ordinal, info)| (info.index().as_index().unwrap_or(ordinal as u32), info.human_name()))
-        .collect())
+    desktop::devices()
 }
 #[cfg(target_os = "android")]
 pub fn devices() -> Result<Vec<(u32, String)>> {
@@ -22,12 +20,8 @@ pub fn start(index: u32) -> Result<FrameStream> {
     #[cfg(windows)]
     media_foundation()?;
     use nokhwa::{
-        Camera,
         pixel_format::RgbFormat,
-        utils::{
-            CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType,
-            Resolution,
-        },
+        utils::FrameFormat,
     };
     let slot = crate::FrameSlot::new();
     let producer = slot.clone();
@@ -35,14 +29,7 @@ pub fn start(index: u32) -> Result<FrameStream> {
     std::thread::Builder::new()
         .name("meeting-camera".into())
         .spawn(move || {
-            let opened = (|| {
-                let wanted = CameraFormat::new(Resolution::new(640, 480), FrameFormat::YUYV, 15);
-                let request =
-                    RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(wanted));
-                let mut camera = Camera::new(CameraIndex::Index(index), request)?;
-                camera.open_stream()?;
-                anyhow::Ok(camera)
-            })();
+            let opened = desktop::open(index);
             let mut camera = match opened {
                 Ok(c) => c,
                 Err(e) => {

@@ -20,6 +20,15 @@ pub struct Tray {
     icon: tray_icon::TrayIcon,
 }
 
+#[cfg(target_os = "linux")]
+impl Drop for Tray {
+    fn drop(&mut self) {
+        // Dropping ksni's handle alone leaves its service running. Explicitly
+        // close the D-Bus connection while the app runtime is still available.
+        drop(self.handle.shutdown());
+    }
+}
+
 impl Tray {
     pub fn poll(&self) -> Option<TrayCmd> {
         self.rx.try_recv().ok()
