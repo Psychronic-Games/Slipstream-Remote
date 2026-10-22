@@ -46,8 +46,9 @@ Slipstream is a free, MIT-licensed remote desktop app: TeamViewer-style
   binary. The PHP station starts it (`slipstream-server --relay-only`) on a
   private loopback port and forwards `/relay` with an `.htaccess`
   `RewriteRule … ws://127.0.0.1:PORT/relay [P]`. It has to be `ws://`:
-  `http://` drops the `Upgrade` header. Clients fall back to the public n0
-  relays only if the station allows it.
+  `http://` drops the `Upgrade` header. The optional backup is Slipstream's
+  own public relay, allowed only when both client and station permit it.
+  No n0-operated default relay map is used.
 * **Wrong clocks:** a computer whose clock is off by weeks would reject every
   TLS certificate as "expired" or "not yet valid". All TLS verification
   (directory and relays) goes through `clock::ClockedVerifier`. It checks
@@ -58,8 +59,18 @@ Slipstream is a free, MIT-licensed remote desktop app: TeamViewer-style
 
 ## Stations and provisioning
 
-Each organisation runs its own station; there is no central server. A
-private station requires its access key on every directory request, and its
+Raw downloads use `https://public.slipstreamremote.com`. Configured private
+stations remain the default, with a Public tab above the ID. Each registry
+allocates its own numeric IDs. The public listener uses a domain-separated
+key derived from the persistent identity; it never advertises private relay
+credentials. Both listeners share the host backend, passwords, permissions,
+authentication throttle and session state. Public registration has independent
+status and cached ID. Test clients opt in explicitly with an isolated station,
+so default fixtures never contact the production public service. Connections,
+recents and reconnecting tabs retain their station choice; Windows gets the
+service's public status over its authenticated local pipe.
+
+Each organisation can run its own station. A private station requires its access key on every directory request, and its
 relay admits only clients presenting the key (iroh passes it as
 `?token=` on the relay URL). Apps learn the station's address, key and name
 from their download (`slipstream_core::provision`):

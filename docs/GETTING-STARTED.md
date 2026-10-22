@@ -2,6 +2,16 @@
 
 This guide takes you from nothing to your first remote-support session:
 
+For a quick connection, download the app from
+[Slipstream Public](https://public.slipstreamremote.com). It connects to the
+public station automatically. Share the ID and one-time code with your partner.
+When using a self-hosted download, its station is selected by default. Tabs
+above **Your ID** switch to **Slipstream Public**; use the same station on both
+computers when entering an ID. Each station issues its own ID, so the numbers
+can differ. Public and private IDs use the same local passwords and permissions.
+
+To run your own service:
+
 1. [Set up your station](#1-set-up-your-station) — once, on your web server.
 2. [Get the app onto your clients' computers](#2-install-the-app-on-your-clients-computers).
 3. [Connect and take control](#3-connect-to-a-computer).
@@ -122,8 +132,9 @@ On the **Settings** tab:
 
 - **Private** (on by default, recommended): only apps downloaded from *your*
   station can use it. Strangers can't register devices or look up your IDs.
-- **Public relay fallback**: lets apps use the free public relays if your own
-  relay is unreachable. Turn it off to prevent sessions using public relays.
+- **Public backup relay**: permits the private endpoint to use Slipstream
+  Public's relay. Both the station and client must allow it. This setting is
+  separate from the app's public ID, which remains available on its Public tab.
 - **Message shown in every app**: e.g. "Call us on 555-0100 before
   connecting".
 - **Download page password**: stops random visitors downloading your
@@ -521,7 +532,7 @@ The **Config** page on each computer:
 |---|---|
 | Device name | How this computer is labelled in your station's device list and to people connecting. |
 | Server address / Access key | Filled in by the download; change only to move to another station. |
-| Public fallback relays | Use the free public relays if your station's relay can't be reached (if your station allows it). |
+| Public backup relay | Allow the private endpoint to use Slipstream Public as a backup, if your station permits it. The Public tab has its own ID and route. |
 | Accept connections | Turn off to make this computer unreachable. It can still connect out. |
 | Permissions | What connected people may do: **Control** (mouse and keyboard), **Clipboard**, **Files**, **Sound** (hear this computer) and **Port forwarding** (off by default). Untick any to allow view-only, no clipboard, or no file access. |
 | Network scan / Wake-on-LAN | Network discovery and diagnostics are allowed by default on supported desktop hosts. Wake-on-LAN is off by default and also requires network scan and remote control permission. |

@@ -70,9 +70,17 @@ struct Cli {
     #[arg(long, env = "SLIPSTREAM_ORG_NAME")]
     org_name: Option<String>,
 
-    /// Tell clients not to fall back to the public n0 relays.
+    /// Tell clients not to fall back to Slipstream Public.
     #[arg(long)]
     no_public_relays: bool,
+
+    /// Maximum received bytes/second per relay connection (0: unlimited).
+    #[arg(long, env = "SLIPSTREAM_RELAY_BYTES_PER_SECOND", default_value_t = 0)]
+    relay_bytes_per_second: u32,
+
+    /// Maximum simultaneous relay connections (0: unlimited).
+    #[arg(long, env = "SLIPSTREAM_RELAY_MAX_CONNECTIONS", default_value_t = 0)]
+    relay_max_connections: usize,
 }
 
 pub struct App {
@@ -158,7 +166,7 @@ async fn build(cli: &Cli) -> Result<Arc<App>> {
     let relay_addr = if cli.no_relay {
         None
     } else {
-        let (server, addr) = relay::spawn(cli.access_key.clone().filter(|k| !k.is_empty())).await?;
+        let (server, addr) = relay::spawn(cli.access_key.clone().filter(|k| !k.is_empty()), cli.relay_bytes_per_second, cli.relay_max_connections).await?;
         // Keep the relay alive for the life of the process.
         Box::leak(Box::new(server));
         Some(addr)

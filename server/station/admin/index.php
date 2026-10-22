@@ -422,7 +422,7 @@ slip_page_start('Station admin', '../');
       <label><input type="checkbox" name="private" value="1" <?= !empty($station['private']) ? 'checked' : '' ?>>
         Private — only apps from this station's download page can use it (recommended)</label>
       <label><input type="checkbox" name="public_relays" value="1" <?= !empty($station['public_relays']) ? 'checked' : '' ?>>
-        Let apps fall back to the free public relays if this station's relay is unreachable</label>
+        Allow apps to use Slipstream Public as a backup relay</label>
       <label class="k">Download page password (optional)</label>
       <input type="password" name="download_password" placeholder="<?= !empty($station['download_password_hash']) ? 'set — type to change' : 'none — anyone can download' ?>">
       <?php if (!empty($station['download_password_hash'])): ?>

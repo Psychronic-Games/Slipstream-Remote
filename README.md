@@ -61,7 +61,10 @@ MIT licensed.
 - **Desktop apps update themselves** from your station — upload a new build,
   and they offer *Install & restart* and keep their settings. Android updates
   are installed from the station's APK.
-- **Your own station, not a central service** — an IT firm or company runs
+- **Works immediately, with self-hosting available** — raw downloads use
+  `public.slipstreamremote.com`. A configured self-hosted station stays the
+  default; tabs above Your ID switch between its ID and your public ID.
+- **Your own station** — an IT firm or company runs
   one self-contained web folder: a download page with apps preconfigured for
   it, a private directory of its clients' devices, its own relay and an admin
   page. Works on ordinary PHP web hosting (Virtualmin, cPanel, …).

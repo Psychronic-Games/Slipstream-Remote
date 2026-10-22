@@ -127,7 +127,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     // Android registers a persistent host identity too; capture still
     // requires an explicit MediaProjection grant on the phone.
     let accept_sessions = !via_service;
-    let (client, events) = rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions, ..Default::default() }))?;
+    let (client, events) = rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions, public_station: (!opts.test_pattern).then(slipstream_core::config::ServerSettings::public_station), ..Default::default() }))?;
 
     // Graphics wgpu can't use (Windows Server 2016's Direct3D 12 can't run
     // the shaders it needs, for one) get the built-in software renderer,
@@ -293,7 +293,7 @@ pub struct Attempt {
     pub id: DeviceId,
     pub password: String,
     /// Found on this signed-in station (`None`: the app's own).
-    pub via: Option<slipstream_session::AccountRef>,
+    pub via: slipstream_session::StationRef,
     pub progress: Arc<Mutex<String>>,
     pub rx: oneshot::Receiver<ConnectResult>,
     pub task: tokio::task::JoinHandle<()>,
@@ -342,6 +342,11 @@ pub struct App {
     t0: Instant,
     pub page: Page,
     pub dir_status: DirStatus,
+    pub public_status: DirStatus,
+    pub selected_public: bool,
+    pub station_draft: (String, String),
+    pub primary_station: Option<String>,
+    pub service_public_status: Option<DirStatus>,
     pub password: String,
     pub service_password: Option<String>,
     pub connect_id: String,
@@ -434,6 +439,11 @@ impl App {
             password: client.one_time_password(),
             service_password: None,
             dir_status: client.dir_status(),
+            public_status: client.public_dir_status(),
+            selected_public: !client.has_custom_station() && client.public_dir_status() != DirStatus::NotConfigured,
+            station_draft: Default::default(),
+            primary_station: client.settings().server.url.filter(|url| !slipstream_core::config::is_public_station(url)),
+            service_public_status: None,
             rt,
             client,
             render_state,
@@ -520,6 +530,10 @@ impl App {
             while let Ok(event)=bridge.events.try_recv() {
                 match event {
                     Event::Password(password) => self.service_password = password,
+                    Event::Directories { primary, public } => {
+                        self.dir_status = primary.unwrap_or(DirStatus::Connecting);
+                        self.service_public_status = public;
+                    },
                     Event::MeetingCall(call) => self.meetings.incoming = call,
                     Event::Started { session, peer } => {
                         if !self.incoming.iter().any(|s| s.id == session) {
@@ -559,7 +573,11 @@ impl App {
 
         while let Ok(ev) = self.events.try_recv() {
             match ev {
-                ClientEvent::Directory(s) => self.dir_status = s,
+                ClientEvent::Directory(s) => if self.client.has_custom_station() || self.client.public_dir_status() == DirStatus::NotConfigured { self.dir_status = s; },
+                ClientEvent::PublicDirectory(s) => {
+                    self.public_status = s.clone();
+                    if !self.client.has_custom_station() { self.dir_status = s; }
+                },
                 ClientEvent::Password(p) => self.password = p,
                 ClientEvent::Motd(m) => self.motd = Some(m),
                 ClientEvent::Org(o) => self.org = o,
@@ -605,6 +623,21 @@ impl App {
     }
 
     /// Starts connecting to `id` in the background.
+    pub fn select_public(&mut self, public: bool) {
+        if self.selected_public != public {
+            std::mem::swap(&mut self.connect_id, &mut self.station_draft.0);
+            std::mem::swap(&mut self.connect_pw, &mut self.station_draft.1);
+            self.selected_public = public;
+        }
+    }
+
+    pub fn selected_dir_status(&self) -> DirStatus {
+        if self.selected_public {
+            if self.via_service { self.service_public_status.clone().unwrap_or(DirStatus::Connecting) }
+            else { self.public_status.clone() }
+        } else { self.dir_status.clone() }
+    }
+
     pub fn start_connect(&mut self, ctx: &egui::Context) {
         let id: DeviceId = match self.connect_id.parse() {
             Ok(id) => id,
@@ -618,12 +651,21 @@ impl App {
             return;
         }
         let password = self.connect_pw.clone();
-        self.start_connect_to(ctx, id, password, None);
+        let station = if self.selected_public { slipstream_session::StationRef::Public } else { slipstream_session::StationRef::Primary };
+        self.start_connect_at(ctx, id, password, station);
     }
 
     /// Connects to `id`, found on this app's station (`via: None`) or a
     /// signed-in one.
     pub fn start_connect_to(&mut self, ctx: &egui::Context, id: DeviceId, password: String, via: Option<slipstream_session::AccountRef>) {
+        self.start_connect_at(ctx, id, password, via.map(slipstream_session::StationRef::Account).unwrap_or_default());
+    }
+
+    pub fn start_connect_at(&mut self, ctx: &egui::Context, id: DeviceId, password: String, via: slipstream_session::StationRef) {
+        let via = if via == slipstream_session::StationRef::Primary && !self.client.has_custom_station()
+            && self.client.public_dir_status() != DirStatus::NotConfigured {
+            slipstream_session::StationRef::Public
+        } else { via };
         let destination=self.connect_destination.take();
         if self.attempt.is_some() {
             return;
@@ -640,10 +682,7 @@ impl App {
                 *p.lock().unwrap() = msg;
                 w2.request_repaint();
             };
-            let result = match &station {
-                Some(r) => client.connect_via(r, id, Some(pw), progress).await,
-                None => client.connect(id, &pw, progress).await,
-            }
+            let result = client.connect_on(&station, id, &pw, progress).await
             .map_err(|e| format!("{e:#}"));
             let _ = tx.send(result);
             wake.request_repaint();
@@ -852,6 +891,8 @@ impl App {
                     slipstream_core::provision::apply(s, &cfg);
                 });
                 self.settings_form = settings::SettingsForm::from(&self.client.settings());
+                self.select_public(false);
+                self.dir_status = self.client.dir_status();
                 self.org = cfg.org.clone();
                 self.link_code.clear();
                 let name = cfg.org.unwrap_or_else(|| cfg.server.clone());
@@ -979,6 +1020,7 @@ impl App {
                 for tab in &self.tabs {tab.lock().unwrap().release_keyboard();}
                 self.quick_connect.open = true;
                 self.quick_connect.focus = true;
+                self.quick_connect.via = if self.selected_public { slipstream_session::StationRef::Public } else { slipstream_session::StationRef::Primary };
                 self.set_visible(ctx, true);
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
@@ -1256,7 +1298,7 @@ impl App {
         } else {
             format!("  ·  {} INBOUND", self.incoming.len())
         };
-        match &self.dir_status {
+        match &self.selected_dir_status() {
             DirStatus::Online { id } => (format!("STATION ONLINE  ·  ID {id}{incoming}"), pal::GREEN),
             DirStatus::Connecting => ("CONTACTING RELAY NETWORK…".into(), pal::GOLD),
             DirStatus::Ready => ("SERVER LINK READY".into(), pal::GREEN),
@@ -1632,7 +1674,7 @@ fn bar_segments(
 impl App {
     fn update_tray(&mut self) {
         let Some(tray) = &self.tray else { return };
-        let status = match (&self.dir_status, self.incoming.len()) {
+        let status = match (&self.selected_dir_status(), self.incoming.len()) {
             (_, n) if n > 0 => format!("{n} remote session(s) active"),
             (DirStatus::Online { id }, _) => format!("Online · ID {id}"),
             (DirStatus::Connecting, _) => "Connecting…".into(),

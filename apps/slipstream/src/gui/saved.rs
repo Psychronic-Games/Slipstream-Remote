@@ -257,13 +257,22 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
 fn own_device(app: &App, account: &StationAccount) -> Option<SavedDevice> {
     if cfg!(target_os = "android") { return None; }
     let settings = app.client.settings();
+    if slipstream_core::config::is_public_station(&account.server) {
+        let status = if app.via_service { app.service_public_status.as_ref() } else { Some(&app.public_status) };
+        let id = match status {
+            Some(slipstream_session::DirStatus::Online { id }) => Some(*id),
+            _ if !app.via_service => settings.host.public_device_id,
+            _ => None,
+        };
+        return own_device_entry(account, slipstream_core::config::PUBLIC_STATION_URL, id, &settings.device_name);
+    }
     let id = match app.dir_status {
         slipstream_session::DirStatus::Online { id } => Some(id),
         _ => settings.host.last_device_id,
     };
     #[cfg(windows)]
     let id = if app.via_service { crate::service::hosted_id() } else { id };
-    own_device_entry(account, settings.server.url.as_deref()?, id, &settings.device_name)
+    own_device_entry(account, app.client.station_settings().url.as_deref()?, id, &settings.device_name)
 }
 
 fn own_device_entry(account: &StationAccount, server: &str, id: Option<DeviceId>, name: &str) -> Option<SavedDevice> {
@@ -424,9 +433,11 @@ pub(super) fn connect(app: &mut App, ctx: &egui::Context, r: &AccountRef, d: &Sa
 }
 
 /// From a recent link: save it in a signed-in station's list.
-pub fn save_recent(app: &mut App, id: DeviceId, name: &str) {
-    let Some(a) = accounts(app).into_iter().find(|a| !a.signed_out) else {
-        app.toast("Sign in to a station first (Config → Stations) to keep a list of devices", pal::VIOLET);
+pub fn save_recent(app: &mut App, recent: &slipstream_core::config::RecentConnection) {
+    let (id, name) = (recent.id, recent.name.as_str());
+    let station = recent.station.clone().or(app.client.station_settings().url).unwrap_or_default();
+    let Some(a) = accounts(app).into_iter().find(|a| !a.signed_out && a.is_station(&station)) else {
+        app.toast("Sign in to this device’s station first (Config → Stations) to save it", pal::VIOLET);
         return;
     };
     let draft = SavedDevice { id, name: name.to_string(), notes: String::new(), group: String::new(), secret: None, added_by: None };
@@ -742,7 +753,7 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
         ui.label(RichText::new("SIGN IN TO A STATION").font(theme::display(15.0)).color(pal::VIOLET));
         let busy=app.saved.job.is_some();
         let label=if busy {"Signing in…"} else {"Sign in"};
-        let own=app.client.settings().server.url.unwrap_or_default();
+        let own=app.client.station_settings().url.unwrap_or_default();
         let hint=if own.is_empty() {"support.example.com"} else {own.as_str()};
         let mut go=false;
         let width=ui.available_width();
@@ -771,7 +782,7 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
             // An empty address means this app's own station.
             let station = Some(app.saved.station.trim().to_string())
                 .filter(|s| !s.is_empty())
-                .or(app.client.settings().server.url)
+                .or(app.client.station_settings().url)
                 .unwrap_or_default();
             let (user, pw) = (app.saved.username.trim().to_string(), std::mem::take(&mut app.saved.password));
             if station.is_empty() || user.is_empty() || pw.is_empty() {

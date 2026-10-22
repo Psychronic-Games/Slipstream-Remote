@@ -185,10 +185,11 @@ fn attr_urls(bytes: &[u8]) -> Vec<String> {
 pub fn apply(settings: &mut Settings, cfg: &StationConfig) -> bool {
     let s = &mut settings.server;
     let same_server = s.url.as_deref().map(str::trim) == Some(cfg.server.trim());
-    if s.url.is_some() && !s.provisioned && !same_server {
+    if s.url.as_deref().is_some_and(|url| !crate::config::is_public_station(url)) && !s.provisioned && !same_server {
         return false;
     }
     let before = (s.url.clone(), s.key.clone(), s.org_name.clone(), s.provisioned);
+    if !same_server { settings.host.last_device_id = None; }
     s.url = Some(cfg.server.clone());
     s.key = cfg.key.clone();
     if cfg.org.is_some() {

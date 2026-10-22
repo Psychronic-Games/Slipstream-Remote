@@ -114,7 +114,9 @@ pub(crate) fn ensure_public_dir() -> PathBuf {
 /// changes.
 fn publish_id(last: &mut Option<slipstream_core::directory::DeviceId>) {
     let Ok(store) = Store::open(machine_home()) else { return };
-    let id = store.load_settings().host.last_device_id;
+    let settings = store.load_settings();
+    let custom = settings.server.url.as_deref().is_some_and(|url| !url.trim().is_empty() && !slipstream_core::config::is_public_station(url));
+    let id = if custom { settings.host.last_device_id } else { settings.host.public_device_id };
     if id.is_some() && id != *last {
         let dir = public_dir();
         let _ = std::fs::create_dir_all(&dir);
@@ -422,10 +424,13 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     // update must not replace the service's new stable ID with the user's key.
     if home.join("identity.key").exists() {
         machine.identity()?;
-        settings.host.last_device_id=machine.load_settings().host.last_device_id;
+        let old = machine.load_settings();
+        settings.host.last_device_id = if old.server.url == settings.server.url { old.host.last_device_id } else { None };
+        settings.host.public_device_id = old.host.public_device_id;
     } else {
         hand_over_identity(&user.dir().join("identity.key"), &home.join("identity.key"))?;
         settings.host.last_device_id=None;
+        settings.host.public_device_id=None;
     }
     machine.save_settings(&settings)?;
     machine.identity()?; // Establish the machine binding before image capture.

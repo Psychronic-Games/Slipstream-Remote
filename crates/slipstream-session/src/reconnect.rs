@@ -1,5 +1,5 @@
 //! Bounded recovery of an established link, always using a fresh station lookup.
-use crate::{AccountRef, Client, ViewerEvent, ViewerSession};
+use crate::{StationRef, Client, ViewerEvent, ViewerSession};
 use anyhow::{Context, Result, bail};
 use slipstream_core::directory::DeviceId;
 use std::{future::Future, time::Duration};
@@ -26,7 +26,7 @@ impl Client {
         &self,
         id: DeviceId,
         password: &str,
-        via: Option<&AccountRef>,
+        via: &StationRef,
         on_progress: impl Fn(String) + Send + Sync + 'static,
     ) -> Result<(
         ViewerSession,
@@ -39,13 +39,7 @@ impl Client {
                 let progress = progress.clone();
                 async move {
                     let notify = move |text| progress(text);
-                    match via {
-                        Some(station) => {
-                            self.connect_via(station, id, Some(password.into()), notify)
-                                .await
-                        }
-                        None => self.connect(id, password, notify).await,
-                    }
+                    self.connect_on(via, id, password, notify).await
                 }
             },
             |number, delay| {

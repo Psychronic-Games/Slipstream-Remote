@@ -123,8 +123,8 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         Some(org) => format!(
             "Set up by {org}'s station when you downloaded this app. Change these only if {org} asks you to."
         ),
-        None => "Your station gives this device its ID, and relays the link when the two computers can't reach \
-                 each other directly. Enter its web address, e.g. support.example.com."
+        None => "Leave the server address empty to use Slipstream Public automatically. Enter your support \
+                 provider's address to add a self-hosted station; it becomes the default tab."
             .to_string(),
     };
     super::saved::stations_panel(app, ui);
@@ -146,7 +146,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         ui.label(RichText::new(network_help).color(pal::DIM));
         ui.add_space(6.0);
         row(ui, "Server address", |ui| {
-            text_field(ui, &mut f.server, "support.example.com", false);
+            text_field(ui, &mut f.server, "empty = public.slipstreamremote.com", false);
         });
         row(ui, "Access key", |ui| {
             text_field(ui, &mut f.key, "only for private stations", true);
@@ -161,8 +161,8 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 link_now = ui.add_enabled_ui(!linking, |ui| theme::pill(ui, label, pal::BLUE)).inner.clicked() || enter;
             });
         });
-        row(ui, "Public fallback relays", |ui| {
-            ui.checkbox(&mut f.public_relays, "Also use the free public relays (applies after restart)");
+        row(ui, "Public backup relay", |ui| {
+            ui.checkbox(&mut f.public_relays, "Allow Slipstream Public as a backup relay (after restart)");
         });
     });
     ui.add_space(14.0);

@@ -167,10 +167,16 @@ pub fn run(
     // Client events → view.
     {
         let view = view.clone();
+        let client = client.clone();
         rt.spawn(async move {
             while let Some(ev) = events.recv().await {
                 {
                     let mut v = view.lock().unwrap();
+                    let ev = match ev {
+                        ClientEvent::PublicDirectory(s) if !client.has_custom_station() => ClientEvent::Directory(s),
+                        ClientEvent::Directory(_) if !client.has_custom_station() => continue,
+                        other => other,
+                    };
                     match ev {
                         ClientEvent::Password(p) if !via_service => v.password = p,
                         ClientEvent::Directory(DirStatus::Online { id }) => {

@@ -65,7 +65,7 @@ impl Broker {
         }
     }
 }
-pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection) -> Result<()> {
+pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection, local: iroh::EndpointId, public: bool) -> Result<()> {
     let broker = &inner.calls;
     let _permit = broker
         .slot
@@ -115,7 +115,7 @@ pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection)
     };
     invitation.validate()?;
     let name = clean_name(&name)?;
-    let key = inner.settings.lock().unwrap().server.key.clone();
+    let key = if public { None } else { inner.settings.lock().unwrap().server.key.clone() };
     ensure!(
         equal(
             &proof,
@@ -123,7 +123,7 @@ pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection)
                 key.as_deref(),
                 &nonce,
                 conn.remote_id(),
-                inner.endpoint.id(),
+                local,
                 &invitation
             )?
         ),
@@ -213,10 +213,11 @@ impl Outgoing {
                 let Lookup::Online { addr, .. } = directory.lookup(id).await? else {
                     bail!("That device is offline");
                 };
-                slipstream_core::net::add_relays(&client.inner.endpoint, &server.relays).await;
+                let endpoint = client.endpoint_for_address(server.url.as_deref());
+                slipstream_core::net::add_relays(&endpoint, &server.relays).await;
                 let conn = tokio::time::timeout(
                     Duration::from_secs(15),
-                    client.inner.endpoint.connect(addr, CALL_ALPN),
+                    endpoint.connect(addr, CALL_ALPN),
                 )
                 .await
                 .context("That device did not answer")?
@@ -243,7 +244,7 @@ impl Outgoing {
                 let proof = call_proof(
                     server.key.as_deref(),
                     &nonce,
-                    client.inner.endpoint.id(),
+                    endpoint.id(),
                     conn.remote_id(),
                     &invitation,
                 )?;

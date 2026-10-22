@@ -38,6 +38,8 @@ function slip_config(): array
         'db' => null,
         'lookups_per_minute' => 60,
         'registers_per_minute' => 30,
+        'relay_bytes_per_second' => 0,
+        'relay_max_connections' => 0,
     ];
     $file = SLIP_ROOT . '/config.php';
     $user = is_file($file) ? (include $file) : [];
@@ -745,6 +747,9 @@ function slip_relay_ensure(bool $force = false): bool
         if ($key = slip_access_key()) {
             $env['SLIPSTREAM_ACCESS_KEY'] = $key;    // env, not argv: invisible to `ps`
         }
+        $cfg = slip_config();
+        $env['SLIPSTREAM_RELAY_BYTES_PER_SECOND'] = (string)max(0, (int)$cfg['relay_bytes_per_second']);
+        $env['SLIPSTREAM_RELAY_MAX_CONNECTIONS'] = (string)max(0, (int)$cfg['relay_max_connections']);
         $spec = [0 => ['file', '/dev/null', 'r'], 1 => ['file', "$data/relay.log", 'a'], 2 => ['file', "$data/relay.log", 'a']];
         $proc = @proc_open($args, $spec, $pipes, $data, $env);
         if (!is_resource($proc)) {

@@ -7,10 +7,10 @@ use iroh::{Endpoint, RelayConfig, RelayMap, RelayMode, RelayUrl, SecretKey, endp
 
 use crate::{config::ServerSettings, proto::ALPN_REMOTE};
 
-/// Builds the relay map: the server's relays, plus n0's public relays if enabled.
+/// Station relays, with Slipstream's public relay as an optional backup.
 pub fn relay_map(server: &ServerSettings) -> RelayMap {
     let map = if server.public_relays_enabled() {
-        RelayMode::Default.relay_map()
+        RelayMap::from_iter([RelayConfig::from(crate::config::PUBLIC_STATION_URL.parse::<RelayUrl>().expect("public relay URL"))])
     } else {
         RelayMap::empty()
     };
@@ -58,16 +58,35 @@ pub async fn bind_client(secret: SecretKey, server: &ServerSettings, accept_sess
     Ok(endpoint)
 }
 
-/// Removes the public n0 relays (a private station forbade them).
+/// Removes the Slipstream public backup when a private station forbids it.
 pub async fn remove_public_relays(endpoint: &Endpoint) {
-    for url in RelayMode::Default.relay_map().urls::<Vec<_>>() {
-        endpoint.remove_relay(&url).await;
-    }
+    endpoint.remove_relay(&crate::config::PUBLIC_STATION_URL.parse().expect("public relay URL")).await;
 }
 
 /// Adds relays the directory server told us about at runtime.
 pub async fn add_relays(endpoint: &Endpoint, relays: &[RelayUrl]) {
     for url in relays {
         endpoint.insert_relay(url.clone(), Arc::new(RelayConfig::from(url.clone()))).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_backup_is_slipstream_and_public_identity_has_no_private_routes() {
+        let private: RelayUrl = "https://private.example/?token=private-key".parse().unwrap();
+        let settings = ServerSettings { relays: vec![private.clone()], ..Default::default() };
+        let map = relay_map(&settings);
+        assert_eq!(map.urls::<Vec<_>>().len(), 2);
+        assert!(map.urls::<Vec<_>>().contains(&private));
+        assert!(map.urls::<Vec<_>>().iter().any(|url| crate::config::is_public_station(url.as_str())));
+        let public = relay_map(&ServerSettings::public_station());
+        assert_eq!(public.urls::<Vec<_>>().len(), 1);
+        assert!(crate::config::is_public_station(public.urls::<Vec<_>>()[0].as_str()));
+        let secret = SecretKey::generate();
+        assert_ne!(crate::config::public_identity(&secret).public(), secret.public());
+        assert_eq!(crate::config::public_identity(&secret).public(), crate::config::public_identity(&secret).public());
     }
 }

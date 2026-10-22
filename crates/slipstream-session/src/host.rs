@@ -40,7 +40,7 @@ async fn fail(send: &mut SendStream, reason: impl Into<String>, retry_after_secs
     Ok(())
 }
 
-pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
+pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::EndpointId) -> Result<()> {
     let peer = conn.remote_id();
     let (mut send, mut recv, hello) = tokio::time::timeout(AUTH_RESPONSE_WAIT, async {
         let (send, mut recv) = conn.accept_bi().await.context("waiting for control stream")?;
@@ -80,7 +80,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection) -> Result<()> {
         if let Some(p) = settings.host.permanent_secret() {
             secrets.push(p);
         }
-        let (auth, pakes) = HostAuth::start(&secrets, &inner.endpoint.id(), &peer);
+        let (auth, pakes) = HostAuth::start(&secrets, &host_id, &peer);
         let exchange = async {
             write_msg(&mut send, &HostMsg::AuthChallenge { pakes }).await?;
             expect_msg(&mut recv).await

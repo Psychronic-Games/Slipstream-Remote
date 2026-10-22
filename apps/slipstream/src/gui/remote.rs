@@ -87,7 +87,7 @@ pub struct RemoteTab {
     pub peer: DeviceId,
     password: String,
     /// The signed-in station this device was found on (`None`: this app's own).
-    pub via: Option<slipstream_session::AccountRef>,
+    pub via: slipstream_session::StationRef,
     pub stats: ViewerStats,
     pub closed: Option<String>,
     reconnect_requested:bool,
@@ -206,7 +206,7 @@ impl RemoteTab {
             session,
             events,
             password,
-            via: None,
+            via: Default::default(),
             stats: ViewerStats::default(),
             closed: None,
             reconnect_requested:false,reconnect:None,
@@ -302,7 +302,7 @@ impl RemoteTab {
             let (client,peer,password,via,wake,status)=(client.clone(),self.peer,self.password.clone(),self.via.clone(),ctx.clone(),progress.clone());
             let task=rt.spawn(async move {
                 let w=wake.clone();
-                let result=client.reconnect(peer,&password,via.as_ref(),move |text|{*status.lock().unwrap()=text;w.request_repaint_of(egui::ViewportId::ROOT);}).await.map_err(|e|format!("{e:#}"));
+                let result=client.reconnect(peer,&password,&via,move |text|{*status.lock().unwrap()=text;w.request_repaint_of(egui::ViewportId::ROOT);}).await.map_err(|e|format!("{e:#}"));
                 let _=tx.send(result);wake.request_repaint_of(egui::ViewportId::ROOT);
             });
             self.reconnect=Some(Reconnecting{progress,rx,task});
@@ -1513,6 +1513,7 @@ mod window_tests {
                 test_pattern: host, accept_sessions: host,
                 clipboard: slipstream_platform::clipboard::ClipboardSource::Memory(Default::default()),
                 audio_out: AudioOut::Memory(Default::default()),
+                public_station: None,
             }).await.unwrap();
             clients.push(client);
         }

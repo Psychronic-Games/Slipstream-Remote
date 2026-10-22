@@ -10,6 +10,10 @@ return [
     // isn't writable.
     // 'data_dir' => '/home/example/slipstream-data',
 
+    // Optional relay capacity controls; 0 keeps the self-hosted default unlimited.
+    // 'relay_bytes_per_second' => 5242880,  // 5 MiB/s per connection
+    // 'relay_max_connections' => 256,
+
     // Use a database instead of files (for very large installs).
     // 'db' => [
     //     'dsn'  => 'mysql:host=localhost;dbname=slipstream;charset=utf8mb4',

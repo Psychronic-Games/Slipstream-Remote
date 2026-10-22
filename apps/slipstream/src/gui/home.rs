@@ -56,6 +56,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         }
     }
 
+    station_tabs(app, ui);
     if ui.available_width() > 660.0 {
         ui.columns(2, |cols| {
             station_panel(app, &mut cols[0], t);
@@ -72,23 +73,55 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     recent_panel(app, ui);
 }
 
+fn station_tabs(app: &mut App, ui: &mut Ui) {
+    let custom = app.client.has_custom_station();
+    let station = if custom { app.client.settings().server.url } else { None };
+    if app.primary_station != station {
+        if app.selected_public { app.station_draft = Default::default(); }
+        else { app.connect_id.clear(); app.connect_pw.clear(); }
+        app.primary_station = station;
+        app.select_public(!custom);
+    }
+    if !custom {
+        if app.client.public_dir_status() != DirStatus::NotConfigured { app.select_public(true); }
+        ui.label(RichText::new("SLIPSTREAM PUBLIC").font(theme::display_bold(18.0)).color(pal::LAVENDER));
+    } else {
+        let mut public = app.selected_public;
+        ui.horizontal_wrapped(|ui| {
+            let label = app.org.as_deref().unwrap_or("My station");
+            ui.selectable_value(&mut public, false, RichText::new(label).font(theme::display_bold(18.0)));
+            ui.selectable_value(&mut public, true, RichText::new("Slipstream Public").font(theme::display_bold(18.0)));
+        });
+        app.select_public(public);
+    }
+    ui.add_space(10.0);
+}
+
 fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
     theme::panel(ui, "This device", pal::LAVENDER, |ui| {
         ui.label(RichText::new("Give your partner this ID and password to let them in.").color(pal::DIM));
         ui.add_space(8.0);
 
-        let (status, color) = match &app.dir_status {
+        let custom = app.client.has_custom_station();
+        let public = app.selected_public || !custom;
+        let directory = app.selected_dir_status();
+        ui.label(RichText::new(if public { "public.slipstreamremote.com".to_string() } else {
+            app.client.settings().server.url.unwrap_or_default()
+        }).small().color(pal::DIM));
+        let (status, color) = match &directory {
             DirStatus::Online { .. } => ("ONLINE · READY FOR LINK", pal::GREEN),
             DirStatus::Connecting | DirStatus::Ready => ("CONTACTING SERVER…", pal::GOLD),
             DirStatus::NotConfigured => ("NO SERVER — SEE CONFIG", pal::RED),
             DirStatus::Error(_) => ("SERVER CONNECTION FAILED", pal::RED),
         };
-        let own_id = match &app.dir_status {
+        let own_id = match &directory {
             DirStatus::Online { id } => Some(*id),
+            _ if app.via_service && public => None,
+            _ if public => app.client.settings().host.public_device_id,
             _ => app.client.settings().host.last_device_id,
         };
         // With the service hosting, partners need the ID it registered as.
-        let hosted = service_id(app);
+        let hosted = if public { None } else { service_id(app) };
         let id_text = hosted.or(own_id).map(|i| i.to_string()).unwrap_or_else(|| "--- --- ---".into());
 
         ui.label(RichText::new("YOUR ID").font(theme::display(15.0)).color(pal::LAVENDER));
@@ -145,7 +178,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         }
         one_time_password(app, ui);
         ui.add_space(10.0);
-        if app.dir_status == DirStatus::NotConfigured {
+        if directory == DirStatus::NotConfigured {
             link_form(app, ui, t);
             return;
         }
@@ -154,7 +187,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             theme::lamp(ui.painter(), rect.center(), color, t);
             ui.label(RichText::new(status).font(theme::display(17.0)).color(color));
         });
-        if let DirStatus::Error(e) = &app.dir_status {
+        if let DirStatus::Error(e) = &directory {
             ui.label(RichText::new(e).font(theme::body(16.0)).color(pal::PEACH));
             if let Ok(store) = slipstream_core::config::Store::open_default() {
                 let log = store.dir().join("slipstream.log").display().to_string();
@@ -162,6 +195,9 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
                 ui.add(egui::Label::new(RichText::new(&log).small().monospace().color(pal::DIM)).truncate())
                     .on_hover_text(&log);
             }
+        }
+        if !custom {
+            egui::CollapsingHeader::new("Connect a self-hosted station").id_salt("link-private-station").show(ui, |ui| link_form(app, ui, t));
         }
         #[cfg(target_os="android")]
         super::android::hosting_panel(ui);
@@ -257,12 +293,15 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     theme::panel(ui, "Establish link", pal::ORANGE, |ui| {
         ui.label(RichText::new("Control another device.").color(pal::DIM));
+        ui.label(RichText::new(if app.selected_public || !app.client.has_custom_station() {
+            "Looking up IDs on Slipstream Public"
+        } else { "Looking up IDs on your self-hosted station" }).small().color(pal::LAVENDER));
         ui.add_space(8.0);
         ui.label(RichText::new("PARTNER ID").font(theme::display(15.0)).color(pal::ORANGE));
         let id_resp = theme::input_frame()
             .show(ui, |ui| {
                 ui.add(
-                    egui::TextEdit::singleline(&mut app.connect_id).align(egui::Align2::LEFT_CENTER)
+                    egui::TextEdit::singleline(&mut app.connect_id).id_salt(("partner-id", app.selected_public, &app.primary_station)).align(egui::Align2::LEFT_CENTER)
                         .hint_text("482 913 077")
                         .font(theme::mono(30.0))
                         .frame(egui::Frame::NONE)
@@ -275,7 +314,7 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
         let pw_resp = theme::input_frame()
             .show(ui, |ui| {
                 ui.add(
-                    egui::TextEdit::singleline(&mut app.connect_pw).align(egui::Align2::LEFT_CENTER)
+                    egui::TextEdit::singleline(&mut app.connect_pw).id_salt(("partner-password", app.selected_public, &app.primary_station)).align(egui::Align2::LEFT_CENTER)
                         .hint_text("partner's password")
                         .password(true)
                         .font(theme::mono(24.0))
@@ -300,7 +339,13 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
 }
 
 fn recent_panel(app: &mut App, ui: &mut Ui) {
-    let recent = app.client.settings().recent;
+    let recent = app.client.settings().recent.into_iter().filter(|r| {
+        match super::quick_connect::recent_station(app, r) {
+            Some(slipstream_session::StationRef::Public) => app.selected_public,
+            Some(slipstream_session::StationRef::Primary) => !app.selected_public || !app.client.has_custom_station(),
+            _ => false,
+        }
+    }).collect::<Vec<_>>();
     theme::panel(ui, "Recent links", pal::BLUE, |ui| {
         if recent.is_empty() {
             ui.label(RichText::new("Devices you connect to will appear here.").color(pal::DIM));
@@ -340,8 +385,14 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
                 theme::star(painter, star.shrink(5.0), if star_resp.hovered() { pal::GOLD } else { pal::DIM });
                 star_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Save in my devices"));
                 if star_resp.clicked() {
-                    super::saved::save_recent(app, r.id, &r.name);
+                    super::saved::save_recent(app, r);
                 } else if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    let route = super::quick_connect::recent_station(app, r);
+                    match route {
+                        Some(slipstream_session::StationRef::Primary) => app.select_public(false),
+                        Some(slipstream_session::StationRef::Public) => app.select_public(true),
+                        _ => { app.toast("Open + / New link to connect through this saved station", pal::GOLD); continue; }
+                    }
                     app.connect_id = r.id.to_string();
                     app.connect_pw.clear();
                     app.toast(format!("Enter the password for {}", r.name), pal::BLUE);

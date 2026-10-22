@@ -1,7 +1,7 @@
 //! New-link picker shared by the console and floating session tabs.
 use eframe::egui::{self, RichText, vec2};
 use slipstream_core::{account::SavedDevice, config::RecentConnection, directory::DeviceId};
-use slipstream_session::{AccountRef, Presence};
+use slipstream_session::{AccountRef, Presence, StationRef};
 
 use super::{
     App, Page, saved,
@@ -17,7 +17,7 @@ pub(super) struct QuickConnect {
     search: String,
     id: String,
     password: String,
-    via: Option<AccountRef>,
+    pub(super) via: StationRef,
     manual_open: bool,
     reveal_manual: bool,
 }
@@ -221,20 +221,20 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
                 .width(ui.available_width())
                 .truncate()
                 .selected_text(
-                    picker
-                        .via
-                        .as_ref()
-                        .and_then(|r| settings.accounts.iter().find(|a| AccountRef::of(a) == *r))
-                        .map(|a| a.label())
-                        .unwrap_or_else(|| "This station".into()),
+                    match &picker.via {
+                        StationRef::Public => "Slipstream Public".into(),
+                        StationRef::Primary => if app.client.has_custom_station() { "My station".into() } else { "Slipstream Public".into() },
+                        StationRef::Account(r) => settings.accounts.iter().find(|a| AccountRef::of(a) == *r).map(|a| a.label()).unwrap_or_else(|| "Signed out".into()),
+                    },
                 )
                 .show_ui(ui, |ui| {
                     theme::console_menu_style(ui.style_mut());
-                    ui.selectable_value(&mut picker.via, None, "This station");
+                    ui.selectable_value(&mut picker.via, StationRef::Primary, if app.client.has_custom_station() { "My station" } else { "Slipstream Public" });
+                    if app.client.has_custom_station() { ui.selectable_value(&mut picker.via, StationRef::Public, "Slipstream Public"); }
                     for account in settings.accounts.iter().filter(|a| !a.signed_out) {
                         ui.selectable_value(
                             &mut picker.via,
-                            Some(AccountRef::of(account)),
+                            StationRef::Account(AccountRef::of(account)),
                             format!("{} · {}", account.label(), account.user.name),
                         );
                     }
@@ -302,30 +302,15 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
             picker.manual_open = true;
             picker.reveal_manual = true;
             picker.password.clear();
-            picker.via = recent
-                .station
-                .as_deref()
-                .and_then(|station| {
-                    settings
-                        .accounts
-                        .iter()
-                        .find(|a| !a.signed_out && a.is_station(station))
-                })
-                .map(AccountRef::of);
-            let is_default = recent.station.as_deref().is_none_or(|station| {
-                settings
-                    .server
-                    .url
-                    .as_deref()
-                    .is_some_and(|default| same_station(station, default))
-            });
-            if picker.via.is_none() && !is_default {
-                app.toast(
-                    "Sign in to this link's station under Config → Stations",
-                    pal::GOLD,
-                );
+            let Some(route) = recent_station(app, &recent) else {
+                app.toast("Sign in to this link's station under Config → Stations", pal::GOLD);
                 picker.id.clear();
-            } else if let Some(r) = &picker.via
+                app.quick_connect = picker;
+                app.connect_destination = previous_destination;
+                return;
+            };
+            picker.via = route;
+            if let StationRef::Account(r) = &picker.via
                 && let Some(account) = settings.accounts.iter().find(|a| AccountRef::of(a) == *r)
                 && let Some(device) = account
                     .devices
@@ -338,7 +323,7 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
         }
         Some(Choice::Connect) => {
             if let Ok(id) = picker.id.parse() {
-                app.start_connect_to(
+                app.start_connect_at(
                     ctx,
                     id,
                     std::mem::take(&mut picker.password),
@@ -361,6 +346,16 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
         picker.password.clear();
     }
     app.quick_connect = picker;
+}
+
+pub(super) fn recent_station(app: &App, recent: &RecentConnection) -> Option<StationRef> {
+    let settings = app.client.settings();
+    let Some(station) = recent.station.as_deref() else { return Some(StationRef::Primary) };
+    if slipstream_core::config::is_public_station(station) { return Some(StationRef::Public); }
+    if app.client.station_settings().url.as_deref().is_some_and(|url| same_station(station, url)) {
+        return Some(StationRef::Primary);
+    }
+    settings.accounts.iter().find(|a| !a.signed_out && a.is_station(station)).map(|a| StationRef::Account(AccountRef::of(a)))
 }
 
 fn same_station(a: &str, b: &str) -> bool {

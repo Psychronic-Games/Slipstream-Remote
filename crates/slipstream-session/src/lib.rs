@@ -5,6 +5,8 @@ mod desktop_shell;
 mod meeting_preview;
 mod public_ip;
 mod reconnect;
+mod stations;
+pub use stations::StationRef;
 mod accounts;
 pub mod files;
 pub mod fsops;
@@ -48,7 +50,7 @@ pub use files::RemoteFs;
 pub use viewer::{AudioOut, FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 
 /// Connection state to the directory server.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DirStatus {
     NotConfigured,
     Connecting,
@@ -62,6 +64,7 @@ pub enum DirStatus {
 #[derive(Debug, Clone)]
 pub enum ClientEvent {
     Directory(DirStatus),
+    PublicDirectory(DirStatus),
     Password(String),
     /// Server message of the day.
     Motd(String),
@@ -80,6 +83,9 @@ pub enum ClientEvent {
 
 #[derive(Debug, Clone, Default)]
 pub struct ClientOptions {
+    /// Production opts into the default public station explicitly. Fixtures
+    /// remain local unless they supply their own isolated public station.
+    pub public_station: Option<slipstream_core::config::ServerSettings>,
     /// Stream a synthetic test pattern instead of the real screen.
     pub test_pattern: bool,
     /// Accept incoming remote-control sessions.
@@ -88,6 +94,12 @@ pub struct ClientOptions {
     pub clipboard: slipstream_platform::clipboard::ClipboardSource,
     /// Where viewing sessions play sound (the speakers, or memory for tests).
     pub audio_out: viewer::AudioOut,
+}
+
+impl ClientOptions {
+    pub fn production() -> Self {
+        Self { public_station: Some(slipstream_core::config::ServerSettings::public_station()), ..Self::default() }
+    }
 }
 
 pub(crate) enum HostSessionCmd {
@@ -99,6 +111,7 @@ pub(crate) enum HostSessionCmd {
 pub(crate) struct Inner {
     pub calls: Arc<meetings::calls::Broker>,
     pub endpoint: Endpoint,
+    pub public_station: Option<stations::PublicStation>,
     pub store: Store,
     pub settings: Mutex<Settings>,
     save_lock: Mutex<()>,
@@ -107,6 +120,7 @@ pub(crate) struct Inner {
     dir_status: watch::Sender<DirStatus>,
     dir_client: watch::Sender<Option<DirectoryClient>>,
     server_changed: tokio::sync::Notify,
+    stopping: watch::Sender<bool>,
     pub password: Mutex<String>,
     /// Held for the whole password exchange, so checks run one at a time
     /// (see `host::run_session`).
@@ -197,13 +211,29 @@ impl Client {
         // app while the Windows service hosts, command-line tools) gets a
         // throwaway key; nothing relies on a viewer's key staying the same.
         let secret = if opts.accept_sessions { persistent } else { iroh::SecretKey::generate() };
-        let endpoint = net::bind_client(secret, &settings.server, opts.accept_sessions).await?;
+        let mut primary_server = settings.server.clone();
+        if opts.public_station.is_some() && !stations::has_custom(&settings) {
+            primary_server.relays.clear();
+            primary_server.use_public_relays = false;
+        }
+        let endpoint = net::bind_client(secret, &primary_server, opts.accept_sessions).await?;
+        let public_station = match opts.public_station.as_ref() {
+            Some(server) => {
+                let persistent = store.identity()?;
+                let secret = if opts.accept_sessions {
+                    slipstream_core::config::public_identity(&persistent)
+                } else { iroh::SecretKey::generate() };
+                Some(stations::PublicStation::bind(secret, server.clone(), opts.accept_sessions).await?)
+            }
+            None => None,
+        };
         info!(endpoint = %endpoint.id(), "endpoint bound");
         let (events, rx) = mpsc::unbounded_channel();
         let password = generate_password(settings.host.one_time_password_len.clamp(4, 32));
         let inner = Arc::new(Inner {
             calls: Arc::new(meetings::calls::Broker::default()),
             endpoint,
+            public_station,
             store,
             settings: Mutex::new(settings),
             save_lock: Mutex::new(()),
@@ -212,6 +242,7 @@ impl Client {
             dir_status: watch::Sender::new(DirStatus::Connecting),
             dir_client: watch::Sender::new(None),
             server_changed: tokio::sync::Notify::new(),
+            stopping: watch::channel(false).0,
             password: Mutex::new(password.clone()),
             throttle: tokio::sync::Mutex::new(AuthThrottle::new()),
             backend: tokio::sync::Mutex::new(None),
@@ -228,16 +259,22 @@ impl Client {
             });
         }
         inner.emit(ClientEvent::Password(password));
-        tokio::spawn(directory_task(inner.clone()));
-        tokio::spawn(update_task(Client { inner: inner.clone() }));
+        spawn_until_shutdown(&inner, directory_task(inner.clone()));
+        if inner.public_station.is_some() {
+            spawn_until_shutdown(&inner, stations::directory_task(inner.clone()));
+        }
+        spawn_until_shutdown(&inner, update_task(Client { inner: inner.clone() }));
         if inner.opts.accept_sessions {
-            tokio::spawn(accept_task(inner.clone()));
+            tokio::spawn(accept_task(inner.clone(), inner.endpoint.clone(), false));
+            if let Some(public) = &inner.public_station {
+                tokio::spawn(accept_task(inner.clone(), public.endpoint.clone(), true));
+            }
         }
         Ok((Self { inner }, rx))
     }
 
     pub fn endpoint_id(&self) -> EndpointId {
-        self.inner.endpoint.id()
+        self.default_endpoint().id()
     }
 
     pub fn settings(&self) -> Settings {
@@ -277,7 +314,9 @@ impl Client {
             let mut s = self.inner.settings.lock().unwrap();
             let before = (s.server.url.clone(), s.server.key.clone());
             f(&mut s);
-            before != (s.server.url.clone(), s.server.key.clone())
+            let changed = before != (s.server.url.clone(), s.server.key.clone());
+            if changed { s.host.last_device_id = None; }
+            changed
         };
         self.inner.save_settings();
         if server_changed {
@@ -286,6 +325,9 @@ impl Client {
     }
 
     pub fn dir_status(&self) -> DirStatus {
+        if !stations::has_custom(&self.settings()) && let Some(public) = &self.inner.public_station {
+            return public.status.borrow().clone();
+        }
         self.inner.dir_status.borrow().clone()
     }
 
@@ -333,6 +375,9 @@ impl Client {
     }
 
     async fn directory(&self) -> Result<DirectoryClient> {
+        if !stations::has_custom(&self.settings()) && self.inner.public_station.is_some() {
+            return self.public_directory().await;
+        }
         let mut rx = self.inner.dir_client.subscribe();
         let wait = rx.wait_for(|c| c.is_some());
         match tokio::time::timeout(Duration::from_secs(10), wait).await {
@@ -380,7 +425,8 @@ impl Client {
             Lookup::Offline { info } => bail!("{} ({id}) is offline", info.name),
             Lookup::NotFound => bail!("no device has the ID {id}"),
         };
-        if addr.id == self.endpoint_id() {
+        let endpoint = self.endpoint_for_address(station.as_deref());
+        if addr.id == self.inner.endpoint.id() || self.inner.public_station.as_ref().is_some_and(|p| addr.id == p.endpoint.id()) {
             bail!("that's this device's own ID");
         }
         let (name, viewer_settings) = {
@@ -388,7 +434,7 @@ impl Client {
             (s.device_name.clone(), s.viewer.clone())
         };
         let (session, events) = viewer::connect(
-            &self.inner.endpoint,
+            &endpoint,
             addr,
             id,
             password,
@@ -407,7 +453,7 @@ impl Client {
     /// This device's full network address (key + relay + IPs), for
     /// serverless direct connections.
     pub fn endpoint_addr(&self) -> iroh::EndpointAddr {
-        self.inner.endpoint.addr()
+        self.default_endpoint().addr()
     }
 
     /// Connects straight to a known endpoint address, bypassing the
@@ -423,7 +469,7 @@ impl Client {
             (s.device_name.clone(), s.viewer.clone())
         };
         viewer::connect(
-            &self.inner.endpoint,
+            &self.default_endpoint(),
             addr,
             DeviceId(0),
             password,
@@ -463,6 +509,7 @@ impl Client {
     }
 
     pub async fn shutdown(&self) {
+        self.inner.stopping.send_replace(true);
         self.disconnect_all_host_sessions();
         // Show as offline right away instead of after the heartbeat window.
         let dc = self.inner.dir_client.borrow().clone();
@@ -474,8 +521,22 @@ impl Client {
         }
         // Closing waits for peers to acknowledge; one that doesn't mustn't
         // keep the app from exiting (or an update from restarting it).
+        if let Some(public) = &self.inner.public_station {
+            let dc = public.directory.borrow().clone();
+            if self.inner.opts.accept_sessions && let Some(dc) = dc {
+                let _ = tokio::time::timeout(Duration::from_secs(2), dc.unregister(public.endpoint.secret_key())).await;
+            }
+            let _ = tokio::time::timeout(Duration::from_secs(3), public.endpoint.close()).await;
+        }
         let _ = tokio::time::timeout(Duration::from_secs(3), self.inner.endpoint.close()).await;
     }
+}
+
+fn spawn_until_shutdown(inner: &Arc<Inner>, future: impl std::future::Future<Output = ()> + Send + 'static) {
+    let mut stop = inner.stopping.subscribe();
+    tokio::spawn(async move {
+        tokio::select! { _ = future => {}, _ = stop.wait_for(|value| *value) => {} }
+    });
 }
 
 fn set_status(inner: &Inner, status: DirStatus) {
@@ -493,7 +554,8 @@ async fn directory_task(inner: Arc<Inner>) {
     loop {
         let (server, key) = {
             let s = inner.settings.lock().unwrap();
-            (s.server.url.clone().filter(|u| !u.trim().is_empty()), s.server.key.clone())
+            (s.server.url.clone().filter(|u| !u.trim().is_empty()
+                && !(inner.public_station.is_some() && slipstream_core::config::is_public_station(u))), s.server.key.clone())
         };
         let Some(server) = server else {
             inner.dir_client.send_replace(None);
@@ -637,9 +699,10 @@ pub(crate) async fn flush(send: &mut iroh::endpoint::SendStream) {
     let _ = tokio::time::timeout(Duration::from_millis(500), send.stopped()).await;
 }
 
-async fn accept_task(inner: Arc<Inner>) {
-    while let Some(incoming) = inner.endpoint.accept().await {
+async fn accept_task(inner: Arc<Inner>, endpoint: Endpoint, public: bool) {
+    while let Some(incoming) = endpoint.accept().await {
         let inner = inner.clone();
+        let endpoint_id = endpoint.id();
         tokio::spawn(async move {
             let conn = match incoming.await {
                 Ok(c) => c,
@@ -649,7 +712,7 @@ async fn accept_task(inner: Arc<Inner>) {
                 }
             };
             if conn.alpn() == slipstream_core::meeting::CALL_ALPN {
-                if let Err(error) = meetings::calls::receive(inner, conn).await {
+                if let Err(error) = meetings::calls::receive(inner, conn, endpoint_id, public).await {
                     debug!("incoming call ended: {error:#}");
                 }
                 return;
@@ -659,7 +722,7 @@ async fn accept_task(inner: Arc<Inner>) {
                 return;
             }
             let linger = conn.clone();
-            if let Err(e) = host::run_session(inner, conn).await {
+            if let Err(e) = host::run_session(inner, conn, endpoint_id).await {
                 debug!("host session ended with error: {e:#}");
             }
             // Let a final message (e.g. "wrong password") reach the viewer
@@ -706,7 +769,7 @@ mod tests {
         s.host.set_permanent_password(Some("correct horse battery"));
         tweak(&mut s);
         store.save_settings(&s).unwrap();
-        let opts = ClientOptions { test_pattern: host, accept_sessions: host, clipboard, audio_out };
+        let opts = ClientOptions { test_pattern: host, accept_sessions: host, clipboard, audio_out, ..Default::default() };
         let (c, ev) = Client::start(store, opts).await.unwrap();
         (c, ev, dir)
     }

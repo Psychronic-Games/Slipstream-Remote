@@ -1,8 +1,9 @@
 # Running your own Slipstream Station
 
-Slipstream isn't a central service. Anyone — an IT firm, a company, a family
-— can run their own **station**: one self-contained web folder that gives
-them a private remote-support service:
+Slipstream includes a public station at `https://public.slipstreamremote.com`
+for downloads without a configured provider. Anyone — an IT firm, a company,
+a family — can run their own **station**: one self-contained web folder that
+gives them a private remote-support service:
 
 - **Download page** — clients get apps that connect to your
   station by themselves: unsigned builds carry its address, access key and
@@ -26,6 +27,35 @@ repoint DNS, done. Apps only know your domain.
 
 New to Slipstream? [GETTING-STARTED.md](GETTING-STARTED.md) walks through
 the whole setup step by step. This page is the reference.
+
+## Public and self-hosted IDs
+
+The built-in public station and every self-hosted station have separate ID
+registries. An ID is meaningful only on the station that issued it; the same
+number can exist on different stations. A configured self-hosted station is
+the default on Bridge. Tabs above **Your ID** show one station's ID at a time,
+and **Establish link** looks up the partner on that selected station. New link
+also offers a station picker. Saved devices and recent links keep their station.
+
+Clients maintain a separate, stable public endpoint derived from their local
+identity. Both endpoints use the same local passwords, permissions, session
+state and authentication throttle. The public directory sees the public
+endpoint's address and device information, never the private relay token or
+station access key. The Windows service supplies its own public ID to the GUI.
+The public ID remains available when a self-hosted station is configured.
+
+The optional **Public backup relay** setting lets the private endpoint use
+Slipstream's relay as well, when permitted by both client and station. It is
+separate from the public ID. No n0-operated relay is added to new endpoints;
+iroh remains the networking library. Direct sessions avoid relay media traffic.
+
+Public hosting has infrastructure costs. `config.php` can set
+`relay_bytes_per_second` per connection and `relay_max_connections` for the
+managed relay (zero means unlimited). The standalone server exposes matching
+`--relay-bytes-per-second` and `--relay-max-connections` options. Capacity counts
+idle relay connections too, including both endpoints of a relayed session;
+it does not mean that many simultaneous sessions. Limits do not cap monthly
+transfer or replace host-level monitoring. Private station defaults stay unlimited.
 
 ## Requirements
 

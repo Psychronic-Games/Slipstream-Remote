@@ -183,13 +183,13 @@ impl Meetings {
         if self.active.is_some() || self.joining.is_some() {
             return;
         }
-        let settings = client.settings();
+        let settings = client.station_settings();
         let name = self.name.clone();
         let title = self.title.clone();
         let capacity = self.capacity.max(2);
         self.error = None;
         self.joining = Some(pending(rt, ctx, async move {
-            Meeting::host(&settings.server, &name, &title, capacity).await
+            Meeting::host(&settings, &name, &title, capacity).await
         }));
     }
     fn join(&mut self, invite: Invitation, client: &Client, rt: &Runtime, ctx: &egui::Context) {
@@ -197,11 +197,11 @@ impl Meetings {
             self.error = Some("Leave your current meeting before joining another".into());
             return;
         }
-        let settings = client.settings();
+        let settings = client.station_settings();
         let name = self.name.clone();
         self.error = None;
         self.joining = Some(pending(rt, ctx, async move {
-            Meeting::join(invite, &settings.server, &name).await
+            Meeting::join(invite, &settings, &name).await
         }));
     }
     fn poll(&mut self, app: &mut App, ctx: &egui::Context) {
@@ -634,7 +634,7 @@ fn call_form(meetings: &mut Meetings, app: &App, ui: &mut Ui, allow: bool) {
             .clicked()
         {
             match meetings.call_id.parse::<DeviceId>() {
-                Ok(id) => meetings.call_target(id, app.client.settings().server),
+                Ok(id) => meetings.call_target(id, app.client.station_settings()),
                 Err(e) => meetings.error = Some(format!("{e:#}")),
             }
         }

@@ -10,6 +10,7 @@ pub fn set_server(address: &str, key: Option<String>) -> Result<()> {
     let store = Store::open_default()?;
     let mut s = store.load_settings();
     slipstream_core::directory::normalize_server_url(address).context("invalid server address")?;
+    if s.server.url.as_deref() != Some(address.trim()) { s.host.last_device_id = None; }
     s.server.url = Some(address.trim().to_string());
     s.server.key = key.filter(|k| !k.trim().is_empty());
     s.server.provisioned = false;
@@ -35,8 +36,11 @@ pub async fn info() -> Result<()> {
     let s = store.load_settings();
     println!("settings dir : {}", store.dir().display());
     println!("device name  : {}", s.device_name);
-    println!("endpoint id  : {}", store.identity()?.public());
-    match s.host.last_device_id {
+    let custom = s.server.url.as_deref().is_some_and(|url| !url.trim().is_empty() && !slipstream_core::config::is_public_station(url));
+    let secret = store.identity()?;
+    let endpoint = if custom { secret.public() } else { slipstream_core::config::public_identity(&secret).public() };
+    println!("endpoint id  : {endpoint}");
+    match if custom { s.host.last_device_id } else { s.host.public_device_id } {
         Some(id) => println!("device id    : {id}"),
         None => println!("device id    : (not registered yet)"),
     }
@@ -46,8 +50,9 @@ pub async fn info() -> Result<()> {
             if s.server.key.is_some() { " (private, key set)" } else { "" },
             s.server.org_name.as_deref().map(|o| format!(" — {o}")).unwrap_or_default()
         ),
-        None => println!("server       : (none — run `slipstream set-server relay.example.com`)"),
+        None => println!("server       : {} (built-in public station)", slipstream_core::config::PUBLIC_STATION_URL),
     }
+    if custom && let Some(id) = s.host.public_device_id { println!("public id    : {id} ({})", slipstream_core::config::PUBLIC_STATION_URL); }
     match slipstream_core::release::trusted_keys().as_slice() {
         [] => println!("updates      : off (this build has no update key)"),
         keys => {
@@ -67,7 +72,7 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
         s.host.set_permanent_password(Some(pw));
         store.save_settings(&s)?;
     }
-    let (client, mut events) = Client::start(store, ClientOptions { test_pattern, accept_sessions: true, ..Default::default() }).await?;
+    let (client, mut events) = Client::start(store, ClientOptions { test_pattern, accept_sessions: true, public_station: (!test_pattern).then(slipstream_core::config::ServerSettings::public_station), ..Default::default() }).await?;
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some() && client.settings().host.enabled {
         let preparing = client.clone();
@@ -89,6 +94,7 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
                 if let Some(bridge)=&mut chat_bridge {bridge.observe(&ev);}
                 match ev {
                     ClientEvent::Directory(DirStatus::Online { id }) => println!("ID       {id}"),
+                    ClientEvent::PublicDirectory(status) => println!("public   {status:?}"),
                     ClientEvent::Directory(other) => println!("server   {other:?}"),
                     ClientEvent::Password(pw) => if !service { println!("PASSWORD {pw}"); },
                     ClientEvent::HostSessionStarted { session, peer } => println!("session {session} started by {peer}"),
@@ -187,7 +193,7 @@ pub async fn connect(
     let forward = forward.iter().map(|f| parse_forward(f)).collect::<Result<Vec<_>>>()?;
     let id: DeviceId = id.parse()?;
     let store = Store::open_default()?;
-    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let (client, _events) = Client::start(store, ClientOptions::production()).await?;
     let attempt = match &station {
         Some(st) => match account_for(&client, st) {
             Ok(r) => client.connect_via(&r, id, password, |p| println!("… {p}")).await,
@@ -292,7 +298,7 @@ pub async fn sign_in(station: &str, username: &str, password: Option<String>) ->
         }
     };
     let store = Store::open_default()?;
-    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let (client, _events) = Client::start(store, ClientOptions::production()).await?;
     let result = client.sign_in(station, username, &password).await;
     let accounts = client.settings().accounts;
     client.shutdown().await;
@@ -311,7 +317,7 @@ pub async fn sign_in(station: &str, username: &str, password: Option<String>) ->
 
 pub async fn sign_out(station: &str) -> Result<()> {
     let store = Store::open_default()?;
-    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let (client, _events) = Client::start(store, ClientOptions::production()).await?;
     let result = account_for(&client, station);
     if let Ok(r) = &result {
         client.sign_out(r).await;
@@ -334,7 +340,7 @@ pub async fn save(id: &str, station: &str, options: SaveOptions) -> Result<()> {
     let SaveOptions { name, notes, group, password, shared, remove } = options;
     let id: DeviceId = id.parse()?;
     let store = Store::open_default()?;
-    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let (client, _events) = Client::start(store, ClientOptions::production()).await?;
     let result = async {
         let r = account_for(&client, station)?;
         if remove {
@@ -360,7 +366,7 @@ pub async fn save(id: &str, station: &str, options: SaveOptions) -> Result<()> {
 
 pub async fn saved() -> Result<()> {
     let store = Store::open_default()?;
-    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let (client, _events) = Client::start(store, ClientOptions::production()).await?;
     client.sync_accounts().await;
     let accounts = client.settings().accounts;
     if accounts.is_empty() {
@@ -393,7 +399,7 @@ pub async fn saved() -> Result<()> {
 
 pub async fn update() -> Result<()> {
     let store = Store::open_default()?;
-    let (client, _events) = Client::start(store, ClientOptions::default()).await?;
+    let (client, _events) = Client::start(store, ClientOptions::production()).await?;
     println!("this is Slipstream {}", slipstream_core::version_string());
     let result = async {
         match client.check_update().await? {

@@ -29,6 +29,10 @@ struct Snapshot {
     password: Option<String>,
     #[serde(default)]
     call: Option<slipstream_session::meetings::calls::IncomingCall>,
+    #[serde(default)]
+    directory: Option<slipstream_session::DirStatus>,
+    #[serde(default)]
+    public_directory: Option<slipstream_session::DirStatus>,
 }
 
 impl Snapshot {
@@ -88,6 +92,7 @@ struct Proof {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
+    Directories { primary: Option<slipstream_session::DirStatus>, public: Option<slipstream_session::DirStatus> },
     MeetingCall(Option<slipstream_session::meetings::calls::IncomingCall>),
     Started {
         session: u64,
@@ -112,10 +117,17 @@ struct Cursor {
     sessions: BTreeMap<u64, u64>,
     password: Option<String>,
     statuses: BTreeMap<u64, String>,
+    directory: Option<slipstream_session::DirStatus>,
+    public_directory: Option<slipstream_session::DirStatus>,
 }
 impl Cursor {
     fn update(&mut self, snapshot: &Snapshot) -> Vec<Event> {
         let mut events = Vec::new();
+        if self.directory != snapshot.directory || self.public_directory != snapshot.public_directory {
+            self.directory = snapshot.directory.clone();
+            self.public_directory = snapshot.public_directory.clone();
+            events.push(Event::Directories { primary: self.directory.clone(), public: self.public_directory.clone() });
+        }
         if self.call != snapshot.call || self.epoch != Some(snapshot.epoch) {
             if self.call.is_some() || snapshot.call.is_some() {
                 events.push(Event::MeetingCall(snapshot.call.clone()));
@@ -340,6 +352,7 @@ mod native {
     }
 
     pub struct Server {
+        custom_station: bool,
         broker: std::sync::Arc<slipstream_session::meetings::calls::Broker>,
         state: Arc<Mutex<Snapshot>>,
         changes: watch::Sender<Snapshot>,
@@ -357,6 +370,7 @@ mod native {
         pub fn start(client: Client) -> Result<Self> {
             let broker = client.call_broker();
             let session = session_id();
+            let custom_station = client.has_custom_station();
             let pipe = create_pipe(session, true)?;
             let key = Store::open_default()?.identity()?;
             crate::service::ensure_public_dir();
@@ -370,6 +384,8 @@ mod native {
                 sessions: Vec::new(),
                 password: Some(client.one_time_password()),
                 call: None,
+                directory: Some(client.dir_status()),
+                public_directory: Some(client.public_dir_status()),
             };
             let state = Arc::new(Mutex::new(initial.clone()));
             let (changes, _) = watch::channel(initial);
@@ -407,6 +423,7 @@ mod native {
             });
             Ok(Self {
                 broker,
+                custom_station,
                 state,
                 changes,
                 clients,
@@ -419,6 +436,12 @@ mod native {
             let mut state = self.state.lock().expect("service chat state");
             match event {
                 ClientEvent::CallChanged => state.call = self.broker.incoming(),
+                ClientEvent::Directory(status) if self.custom_station => state.directory = Some(status.clone()),
+                ClientEvent::PublicDirectory(status) => {
+                    state.public_directory = Some(status.clone());
+                    // The default directory follows the public station for raw apps.
+                    if !self.custom_station { state.directory = Some(status.clone()); }
+                },
                 ClientEvent::Password(password) => state.password = Some(password.clone()),
                 ClientEvent::HostSessionStarted { session, peer } => {
                     if state.sessions.len() >= 32 {
@@ -595,6 +618,9 @@ mod native {
                     }
                     .await;
                     c.store(false, Ordering::Release);
+                    cursor.directory = None;
+                    cursor.public_directory = None;
+                    let _ = tx.send(Event::Directories { primary: None, public: None });
                     if cursor.call.take().is_some() {
                         let _ = tx.send(Event::MeetingCall(None));
                     }
@@ -626,6 +652,23 @@ pub use native::{Gui, Server};
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_id_updates_and_older_service_snapshots_clear_the_public_id() {
+        use slipstream_session::DirStatus;
+        use slipstream_core::directory::DeviceId;
+        let mut snapshot: Snapshot = serde_json::from_str(r#"{"epoch":1,"sequence":0,"sessions":[]}"#).unwrap();
+        let mut cursor = Cursor::default();
+        assert!(cursor.update(&snapshot).is_empty());
+        snapshot.directory = Some(DirStatus::Online { id: DeviceId(123456789) });
+        snapshot.public_directory = Some(DirStatus::Online { id: DeviceId(987654321) });
+        assert_eq!(cursor.update(&snapshot), vec![Event::Directories {
+            primary: snapshot.directory.clone(), public: snapshot.public_directory.clone(),
+        }]);
+        assert!(cursor.update(&snapshot).is_empty());
+        let older: Snapshot = serde_json::from_str(r#"{"epoch":2,"sequence":0,"sessions":[]}"#).unwrap();
+        assert_eq!(cursor.update(&older), vec![Event::Directories { primary: None, public: None }]);
+    }
+
     #[test]
     fn retained_sender_uses_the_current_service_epoch_for_each_command() {
         use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
@@ -696,6 +739,8 @@ mod tests {
             }],
             password: None,
             call: None,
+            directory: None,
+            public_directory: None,
         };
         snapshot.message(0, false, "Hello".into());
         let mut cursor = Cursor::default();

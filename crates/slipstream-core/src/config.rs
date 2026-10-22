@@ -11,6 +11,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::directory::DeviceId;
 
+pub const PUBLIC_STATION_URL: &str = "https://public.slipstreamremote.com";
+
+pub fn is_public_station(address: &str) -> bool {
+    crate::directory::normalize_server_url(address).ok()
+        == crate::directory::normalize_server_url(PUBLIC_STATION_URL).ok()
+}
+
+/// Stable public identity, independent of any private station identity.
+pub fn public_identity(secret: &iroh::SecretKey) -> iroh::SecretKey {
+    iroh::SecretKey::from_bytes(&blake3::derive_key("slipstream public endpoint v1", &secret.to_bytes()))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -92,11 +104,22 @@ pub struct ServerSettings {
     pub station_allows_public_relays: bool,
     /// Relays learned from the directory server (cached for faster startup).
     pub relays: Vec<RelayUrl>,
-    /// Also use the public n0 relays as a fallback.
+    /// Also use the Slipstream public relay as a fallback.
     pub use_public_relays: bool,
 }
 
 impl ServerSettings {
+    pub fn public_station() -> Self {
+        Self {
+            url: Some(PUBLIC_STATION_URL.into()),
+            org_name: Some("Slipstream Public".into()),
+            relays: vec![PUBLIC_STATION_URL.parse().expect("public relay URL")],
+            use_public_relays: false,
+            station_allows_public_relays: false,
+            ..Default::default()
+        }
+    }
+
     /// Public relays are used only if both the user and the station allow it.
     pub fn public_relays_enabled(&self) -> bool {
         self.use_public_relays && self.station_allows_public_relays
@@ -126,6 +149,8 @@ pub struct HostSettings {
     pub allow_wake_on_lan: bool,
     /// Last numeric ID the server gave us (display only; the server is authoritative).
     pub last_device_id: Option<DeviceId>,
+    /// The separately registered public endpoint's ID; never a private ID.
+    pub public_device_id: Option<DeviceId>,
     /// Wayland portal token so screen-sharing permission survives restarts.
     pub portal_restore_token: Option<String>,
 }
@@ -216,6 +241,7 @@ impl Default for HostSettings {
             allow_network_scan: true,
             allow_wake_on_lan: false,
             last_device_id: None,
+            public_device_id: None,
             portal_restore_token: None,
         }
     }
@@ -380,6 +406,7 @@ impl Store {
                     Err(e)=>return Err(e).context("reading device settings"),
                 };
                 settings.host.last_device_id=None;
+                settings.host.public_device_id=None;
                 if settings.device_name.eq_ignore_ascii_case(&binding.system_name) {settings.device_name=default_device_name();}
                 self.save_settings(&settings)?;
                 for name in ["device-id.txt","chat-identity.txt"] {
