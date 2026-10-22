@@ -22,6 +22,10 @@ preview are displayed; screen shares have priority, and a participant can be
 pinned. The organizer forwards encoded streams rather than transcoding them.
 The organizer's upload and each participant's connection determine video capacity.
 
+Windows Server/N camera sharing requires the optional Media Foundation feature
+(Media Feature Pack on N editions). The app reports a camera error when that
+feature is unavailable; remote support and meeting audio continue to work.
+
 On Android, press **Show me** and allow camera access to share the rear camera.
 Switch to the front camera or enable the torch where the phone supports it.
 Stop Show me locally, leave the room, or use the ongoing notification's

@@ -24,6 +24,10 @@ track them.
 | 13 | [ARM builds](13-arm-builds.md) | infra |
 | 15 | [Windows: capture straight from DXGI](15-windows-capture-dxgi.md) (done in 0.7.1; to measure) | Windows, performance |
 | 16 | [Try the new session tools on real machines](16-session-tools-real-machines.md) | testing |
+| 17 | [Group meetings with incoming calls and mobile Show me](17-group-meetings-and-show-me.md) (implemented in 0.23.0; physical room measurements open) | feature, testing |
+
+For 0.23.0 meetings, see the [usage guide](../MEETINGS.md) and
+[2026-10-21 publication handoff](../DEVELOPMENT-2026-10-21.md).
 
 Start with the current priorities in [status](../STATUS.md#next-steps-suggested-order)
 and the [2026-10-20 handoff](../DEVELOPMENT-2026-10-20.md). Issues 09 and 16
