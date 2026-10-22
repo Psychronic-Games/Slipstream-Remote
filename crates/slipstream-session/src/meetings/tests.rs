@@ -1,4 +1,42 @@
 use super::*;
+#[test]
+fn invitation_routes_respect_both_stations_public_relay_policy() {
+    let public = iroh::RelayMode::Default.relay_map().urls::<Vec<_>>()[0].clone();
+    let private: iroh::RelayUrl = "https://meeting.example/?token=guest-lease"
+        .parse()
+        .unwrap();
+    let mut invitation = Invitation {
+        version: VERSION,
+        address: iroh::EndpointAddr::new(iroh::SecretKey::generate().public())
+            .with_relay_url(public.clone())
+            .with_relay_url(private.clone()),
+        token: random_secret(),
+        title: "Policy".into(),
+        expires: now() + 3600,
+        public_relays: true,
+    };
+    let server = ServerSettings {
+        key: Some("must-not-be-forwarded".into()),
+        ..local()
+    };
+    let (settings, address) = guest_routes(&invitation, &server).unwrap();
+    assert_eq!(settings.relays, vec![private.clone()]);
+    assert!(settings.key.is_none() && settings.url.is_none());
+    assert!(address.relay_urls().all(|url| url == &private));
+    let mut allowed = server.clone();
+    allowed.use_public_relays = true;
+    assert_eq!(
+        guest_routes(&invitation, &allowed).unwrap().1.addrs.len(),
+        2
+    );
+    invitation.public_relays = false;
+    assert_eq!(
+        guest_routes(&invitation, &allowed).unwrap().1.addrs.len(),
+        1
+    );
+    invitation.address = iroh::EndpointAddr::new(invitation.address.id).with_relay_url(public);
+    assert!(guest_routes(&invitation, &allowed).is_err());
+}
 fn local() -> ServerSettings {
     ServerSettings {
         use_public_relays: false,
@@ -138,7 +176,9 @@ async fn twenty_participant_meeting_admission_chat_media_removal_and_capacity() 
             data: video.data.clone(),
         }));
         let next = tokio::time::timeout(Duration::from_secs(3), guests[18].video.recv())
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!((next.participant, next.seq), (source, seq));
     }
     host.command(Command::Remove(source));

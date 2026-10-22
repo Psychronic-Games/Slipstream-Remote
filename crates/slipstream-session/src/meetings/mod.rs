@@ -138,21 +138,12 @@ impl Meeting {
     pub async fn join(invitation: Invitation, server: &ServerSettings, name: &str) -> Result<Self> {
         invitation.validate()?;
         let name = clean_name(name)?;
-        let mut settings = server.clone();
-        // Guest relay leases in an invitation are independent of the
-        // guest's own station. Retain the guest's public-relay policy.
-        settings.relays = invitation.address.relay_urls().cloned().collect();
-        settings.key = None;
-        settings.url = None;
-        settings.use_public_relays &= invitation.public_relays;
+        let (settings, address) = guest_routes(&invitation, server)?;
         let endpoint = bind(&settings).await?;
-        let conn = tokio::time::timeout(
-            Duration::from_secs(20),
-            endpoint.connect(invitation.address.clone(), ALPN),
-        )
-        .await
-        .context("Meeting host did not answer")?
-        .context("Cannot reach this meeting; the host may need an update")?;
+        let conn = tokio::time::timeout(Duration::from_secs(20), endpoint.connect(address, ALPN))
+            .await
+            .context("Meeting host did not answer")?
+            .context("Cannot reach this meeting; the host may need an update")?;
         let (mut send, recv) = conn.open_bi().await?;
         wire::write(
             &mut send,
@@ -195,6 +186,35 @@ impl Drop for Meeting {
     fn drop(&mut self) {
         let _ = self.commands.try_send(Command::Leave);
     }
+}
+
+fn guest_routes(
+    invitation: &Invitation,
+    server: &ServerSettings,
+) -> Result<(ServerSettings, iroh::EndpointAddr)> {
+    let mut settings = server.clone();
+    let mut address = invitation.address.clone();
+    settings.use_public_relays &= invitation.public_relays;
+    if !settings.public_relays_enabled() {
+        let public = iroh::RelayMode::Default.relay_map();
+        address.addrs.retain(|route| match route {
+            iroh::TransportAddr::Relay(url) => !public
+                .urls::<Vec<_>>()
+                .iter()
+                .any(|known| known.host_str() == url.host_str()),
+            _ => true,
+        });
+        ensure!(
+            !address.addrs.is_empty(),
+            "This meeting requires a public relay that your station has disabled"
+        );
+    }
+    // Only invitation guest leases belong on this endpoint. The guest's
+    // station key and configured station routes must never be substituted.
+    settings.relays = address.relay_urls().cloned().collect();
+    settings.key = None;
+    settings.url = None;
+    Ok((settings, address))
 }
 
 async fn bind(server: &ServerSettings) -> Result<Endpoint> {
