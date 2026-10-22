@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.24.0 — 2026-10-22
+
 - Repair enabled Linux autostart entries when a moved or newly downloaded app
   starts, and refresh the executable when saving Config. Respect entries disabled
   by the desktop and leave side-profile startup integration alone.
