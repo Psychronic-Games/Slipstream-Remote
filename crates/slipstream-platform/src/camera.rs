@@ -8,12 +8,8 @@ pub fn devices() -> Result<Vec<(u32, String)>> {
     media_foundation()?;
     Ok(nokhwa::query(nokhwa::utils::ApiBackend::Auto)?
         .into_iter()
-        .filter_map(|info| {
-            info.index()
-                .as_index()
-                .ok()
-                .map(|index| (index, info.human_name()))
-        })
+        .enumerate()
+        .map(|(ordinal, info)| (info.index().as_index().unwrap_or(ordinal as u32), info.human_name()))
         .collect())
 }
 #[cfg(target_os = "android")]

@@ -339,7 +339,7 @@ mod cpal_io {
                 let host = cpal::default_host();
                 let device = if let Some(name) = name {
                     host.input_devices()?
-                        .find(|d| d.description().is_ok_and(|d| d.name() == name))
+                        .find(|d| d.id().is_ok_and(|id| id.to_string() == name) || d.description().is_ok_and(|d| d.name() == name))
                         .context("Microphone was not found")?
                 } else {
                     host.default_input_device()

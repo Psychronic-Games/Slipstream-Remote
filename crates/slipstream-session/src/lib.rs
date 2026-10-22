@@ -162,16 +162,22 @@ impl Client {
         slipstream_platform::camera::start_cancellable(index, cancelled)
     }
 
+    pub fn meeting_cameras(&self)->Result<Vec<(u32,String)>> {
+        if self.inner.opts.test_pattern {return Ok(vec![(0,"Test camera 1".into()),(1,"Test camera 2".into())]);}
+        slipstream_platform::camera::devices()
+    }
+
     /// Sharing a screen into a meeting does not inject input or create a viewer.
-    pub async fn capture_for_meeting(&self) -> Result<slipstream_platform::FrameStream> {
+    pub async fn meeting_displays(&self) -> Result<Vec<slipstream_core::proto::DisplayInfo>> {
+        let backend = host::screen_backend(&self.inner).await?;
+        Ok(backend.as_ref().context("No screen is available")?.displays())
+    }
+    pub async fn capture_for_meeting(&self, index:u32) -> Result<slipstream_platform::FrameStream> {
         let mut backend = host::screen_backend(&self.inner).await?;
         let backend = backend.as_mut().context("No screen is available")?;
         let displays = backend.displays();
-        let display = displays
-            .iter()
-            .find(|d| d.primary)
-            .or(displays.first())
-            .context("No screen is available")?;
+        let display = displays.iter().find(|d| d.index==index)
+            .context("The selected screen is no longer available; choose a screen again")?;
         backend.capture(display.index, 15)
     }
     /// Loads settings and identity from `store`, binds the network endpoint
@@ -1355,6 +1361,34 @@ mod tests {
         assert!(wait_for(&mut events,|e|matches!(e,ClientEvent::HostSessionEnded {..})).await);
         viewer.shutdown().await;host.shutdown().await;
         let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+    }
+
+    #[tokio::test(flavor="multi_thread",worker_threads=2)]
+    async fn meeting_screen_selection_uses_explicit_sparse_id_without_input_or_automatic_capture() {
+        use slipstream_platform::{Backend,FrameStream,test_pattern::TestPattern};
+        struct Screens {seen:Arc<Mutex<Vec<u32>>>}
+        impl Backend for Screens {
+            fn name(&self)->&'static str {"meeting-screen-selection"}
+            fn displays(&self)->Vec<slipstream_core::proto::DisplayInfo> {
+                [7,27].into_iter().map(|index|slipstream_core::proto::DisplayInfo {index,name:format!("Screen {index}"),width:320,height:180,x:0,y:0,primary:index==7}).collect()
+            }
+            fn capture(&mut self,index:u32,fps:u32)->Result<FrameStream> {self.seen.lock().unwrap().push(index);TestPattern::new(320,180).capture(0,fps)}
+            fn inject(&mut self,_index:u32,_event:InputEvent)->Result<()> {panic!("meeting capture must not inject input")}
+        }
+        let (client,_events,dir)=client("meeting-screen-choice",false).await;
+        let seen=Arc::new(Mutex::new(Vec::new()));
+        *client.inner.backend.lock().await=Some(Box::new(Screens {seen:seen.clone()}));
+        let choices=client.meeting_displays().await.unwrap();
+        assert_eq!(choices.iter().map(|d|d.index).collect::<Vec<_>>(),vec![7,27]);
+        assert!(seen.lock().unwrap().is_empty(),"listing screens started capture");
+        assert!(client.capture_for_meeting(99).await.is_err());
+        assert!(seen.lock().unwrap().is_empty(),"invalid choice fell back to another screen");
+        let capture=client.capture_for_meeting(27).await.unwrap();
+        assert_eq!(*seen.lock().unwrap(),vec![27]);
+        let frame=capture.next(Duration::from_secs(2)).unwrap().unwrap();
+        assert_eq!((frame.width,frame.height),(320,180));
+        assert!(client.inner.host_sessions.lock().unwrap().is_empty());
+        drop(capture);client.shutdown().await;let _=std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test(flavor="multi_thread")]

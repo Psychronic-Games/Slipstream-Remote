@@ -149,6 +149,9 @@ pub struct ViewerSettings {
 pub struct AppSettings {
     /// The local user may decline all incoming meeting calls.
     pub block_meeting_calls: bool,
+    /// Stable input identity; None follows the system default.
+    pub meeting_microphone: Option<String>,
+    pub meeting_camera: Option<u32>,
     /// Closing the window keeps Slipstream running in the system tray
     /// (for unattended access). Off by default: closing ends access.
     pub run_in_tray: bool,

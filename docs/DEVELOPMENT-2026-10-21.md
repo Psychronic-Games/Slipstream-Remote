@@ -132,3 +132,43 @@ Final cache sizes: 9.31 GiB development/test and 30.05 GiB release, within
 12/32 GiB budgets; incremental compilation stays disabled. The final release
 build log is /tmp/slipstream-0230-release-build-final.log. Earlier documentation
 reconciliation edits remain separate from this implementation/publication.
+
+## Meeting usability follow-up — 0.23.1
+
+User testing found blank device fields, automatic primary-screen sharing,
+a crowded meeting page, an unclear lock control and a Close call button that
+only dismissed invitation status after Answer. This patch changes the client UI:
+
+- Named microphone/camera pickers, remembered selections, current device labels
+  and asynchronous refresh. Linux enumerates real PulseAudio inputs (including
+  PipeWire's Pulse server), excludes loopback monitors and resolves the named
+  system default. Other platforms use CPAL stable microphone identities.
+- Explicit screen selection with resolution, main display and arrangement map;
+  cancellation preserves the current source. Capture requires the chosen display
+  index and fails if it has disappeared, without falling back to another screen.
+- Live meeting, Chat, Participants and Devices views with persistent media/end
+  controls, unread chat and Enter/Shift+Enter composition.
+- Cancel call exists only while preparing/dialing/ringing. Answer clears that
+  status; Leave meeting exits a guest and End meeting confirms ending everyone.
+- Participants explains Allow new join requests. Closing admission leaves current
+  participants connected; requests already waiting can still be admitted.
+  Organizer end/removal actions ask for confirmation.
+
+The isolated native two-client audit passes with synthetic media and two screens:
+named camera choice/persistence, cancel and second call/Answer, removal of stale
+call controls, encoded/decoded camera video, separate chat/unread/Enter sending,
+screen chooser cancellation, explicit second-screen sharing, 480×800 layout,
+cancelled End confirmation and final group teardown. Evidence:
+/tmp/slipstream-meetings-ui-nhuel3i4. No real user profile, calls or capture were
+used. A separate metadata-only microphone example correctly listed this Linux
+workstation's three inputs and identified the Yeti system default.
+
+The session regression checks sparse display IDs, no capture during discovery,
+no primary fallback for an invalid choice and no remote input/session creation.
+This patch uses the existing meeting/remote protocols and needs only client
+publication, with no station API or relay restart.
+
+Pre-release checks: workspace tests pass (157 passed, five existing manual/
+benchmark tests ignored). Strict Clippy passes for Linux workspace/all targets,
+Windows x86_64/all client targets and Android arm64. The native audit described
+above passes. All heavy checks used the serial resource-limited wrapper.

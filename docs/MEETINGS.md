@@ -2,23 +2,38 @@
 
 Open **Meetings**, enter your name and a room title, and press **Create meeting**.
 The room defaults to 20 participants; its capacity can be set from 2 to 32.
+Before joining, open **Devices** to choose named microphone and camera inputs.
+The system-default microphone shows its device name; choices are remembered.
+Use **Refresh devices** after connecting a headset or camera.
 Prefer a desktop organizer and a good upload connection for larger rooms.
 
 **Copy invitation** shares a link that another installed Slipstream client can
 paste into Meetings or open as a Slipstream link. Guests wait for the organizer
-to admit them. The organizer can decline requests, remove participants, lock
-new admission and end the room. Invitations expire after four hours. A removed
-participant's old admission is invalid; a new endpoint still requires approval.
+to admit them. The organizer can decline requests, remove participants and end the room.
+In **Participants**, **Allow new join requests** controls admission: turn it off to block new arrivals while current members
+stay connected. Existing waiting requests can still be admitted. Invitations expire after four
+hours. A removed participant's old admission is invalid; a new endpoint still requires approval.
 
-Use **Meeting** beside a saved system, or **Call a system** in the room, to ring
+Use **Meeting** beside a saved system, or **Call system** in the room, to ring
 that client. The recipient sees **Answer** and **Decline**. Answer joins the
-inviting room muted. Calling requires authorization for the recipient's station;
+inviting room muted. **Cancel call** stops a dialing/ringing invitation; it
+appears only before Answer. After joining, **Leave meeting** exits the room;
+the organizer's **End meeting** ends it for everyone after confirmation.
+Calling requires authorization for the recipient's station;
 a meeting invitation itself grants no remote-control or station directory rights.
 Installed clients must be updated for meetings; update the Windows service too.
 
+During a meeting, use **Live meeting**, **Chat**, **Participants** and
+**Devices** to switch views. Mute, camera, screen sharing and Leave/End controls
+stay above the selected view. Chat shows an unread badge when you are elsewhere;
+Enter sends a message and Shift+Enter inserts a new line.
+
 Press **Unmute** to enable your microphone. **Camera** and **Share screen** are
-separate explicit actions. Up to four selected remote sources and a local
-preview are displayed; screen shares have priority, and a participant can be
+separate explicit actions. **Share screen** opens a chooser with screen names,
+resolution, main-display labels and a layout map. Choose a screen and confirm
+**Share selected screen**. **Change screen** opens the chooser again; Cancel
+keeps your current sharing unchanged. Up to four selected remote sources and a
+local preview are displayed; screen shares have priority, and a participant can be
 pinned. The organizer forwards encoded streams rather than transcoding them.
 The organizer's upload and each participant's connection determine video capacity.
 

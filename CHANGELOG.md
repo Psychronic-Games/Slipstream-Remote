@@ -13,6 +13,28 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.23.1 — 2026-10-21
+
+### Meeting usability
+
+- Split meetings into Live meeting, Chat, Participants and Devices tabs, with
+  media controls always accessible. Show unread chat and waiting participants;
+  support Enter to send and Shift+Enter for a new line.
+- Replace the empty microphone field and numeric camera index with named
+  device pickers, the current system-default microphone and remembered choices.
+  Refresh device lists without starting capture; apply device changes to active
+  media. Discover Linux microphones through runtime-loaded PulseAudio, excluding
+  loopback monitors, and use stable microphone identities on Windows/macOS/Android.
+- Ask which screen to share before starting capture, with names, resolution,
+  main-display status and a desktop arrangement map. Cancel preserves current
+  sharing; Change screen uses the explicitly selected display without fallback.
+- Show Cancel call only while dialing/ringing and remove the invitation status
+  after Answer. Leave meeting and End meeting control the ongoing room.
+  Confirm organizer end/removal actions before disconnecting participants.
+- Replace Lock meeting with an explained Allow new join requests setting in
+  Participants. Closing admission blocks new arrivals and keeps current members
+  connected; existing waiting guests can still be admitted.
+
 ## 0.23.0 — 2026-10-21
 
 ### Group meetings and mobile Show me

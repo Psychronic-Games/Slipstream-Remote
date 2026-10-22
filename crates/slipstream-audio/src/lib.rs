@@ -2,6 +2,7 @@
 //! and playing it on the viewer.
 
 pub mod buffer;
+pub mod devices;
 mod io;
 pub mod opus;
 #[cfg(target_os = "linux")]

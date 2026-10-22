@@ -82,7 +82,7 @@ def main():
         wanted = normalize(phrase)
         matches = []
         for index in range(0 if controls else len(rows)):
-          for count in range(1,min(7,len(rows)-index)+1):
+          for count in range(1,min(12,len(rows)-index)+1):
             group = rows[index:index + count]
             if ''.join(normalize(row['text']) for row in group) == wanted:
                 left = min(int(row['left']) for row in group)
@@ -111,10 +111,13 @@ def main():
                 left*=3;top*=3;right=(right+1)*3;bottom=(bottom+1)*3
                 if right-left<35 or not 15<=bottom-top<=42: continue
                 crop=image.crop((left+12,top+4,right-12,bottom-4))
-                crop=ImageOps.grayscale(crop).resize((crop.width*3,crop.height*3)).point(lambda p:255 if p>100 else 0)
+                crop=ImageOps.grayscale(crop).resize((crop.width*5,crop.height*5)).point(lambda p:255 if p>100 else 0)
                 crop=ImageOps.expand(crop,border=20,fill=255);path=base/'button-ocr.png';crop.save(path)
                 text=subprocess.run(['tesseract',str(path),'stdout','--psm','6'],capture_output=True,text=True,check=True).stdout
-                if normalize(text)==wanted: matches.append(((left+right)//2,(top+bottom)//2))
+                observed=normalize(text)
+                if len(observed)==len(wanted):
+                    observed=''.join(expected if expected.isdigit() and character in {'I','L','O','Z'} and {'I':'1','L':'1','O':'0','Z':'2'}[character]==expected else character for character,expected in zip(observed,wanted))
+                if observed.replace("G","C")==wanted.replace("G","C"): matches.append(((left+right)//2,(top+bottom)//2))
         return matches[-1 if last else 0] if matches else None
 
     def click(win, phrase, name, last=False):
@@ -129,7 +132,7 @@ def main():
         g=geometry(win)
         image=ImageGrab.grab(xdisplay=env['DISPLAY']).crop((g['X'],g['Y'],g['X']+g['WIDTH'],g['Y']+g['HEIGHT']))
         image.save(base/f'{name}.png')
-        video=image.crop((300,390,min(980,image.width),min(780,image.height))).convert('RGB').resize((200,160))
+        video=image.crop((200,360,min(980,image.width),min(920,image.height))).convert('RGB').resize((200,160))
         return sum(r>200 and green>90 and b<80 for r,green,b in video.getdata())>50
 
     try:
@@ -175,7 +178,7 @@ def main():
             profile.mkdir()
             profiles.append(profile)
             (profile / 'settings.toml').write_text(f'device_name = {json.dumps(name)}\n[server]\nurl = "http://127.0.0.1:{port}"\nkey = "fixture-meeting-access"\nuse_public_relays = false\n')
-            local = env | {'SLIPSTREAM_HOME': str(profile)}
+            local = env | {'SLIPSTREAM_HOME': str(profile), 'SLIPSTREAM_TEST_SCREENS':'2'}
             process = launch([str(args.client.resolve()), '--test-pattern', '--page', 'meetings', '--window-size', '1140x1100'], f'client-{index}', local)
             win = wait(lambda: window(process.pid), f'client {index} window')
             xdo('windowmove', win, index * 1200, 0)
@@ -187,41 +190,68 @@ def main():
             except (OSError, ValueError):
                 return None
         target = wait(device_id, 'remote device ID')
+        def click_text(win, phrase, name, last=False):
+            point=wait(lambda:locate(win,phrase,name,last),f'{name}: {phrase}')
+            g=geometry(win);xdo('windowfocus',win);xdo('mousemove',g['X']+point[0],g['Y']+point[1],'click','1');time.sleep(.25)
+            return point
+        click(host, 'Devices', 'host-setup-devices')
+        click_text(host,'Test camera','host-camera-picker')
+        click_text(host,'Test camera 2','host-second-camera')
+        wait(lambda:tomllib.loads((profiles[0]/'settings.toml').read_text()).get('app',{}).get('meeting_camera')==1,'remember selected camera')
+        wait(lambda:locate(host,'System default','host-microphone-name'),'named default microphone')
+        click(host,'Start or join','host-back-to-setup')
         click(host, 'Create meeting', 'host-create')
-        point = wait(lambda: locate(host, 'Call a system', 'host-room'), 'call form')
+        click(host,'Participants 1','host-people')
+        point = wait(lambda: locate(host, 'System', 'host-room',last=True), 'call form')
         g = geometry(host)
         xdo('mousemove', g['X'] + point[0] + 125, g['Y'] + point[1], 'click', '1')
         xdo('type', '--clearmodifiers', '--delay', '0', str(target))
-        click(host, 'Meeting call', 'host-calling')
+        click(host, 'Call system', 'host-calling-first')
+        wait(lambda:locate(guest,'Answer','guest-ringing',controls=True),'incoming call prompt')
+        click(host,'Cancel call','host-cancel-call')
+        wait(lambda:not locate(guest,'Answer','guest-cancelled',controls=True),'cancel removed incoming prompt')
+        time.sleep(5.1)
+        click(host, 'Call system', 'host-calling')
         click(guest, 'Answer', 'guest-incoming', last=True)
-        wait(lambda: locate(guest, 'Unmute', 'guest-joined',controls=True), 'answered participant joining')
+        wait(lambda:locate(host,'Participants 2','host-answered',controls=True),'answered peer joining')
+        assert not locate(host,'Close call','host-no-close-call',controls=True)
+        assert not locate(host,'Cancel call','host-no-cancel-call',controls=True)
+        click(host,'Live meeting','host-live')
         click(host, 'Camera', 'host-camera')
         wait(lambda: camera_visible(host,'host-preview'), 'local decoded camera preview')
         wait(lambda: camera_visible(guest,'guest-video'), 'remote decoded camera tile')
-        print('Native incoming call, Answer, admission and encoded camera preview passed', flush=True)
-        # Scroll only the fixture window to its room chat.
-        xdo('windowfocus', host)
-        g = geometry(host)
-        xdo('mousemove', g['X'] + g['WIDTH'] - 50, g['Y'] + 750, 'click', '--repeat', '8', '--delay', '60', '5')
-        point = wait(lambda: locate(host, 'Send', 'host-chat'), 'meeting Send control')
-        xdo('mousemove', g['X'] + point[0] + 140, g['Y'] + point[1] - 38, 'click', '1')
+        wait(lambda:locate(host,'Test camera 2','host-selected-camera'),'selected camera in sharing status')
+        print('Named camera choice/persistence, cancelled call, Answer, call-status cleanup and live camera passed',flush=True)
+        click(host,'Chat','host-chat-tab')
+        point = wait(lambda: locate(host, 'Message everyone', 'host-chat'), 'meeting message field')
+        g=geometry(host)
+        xdo('mousemove', g['X'] + point[0] + 100, g['Y'] + point[1], 'click', '1')
         xdo('type', '--clearmodifiers', '--delay', '0', 'Meeting fixture message')
-        click(host, 'Send', 'host-sent')
-        g = geometry(guest)
-        xdo('windowfocus', guest)
-        xdo('mousemove', g['X'] + g['WIDTH'] - 50, g['Y'] + 750, 'click', '--repeat', '8', '--delay', '60', '5')
-        wait(lambda: locate(guest, 'Meeting fixture message', 'guest-chat'), 'group Subspace chat')
-        g = geometry(host)
-        xdo('windowfocus', host)
-        xdo('mousemove', g['X'] + g['WIDTH'] - 50, g['Y'] + 450, 'click', '--repeat', '12', '--delay', '50', '4')
+        xdo('key','Return')
+        click(guest,'Chat 1 new','guest-unread-chat')
+        wait(lambda:locate(guest,'Meeting fixture message','guest-chat'),'group Subspace chat')
         click(host, 'Stop camera', 'host-stopping-camera')
-        g = geometry(guest)
-        xdo('windowfocus', guest)
-        xdo('mousemove', g['X'] + g['WIDTH'] - 50, g['Y'] + 450, 'click', '--repeat', '12', '--delay', '50', '4')
-        wait(lambda: locate(guest, 'Cameras', 'guest-camera-stopped'), 'camera stopped on peer')
-        click(host, 'End meeting', 'host-ended')
-        wait(lambda: locate(guest, 'Close meeting', 'guest-ended'), 'organizer ending the room')
-        print('Native group chat, camera Stop and meeting teardown passed', flush=True)
+        click(guest,'Live meeting','guest-live-again')
+        wait(lambda:locate(guest,'Cameras','guest-camera-stopped'),'camera stopped on peer')
+        click(host,'Share screen','host-screen-chooser-cancel')
+        click_text(host,'Screen 2 Test Pattern 2 1280 x 720','host-choose-screen-cancel')
+        click(host,'Cancel','host-cancel-screen')
+        assert locate(host,'Share screen','host-cancel-kept-off',controls=True)
+        click(host,'Share screen','host-screen-chooser')
+        click_text(host,'Screen 2 Test Pattern 2 1280 x 720','host-choose-screen-two')
+        click(host,'Share selected screen','host-confirm-screen')
+        wait(lambda:locate(host,'Test Pattern 2','host-screen-two-shared'),'explicit second screen sharing status')
+        wait(lambda:camera_visible(guest,'guest-screen-video'),'selected screen reaches peer')
+        xdo('windowsize',guest,480,800)
+        time.sleep(.5);words(guest,'guest-narrow-live')
+        click(host,'Stop sharing','host-stop-screen')
+        click(host,'End meeting','host-end-confirmation')
+        click(host,'Keep meeting open','host-cancel-end')
+        assert locate(guest,'Unmute','guest-still-connected',controls=True)
+        click(host,'End meeting','host-end-again')
+        click(host,'End for everyone','host-ended')
+        wait(lambda:locate(guest,'Close meeting','guest-ended',controls=True),'organizer ending the room')
+        print('Separate Chat/unread count, persistent media controls, screen choice/Cancel, narrow live view and confirmed teardown passed',flush=True)
     finally:
         for child in reversed(children):
             if child.poll() is None:
