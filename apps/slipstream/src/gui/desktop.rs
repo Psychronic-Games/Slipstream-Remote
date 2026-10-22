@@ -54,6 +54,23 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
     Ok(true)
 }
 
+/// Exec is parsed as a desktop string and then as a quoted command argument.
+pub(super) fn exec_argument(path: &Path) -> Result<String> {
+    let path = path.to_str().context("executable path is not UTF-8")?;
+    anyhow::ensure!(!path.chars().any(|c| c.is_control() || c == '='), "executable path cannot be represented in a desktop entry");
+    let mut quoted = String::from("\"");
+    for ch in path.chars() {
+        match ch {
+            '\\' => quoted.push_str("\\\\\\\\"),
+            '"' | '`' | '$' => { quoted.push_str("\\\\"); quoted.push(ch); }
+            '%' => quoted.push_str("%%"),
+            _ => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    Ok(quoted)
+}
+
 pub fn integrate() -> Result<()> {
     std::hint::black_box(&EXECUTABLE_NOTE);
     // A system-wide install (package, install script) already provides it.
@@ -86,10 +103,10 @@ pub fn integrate() -> Result<()> {
     changed |= mime_changed;
     let entry = format!(
         "[Desktop Entry]\nType=Application\nName=Slipstream Remote\nGenericName=Remote Desktop\n\
-         Comment=Fast, free, open-source remote desktop\nExec=\"{}\" %U\nIcon={APP_ID}\nTerminal=false\n\
+         Comment=Fast, free, open-source remote desktop\nExec={} %U\nIcon={APP_ID}\nTerminal=false\n\
          Categories=Network;RemoteAccess;\nKeywords=remote;desktop;support;teamviewer;\nStartupWMClass={APP_ID}\n\
          MimeType=x-scheme-handler/slipstream;\n",
-        exe.display()
+        exec_argument(&exe)?
     );
     changed |= write_if_changed(&data.join(format!("applications/{APP_ID}.desktop")), entry.as_bytes())?;
     if changed {
@@ -109,6 +126,13 @@ pub fn integrate() -> Result<()> {
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[test]
+    fn executable_paths_escape_both_desktop_and_command_syntax() {
+        assert_eq!(exec_argument(Path::new("/home/test/Slipstream Remote (2)")).unwrap(), "\"/home/test/Slipstream Remote (2)\"");
+        assert_eq!(exec_argument(Path::new(r#"/tmp/a\b"$`%"#)).unwrap(), r#""/tmp/a\\\\b\\"\\$\\`%%""#);
+        assert!(exec_argument(Path::new("/tmp/app\nHidden=true")).is_err());
+    }
 
     #[test]
     fn executable_marker_survives_linking_in_the_mime_probe_region() {

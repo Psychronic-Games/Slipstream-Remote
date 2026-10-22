@@ -324,6 +324,12 @@ move its devices elsewhere first. Shared-device editing still requires a
 station administrator. Configuring a relay address alone does not sign in a
 technician; use **Config → Stations** if its saved list is not visible.
 
+The search field at the top of **Saved devices** filters all signed-in stations'
+private and shared lists by device name, ID, group or station. Searches ignore
+case; use several words to narrow the results. Matching groups open while you
+search. **Clear** restores the full list. The **+ / New link** picker also has
+search.
+
 1. Open Slipstream on your own computer. You download it from the same
    station page.
 2. On the **Bridge** page, under **Establish link**, enter the client's
@@ -457,6 +463,13 @@ regular clients), set this up on that computer, under **Config**:
    with *Start with system*.
 
 Then connect with the ID and the unattended password.
+
+On Linux, autostart points to the app's current file location. After moving or
+renaming the app, launch it once from its new location to refresh an enabled
+startup entry. Saving Config with **Start with system** checked also refreshes
+it. Keep the executable in that location for the next login. If the desktop's
+Autostart settings disable the entry, launching the app leaves it disabled;
+enable it again in Config when wanted.
 
 ### Windows: the Slipstream service
 

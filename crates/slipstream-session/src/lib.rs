@@ -1341,9 +1341,9 @@ mod tests {
         let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
     }
 
-    #[tokio::test(flavor="multi_thread")]
+    #[tokio::test(flavor="multi_thread",worker_threads=2)]
     async fn a_stopped_video_receiver_ends_the_session_instead_of_freezing() {
-        use slipstream_core::{auth::ViewerAuth,framing::{expect_msg,write_msg},proto::{HostMsg,ViewerMsg,StreamSettings,PROTOCOL_VERSION,ALPN_REMOTE}};
+        use slipstream_core::{auth::ViewerAuth,framing::{expect_msg,write_msg},proto::{HostMsg,ViewerMsg,VideoFrame,StreamSettings,PROTOCOL_VERSION,ALPN_REMOTE}};
         let (host,mut events,hdir)=client("video-stop-host",true).await;
         let (viewer,_events,vdir)=client("video-stop-viewer",false).await;
         let conn=viewer.inner.endpoint.connect(host.endpoint_addr(),ALPN_REMOTE).await.unwrap();
@@ -1354,8 +1354,11 @@ mod tests {
         write_msg(&mut send,&ViewerMsg::AuthResponse {pakes,confirms}).await.unwrap();
         let HostMsg::AuthOk {confirm,..}=expect_msg(&mut recv).await.unwrap() else {panic!("not authenticated")};
         auth.verify_host(&confirm).unwrap();
-        write_msg(&mut send,&ViewerMsg::StartStream {display:0,settings:StreamSettings::default()}).await.unwrap();
+        write_msg(&mut send,&ViewerMsg::StartStream {display:0,settings:StreamSettings {max_in_flight:1,..Default::default()}}).await.unwrap();
         let mut video=tokio::time::timeout(Duration::from_secs(3),conn.accept_uni()).await.unwrap().unwrap();
+        // Consume the sole frame without granting more credit. The writer is
+        // now waiting for the encoder, so only STOP_SENDING can wake it.
+        let _:VideoFrame=tokio::time::timeout(Duration::from_secs(3),expect_msg(&mut video)).await.unwrap().unwrap();
         video.stop(0u32.into()).unwrap();
         let bye=tokio::time::timeout(Duration::from_secs(3),async {
             loop {if let HostMsg::Bye {reason}=expect_msg(&mut recv).await.unwrap() {break reason;}}

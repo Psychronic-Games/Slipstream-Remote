@@ -25,6 +25,7 @@ const SYNC_EVERY: Duration = Duration::from_secs(120);
 
 #[derive(Default)]
 pub struct Saved {
+    search: String,
     // The sign-in form (Config → Stations).
     station: String,
     username: String,
@@ -185,6 +186,30 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
             }
             return;
         }
+        ui.horizontal(|ui| {
+            if !app.saved.search.is_empty() && theme::pill(ui, "Clear", pal::BLUE).clicked() {
+                app.saved.search.clear();
+            }
+            theme::input_frame().show(ui, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut app.saved.search)
+                    .id_salt("saved-device-search")
+                    .frame(egui::Frame::NONE)
+                    .hint_text("Find a device by name, ID, group or station…")
+                    .desired_width(ui.available_width()));
+            });
+        });
+        let filter = app.saved.search.to_lowercase();
+        let total = accounts.iter().map(|a| a.devices.len() + a.shared.len()).sum::<usize>();
+        let found = accounts.iter().map(|a| {
+            a.devices.iter().chain(&a.shared)
+                .filter(|d| matches(&filter, &d.name, d.id, &d.group, &a.label())).count()
+        }).sum::<usize>();
+        if !filter.trim().is_empty() {
+            ui.label(RichText::new(format!("{found} of {total} devices")).small().color(pal::DIM));
+            if found == 0 {
+                ui.label(RichText::new("No matching devices").color(pal::DIM));
+            }
+        }
         for (i, a) in accounts.iter().enumerate() {
             if i > 0 {
                 ui.add_space(10.0);
@@ -253,23 +278,21 @@ fn own_device_entry(account: &StationAccount, server: &str, id: Option<DeviceId>
 #[allow(clippy::too_many_arguments)]
 fn grouped_devices(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef,
     account: &StationAccount, devices: &[SavedDevice], shared: bool, t: f64) {
-    let mut groups = BTreeMap::<String, Vec<&SavedDevice>>::new();
-    for device in devices { groups.entry(device.group.clone()).or_default().push(device); }
-    if !shared { for group in &account.groups { groups.entry(group.clone()).or_default(); } }
-    for (group, mut devices) in groups {
-        devices.sort_by_key(|d| d.name.to_lowercase());
+    let filter = app.saved.search.to_lowercase();
+    let empty = if shared { &[][..] } else { account.groups.as_slice() };
+    for (group, devices) in grouped(devices, empty, &filter, &account.label()) {
         let title = format!("{}  ·  {}", if group.is_empty() { "UNGROUPED".into() } else { group.to_uppercase() }, devices.len());
         egui::CollapsingHeader::new(RichText::new(title).font(theme::display_bold(17.0)).color(if shared { pal::GOLD } else { pal::LAVENDER }))
             .id_salt(("saved-group", &account.server, &account.user.username, shared, &group))
-            .default_open(true).show(ui, |ui| {
+            .default_open(true).open((!filter.trim().is_empty()).then_some(true)).show(ui, |ui| {
                 if !account.signed_out && (!shared || account.user.admin) {
                     ui.horizontal(|ui| {
                         if ui.small_button("+ Add device").clicked() {
                             open_editor(app,r,None,shared);
-                            if let Some(editor) = &mut app.saved.editor {editor.group=group.clone();}
+                            if let Some(editor) = &mut app.saved.editor {editor.group=group.to_owned();}
                         }
                         if devices.is_empty() && !shared && ui.small_button("Remove empty group").clicked() {
-                            let (client,r,name)=(app.client.clone(),r.clone(),group.clone());
+                            let (client,r,name)=(app.client.clone(),r.clone(),group.to_owned());
                             spawn_job(app,ctx,"Remove group",async move {
                                 client.delete_group(&r,&name).await?; Ok("Empty group removed".into())
                             });
@@ -280,6 +303,37 @@ fn grouped_devices(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountR
                 for device in devices { device_row(app, ui, ctx, r, account, device, shared, t); }
             });
     }
+}
+
+/// Shared by Saved devices and the New link picker. Each word may match a
+/// different field; station-qualified searches retain the original account.
+pub(super) fn matches(search: &str, name: &str, id: DeviceId, group: &str, station: &str) -> bool {
+    let text = format!("{name} {id} {} {group} {station}", id.0).to_lowercase();
+    search.split_whitespace().all(|word| text.contains(word))
+}
+
+pub(super) fn grouped<'a>(
+    devices: &'a [SavedDevice],
+    empty: &'a [String],
+    search: &str,
+    station: &str,
+) -> BTreeMap<&'a str, Vec<&'a SavedDevice>> {
+    let mut groups = BTreeMap::<&str, Vec<_>>::new();
+    for device in devices {
+        if matches(search, &device.name, device.id, &device.group, station) {
+            groups.entry(&device.group).or_default().push(device);
+        }
+    }
+    for group in empty {
+        let text = format!("{group} {station}").to_lowercase();
+        if search.split_whitespace().all(|word| text.contains(word)) {
+            groups.entry(group).or_default();
+        }
+    }
+    for devices in groups.values_mut() {
+        devices.sort_by_key(|d| d.name.to_lowercase());
+    }
+    groups
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -748,6 +802,23 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_combines_device_name_id_group_and_station_without_changing_membership() {
+        let device = SavedDevice {
+            id: DeviceId(482913077), name: "Front Desk".into(), group: "Office".into(),
+            notes: String::new(), secret: None, added_by: None,
+        };
+        let devices = vec![device];
+        let empty = vec!["Empty lab".to_owned()];
+        let results = grouped(&devices, &empty, "desk office alpha 482913", "Alpha station");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results["Office"][0].id, DeviceId(482913077));
+        assert!(grouped(&devices, &empty, "desk beta", "Alpha station").is_empty());
+        assert_eq!(grouped(&devices, &empty, "   ", "Alpha station").len(), 2);
+        assert_eq!(devices[0].name, "Front Desk");
+        assert_eq!(devices[0].group, "Office");
+    }
 
     #[test]
     fn own_device_uses_matching_station_and_preserves_saved_details() {

@@ -1,12 +1,11 @@
 //! New-link picker shared by the console and floating session tabs.
-use std::collections::BTreeMap;
-
 use eframe::egui::{self, RichText, vec2};
 use slipstream_core::{account::SavedDevice, config::RecentConnection, directory::DeviceId};
 use slipstream_session::{AccountRef, Presence};
 
 use super::{
     App, Page, saved,
+    saved::{grouped, matches},
     theme::{self, pal},
 };
 
@@ -28,14 +27,6 @@ enum Choice {
     Saved(AccountRef, SavedDevice, bool),
     Connect,
     Stations,
-}
-
-fn matches(search: &str, name: &str, id: DeviceId, group: &str, station: &str) -> bool {
-    search.split_whitespace().all(|word| {
-        format!("{name} {id} {} {group} {station}", id.0)
-            .to_lowercase()
-            .contains(word)
-    })
 }
 
 pub(super) fn window(app: &mut App, ctx: &egui::Context) {
@@ -112,6 +103,7 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
                                 )
                                 .id_salt((shared, group))
                                 .default_open(true)
+                                .open((!filter.trim().is_empty()).then_some(true))
                                 .show(ui, |ui| {
                                     if devices.is_empty() {
                                         ui.label(
@@ -379,31 +371,6 @@ fn same_station(a: &str, b: &str) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
-}
-
-/// Preserve the station's group structure rather than flattening its devices.
-fn grouped<'a>(
-    devices: &'a [SavedDevice],
-    empty: &'a [String],
-    search: &str,
-    station: &str,
-) -> BTreeMap<&'a str, Vec<&'a SavedDevice>> {
-    let mut groups = BTreeMap::<&str, Vec<_>>::new();
-    for device in devices {
-        if matches(search, &device.name, device.id, &device.group, station) {
-            groups.entry(&device.group).or_default().push(device);
-        }
-    }
-    for group in empty {
-        let text = format!("{group} {station}").to_lowercase();
-        if search.split_whitespace().all(|word| text.contains(word)) {
-            groups.entry(group).or_default();
-        }
-    }
-    for devices in groups.values_mut() {
-        devices.sort_by_key(|d| d.name.to_lowercase());
-    }
-    groups
 }
 
 fn link_row(

@@ -404,7 +404,7 @@ fn save(app: &mut App) {
     f.has_permanent = has_permanent;
     let f = &app.settings_form;
     let autostart = f.autostart;
-    if autostart != super::autostart::is_enabled()
+    if (autostart != super::autostart::is_enabled() || (cfg!(target_os = "linux") && autostart))
         && let Err(e) = super::autostart::set_enabled(autostart)
     {
         app.settings_form.error = Some(format!("Autostart: {e:#}"));

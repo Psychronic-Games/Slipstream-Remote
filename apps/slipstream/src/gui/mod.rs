@@ -98,6 +98,10 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     if let Err(e) = desktop::integrate() {
         tracing::debug!("desktop integration skipped: {e:#}");
     }
+    #[cfg(target_os = "linux")]
+    if let Err(e) = autostart::refresh_enabled() {
+        tracing::warn!("could not refresh autostart: {e:#}");
+    }
     #[cfg(windows)]
     if let Err(e) = scheme::register() {
         tracing::debug!("link handler not registered: {e:#}");

@@ -13,6 +13,16 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Repair enabled Linux autostart entries when a moved or newly downloaded app
+  starts, and refresh the executable when saving Config. Respect entries disabled
+  by the desktop and leave side-profile startup integration alone.
+- Add search to Bridge's Saved devices across private/shared lists and stations,
+  matching name, ID, group and station. Open matching groups during search and
+  share filtering with the New link picker.
+- Detect a viewer stopping its video stream even when the encoder has exhausted
+  frame credit, ending the session instead of leaving a frozen link. Strengthen
+  the existing regression to reproduce cancellation after the last allowed frame.
+
 ## 0.23.2 — 2026-10-21
 
 ### Meeting previews and tab groups

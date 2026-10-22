@@ -344,7 +344,19 @@ async fn session_loop(
     let writer = tokio::spawn(async move {
         let mut stream = video_conn.open_uni().await?;
         stream.set_priority(slipstream_core::proto::PRIORITY_VIDEO).ok();
-        while let Some(frame) = video_rx.recv().await {
+        let stopped = stream.stopped();
+        tokio::pin!(stopped);
+        loop {
+            // An exhausted frame-credit window leaves the encoder idle. Still
+            // observe peer cancellation without needing another frame/write.
+            let frame = tokio::select! {
+                result = &mut stopped => {
+                    let code = result.context("video stream closed")?;
+                    bail!("the viewer stopped receiving video ({code:?})");
+                }
+                frame = video_rx.recv() => frame,
+            };
+            let Some(frame) = frame else { break; };
             write_msg(&mut stream, &frame).await?;
         }
         stream.finish().ok();
