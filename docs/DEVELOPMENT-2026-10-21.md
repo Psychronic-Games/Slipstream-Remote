@@ -273,3 +273,34 @@ serialized with two Cargo jobs. Pre-existing documentation reconciliation edits
 remain separate from these implementation changes.
 
 Strict Linux workspace/all-target Clippy also passes with warnings denied.
+
+### 0.23.2 publication
+
+Published **0.23.2 / build 123 / 83e507b** to the mounted production station.
+The existing release keys signed the desktop update manifest and arm64 Android
+APK. Local signature/hash checks pass; Linux starts with the expected release
+identity, references at most glibc 2.30 and has no GLIBC_ABI_DT_RELR dependency.
+Windows version resources are 0.23.2.123, bundled Mesa remains included and the
+optional Media Foundation DLLs remain delay imports. Android is non-debuggable,
+versionName 0.23.2 / versionCode 123, with the existing capture permissions and
+unchanged d6ae3771378e9c00a82902e728012992834b9bf7e234fefed80dc85a4b879c6c
+certificate. All three release builds completed through the bounded wrapper.
+
+The publisher required **0.23.1 / 121 / d3d5e34**, backed up the previous clients,
+preserved deployment ownership/modes, verified staged/replaced hashes and wrote
+the new manifest last. Private rollback backup:
+/home/doug/WebServer/home/relay/tmp/slipstream-rollback-0.23.1-to-0.23.2-8l5v6bfk.
+Restore verified backup client files with deployed ownership/modes and the old
+manifest last if needed. This was a clients-only publication; the station API,
+managed relay and station configuration were unchanged.
+
+Authenticated live Linux/Windows update offers and full HTTPS downloads for
+Linux, Windows and Android verify against 0.23.2 / 123 / 83e507b. Provisioning
+trailers match the station and the signed APK bytes remain intact. Install via
+About → Check for updates → Install & restart on desktop, or the station's new
+APK on Android. Publication does not replace a currently running app.
+
+Build log: /tmp/slipstream-0232-release-build.log. Workspace test log:
+/tmp/slipstream-0232-tests.log. Final Cargo caches: 5.23 GiB development/test and
+30.76 GiB release, within the 12/32 GiB budgets. This later documentation commit
+does not change the packaged source/build identity.
