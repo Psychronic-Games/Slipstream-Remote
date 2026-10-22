@@ -172,3 +172,35 @@ Pre-release checks: workspace tests pass (157 passed, five existing manual/
 benchmark tests ignored). Strict Clippy passes for Linux workspace/all targets,
 Windows x86_64/all client targets and Android arm64. The native audit described
 above passes. All heavy checks used the serial resource-limited wrapper.
+
+### 0.23.1 publication
+
+Published **0.23.1 / build 121 / d3d5e34** to the existing mounted station.
+Linux, Windows and the arm64 Android APK were rebuilt and signed with the
+existing keys. Local desktop signatures/hashes, Linux version/glibc (maximum
+referenced 2.30), Windows version resources (0.23.1.121), bundled Mesa and
+Media Foundation delay imports all verify. Android remains non-debuggable,
+versionName 0.23.1 / versionCode 121, with the existing capture permissions
+and unchanged d6ae3771378e9c00a82902e728012992834b9bf7e234fefed80dc85a4b879c6c
+release certificate.
+
+The publisher required the previous **0.23.0 / 119 / 9c7ee24**, backed up its
+clients outside the web root, preserved deployed ownership/modes, verified the
+staged files and replaced the manifest last. Private rollback backup:
+/home/doug/WebServer/home/relay/tmp/slipstream-rollback-0.23.0-to-0.23.1-lm1fp46a.
+Restore verified backup client files with deployed ownership/modes and the old
+manifest last if rollback is needed. No PHP/relay binary or station settings
+were changed and the relay was not restarted.
+
+Authenticated live Linux/Windows update offers and full HTTPS downloads for
+Linux, Windows and Android all verify against the new release, including desktop
+provisioning trailers and unchanged signed APK bytes. Desktop users install
+through About → Check for updates → Install & restart; Android users install
+the station's new APK. Running clients are not automatically replaced by
+publication.
+
+Release log: /tmp/slipstream-0231-release-build.log. Test log:
+/tmp/slipstream-0231-tests.log. Final caches: 11.61 GiB development/test,
+30.41 GiB release, within the existing 12/32 GiB budgets. This documentation
+commit follows the packaged source commit and does not change build 121.
+Earlier documentation reconciliation edits remain separate and uncommitted.
