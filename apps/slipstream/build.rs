@@ -32,7 +32,9 @@ fn main() {
         if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
             // Direct3D too: under Wine its d3d11 is built on OpenGL and would
             // load that first (and loading on first use costs nothing).
-            for dll in ["opengl32.dll", "d3d11.dll", "dxgi.dll"] {
+            // Media Foundation is optional on Windows Server/N editions.
+            // camera::media_foundation checks it before any camera API call.
+            for dll in ["opengl32.dll", "d3d11.dll", "dxgi.dll", "mf.dll", "mfplat.dll", "mfreadwrite.dll"] {
                 println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}");
             }
             println!("cargo:rustc-link-lib=delayimp");

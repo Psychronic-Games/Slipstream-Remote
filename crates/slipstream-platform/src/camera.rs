@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub fn devices() -> Result<Vec<(u32, String)>> {
+    #[cfg(windows)]
+    media_foundation()?;
     Ok(nokhwa::query(nokhwa::utils::ApiBackend::Auto)?
         .into_iter()
         .filter_map(|info| {
@@ -21,6 +23,8 @@ pub fn devices() -> Result<Vec<(u32, String)>> {
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub fn start(index: u32) -> Result<FrameStream> {
+    #[cfg(windows)]
+    media_foundation()?;
     use nokhwa::{
         Camera,
         pixel_format::RgbFormat,
@@ -149,6 +153,35 @@ pub fn start_cancellable(
 }
 pub fn default_camera() -> Result<FrameStream> {
     start(devices()?.first().context("No camera is available")?.0)
+}
+
+/// The executable delay-loads these optional components. Pin their system
+/// copies before entering nokhwa, so a missing Server/N media feature is a
+/// camera error instead of a loader exception that prevents using the app.
+#[cfg(windows)]
+fn media_foundation() -> Result<()> {
+    use windows_sys::Win32::{
+        Foundation::FreeLibrary,
+        System::LibraryLoader::{LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW},
+    };
+    static AVAILABLE: std::sync::OnceLock<std::result::Result<(), String>> =
+        std::sync::OnceLock::new();
+    AVAILABLE.get_or_init(|| {
+        let mut loaded = Vec::new();
+        for name in ["mf.dll", "mfplat.dll", "mfreadwrite.dll"] {
+            let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+            // SAFETY: terminated UTF-16 and a system-directory-only search.
+            let module = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), LOAD_LIBRARY_SEARCH_SYSTEM32) };
+            if module.is_null() {
+                for previous in loaded { unsafe { FreeLibrary(previous); } }
+                return Err("Camera sharing needs the Windows Media Foundation feature (Media Feature Pack on N editions). Remote support and meetings remain available.".into());
+            }
+            loaded.push(module);
+        }
+        // Keep these library references until process exit: delay-import
+        // pointers may be used by any later camera worker.
+        Ok(())
+    }).as_ref().map_err(|message| anyhow::anyhow!(message.clone())).copied()
 }
 
 /// Convert checked Android YUV planes and rotate into the phone's current view.
