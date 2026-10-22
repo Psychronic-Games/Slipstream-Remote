@@ -201,7 +201,9 @@ async fn bind(server: &ServerSettings) -> Result<Endpoint> {
     let endpoint =
         slipstream_core::net::bind_client(iroh::SecretKey::generate(), server, false).await?;
     endpoint.set_alpns(vec![ALPN.to_vec()]);
-    if endpoint.addr().relay_urls().next().is_some() {
+    // A newly bound endpoint can have no home relay in addr() yet. Wait
+    // using the configured map so invitations include the chosen route.
+    if !slipstream_core::net::relay_map(server).is_empty() {
         let _ = tokio::time::timeout(Duration::from_secs(5), endpoint.online()).await;
     }
     Ok(endpoint)
