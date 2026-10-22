@@ -12,6 +12,7 @@
 pub mod android;
 #[cfg(any(target_os = "android", test))]
 mod android_frames;
+pub mod camera;
 pub mod clipboard;
 pub mod keymap;
 pub mod machine;

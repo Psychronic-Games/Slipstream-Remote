@@ -48,10 +48,16 @@ pub struct Encoder {
 unsafe impl Send for Encoder {}
 
 impl Encoder {
+    pub fn voice() -> Result<Self> {
+        Self::with_application(48_000, 2048)
+    }
     pub fn new(bitrate: i32) -> Result<Self> {
+        Self::with_application(bitrate, APPLICATION_AUDIO)
+    }
+    fn with_application(bitrate: i32, application: c_int) -> Result<Self> {
         let mut err = 0;
         // SAFETY: valid arguments; the result is checked.
-        let raw = unsafe { opus_encoder_create(SAMPLE_RATE as i32, 2, APPLICATION_AUDIO, &mut err) };
+        let raw = unsafe { opus_encoder_create(SAMPLE_RATE as i32, 2, application, &mut err) };
         if raw.is_null() {
             bail!("Opus encoder: {}", error(err));
         }

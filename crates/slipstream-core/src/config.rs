@@ -147,6 +147,8 @@ pub struct ViewerSettings {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
+    /// The local user may decline all incoming meeting calls.
+    pub block_meeting_calls: bool,
     /// Closing the window keeps Slipstream running in the system tray
     /// (for unattended access). Off by default: closing ends access.
     pub run_in_tray: bool,

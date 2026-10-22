@@ -24,8 +24,17 @@ impl relay::AccessControl for KeyAccess {
     async fn on_connect(&self, req: &relay::ClientRequest) -> relay::Access {
         match &self.0 {
             None => relay::Access::Allow,
-            Some(key) if req.auth_token().is_some_and(|t| crate::api::same_key(&t, key)) => relay::Access::Allow,
-            Some(_) => relay::Access::Deny { reason: Some("this relay requires an access key".into()) },
+            Some(key)
+                if req.auth_token().is_some_and(|t| {
+                    crate::api::same_key(&t, key)
+                        || slipstream_core::meeting::valid_relay_token(key, &t)
+                }) =>
+            {
+                relay::Access::Allow
+            }
+            Some(_) => relay::Access::Deny {
+                reason: Some("this relay requires an access key".into()),
+            },
         }
     }
 }

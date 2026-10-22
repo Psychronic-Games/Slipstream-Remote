@@ -300,6 +300,16 @@ impl DirectoryClient {
 
     /// Asks the station which app build it offers for `platform`
     /// (e.g. "windows-x86_64"). `None` if it has none (or can't say).
+    /// A relay-only guest lease, valid for this meeting's lifetime (four hours).
+    pub async fn meeting_relay(&self) -> Result<Option<String>> {
+        #[derive(Deserialize)]
+        struct Reply {
+            token: Option<String>,
+        }
+        let reply: Reply = self.call(serde_json::json!({"op":"meeting_relay"})).await?;
+        Ok(reply.token)
+    }
+
     pub async fn update_check(&self, platform: &str) -> Result<Option<serde_json::Value>> {
         #[derive(Deserialize)]
         struct R {

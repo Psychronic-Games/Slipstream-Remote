@@ -13,6 +13,27 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.23.0 — 2026-10-21
+
+### Group meetings and mobile Show me
+
+- Add participant-hosted meetings with a default capacity of 20 (configurable
+  to 32), organizer admission, lock/remove controls, invitations, shared
+  Subspace chat and independent remote-support tabs. Forward encoded media
+  through the organizer with up to four selected remote video sources.
+- Add a Meeting action for saved systems, authenticated incoming calls with
+  Answer/Decline, cancellation, call preferences and the Windows service bridge.
+  Answer starts muted; camera and screen sharing require a separate action.
+- Add microphone voice audio with echo cancellation, noise suppression,
+  level control and mixed playback. Pause support loopback capture while
+  meeting audio plays to avoid recapturing the conversation.
+- Add desktop camera/screen sharing and Android Show me with rear/front camera,
+  local preview, torch where supported, runtime permissions and a foreground
+  notification that can stop camera and microphone capture.
+- Give meeting endpoints expiring relay-only guest leases. Invitations never
+  carry the station access key. Keep remote-control protocol 6 unchanged.
+  Meetings last up to four hours and end when their organizer leaves.
+
 ## 0.22.1 — 2026-10-20
 
 ### LCARS interface polish and automatic device recognition

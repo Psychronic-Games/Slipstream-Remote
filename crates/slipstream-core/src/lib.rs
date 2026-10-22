@@ -7,6 +7,7 @@ pub mod config;
 mod hardware_id;
 pub mod directory;
 pub mod framing;
+pub mod meeting;
 pub mod net;
 pub mod network;
 pub mod proto;

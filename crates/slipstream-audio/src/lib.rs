@@ -6,5 +6,6 @@ mod io;
 pub mod opus;
 #[cfg(target_os = "linux")]
 mod pulse;
+pub mod voice;
 
 pub use io::{Capture, Player, capture_supported};

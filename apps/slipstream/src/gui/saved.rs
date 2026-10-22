@@ -293,15 +293,47 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
     // Reserve the actions first; long names and notes truncate in the space
     // left for the system rather than pushing Connect/Edit out of the panel.
     ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center),|ui| {
-            let can_edit=!a.signed_out && (!shared || a.user.admin);
-            if can_edit && theme::pill_sized(ui,"Edit",pal::LAVENDER,vec2(58.0,28.0)).clicked() {open_editor(app,r,Some(d),shared);}
-            if ui.add_enabled_ui(app.attempt.is_none() && !a.signed_out,|ui|theme::pill(ui,"Connect",pal::ORANGE)).inner.clicked() {connect(app,ctx,r,d,shared);}
-            ui.allocate_ui_with_layout(vec2(ui.available_width(),44.0),Layout::top_down(Align::Min),|ui| {
-                ui.horizontal(|ui| {
-                    let (rect,_)=ui.allocate_exact_size(vec2(20.0,21.0),Sense::hover());
-                    theme::lamp(ui.painter(),rect.center(),color,t);
-                    ui.add(egui::Label::new(RichText::new(name.to_uppercase()).font(theme::display(18.0)).color(pal::TAN)).truncate())
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let can_edit = !a.signed_out && (!shared || a.user.admin);
+            if can_edit && theme::pill_sized(ui, "Edit", pal::LAVENDER, vec2(58.0, 28.0)).clicked()
+            {
+                open_editor(app, r, Some(d), shared);
+            }
+            if ui
+                .add_enabled_ui(!a.signed_out, |ui| theme::pill(ui, "Meeting", pal::GREEN))
+                .inner
+                .clicked()
+            {
+                let mut server = app.client.settings().server;
+                server.url = Some(a.server.clone());
+                server.key = a.key.clone();
+                app.meetings.call_target(d.id, server);
+                app.page = Page::Meetings;
+            }
+            if ui
+                .add_enabled_ui(app.attempt.is_none() && !a.signed_out, |ui| {
+                    theme::pill(ui, "Connect", pal::ORANGE)
+                })
+                .inner
+                .clicked()
+            {
+                connect(app, ctx, r, d, shared);
+            }
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), 44.0),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(vec2(20.0, 21.0), Sense::hover());
+                        theme::lamp(ui.painter(), rect.center(), color, t);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(name.to_uppercase())
+                                    .font(theme::display(18.0))
+                                    .color(pal::TAN),
+                            )
+                            .truncate(),
+                        )
                         .on_hover_text(format!("{name} · {tip}"));
                 });
                 ui.horizontal(|ui| {

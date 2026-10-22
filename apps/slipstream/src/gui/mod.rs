@@ -12,6 +12,7 @@ mod network;
 mod keys;
 #[cfg(windows)]
 mod lite;
+mod meetings;
 mod remote;
 mod session_windows;
 mod session_tabs;
@@ -203,6 +204,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             let mut app = App::new(cc.egui_ctx.clone(), rt2, client2, events, render_state);
             app.page = match opts.page.as_deref() {
                 Some("links") => Page::Links,
+                Some("meetings") => Page::Meetings,
                 Some("config") => Page::Settings,
                 Some("about") => Page::About,
                 _ => Page::Home,
@@ -234,6 +236,13 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             }
             app.start_hidden = opts.minimized && app.tray.is_some();
             app.open_files = opts.open_files;
+            if let Some(link) = opts
+                .link
+                .filter(|link| link.starts_with("slipstream://meeting"))
+            {
+                app.meetings.join_text = link;
+                app.page = Page::Meetings;
+            }
             Ok(Box::new(app))
         }),
     )
@@ -247,9 +256,10 @@ pub fn run(opts: GuiOptions) -> Result<()> {
 pub const NARROW: f32 = 600.0;
 
 /// The console's sections: label, page, colour.
-const NAV: [(&str, Page, Color32); 4] = [
+const NAV: [(&str, Page, Color32); 5] = [
     ("Bridge", Page::Home, pal::PEACH),
     ("Links", Page::Links, pal::BLUE),
+    ("Meetings", Page::Meetings, pal::GREEN),
     ("Config", Page::Settings, pal::VIOLET),
     ("About", Page::About, pal::GOLD),
 ];
@@ -258,6 +268,7 @@ const NAV: [(&str, Page, Color32); 4] = [
 pub enum Page {
     Home,
     Links,
+    Meetings,
     Settings,
     About,
     Remote(u64),
@@ -335,6 +346,7 @@ pub struct App {
     session_actions: SessionActionQueue,
     session_tabs: Arc<Mutex<session_tabs::Tabs>>,
     quick_connect: quick_connect::QuickConnect,
+    meetings: meetings::Meetings,
     next_tab: u64,
     pub incoming: Vec<IncomingSession>,
     toasts: Vec<Toast>,
@@ -428,6 +440,7 @@ impl App {
             session_actions: mpsc::channel(),
             session_tabs: Arc::new(Mutex::new(session_tabs::Tabs::default())),
             quick_connect: Default::default(),
+            meetings: Default::default(),
             next_tab: 1,
             incoming: Vec::new(),
             toasts: Vec::new(),
@@ -497,17 +510,40 @@ impl App {
             use crate::service_chat::Event;
             while let Ok(event)=bridge.events.try_recv() {
                 match event {
-                        Event::Password(password) => self.service_password = password,
-                    Event::Started{session,peer}=> {
-                        if !self.incoming.iter().any(|s|s.id==session) {self.incoming.push(IncomingSession{id:session,peer,chat:Default::default(),started:Instant::now()});}
-                    },
-                    Event::Status{session,text} => if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
-                        let mut chat = s.chat.lock().unwrap();chat.status_open = !text.is_empty();chat.status = text;
-                    },
-                    Event::Ended{session}=>self.incoming.retain(|s|s.id!=session),
-                    Event::Message{session,ours,text}=>if let Some(session)=self.incoming.iter_mut().find(|s|s.id==session){
-                        let mut chat=session.chat.lock().expect("chat lock");chat.log.push((ours,text));if !ours{chat.open=true;chat.ping=true;}
-                    },
+                    Event::Password(password) => self.service_password = password,
+                    Event::MeetingCall(call) => self.meetings.incoming = call,
+                    Event::Started { session, peer } => {
+                        if !self.incoming.iter().any(|s| s.id == session) {
+                            self.incoming.push(IncomingSession {
+                                id: session,
+                                peer,
+                                chat: Default::default(),
+                                started: Instant::now(),
+                            });
+                        }
+                    }
+                    Event::Status { session, text } => {
+                        if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
+                            let mut chat = s.chat.lock().unwrap();
+                            chat.status_open = !text.is_empty();
+                            chat.status = text;
+                        }
+                    }
+                    Event::Ended { session } => self.incoming.retain(|s| s.id != session),
+                    Event::Message {
+                        session,
+                        ours,
+                        text,
+                    } => {
+                        if let Some(session) = self.incoming.iter_mut().find(|s| s.id == session) {
+                            let mut chat = session.chat.lock().expect("chat lock");
+                            chat.log.push((ours, text));
+                            if !ours {
+                                chat.open = true;
+                                chat.ping = true;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -549,6 +585,7 @@ impl App {
                     self.toast(format!("Received {}", path.display()), pal::GREEN);
                 }
                 ClientEvent::Notice(n) => self.toast(n, pal::GOLD),
+                ClientEvent::CallChanged => {}
                 ClientEvent::UpdateAvailable(info) => {
                     if self.update.as_ref().is_none_or(|u| u.info != info) {
                         self.update = Some(UpdateState::new(info));
@@ -859,7 +896,9 @@ impl App {
         if let Some(tab) = self.tab(id) { tab.lock().unwrap().end_link(); }
         self.tabs.retain(|t| t.lock().unwrap().id != id);
         let alive: Vec<u64> = self.tabs.iter().map(|t| t.lock().unwrap().id).collect();
-        video::retain_streams(&self.render_state, |s| alive.contains(&s));
+        video::retain_streams(&self.render_state, |s| {
+            s >= meetings::STREAM_BASE || alive.contains(&s)
+        });
         if self.page == Page::Remote(id) {
             self.page = self.tabs.iter().find_map(|tab| {
                 let tab = tab.lock().unwrap();
@@ -1636,6 +1675,7 @@ impl eframe::App for App {
         }
         // Runs even while the window is hidden in the tray.
         self.handle_events();
+        meetings::poll(self, ctx);
         let title = window_title(self.org.as_deref());
         if self.window_title != title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -1653,6 +1693,11 @@ impl eframe::App for App {
         while let Some(req) = self.show_requests.as_ref().and_then(|rx| rx.try_recv().ok()) {
             show = true;
             if let single::Request::Link(url) = req {
+                if url.starts_with("slipstream://meeting") {
+                    self.meetings.join_text = url;
+                    self.page = Page::Meetings;
+                    continue;
+                }
                 match StationLink::parse(&url) {
                     Some(link) => self.start_link(ctx, link, true),
                     None => self.toast("That link isn't a Slipstream station link", pal::RED),
@@ -1826,17 +1871,20 @@ impl eframe::App for App {
             }
             let content = self.draw_frame(ui);
             let mut child = ui.new_child(UiBuilder::new().max_rect(content));
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {
-                #[cfg(target_os = "android")]
-                android::keep_focus_in_view(ui);
-                match self.page {
-                    Page::Home => home::ui(self, ui),
-                    Page::Links => home::links_ui(self, ui),
-                    Page::Settings => settings::ui(self, ui),
-                    Page::About => settings::about_ui(self, ui),
-                    Page::Remote(_) => {}
-                }
-            });
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(&mut child, |ui| {
+                    #[cfg(target_os = "android")]
+                    android::keep_focus_in_view(ui);
+                    match self.page {
+                        Page::Home => home::ui(self, ui),
+                        Page::Links => home::links_ui(self, ui),
+                        Page::Meetings => meetings::ui(self, ui),
+                        Page::Settings => settings::ui(self, ui),
+                        Page::About => settings::about_ui(self, ui),
+                        Page::Remote(_) => {}
+                    }
+                });
         }
 
         // Animate at the display's refresh rate whenever the window can be

@@ -100,6 +100,7 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
                     ClientEvent::Org(Some(o)) => println!("station  {o}"),
                     ClientEvent::Org(None) => {}
                     ClientEvent::Notice(n) => println!("notice: {n}"),
+                    ClientEvent::CallChanged => {},
                     ClientEvent::UpdateAvailable(u) if service => {
                         tracing::info!(version = %u.label(), "installing update");
                         match client.install_update(&u, |_, _| {}).await {

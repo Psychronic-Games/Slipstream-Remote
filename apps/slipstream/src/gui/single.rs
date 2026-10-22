@@ -93,7 +93,7 @@ impl Instance {
                 } else if &buf == LINK {
                     // The sender waits for our "ok", so read up to the newline.
                     let mut url = String::new();
-                    let _ = std::io::BufReader::new((&s).take(4096)).read_line(&mut url);
+                    let _ = std::io::BufReader::new((&s).take(16385)).read_line(&mut url);
                     match url.trim() {
                         "" => continue,
                         u => Request::Link(u.to_string()),

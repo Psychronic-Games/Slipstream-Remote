@@ -27,6 +27,8 @@ struct Snapshot {
     /// Sent only over the authenticated, session-checked local pipe.
     #[serde(default)]
     password: Option<String>,
+    #[serde(default)]
+    call: Option<slipstream_session::meetings::calls::IncomingCall>,
 }
 
 impl Snapshot {
@@ -59,6 +61,8 @@ impl Snapshot {
 #[cfg(any(windows, test))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Action {
+    AnswerCall { id: u64, accepted: bool },
+    MeetingCalls { enabled: bool },
     Chat { session: u64, text: String },
     Disconnect { session: u64 },
     RegeneratePassword,
@@ -73,6 +77,8 @@ struct Command {
 #[derive(Debug, Serialize, Deserialize)]
 struct Challenge {
     nonce: [u8; 32],
+    #[serde(default)]
+    meeting_calls: bool,
 }
 #[cfg(windows)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -82,15 +88,26 @@ struct Proof {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    Started { session: u64, peer: String },
-    Ended { session: u64 },
-    Message { session: u64, ours: bool, text: String },
+    MeetingCall(Option<slipstream_session::meetings::calls::IncomingCall>),
+    Started {
+        session: u64,
+        peer: String,
+    },
+    Ended {
+        session: u64,
+    },
+    Message {
+        session: u64,
+        ours: bool,
+        text: String,
+    },
     Password(Option<String>),
     Status { session: u64, text: String },
 }
 
 #[derive(Default)]
 struct Cursor {
+    call: Option<slipstream_session::meetings::calls::IncomingCall>,
     epoch: Option<u64>,
     sessions: BTreeMap<u64, u64>,
     password: Option<String>,
@@ -99,6 +116,12 @@ struct Cursor {
 impl Cursor {
     fn update(&mut self, snapshot: &Snapshot) -> Vec<Event> {
         let mut events = Vec::new();
+        if self.call != snapshot.call || self.epoch != Some(snapshot.epoch) {
+            if self.call.is_some() || snapshot.call.is_some() {
+                events.push(Event::MeetingCall(snapshot.call.clone()));
+            }
+            self.call = snapshot.call.clone();
+        }
         if self.password != snapshot.password {
             self.password = snapshot.password.clone();
             events.push(Event::Password(self.password.clone()));
@@ -154,6 +177,24 @@ pub struct Sender {
 }
 #[cfg(any(windows, test))]
 impl Sender {
+    pub fn meeting_calls(&self, enabled: bool) {
+        if self.connected() {
+            let _ = self.tx.send(Command {
+                epoch: self.epoch.load(std::sync::atomic::Ordering::Acquire),
+                action: Action::MeetingCalls { enabled },
+            });
+        }
+    }
+    pub fn answer_call(&self, id: u64, accepted: bool) -> bool {
+        self.connected()
+            && self
+                .tx
+                .send(Command {
+                    epoch: self.epoch.load(std::sync::atomic::Ordering::Acquire),
+                    action: Action::AnswerCall { id, accepted },
+                })
+                .is_ok()
+    }
     pub fn regenerate_password(&self) -> bool {
         self.connected() && self.tx.send(Command {
             epoch: self.epoch.load(std::sync::atomic::Ordering::Acquire),
@@ -299,6 +340,7 @@ mod native {
     }
 
     pub struct Server {
+        broker: std::sync::Arc<slipstream_session::meetings::calls::Broker>,
         state: Arc<Mutex<Snapshot>>,
         changes: watch::Sender<Snapshot>,
         clients: Arc<AtomicUsize>,
@@ -313,6 +355,7 @@ mod native {
     }
     impl Server {
         pub fn start(client: Client) -> Result<Self> {
+            let broker = client.call_broker();
             let session = session_id();
             let pipe = create_pipe(session, true)?;
             let key = Store::open_default()?.identity()?;
@@ -326,6 +369,7 @@ mod native {
                 sequence: 0,
                 sessions: Vec::new(),
                 password: Some(client.one_time_password()),
+                call: None,
             };
             let state = Arc::new(Mutex::new(initial.clone()));
             let (changes, _) = watch::channel(initial);
@@ -362,6 +406,7 @@ mod native {
                 }
             });
             Ok(Self {
+                broker,
                 state,
                 changes,
                 clients,
@@ -373,6 +418,7 @@ mod native {
         pub fn observe(&mut self, event: &ClientEvent) {
             let mut state = self.state.lock().expect("service chat state");
             match event {
+                ClientEvent::CallChanged => state.call = self.broker.incoming(),
                 ClientEvent::Password(password) => state.password = Some(password.clone()),
                 ClientEvent::HostSessionStarted { session, peer } => {
                     if state.sessions.len() >= 32 {
@@ -418,6 +464,7 @@ mod native {
         let hello: Challenge = tokio::time::timeout(Duration::from_secs(3), read(&mut pipe)).await??;
         let signature = key.sign(&challenge_message(&hello.nonce, session)).to_bytes().to_vec();
         write(&mut pipe, &Proof { signature }).await?;
+        let _meeting_receiver = hello.meeting_calls.then(|| client.call_broker().receiver());
         clients.fetch_add(1, Ordering::AcqRel);
         struct Active(Arc<AtomicUsize>);
         impl Drop for Active {
@@ -436,7 +483,15 @@ mod native {
                     continue;
                 }
                 match command.action {
-                    Action::Chat { session, text } if s.sessions.iter().any(|s| s.id == session) => {
+                    Action::AnswerCall { id, accepted } => {
+                        client.call_broker().answer(id, accepted)
+                    }
+                    Action::MeetingCalls { enabled } => {
+                        client.update_settings(|s| s.app.block_meeting_calls = !enabled)
+                    }
+                    Action::Chat { session, text }
+                        if s.sessions.iter().any(|s| s.id == session) =>
+                    {
                         let text: String = text.chars().take(4000).collect();
                         client.host_chat(session, text.clone());
                         s.message(session, true, text);
@@ -496,9 +551,20 @@ mod native {
                         let public: PublicKey = std::fs::read_to_string(key_path())?.trim().parse()?;
                         let mut pipe = open_pipe(session)?;
                         let nonce = rand::random();
-                        write(&mut pipe, &Challenge { nonce }).await?;
-                        let proof: Proof = tokio::time::timeout(Duration::from_secs(3), read(&mut pipe)).await??;
-                        let bytes: [u8; 64] = proof.signature.try_into().map_err(|_| anyhow::anyhow!("bad host-chat proof"))?;
+                        write(
+                            &mut pipe,
+                            &Challenge {
+                                nonce,
+                                meeting_calls: true,
+                            },
+                        )
+                        .await?;
+                        let proof: Proof =
+                            tokio::time::timeout(Duration::from_secs(3), read(&mut pipe)).await??;
+                        let bytes: [u8; 64] = proof
+                            .signature
+                            .try_into()
+                            .map_err(|_| anyhow::anyhow!("bad host-chat proof"))?;
                         public
                             .verify(&challenge_message(&nonce, session), &Signature::from_bytes(&bytes))
                             .context("host-chat identity mismatch")?;
@@ -529,6 +595,9 @@ mod native {
                     }
                     .await;
                     c.store(false, Ordering::Release);
+                    if cursor.call.take().is_some() {
+                        let _ = tx.send(Event::MeetingCall(None));
+                    }
                     if cursor.password.take().is_some() {
                         let _ = tx.send(Event::Password(None));
                     }
@@ -626,6 +695,7 @@ mod tests {
                 status: String::new(),
             }],
             password: None,
+            call: None,
         };
         snapshot.message(0, false, "Hello".into());
         let mut cursor = Cursor::default();

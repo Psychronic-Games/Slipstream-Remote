@@ -190,6 +190,15 @@ if ($key = slip_access_key()) {
 
 try {
     switch ($req['op'] ?? '') {
+        case 'meeting_relay':
+            if (!slip_rate_ok('meeting_relay', 20)) {
+                fail('too many meeting requests, wait a minute', 429);
+            }
+            $relayKey = slip_access_key();
+            $body = 'meeting1.' . (time() + 4 * 3600) . '.' . bin2hex(random_bytes(16));
+            reply(['ok' => true, 'token' => $relayKey === null ? null :
+                $body . '.' . hash_hmac('sha256', $body, $relayKey)]);
+
         case 'hello':
             reply([
                 'ok' => true,

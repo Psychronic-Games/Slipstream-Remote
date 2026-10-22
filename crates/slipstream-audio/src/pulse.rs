@@ -140,6 +140,11 @@ impl Stream {
         Self::open(RECORD, Some(c"@DEFAULT_MONITOR@"), latency_ms)
     }
 
+    pub fn microphone(source: Option<&str>) -> Result<Self> {
+        let source = source.map(CString::new).transpose()?;
+        Self::open(RECORD, source.as_deref(), 20)
+    }
+
     pub fn playback(latency_ms: u32) -> Result<Self> {
         Self::open(PLAYBACK, None, latency_ms)
     }

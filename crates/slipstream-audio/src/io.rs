@@ -22,7 +22,7 @@ use crate::buffer::Jitter;
 use crate::opus::{FRAME_SAMPLES, SAMPLE_RATE};
 
 /// A running capture or playback thread; requests stop when dropped.
-struct Worker {
+pub(crate) struct Worker {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -43,8 +43,11 @@ impl Drop for Worker {
 
 /// Starts `body` on a thread. It reports whether it got going (`ready`)
 /// before looping until `stop` is set.
-fn spawn(name: &str, body: impl FnOnce(Arc<AtomicBool>, &dyn Fn(Result<()>)) + Send + 'static) -> Result<Worker> {
-    spawn_with_timeout(name,std::time::Duration::from_secs(5),body)
+pub(crate) fn spawn(
+    name: &str,
+    body: impl FnOnce(Arc<AtomicBool>, &dyn Fn(Result<()>)) + Send + 'static,
+) -> Result<Worker> {
+    spawn_with_timeout(name, std::time::Duration::from_secs(5), body)
 }
 
 fn spawn_with_timeout(name:&str,timeout:std::time::Duration,body:impl FnOnce(Arc<AtomicBool>,&dyn Fn(Result<()>))+Send+'static)->Result<Worker> {
@@ -82,6 +85,35 @@ pub type OnFrame = Box<dyn FnMut(&[i16]) + Send + 'static>;
 pub struct Capture(#[allow(dead_code)] Worker);
 
 impl Capture {
+    /// Captures the selected microphone, separately from system loopback.
+    pub fn microphone(
+        device: Option<String>,
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))] mut on_frame: OnFrame,
+    ) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            spawn("meeting-microphone", move |stop, ready| {
+                let mut stream = match crate::pulse::Stream::microphone(device.as_deref()) {
+                    Ok(s) => s,
+                    Err(e) => return ready(Err(e)),
+                };
+                ready(Ok(()));
+                let mut frame = vec![0i16; crate::opus::FRAME_SAMPLES];
+                while !stop.load(Ordering::Relaxed) {
+                    if let Err(e) = stream.read(&mut frame) {
+                        tracing::warn!("microphone stopped: {e:#}");
+                        return;
+                    }
+                    on_frame(&frame);
+                }
+            })
+            .map(Capture)
+        }
+        #[cfg(any(windows, target_os = "macos", target_os = "android"))]
+        {
+            cpal_io::microphone(device, on_frame).map(Capture)
+        }
+    }
     /// A steady 440 Hz tone instead of real capture (test pattern mode, tests).
     pub fn test_tone(mut on_frame: OnFrame) -> Result<Self> {
         spawn("audio-tone", move |stop, ready| {
@@ -104,6 +136,12 @@ impl Capture {
     }
 
     pub fn start(#[cfg_attr(windows, allow(unused_mut))] mut on_frame: OnFrame) -> Result<Self> {
+        let mut original = on_frame;
+        on_frame = Box::new(move |frame| {
+            if !crate::voice::playing_call() {
+                original(frame);
+            }
+        });
         #[cfg(target_os = "linux")]
         {
             spawn("audio-capture", move |stop, ready| {
@@ -143,13 +181,21 @@ pub struct Player {
 }
 
 impl Player {
+    pub fn set_render_tap(&self, tap: Option<OnFrame>) {
+        self.jitter.set_render_tap(tap);
+    }
     /// Collects the audio in `into` instead of playing it (tests).
     pub fn memory(into: Arc<std::sync::Mutex<Vec<i16>>>) -> Self {
         Self { jitter: Arc::default(), _worker: None, memory: Some(into) }
     }
 
     pub fn start() -> Result<Self> {
-        let jitter = Arc::new(Jitter::default());
+        Self::with_jitter(Arc::default())
+    }
+    pub fn meeting() -> Result<Self> {
+        Self::with_jitter(Arc::new(Jitter::realtime()))
+    }
+    fn with_jitter(jitter: Arc<Jitter>) -> Result<Self> {
         #[cfg(target_os = "linux")]
         let worker = {
             let jitter = jitter.clone();
@@ -195,7 +241,6 @@ mod cpal_io {
     };
 
     use super::{Worker, spawn};
-    #[cfg(windows)]
     use crate::{
         buffer::{to_i16, to_stereo},
         opus::FRAME_SAMPLES,
@@ -246,8 +291,11 @@ mod cpal_io {
         })
     }
 
-    #[cfg(windows)]
-    fn input<T>(device: &cpal::Device, config: cpal::StreamConfig, mut on_frame: super::OnFrame) -> Result<cpal::Stream>
+    fn input<T>(
+        device: &cpal::Device,
+        config: cpal::StreamConfig,
+        mut on_frame: super::OnFrame,
+    ) -> Result<cpal::Stream>
     where
         T: SizedSample,
         f32: FromSample<T>,
@@ -283,6 +331,38 @@ mod cpal_io {
                 None,
             )
             .map_err(|e| anyhow!("audio capture: {e}"))
+    }
+
+    pub fn microphone(name: Option<String>, on_frame: super::OnFrame) -> Result<Worker> {
+        spawn("meeting-microphone", move |stop, ready| {
+            let built = (|| {
+                let host = cpal::default_host();
+                let device = if let Some(name) = name {
+                    host.input_devices()?
+                        .find(|d| d.description().is_ok_and(|d| d.name() == name))
+                        .context("Microphone was not found")?
+                } else {
+                    host.default_input_device()
+                        .context("No microphone is available")?
+                };
+                let config = device.default_input_config()?;
+                let format = config.sample_format();
+                let config = config.config();
+                match format {
+                    SampleFormat::F32 => input::<f32>(&device, config, on_frame),
+                    SampleFormat::I16 => input::<i16>(&device, config, on_frame),
+                    SampleFormat::I32 => input::<i32>(&device, config, on_frame),
+                    _ => Err(anyhow!("Unsupported microphone sample format")),
+                }
+            })();
+            match built {
+                Ok(stream) => {
+                    ready(Ok(()));
+                    run(stream, &stop);
+                }
+                Err(e) => ready(Err(e)),
+            }
+        })
     }
 
     pub fn playback(jitter: Arc<Jitter>) -> Result<Worker> {

@@ -70,6 +70,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSCameraUsageDescription</key>
+  <string>Slipstream uses your camera when you choose to share it in a meeting.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Slipstream uses your microphone when you unmute in a meeting.</string>
   <key>NSScreenCaptureUsageDescription</key>
   <string>Slipstream shares your screen with the technician you gave your ID and password to.</string>
   <key>NSAppleEventsUsageDescription</key>

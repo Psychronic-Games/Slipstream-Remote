@@ -17,6 +17,90 @@ struct Bridge {
 }
 static BRIDGE: OnceLock<Bridge> = OnceLock::new();
 static HUB: OnceLock<CaptureHub> = OnceLock::new();
+static CAMERA: OnceLock<CaptureHub> = OnceLock::new();
+fn camera() -> &'static CaptureHub {
+    CAMERA.get_or_init(CaptureHub::default)
+}
+pub fn camera_dimensions() -> Option<(u32, u32)> {
+    camera().dimensions()
+}
+pub fn camera_stream() -> Result<FrameStream> {
+    camera().subscribe()
+}
+pub fn camera_started(width: u32, height: u32) {
+    camera().start(width, height);
+}
+pub fn camera_stopped() {
+    camera().stop("Phone camera sharing stopped");
+}
+static CAMERA_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub fn camera_start(index: u32) -> Result<u64> {
+    let epoch = CAMERA_EPOCH.fetch_add(1, Ordering::AcqRel) + 1;
+    camera_stopped();
+    action(if index == 1 { 11 } else { 10 })?;
+    Ok(epoch)
+}
+pub fn camera_stop(epoch: u64) {
+    if CAMERA_EPOCH
+        .compare_exchange(epoch, epoch + 1, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        camera_stopped();
+        let _ = action(12);
+    }
+}
+pub fn camera_frame(data: &[u8], width: u32, height: u32) {
+    let _ = camera().publish(data, width, height, width as usize * 4, 4);
+}
+pub fn microphone_ready() -> bool {
+    let Some(b) = BRIDGE.get() else {
+        return false;
+    };
+    let Ok(mut env) = b.vm.attach_current_thread() else {
+        return false;
+    };
+    let Ok(class) = env.new_local_ref(b.class.as_obj()).map(JClass::from) else {
+        return false;
+    };
+    env.call_static_method(class, "microphoneReady", "()Z", &[])
+        .and_then(|v| v.z())
+        .unwrap_or(false)
+}
+type CallHandler = Box<dyn Fn(u64, bool) + Send + Sync>;
+static CALL_HANDLER: OnceLock<CallHandler> = OnceLock::new();
+pub fn install_call_handler(handler: impl Fn(u64, bool) + Send + Sync + 'static) {
+    let _ = CALL_HANDLER.set(Box::new(handler));
+}
+pub fn answer_call(id: u64, accepted: bool) {
+    if let Some(handler) = CALL_HANDLER.get() {
+        handler(id, accepted);
+    }
+}
+pub fn notify_call(name: Option<&str>, id: u64) {
+    let Some(b) = BRIDGE.get() else {
+        return;
+    };
+    let Ok(mut env) = b.vm.attach_current_thread() else {
+        return;
+    };
+    let Ok(class) = env.new_local_ref(b.class.as_obj()).map(JClass::from) else {
+        return;
+    };
+    let Ok(name) = env.new_string(name.unwrap_or("")) else {
+        return;
+    };
+    if env
+        .call_static_method(
+            class,
+            "meetingCall",
+            "(Ljava/lang/String;J)V",
+            &[JValue::Object(&name), JValue::Long(id as i64)],
+        )
+        .is_err()
+    {
+        let _ = env.exception_clear();
+    }
+}
 static ACCESS: AtomicBool = AtomicBool::new(false);
 static FULL_DISPLAY: AtomicBool = AtomicBool::new(true);
 static MESSAGE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());

@@ -23,8 +23,16 @@ pub fn relay_map(server: &ServerSettings) -> RelayMap {
 /// Binds the endpoint every Slipstream client uses, both to host and to view.
 pub async fn bind_client(secret: SecretKey, server: &ServerSettings, accept_sessions: bool) -> Result<Endpoint> {
     let map = relay_map(server);
-    let mode = if map.is_empty() { RelayMode::Disabled } else { RelayMode::Custom(map) };
-    let alpns = if accept_sessions { vec![ALPN_REMOTE.to_vec()] } else { vec![] };
+    let mode = if map.is_empty() {
+        RelayMode::Disabled
+    } else {
+        RelayMode::Custom(map)
+    };
+    let alpns = if accept_sessions {
+        vec![ALPN_REMOTE.to_vec(), crate::meeting::CALL_ALPN.to_vec()]
+    } else {
+        vec![]
+    };
     // Relay TLS uses our clock-corrected verifier too (see `clock`).
     let ca = iroh::tls::CaTlsConfig::custom_server_cert_verifier(Arc::new(|provider| {
         crate::clock::verifier(provider).map_err(std::io::Error::other)

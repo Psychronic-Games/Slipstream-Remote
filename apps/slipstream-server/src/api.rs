@@ -109,6 +109,20 @@ pub async fn handle(
         return err(StatusCode::FORBIDDEN, "this is a private Slipstream server — use the app from its download page");
     }
     match req.get("op").and_then(Value::as_str).unwrap_or("") {
+        "meeting_relay" => {
+            if !app.limits.allow(ip, "meeting_relay", 20) {
+                return err(StatusCode::TOO_MANY_REQUESTS, "Too many meeting requests");
+            }
+            let nonce = slipstream_core::meeting::random_secret();
+            let token = app.access_key.as_ref().map(|key| {
+                slipstream_core::meeting::relay_token(
+                    key,
+                    slipstream_core::meeting::now() + 4 * 3600,
+                    &nonce[..32],
+                )
+            });
+            Json(json!({"ok":true,"token":token})).into_response()
+        }
         "hello" => {
             let mut relays: Vec<String> = Vec::new();
             if app.relay_enabled

@@ -39,6 +39,88 @@ fn android_main(app: AndroidApp) {
 }
 
 /// `MainActivity.onLink`: the activity was opened with a `slipstream://`
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_MeetingCallReceiver_decline(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    id: i64,
+) {
+    slipstream_platform::android::answer_call(id as u64, false);
+}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_MeetingCaptureService_onCameraStarted(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    width: i32,
+    height: i32,
+) {
+    if width > 0 && height > 0 {
+        slipstream_platform::android::camera_started(width as u32, height as u32);
+    }
+}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_MeetingCaptureService_onCameraStopped(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) {
+    slipstream_platform::android::camera_stopped();
+}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_MeetingCaptureService_onMicrophoneStopped(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) {
+    slipstream_audio::voice::stop_all_microphones();
+}
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+extern "system" fn Java_com_slipstreamremote_app_MeetingCaptureService_onCameraFrame(
+    env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    y: jni::objects::JByteBuffer,
+    u: jni::objects::JByteBuffer,
+    v: jni::objects::JByteBuffer,
+    width: i32,
+    height: i32,
+    y_row: i32,
+    uv_row: i32,
+    uv_pixel: i32,
+    rotation: i32,
+) {
+    if width < 2 || height < 2 || y_row < 0 || uv_row < 0 || uv_pixel < 1 || rotation < 0 {
+        return;
+    }
+    let planes = [&y, &u, &v].map(|buffer| {
+        env.get_direct_buffer_address(buffer)
+            .and_then(|ptr| env.get_direct_buffer_capacity(buffer).map(|len| (ptr, len)))
+    });
+    let [Ok((yp, yl)), Ok((up, ul)), Ok((vp, vl))] = planes else {
+        return;
+    };
+    // Camera Image owns all three direct buffers throughout this JNI callback.
+    let (y, u, v) = unsafe {
+        (
+            std::slice::from_raw_parts(yp, yl),
+            std::slice::from_raw_parts(up, ul),
+            std::slice::from_raw_parts(vp, vl),
+        )
+    };
+    if let Ok((w, h, data)) = slipstream_platform::camera::yuv420(
+        y,
+        u,
+        v,
+        width as usize,
+        height as usize,
+        y_row as usize,
+        uv_row as usize,
+        uv_pixel as usize,
+        rotation as u32,
+    ) {
+        slipstream_platform::android::camera_frame(&data, w, h);
+    }
+}
+
+/// `MainActivity.onLink`: the activity was opened with a `slipstream://`
 /// link (the station page's button), at start or while running.
 #[unsafe(no_mangle)]
 extern "system" fn Java_com_slipstreamremote_app_MainActivity_onLink(mut env: jni::JNIEnv, _class: jni::objects::JClass, url: jni::objects::JString) {

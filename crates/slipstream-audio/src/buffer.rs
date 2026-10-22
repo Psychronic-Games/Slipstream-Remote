@@ -17,7 +17,9 @@ const fn samples(ms: usize) -> usize {
 /// Decoded audio waiting to be played: interleaved 48 kHz stereo.
 #[derive(Default)]
 pub struct Jitter {
+    low_latency: bool,
     state: Mutex<JitterState>,
+    render_tap: Mutex<Option<crate::io::OnFrame>>,
 }
 
 #[derive(Default)]
@@ -27,11 +29,20 @@ struct JitterState {
 }
 
 impl Jitter {
+    pub fn realtime() -> Self {
+        Self {
+            low_latency: true,
+            ..Default::default()
+        }
+    }
+    pub fn set_render_tap(&self, tap: Option<crate::io::OnFrame>) {
+        *self.render_tap.lock().unwrap() = tap;
+    }
     pub fn push(&self, pcm: &[i16]) {
         let mut s = self.state.lock().unwrap();
         s.samples.extend(pcm);
-        if s.samples.len() > samples(MAX_MS) {
-            let excess = s.samples.len() - samples(START_MS);
+        if s.samples.len() > samples(if self.low_latency { 80 } else { MAX_MS }) {
+            let excess = s.samples.len() - samples(if self.low_latency { 20 } else { START_MS });
             s.samples.drain(..excess);
         }
     }
@@ -40,7 +51,7 @@ impl Jitter {
     /// (re)filling.
     pub fn pull(&self, out: &mut [i16]) {
         let mut s = self.state.lock().unwrap();
-        if !s.playing && s.samples.len() >= samples(START_MS) {
+        if !s.playing && s.samples.len() >= samples(if self.low_latency { 20 } else { START_MS }) {
             s.playing = true;
         }
         let n = if s.playing { out.len().min(s.samples.len()) } else { 0 };
@@ -50,6 +61,10 @@ impl Jitter {
         out[n..].fill(0);
         if s.playing && s.samples.is_empty() {
             s.playing = false; // ran dry: build up a cushion again
+        }
+        drop(s);
+        if let Some(tap) = self.render_tap.lock().unwrap().as_mut() {
+            tap(out);
         }
     }
 }

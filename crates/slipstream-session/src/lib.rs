@@ -2,7 +2,6 @@
 //! reachable by ID, hosts incoming sessions, and opens outgoing ones.
 
 mod desktop_shell;
-mod incoming;
 mod public_ip;
 mod reconnect;
 mod accounts;
@@ -10,6 +9,8 @@ pub mod files;
 pub mod fsops;
 pub mod preview;
 mod host;
+mod incoming;
+pub mod meetings;
 pub mod network;
 pub mod support;
 mod network_names;
@@ -71,6 +72,7 @@ pub enum ClientEvent {
     HostStatus { session: u64, text: String },
     FileReceived { session: u64, path: std::path::PathBuf },
     Notice(String),
+    CallChanged,
     /// The station offers a newer version of the app.
     UpdateAvailable(update::UpdateInfo),
 }
@@ -94,6 +96,7 @@ pub(crate) enum HostSessionCmd {
 }
 
 pub(crate) struct Inner {
+    pub calls: Arc<meetings::calls::Broker>,
     pub endpoint: Endpoint,
     pub store: Store,
     pub settings: Mutex<Settings>,
@@ -143,6 +146,34 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn call_broker(&self) -> Arc<meetings::calls::Broker> {
+        self.inner.calls.clone()
+    }
+
+    pub fn camera_for_meeting(
+        &self,
+        index: u32,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<slipstream_platform::FrameStream> {
+        if self.inner.opts.test_pattern {
+            use slipstream_platform::Backend;
+            return slipstream_platform::test_pattern::TestPattern::new(640, 360).capture(0, 15);
+        }
+        slipstream_platform::camera::start_cancellable(index, cancelled)
+    }
+
+    /// Sharing a screen into a meeting does not inject input or create a viewer.
+    pub async fn capture_for_meeting(&self) -> Result<slipstream_platform::FrameStream> {
+        let mut backend = host::screen_backend(&self.inner).await?;
+        let backend = backend.as_mut().context("No screen is available")?;
+        let displays = backend.displays();
+        let display = displays
+            .iter()
+            .find(|d| d.primary)
+            .or(displays.first())
+            .context("No screen is available")?;
+        backend.capture(display.index, 15)
+    }
     /// Loads settings and identity from `store`, binds the network endpoint
     /// and starts background tasks. Must be called inside a tokio runtime.
     pub async fn start(store: Store, opts: ClientOptions) -> Result<(Self, mpsc::UnboundedReceiver<ClientEvent>)> {
@@ -161,6 +192,7 @@ impl Client {
         let (events, rx) = mpsc::unbounded_channel();
         let password = generate_password(settings.host.one_time_password_len.clamp(4, 32));
         let inner = Arc::new(Inner {
+            calls: Arc::new(meetings::calls::Broker::default()),
             endpoint,
             store,
             settings: Mutex::new(settings),
@@ -176,6 +208,15 @@ impl Client {
             host_sessions: Mutex::new(HashMap::new()),
             next_session: AtomicU64::new(0),
         });
+        #[cfg(target_os = "android")]
+        {
+            let broker = Arc::downgrade(&inner.calls);
+            slipstream_platform::android::install_call_handler(move |id, answer| {
+                if let Some(broker) = broker.upgrade() {
+                    broker.answer(id, answer);
+                }
+            });
+        }
         inner.emit(ClientEvent::Password(password));
         tokio::spawn(directory_task(inner.clone()));
         tokio::spawn(update_task(Client { inner: inner.clone() }));
@@ -597,6 +638,12 @@ async fn accept_task(inner: Arc<Inner>) {
                     return;
                 }
             };
+            if conn.alpn() == slipstream_core::meeting::CALL_ALPN {
+                if let Err(error) = meetings::calls::receive(inner, conn).await {
+                    debug!("incoming call ended: {error:#}");
+                }
+                return;
+            }
             if conn.alpn() != ALPN_REMOTE {
                 conn.close(0u32.into(), b"unsupported protocol");
                 return;
