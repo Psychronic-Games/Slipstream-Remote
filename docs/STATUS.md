@@ -1,33 +1,56 @@
 # Project status
 
-*Updated 2026-10-20; latest published release 0.22.1.
+*Updated 2026-10-21; latest published release 0.23.2.
 Read this first when picking the work back up.*
 
-The latest [development and deployment handoff](DEVELOPMENT-2026-10-20.md)
-records **0.22.1, build 113, commit 61367b6**, published on
-https://relay.slipstreamremote.com with verified live update offers/downloads.
-The + follows the last tab or Bridge when empty; New Link has complete LCARS
-framing and private/shared/empty groups. Group editing has an integrated
-full-width chooser, and compact settings/sign-in controls stay inside panels.
-Unique device detection is automatic on this Linux desktop using readable,
-locally hashed built-in PCI network hardware when firmware is root-only;
-learning the fallback preserves existing identities. 148 tests pass (five
-ignored); Linux/Windows/Android Clippy, native Linux UI/account checks and
-packaged Windows Wine file transfer/compact window checks pass.
+The latest [development and deployment handoff](DEVELOPMENT-2026-10-21.md)
+records **0.23.2, build 123, source commit 83e507b**, published on
+https://relay.slipstreamremote.com with verified live update offers and full
+Linux/Windows/Android downloads. Later documentation commits do not change
+the packaged build identity.
 
-0.22.0 also added direct relay-synced groups, vector Delta arrows/stars,
-rounded-bar pulse clipping, Windows tool-caption and late-repaint fixes,
-Linux portal recovery/timeouts and executable MIME recognition. Physical
-Windows DWM and future KDE-upgrade recovery remain real-device follow-ups.
+[Group meetings and Android Show me](MEETINGS.md) are implemented, with a
+20-person default and configurable capacity up to 32. An organizer's client
+forwards selected encoded media; guests require admission. Incoming calls have
+Answer/Decline and pre-answer cancellation. Live meeting, Chat, Participants
+and Devices views keep controls accessible. Named microphone/camera choices
+are remembered; screen sharing requires an explicit selection with local-only
+preview thumbnails. Linux camera filtering and mode negotiation fix the C920
+metadata-endpoint/CameraFormat failure reproduced on this workstation.
+
+Native session windows now hold tab groups. Drag tabs between the console and
+floating groups, reorder or tear them out without reconnecting. Each window's
+**+** adds the new link to that group. The reported phantom tray icons came from
+native QA clients inheriting the desktop D-Bus session; the audit now isolates
+both D-Bus and Xvfb. Linux tray destruction explicitly shuts down its service.
+
+Latest verification: **161 workspace tests passed, five ignored**; strict Linux
+workspace/all-target Clippy passed. Linux, Windows and Android release builds,
+artifact signatures/hashes and live publication checks passed. Isolated native
+meeting and three-client tab-group audits passed. A local C920 probe captured
+and discarded valid frames. Physical 20-person load, Windows-service calls,
+Android camera/audio and mixed-DPI window behavior remain follow-ups; the
+synthetic room test does not establish full-camera capacity on real uplinks.
 
 Build/check scripts trim caches automatically at 12 GiB development/test and
 32 GiB release, with incremental caching off and two generated Android package
-versions per variant. Latest sizes are 5.60 / 27.87 GiB; the earlier cleanup
-removed about 154 GiB. Use `scripts/check.sh` for substantial development checks.
-Details and rollback paths are in the latest handoff; previous support-tool
-scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).
+versions per variant. Latest recorded sizes are **5.23 / 30.76 GiB**. Use
+`scripts/check.sh` for substantial checks. Rollback paths, verification limits
+and the next-session starting point are in the latest handoff. Earlier
+support-tool scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).
 
-**0.21.1 (previous release):** final implementation 2d1a128, build 106. Audits the
+## Earlier release history
+
+The entries below retain each release's original verification evidence.
+The latest published version and checks are recorded at the top of this page.
+
+**0.22.1 / 0.22.0:** New Link framing and station/private/shared/empty groups,
+compact settings, automatic Linux hardware fallback for device identity,
+Windows tool-caption/repaint corrections and bounded portal recovery. The
+[October 20 handoff](DEVELOPMENT-2026-10-20.md) preserves publication and
+verification evidence for 0.22.1 / 113 / 61367b6.
+
+**0.21.1 (earlier published release):** final implementation 2d1a128, build 106. Audits the
 five support-tool features below. Fixes pending requests surviving window
 close/link loss, late tunnel replies, compact-host status cleanup and missing
 Dismiss / Stop controls, stale Windows service command epochs and unrelated
@@ -60,7 +83,8 @@ Missing or duplicate firmware evidence limits detection. The feature test run
 passed 131 tests (five ignored); Linux/Windows all-target and arm64 Android
 Clippy passed in its initial preparation. Its artifacts were checked before
 the subsequent workflow audit found the bugs corrected in 0.21.1. This
-intermediate candidate was never published; 0.21.1 is now live.
+intermediate candidate was never published; 0.21.1 superseded it before the
+later 0.22.0 and 0.22.1 publications.
 
 **0.20.0:** a session strip switches workstations and returns to Bridge.
 Drag tabs to reorder, release outside the strip to create a floating window,
@@ -309,12 +333,12 @@ The verification table below also records earlier releases.
 | Self-update: offer, download, checksum, swap, restart; tampered file rejected | ✅ |
 | Signed updates (release key, unsigned/foreign builds refused) | ✅ signature tests and deployed manifest/HTTPS download verification |
 | Parallel password guessing held to the lockout | ✅ end-to-end test |
-| Station on the server's PHP 8.4 (no extensions): setup, sign-in, settings, download password, devices, key renewal, update offer | ✅ against a local copy; all PHP lint-clean |
+| Station on the server's PHP 8.4 with its standard extensions, including sodium: setup, sign-in, settings, download password, devices, key renewal, update offer | ✅ against a local copy; all PHP lint-clean |
 | Signed update installs; tampered, unsigned and foreign manifests and a swapped binary are refused | ✅ against a local station |
 | Windows build under Wine: host at 1440p/60 fps, GUI | ✅ |
 | Compact window (no usable GPU, e.g. Windows Server 2016): ID/password/status, being controlled | ✅ under Wine (forced); on real Server 2016 by the user |
 | Full window through the built-in software renderer (Mesa llvmpipe) | ✅ on real Windows Server 2016 (VMware VM), through the copy of the app beside Mesa (loading Mesa in-process found no adapter there). Idle CPU use cut by slower animations on llvmpipe (0.6.0); not re-measured |
-| Linux → Windows Server 2016 VM over the internet | ✅ direct path, 20–50 ms round trip. Service capture uses DXGI duplication there (1.8 ms a frame). Encoding took 23 ms a frame, so about 34 fps; 0.7.0's camera mode and adaptive resolution should reach 60 but haven't been measured there yet |
+| Linux → Windows Server 2016 VM over the internet | ✅ direct path, 20–50 ms round trip. Earlier measurements: DXGI capture 1.8 ms/frame, encoding 23 ms/frame, about 34 fps. Current camera-mode encoding needs remeasurement there; Speed/Low bandwidth can reduce moving-picture resolution, while Balanced/Quality preserve resolution. |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
 | Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. Not yet on the live station |
@@ -329,17 +353,23 @@ The verification table below also records earlier releases.
 | Adaptive resolution and idle sharpening | ✅ pipeline test with a simulated slow encoder (shrinks to fit 60 fps, full-size frame once still) and a local session at 30 ms a simulated frame |
 | Host pace in the viewer (stats tooltip, 30 s log line) | ✅ local sessions and the live Server 2016 VM |
 | X11 host | ⚠️ implemented, lightly tested |
-| macOS | ⚠️ type-checks for Apple Silicon (cross-checked from Linux); `scripts/build-macos.sh` packages it; not yet run on a Mac |
+| macOS | ⚠️ type-checks for Apple Silicon (cross-checked from Linux); universal packaging script prepared; native building and runtime checks pending |
 | Android viewer and host | ⚠️ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; real phones still need confirmation. Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
-`cargo test --workspace` passes: unit tests plus in-process sessions
-covering video and input, files, chat, clipboard text and files, sound
-and port forwarding.
+The latest recorded workspace run passed **161 tests, with five ignored**
+(0.23.2). Unit tests and in-process sessions cover video and input, files,
+chat, clipboard text and files, sound and port forwarding. Use
+`scripts/check.sh` to rerun the workspace suite.
 
 ## Known gaps and limits
 
-- **macOS**: packaged by `scripts/build-macos.sh` but never run on a Mac.
+- **Meetings**: the organizer must stay connected; no host migration, automatic
+  active-speaker selection or adaptive meeting bitrate yet. Invitations/rooms
+  last four hours. Android incoming calls require a running, reachable app.
+  See [meeting scope](issues/17-group-meetings-and-show-me.md) for remaining work.
+- **macOS**: `scripts/build-macos.sh` is prepared to package a universal app;
+  native building and runtime verification remain pending.
   Not notarised (Apple Developer Program not joined yet), so users choose
   *Open Anyway*, and permissions may need granting again after updates. Its
   capture may or may not show the pointer (`cursor_in_video` is false, so
@@ -352,9 +382,10 @@ and port forwarding.
 - **Privacy mode** needs Windows 10 2004 or later on the remote side, and
   blocks the local keyboard and mouse only under the service (Windows
   allows `BlockInput` only to elevated programs).
-- **Windows signing**: set up for SignPath (free for open source) in the
-  release workflow, which needs the repository public on GitHub. Until then
-  the .exe is unsigned and SmartScreen warns about it.
+- **Windows signing**: the release workflow includes a conditional SignPath
+  step. Repository publication, application/acceptance and signing credentials
+  remain pending. The published .exe is not Authenticode-signed and may
+  trigger SmartScreen warnings; desktop update signatures are already active.
 - **Software video only**: OpenH264 on the CPU (with its SIMD code: builds
   need `nasm`), in camera mode since 0.7.0. The pipeline figures (60 fps up
   to 1080p, about 56 at 1440p and 37 at 4K for a fully moving picture) were
@@ -368,7 +399,9 @@ and port forwarding.
 - **Sound**: Windows and Linux hosts share it; Mac hosts can't yet
   (ScreenCaptureKit audio). Not yet heard on real speakers between two
   machines: end-to-end test with a test tone; real devices open on Linux.
-- **x86_64 only**: no ARM Linux or Windows-on-ARM builds yet.
+- **Desktop/station ARM builds**: Linux and Windows apps and the station relay
+  are currently distributed for x86_64 only. Android releases are arm64;
+  the unverified macOS packaging script targets Apple Silicon and Intel.
 - **Wayland unattended access**: depends on the portal's restore token
   surviving. A reboot may bring the permission prompt back on some desktops.
 - **File transfer**: no resume for interrupted large transfers.
@@ -385,17 +418,25 @@ implemented and emulator-tested, alongside the touch viewer. Remaining work
 includes real-phone checks, viewer keyboard polish, hardware encoding and
 host audio/clipboard/files/updates. The steps below carry on alongside it.
 
-1. **Confirm 0.21.1 on real machines**: publication and signed HTTPS checks
-   are complete. Confirm clone/service identity on
-   differently identified Windows hardware; exercise reports, status/Stop,
-   discovered-service tunnels, permitted LAN wake and network diagnostics.
-   **Confirm 0.20.0 on the Windows Server VM**: tab reorder/tear-out/dock-back
+1. **Continue from published 0.23.2 and the user's next observations**: today's
+   camera, screen-preview, call controls and grouped-window fixes are complete.
+   Check the updated client on the user's normal setup; retain real-machine
+   meeting/load and mixed-DPI follow-ups in issues 17 and 16. Publication and
+   signed HTTPS checks are complete. Confirm automatic device recognition
+   and clone/service identity on differently identified Windows hardware;
+   exercise reports, status/Stop, discovered-service tunnels, permitted LAN
+   wake and network diagnostics. Check New Link's station/group selection,
+   compact forms, Windows tool captions and close/repaint behavior. Test
+   Wayland approval recovery after a KDE upgrade when that environment is
+   available (issue 11). Carry forward the earlier Windows Server VM checks:
+   tab reorder/tear-out/dock-back
    and the saved new-link default, service one-time codes beside
    unattended access, independent workstation windows, closing tools without
    black remnants, sharp Balanced/Quality motion,
    the pointer on the mouseless VM, service-update recovery, incoming chat,
    peripheral/network-drive inventory, Explorer/Desktop drop destinations,
-   scanner browser launching and native frame corners/rails. Use the stats
+   scanner browser launching and native frame corners/rails (issues 01, 04,
+   15 and 16). Use the stats
    tooltip and 30-second log line to measure capture/encode/decode and picture
    dimensions rather than assuming a high frame rate means full resolution.
 2. **Confirm Android hosting on real phones**: persistent ID, sharing consent,
@@ -426,5 +467,5 @@ host audio/clipboard/files/updates. The steps below carry on alongside it.
 - How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 - User-facing behaviour: [GETTING-STARTED.md](GETTING-STARTED.md).
 - What changed: [CHANGELOG.md](../CHANGELOG.md).
-- Latest handoff and deployed build: [DEVELOPMENT-2026-10-20.md](DEVELOPMENT-2026-10-20.md).
+- Latest handoff and deployed build: [DEVELOPMENT-2026-10-21.md](DEVELOPMENT-2026-10-21.md).
 - Audit findings, regression evidence and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md).

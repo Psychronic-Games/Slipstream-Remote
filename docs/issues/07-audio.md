@@ -14,7 +14,7 @@ a Config default. What's left:
 - [x] Capture: Windows (WASAPI loopback via cpal), Linux (PulseAudio via
       dlopen, which covers PipeWire desktops).
 - [x] Opus 20 ms frames as datagrams; jitter buffer; toolbar toggle; host
-      permission; protocol v4.
+      permission (introduced with protocol 4; current protocol is 6).
 - [ ] macOS capture: ScreenCaptureKit audio (`SCStreamConfiguration.
       capturesAudio`), needs the Screen Recording permission it already has.
 - [ ] Listen on real machines: Linux → Windows and back; check latency
@@ -24,5 +24,6 @@ a Config default. What's left:
 
 ## Pointers
 
-- `crates/slipstream-platform/src/pw.rs` (PipeWire loader)
+- `crates/slipstream-audio/src/io.rs`, `pulse.rs` (audio capture/playback)
+- `crates/slipstream-session/src/host.rs`, `viewer.rs` (session audio)
 - `crates/slipstream-core/src/proto.rs` (`Capabilities`)

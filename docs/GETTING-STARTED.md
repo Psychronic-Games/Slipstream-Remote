@@ -36,9 +36,10 @@ it.
   from a release, or build it yourself with `scripts/build-station.sh` (see
   [BUILDING.md](BUILDING.md)).
 
-> If PHP isn't allowed to start programs on your host, everything still works
-> except your own relay; apps then use the free public relays for
-> connections that can't go direct. You can also skip PHP entirely and run
+> If PHP isn't allowed to start programs on your host, the directory and
+> downloads still work. Connections that can't go direct need public fallback
+> enabled on both station and client, or a separately managed relay.
+> You can also skip PHP entirely and run
 > the server binary. See [SERVER.md](SERVER.md#other-web-servers).
 
 ### Step 1: Create the site
@@ -70,7 +71,7 @@ public_html/
 ├── api/             ← the directory the apps talk to
 ├── assets/
 ├── bin/             ← the relay program
-├── clients/         ← the apps for Windows, Linux, macOS + manifest.json
+├── clients/         ← available desktop apps and Android APK + manifest.json
 └── lib/
 ```
 
@@ -122,7 +123,7 @@ On the **Settings** tab:
 - **Private** (on by default, recommended): only apps downloaded from *your*
   station can use it. Strangers can't register devices or look up your IDs.
 - **Public relay fallback**: lets apps use the free public relays if your own
-  relay is unreachable. Turn it off if all traffic must stay on your server.
+  relay is unreachable. Turn it off to prevent sessions using public relays.
 - **Message shown in every app**: e.g. "Call us on 555-0100 before
   connecting".
 - **Download page password**: stops random visitors downloading your
@@ -143,12 +144,13 @@ they follow automatically.
 
 Send your clients to your station's address, e.g.
 `https://support.example.com/`. The page offers the right download for their
-computer. The app **connects to your station by itself**:
+computer. Desktop downloads normally link to the station automatically;
+Android uses **Connect this app** or a setup code:
 
-- Apps you build yourself carry your station's settings inside the download.
-- Signed apps (from a release) and the Mac app are the same file for
-  everyone. They read your station from the download address the browser
-  recorded on the file.
+- Unsigned Linux/Windows apps carry your station's settings inside the download.
+- Apps marked as code-signed and Mac bundles are served unchanged. Supported
+  desktop browsers record the download address on the file, which the app
+  uses to link to the station. Android APKs are also served unchanged.
 - If that didn't work (say the file was copied to a USB stick), the app
   asks for a station. The download page has a **Connect this app** button,
   and also shows your station's address and a **setup code** (like
@@ -169,8 +171,10 @@ computer. The app **connects to your station by itself**:
    program*, or run `chmod +x "Slipstream Remote - "*`.
 3. Run it. The first start adds Slipstream to the application menu.
 
-It runs on any 64-bit distribution from 2020 on (glibc 2.31+: Debian 11,
-Ubuntu 20.04, Fedora, Arch…) and needs no extra packages.
+The portable Linux build targets x86_64 with glibc 2.31+ (Debian 11,
+Ubuntu 20.04 and newer). Optional capture libraries do not need installing
+alongside it. ARM Linux builds are not distributed yet, and the older
+Debian-server startup check remains open.
 
 - **Wayland** (KDE, GNOME, …): Slipstream prepares screen access at startup,
   before anyone connects. Choose a screen and *Share/Allow* in the desktop's
@@ -196,6 +200,10 @@ refresh the folder if its icon is cached.
 
 ### macOS (12 or newer, Apple Silicon or Intel)
 
+The packaging script targets both architectures, but native building and
+runtime checks on a Mac are still pending. These are the intended install
+steps once a Mac bundle is available from your station:
+
 1. Download the zip, open it and move **Slipstream** to *Applications*.
 2. Open it. The app isn't notarised by Apple yet, so macOS refuses the
    first time: go to *System Settings → Privacy & Security* and choose
@@ -211,10 +219,13 @@ an update.
 
 ### Android (8 or newer): preview
 
-The Android app controls computers; being controlled from a computer comes
-later (issue 09). In a session, tap to click, long-press to right-click,
-drag with one finger, pinch to zoom and drag two fingers to look around
-(or to scroll, when not zoomed in). Everything else is under **Console**.
+The Android app can control computers and share the phone's screen with a
+computer. Hosting and touch controls have been tested on an Android 16
+emulator; real-phone and older-Android verification remain open
+([issue 09](issues/09-android.md)). In a viewer session, tap to click,
+long-press to right-click, drag with one finger, pinch to zoom and drag two
+fingers to look around (or to scroll, when not zoomed in). Everything else
+is under **Console**.
 Typing on the remote computer from the phone's keyboard is next.
 
 1. Open the station's page on the phone and tap **Download** (the page
@@ -225,6 +236,19 @@ Typing on the remote computer from the phone's keyboard is next.
    needed. Play Protect may offer to scan the app; let it.
 3. Back on the station's page, tap **Connect this app**: the app opens and
    links to the station. (Or type the address and setup code in it.)
+
+To let a computer see the phone, tap **Start sharing**, approve Android's
+screen-sharing prompt and give the viewer the phone's ID and password.
+Enable Slipstream's accessibility service through the app's setup controls
+to allow remote input. On Android 13+, sideloaded apps may first need
+**App info → ⋮ → Allow restricted settings**. Input also requires active
+full-display sharing; partial-app capture is view-only.
+
+The foreground notification can stop sharing. New capture after an app or
+phone restart needs approval again, even with a saved password. Android
+hosting currently uses software H.264; host audio, clipboard, files and
+self-update are pending. To update, download and install the newer APK from
+the station using the same signing certificate; settings and identity are kept.
 
 ### What your client sees
 
@@ -244,6 +268,11 @@ time.
 
 ---
 
+For voice/video calls, group chat and Android camera assistance, open
+**Meetings**. See [Meetings and Show me](MEETINGS.md) for invitations, incoming
+calls, device selection and screen-sharing previews. Meetings and remote
+support links run independently.
+
 ## 3. Connect to a computer
 
 The device's one-time code and its optional unattended password both work
@@ -257,24 +286,28 @@ required when installing the service for access before sign-in.
 Desktop links start as tabs by default. Switch workstations from the strip
 below the title bar, or select **Bridge** to return to the console. Drag a tab
 along the strip to reorder it; drag it outside the strip and release to open
-a floating window. Drag the floating window's tab back onto the main strip
-to dock it at the highlighted position. These moves keep the existing link.
+a floating window. Drag tabs between the console and any floating window,
+or between floating windows, to combine them into groups at the highlighted
+position. Tear a tab out of any group to create another window. These moves
+keep the existing link.
 
 Choose **Config → Viewing → New links → Tabs / Separate windows**, then
 **Save configuration**, to set the default for future connections. Existing
 links keep their current layout. You can mix tabbed and floating sessions.
 **Pop out**, **Dock**, and the tab's right-click menu provide the same moves
 without dragging; at compact widths, Pop out / Dock are under Console.
-**Links → Open window / Focus window** remains available. Closing a tab or
-session window ends only that workstation's link. Phones keep embedded tabs;
-separate native windows require desktop support. On systems that withhold
+**Links → Open window / Focus window** remains available. Closing one tab
+ends that workstation's link and retains the other tabs in its group.
+Phones keep embedded tabs; separate native windows require desktop support. On systems that withhold
 cross-window pointer positions, use the Dock action if dragging back is
 unavailable. The title bar identifies the workstation; picture quality and
 FPS/latency sit together on the session toolbar.
 
 The **+** follows the last session tab, or sits beside **Bridge** when no
 sessions are open. It opens **New link** in the console or from a floating
-session window. Saved systems appear in their private/shared groups, including
+session window. The new connection opens in the group where you pressed +,
+including after a password prompt, even when the default is Separate windows.
+Saved systems appear in their private/shared groups, including
 empty groups; expand **Recent links** or **Link by ID** for other connections.
 Search systems by name, ID, group or station. Online lamps show cached
 presence; **Refresh devices** fetches the lists again. Saved passwords use
@@ -399,7 +432,7 @@ The Bridge then shows **Saved devices**, per station:
   and notes. It's kept on the station, so it follows you to any computer.
 - Optionally save its **unattended password** too: **Connect** then works
   in one click (🔑 marks those). The password is encrypted on your computer
-  with a key made from your sign-in password, so the station can't read it.
+  with a key made from your sign-in password before being stored on the station.
   If an admin resets your sign-in password, saved passwords are cleared.
 - The lamp shows which devices are online right now.
 - **Shared by …** lists devices the station's admins share with everyone.
@@ -448,6 +481,10 @@ With the service:
 - the app starts hidden in the tray at every sign-in, so the service's
   presence shows there (*Config → Tray icon* turns that off).
 
+Install/reinstall and normal-desktop hosting have been verified on Windows
+Server 2016. UAC, login-screen control, Ctrl+Alt+Del, session switching and
+service-update recovery still need the [real-Windows checks](issues/04-windows-service.md).
+
 The service keeps its own copy of the settings: after changing the
 unattended password or permissions, press **Update** next to it. From an
 administrator command prompt: `slipstream service install [--password …]`,
@@ -472,6 +509,7 @@ The **Config** page on each computer:
 | Public fallback relays | Use the free public relays if your station's relay can't be reached (if your station allows it). |
 | Accept connections | Turn off to make this computer unreachable. It can still connect out. |
 | Permissions | What connected people may do: **Control** (mouse and keyboard), **Clipboard**, **Files**, **Sound** (hear this computer) and **Port forwarding** (off by default). Untick any to allow view-only, no clipboard, or no file access. |
+| Network scan / Wake-on-LAN | Network discovery and diagnostics are allowed by default on supported desktop hosts. Wake-on-LAN is off by default and also requires network scan and remote control permission. |
 | One-time password length | Longer means harder to guess. |
 | Unattended password, Start with system, Close button | See [Unattended access](#unattended-access). |
 | Screen permission / access | Wayland: Approve now, or Reset / approve again to change the selection. Prepared at startup and kept ready in the tray; persistence depends on the desktop. Windows: no screen-sharing approval is needed, including for the background service. |
@@ -497,7 +535,7 @@ if they changed. Your settings and devices live in `slipstream-data/` and
 are never touched. If `bin/` changed, press **Restart relay** on the admin
 page.
 
-**Updating the apps.** Apps check your station about 20 seconds after they
+**Updating desktop apps.** Apps check your station about 20 seconds after they
 start and then every 6 hours. When a newer build is there, a banner offers
 **Install & restart**. The app then:
 
@@ -509,6 +547,10 @@ start and then every 6 hours. When a newer build is there, a banner offers
 
 *About → Check for updates* checks right away, and `slipstream
 update` does the same on the command line.
+
+**Updating Android.** Download the latest APK from the station and install
+it over the existing app. It must use the same Android signing certificate.
+Android does not yet offer *Install & restart* updates.
 
 When an update changes the connection protocol, both computers need the new
 version. The older side gets a clear "please update" message instead of a

@@ -2,7 +2,8 @@
 
 **Fast, free, open-source remote desktop.** Give someone your 9-digit ID and
 password and they can see and control your screen — or do the same to theirs.
-No accounts, no subscriptions, no telemetry. MIT licensed.
+No account required for remote sessions, no subscriptions, no telemetry.
+MIT licensed.
 
 ![Slipstream bridge screen](docs/screenshots/bridge.png)
 
@@ -11,8 +12,8 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 - **TeamViewer-style access** — short numeric IDs, one-time passwords that
   rotate after every session, optional permanent password for unattended access.
 - **End-to-end encrypted** — every link is QUIC/TLS 1.3 between the two devices.
-  Passwords are verified with SPAKE2, so they never cross the network and can't
-  be brute-forced offline — not even by the server.
+  Remote-session passwords are verified with SPAKE2, so they never cross the
+  network and can't be brute-forced offline — not even by the server.
 - **Peer-to-peer and fast** — direct connections through NAT hole punching,
   with a relay fallback. H.264 video rendered on the GPU; a frame-ack pacing
   loop keeps latency low instead of letting frames queue up.
@@ -21,25 +22,33 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 - **Support tools** — connect to discovered TCP services through a workstation,
   export reviewed diagnostic reports, send LAN wake packets, compare DNS and
   gateway/station checks, and show the user a plain-language support status.
-- **Cloned-device detection** — desktop firmware UUID/serial binding gives an
+- **Cloned-device detection** — locally hashed desktop hardware evidence gives an
   imaged machine a fresh identity when it starts on different hardware, while
   retaining station and unattended settings. Run the updated master/service
-  before imaging; unavailable or duplicated firmware identifiers limit detection.
-- **Several workstations at once** — use reorderable session tabs or separate windows,
-  or dock them back into the console without reconnecting. The tab strip's
-  **+** finds recent links and station-saved/shared devices, or connects by ID.
+  before imaging. Firmware UUID/serial identifiers take priority; Linux can
+  fall back to permanent built-in PCI network adapters. Missing or duplicated
+  evidence limits detection. See [imaging](docs/GETTING-STARTED.md#imaging-and-automatic-device-ids).
+- **Several workstations at once** — group tabs in the console or floating
+  windows, drag them between groups or tear them out without reconnecting.
+  Each group's **+** opens recent or station-saved/shared devices in that window.
+- **Group meetings and Show me** — authorized clients join an organizer-hosted
+  room with voice, camera, chosen-screen sharing and Subspace chat. Android's
+  rear camera can show equipment to a technician. The default room size is 20;
+  usable video capacity depends on the organizer's upload connection.
+  See the [meeting guide](docs/MEETINGS.md).
 - **Clipboard sync, chat, and a two-pane file manager** — copy and paste
   text and files between the computers, browse both, send and receive
   folders, or drag files from your desktop straight onto the remote screen.
-- **Technician sign-in** — keep your list of devices (with their passwords,
-  encrypted so the station can't read them) on your station, and sign in
+- **Technician sign-in** — keep your list of devices (with their passwords
+  encrypted in the app before station storage) on your station, and sign in
   to several stations at once, other organisations' too.
 - **System information** — the remote computer's hardware, drives,
   temperatures and network, live, plus peripherals, printers/scanners and
   network drives.
 - **Sound** from the remote computer, when you want it.
-- **Unattended Windows servers** — the Slipstream service reaches UAC
-  prompts, administrator windows and the login screen.
+- **Unattended Windows servers** — the Slipstream service hosts from boot,
+  with support for UAC prompts, administrator windows and the login screen.
+  Secure-desktop control still needs [real-Windows verification](docs/issues/04-windows-service.md).
 - **Privacy mode** blacks out the remote screen while you work, and
   **port forwarding** reaches services on the remote network (its Remote
   Desktop, a router's admin page).
@@ -49,8 +58,9 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 - **Quality presets** — Balanced, Speed, Quality, Low bandwidth; automatic
   bitrate adaptation.
 - **Runs in the tray**, starts with the system, stays reachable.
-- **Updates itself** from your station — upload a new build, every app
-  offers *Install & restart* and keeps its settings.
+- **Desktop apps update themselves** from your station — upload a new build,
+  and they offer *Install & restart* and keep their settings. Android updates
+  are installed from the station's APK.
 - **Your own station, not a central service** — an IT firm or company runs
   one self-contained web folder: a download page with apps preconfigured for
   it, a private directory of its clients' devices, its own relay and an admin
@@ -64,11 +74,13 @@ No accounts, no subscriptions, no telemetry. MIT licensed.
 | Linux — Wayland (KDE, GNOME, wlroots) | desktop portal + PipeWire | ✅ | tested (KDE) |
 | Linux — X11 | MIT-SHM + XTest | ✅ | in testing |
 | Windows 10/11 | DXGI + SendInput | ✅ | tested |
-| macOS 12+ | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | builds (`scripts/build-macos.sh`); testing on a real Mac next |
+| macOS 12+ | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | implemented | Apple Silicon cross-type-checks; native build and real-Mac testing pending |
 | Android 8+ | MediaProjection + accessibility (on-device approval) | touch viewer | Android 16 emulator tested; real phones next |
 
-The Linux app is a single file that runs on any 64-bit distribution from
-2020 on (glibc 2.31+), with no extra packages.
+The portable Linux app is a single x86_64 file targeting glibc 2.31+
+(Debian 11 / Ubuntu 20.04 and newer), with no optional capture libraries
+required at runtime. The older Debian-server startup check remains open.
+See [status](docs/STATUS.md) for platform verification and limits.
 
 ## Quick start
 
@@ -87,8 +99,9 @@ password. See [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md#1-set-up-your-st
 
 Download it from your station's page (`https://support.example.com/`) on
 every computer — it connects to your station by itself (or with the setup
-code shown on the page). Any OS can
-control any other.
+code shown on the page). The same session protocol connects the supported
+platforms; Android hosting requires approval on the phone, and macOS still
+needs native verification.
 
 ### 3. Connect
 
@@ -126,9 +139,9 @@ running two instances on one machine).
 ## Building
 
 ```sh
-cargo build --release
-cargo test --workspace
-scripts/build-station.sh     # portable Linux + Windows builds, ready to upload
+scripts/check.sh cargo build --release --locked
+scripts/check.sh                # workspace tests, with resource/cache limits
+scripts/build-station.sh        # portable Linux + Windows builds, ready to upload
 ```
 
 Build dependencies, cross-compiling and the release checklist are in
@@ -143,7 +156,9 @@ Build dependencies, cross-compiling and the release checklist are in
 | [Building and releasing](docs/BUILDING.md) | Toolchain, release builds, publishing updates |
 | [Architecture](docs/ARCHITECTURE.md) | Networking, authentication, protocol, platform backends |
 | [Status](docs/STATUS.md) | What's verified, known gaps, next steps |
-| [2026-10-20 handoff](docs/DEVELOPMENT-2026-10-20.md) | Completed 0.21.1 publication, verification and rollback |
+| [Meetings and Show me](docs/MEETINGS.md) | Calls, admission, devices, screen previews and mobile camera sharing |
+| [2026-10-21 handoff](docs/DEVELOPMENT-2026-10-21.md) | Published 0.23.2, verification, rollback and next-session starting point |
+| [2026-10-20 handoff](docs/DEVELOPMENT-2026-10-20.md) | Earlier 0.22.1 publication and verification |
 | [2026-10-19 handoff](docs/DEVELOPMENT-2026-10-19.md) | Support features, audit and remaining device checks |
 | [2026-10-18 handoff](docs/DEVELOPMENT-2026-10-18.md) | Earlier features, verification and deployment history |
 | [2026-10-18 audit](docs/AUDIT-2026-10-18.md) | Fixed reliability/performance findings, regression evidence and limits |

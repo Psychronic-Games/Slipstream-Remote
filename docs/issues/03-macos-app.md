@@ -20,7 +20,7 @@ download address or a setup code. Self-updates replace the bundle's
 ```sh
 xcode-select --install          # once
 brew install nasm               # once; rustup from rustup.rs
-SLIPSTREAM_UPDATE_KEYS=<release public key> scripts/build-macos.sh
+SLIPSTREAM_UPDATE_KEYS=PUBLIC_KEY scripts/check.sh scripts/build-macos.sh
 ```
 
 ## Checklist
@@ -57,7 +57,8 @@ SLIPSTREAM_UPDATE_KEYS=<release public key> scripts/build-macos.sh
   Events and winit (through eframe) doesn't pass them on. Setup codes work.
   A fix needs an Apple Event handler (`NSAppleEventManager`) or winit
   support.
-- Not notarised (needs the $99/year Apple Developer Program; see issue 05).
+- Not notarised (Developer ID signing and Apple Developer Program membership
+  remain pending; see issue 05).
 
 ## Pointers
 

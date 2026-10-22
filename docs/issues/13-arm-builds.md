@@ -5,9 +5,11 @@ labels: [infra]
 
 ## Background
 
-Only x86_64 apps are built. Raspberry Pis, ARM laptops (Snapdragon Windows
-machines) and ARM servers can't use Slipstream yet. The relay binary is
-x86_64 only too, which matters for stations on ARM VPSes.
+Linux and Windows desktop apps and the station relay are currently distributed
+for x86_64 only. This issue adds native ARM Linux and Windows-on-ARM builds,
+including the relay for ARM VPSes. Android release APKs already target arm64;
+the macOS packaging script targets Apple Silicon and Intel but still needs
+native verification (issue 03).
 
 ## Tasks
 

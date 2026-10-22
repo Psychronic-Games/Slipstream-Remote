@@ -1,5 +1,19 @@
 # Development handoff — 2026-10-20
 
+## Documentation reconciliation
+
+The October 20 documentation baseline distinguishes published 0.22.1 behavior,
+implemented features awaiting device checks, and planned work. Corrections
+cover Android hosting/manual updates and release signing, pending Windows
+publisher signing and native macOS verification, conditional CI signing/local
+manifest assembly, the SPAKE2 exchange order, Linux hardware fallback and the
+remaining real-machine checklists. The privacy policy includes public relay
+fallback and public-IP lookups. Historical release/deployment evidence below
+is preserved. This documentation pass does not rebuild or publish clients;
+the release recorded in this handoff is **0.22.1 / 113 / 61367b6**. Subsequent
+meetings work and the latest publication are in the
+[October 21 handoff](DEVELOPMENT-2026-10-21.md).
+
 ## Published release: 0.22.1
 
 Published **0.22.1, build 113, commit 61367b6** at

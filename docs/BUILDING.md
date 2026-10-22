@@ -25,7 +25,7 @@ scripts/check.sh cargo build --workspace --locked
 scripts/check.sh                # unit + end-to-end session tests
 scripts/check.sh cargo clippy --workspace --all-targets --locked -- -D warnings
 scripts/check.sh cargo run -p slipstream         # the app
-scripts/try-local.sh            # one-machine trial: local server + host + viewer
+scripts/check.sh scripts/try-local.sh # one-machine trial: local server + host + viewer
 ```
 
 `SLIPSTREAM_HOME=/some/dir` gives an instance its own settings, identity and
@@ -49,6 +49,23 @@ Linux desktop file drops need X11/Xwayland: the app selects X11 for its
 windows when `DISPLAY` is available, including inside a Wayland session.
 Capture/input still selects the native Wayland portal from `WAYLAND_DISPLAY`.
 Native Wayland file drops are unavailable in [winit 0.30's feature matrix](https://docs.rs/crate/winit/0.30.13/source/FEATURES.md).
+
+### Native meeting and tab checks
+
+The native audit uses temporary profiles, a PHP fixture station, synthetic
+camera frames and Xvfb. It re-executes under `dbus-run-session` to isolate tray
+registrations and desktop portals. Xvfb alone still exposes the real desktop's
+D-Bus services; preserve the private-bus setup when adding fixtures. It requires
+Pillow, tesseract, Xvfb, xdotool, dbus-run-session and PHP CLI with sodium.
+Run the modes sequentially through the resource wrapper:
+
+```sh
+scripts/check.sh python3 scripts/test-meetings-ui.py --client target/debug/slipstream
+scripts/check.sh python3 scripts/test-meetings-ui.py --client target/debug/slipstream --tabs
+```
+
+The script prints a temporary evidence directory containing logs/screenshots.
+See the [latest handoff](DEVELOPMENT-2026-10-21.md) for completed release checks.
 
 ### Disk space
 
@@ -243,7 +260,7 @@ The isolated publication regression check uses generated keys and temporary
 files, without touching a real station:
 
 ```sh
-python3 scripts/test-publish-station-clients.py
+scripts/check.sh python3 scripts/test-publish-station-clients.py
 ```
 
 ### The macOS app
@@ -251,7 +268,7 @@ python3 scripts/test-publish-station-clients.py
 On a Mac with the Xcode command line tools, Rust and `brew install nasm`:
 
 ```sh
-SLIPSTREAM_UPDATE_KEYS=<release public key> scripts/build-macos.sh
+SLIPSTREAM_UPDATE_KEYS=PUBLIC_KEY scripts/check.sh scripts/build-macos.sh
 ```
 
 `target/release/slipstream-release pubkey` on the build machine prints the
@@ -263,18 +280,26 @@ a loop).
 
 ### Releases from CI (signed apps)
 
-`.github/workflows/release.yml` runs on a version tag (`git tag v0.6.0 &&
-git push --tags`). It builds Linux, Windows and macOS, has SignPath sign the
-Windows app, and publishes everything plus `release.json` as a draft GitHub
-release. Then, on the machine with the release key:
+The CI/release workflows are prepared but have not run; the repository has
+no GitHub remote configured. Current published clients are built locally.
+
+Once the repository is published, `.github/workflows/release.yml` is configured
+to run on a `v*` version tag. It builds Linux, Windows and macOS and publishes
+the artifacts plus `release.json` as a draft GitHub release. Windows signing
+is conditional on the SignPath configuration; without it the executable stays
+unsigned. The workflow does not assemble a station zip or build Android.
+On the machine with the release key, download all artifacts from the chosen
+tag into a directory, then assemble the station:
 
 ```sh
-gh release download v0.6.0 -D /tmp/rel
+gh release download vX.Y.Z -D /tmp/rel
 scripts/build-station.sh --from-release /tmp/rel
 ```
 
-That signs the update manifest and marks the signed apps, so the station
-serves them untouched. Before the first release, set the repository
+Assembly signs a new update manifest locally; CI does not receive the private
+update key or produce that manifest. Apps marked as code-signed in
+`release.json`, and Mac bundles, are served untouched by the station.
+Before the first CI release, set the repository
 variable `SLIPSTREAM_UPDATE_KEYS` to your release public key; the script
 refuses a release built with a different one. The SignPath variables are
 described at the top of the workflow, and the signing policy is in
@@ -283,11 +308,16 @@ described at the top of the workflow, and the signing policy is in
 ### Protocol changes
 
 `PROTOCOL_VERSION` in `crates/slipstream-core/src/proto.rs` must go up
-whenever a session message changes shape. Messages are `postcard`-encoded,
+whenever a session message changes shape. The current version is **6**.
+Messages are `postcard`-encoded,
 which has no optional fields: an added field breaks older peers. Hosts and
 viewers with different versions refuse each other with a "please update"
-message, so a protocol change means updating every app (the station does
-that for you).
+message, so a protocol change means updating both peers; desktop apps offer
+the station's update, while Android requires installing its new APK.
+
+An appended `StreamOpen`/`StreamReply` variant is an exception: an older peer
+rejects only that optional request stream. Existing variant layouts and
+discriminants must remain unchanged. See [ARCHITECTURE.md](ARCHITECTURE.md#session-protocol-alpn-slipstreamremote1-protocol_version-6).
 
 ## Testing the Windows build on Linux
 
@@ -296,14 +326,14 @@ the host side with the screenshot capture fallback:
 
 ```sh
 export WINEPREFIX=/tmp/slip-wine WINEDEBUG=-all
-wine target/x86_64-pc-windows-msvc/release/slipstream.exe host --password test1234
+scripts/check.sh wine target/x86_64-pc-windows-msvc/release/slipstream.exe host --password test1234
 ```
 
 Windows-only unit tests (for example the pointer drawing) run under Wine too:
 
 ```sh
 CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER=wine \
-  cargo xwin test --target x86_64-pc-windows-msvc -p slipstream-platform
+  scripts/check.sh cargo xwin test --target x86_64-pc-windows-msvc -p slipstream-platform
 ```
 
 Real DXGI capture, SmartScreen and input on the secure desktop need a real
@@ -345,7 +375,13 @@ create avd -n slipstream-test -k "system-images;android-36;google_apis;x86_64"
 -d pixel_7`) and run it headless:
 
 ```sh
-emulator -avd slipstream-test -no-window -no-audio -gpu swiftshader_indirect &
+scripts/check.sh emulator -avd slipstream-test -no-window -no-audio -gpu swiftshader_indirect
+```
+
+Keep the emulator in the foreground in its own terminal/tool session. In a
+second terminal, use lightweight inspection commands:
+
+```sh
 adb exec-out screencap -p > shot.png       # see the screen
 adb logcat -s Slipstream                   # the app's log
 ```
@@ -365,11 +401,18 @@ adb shell "run-as com.slipstreamremote.app sh -c 'cat > files/settings.toml'" < 
 Escape `&` when opening a link through `adb shell am start -d '…'`: the
 device's shell splits the command there otherwise.
 
-**Signing.** Until a release key is set up, the APK is signed with this
-computer's debug key (`~/.android/debug.keystore`). Android only installs
-an update signed with the same key as the installed app, so the release
-key has to exist (and be backed up, like the update key) before the first
-APK goes to users.
+**Signing.** Published APKs use the existing Android release key.
+`scripts/build-android.sh` creates it on first use at
+`~/.config/slipstream-release/android-release.p12` (or
+`$XDG_CONFIG_HOME/slipstream-release/android-release.p12`), with its password
+in the adjacent `.pass` file. `SLIPSTREAM_ANDROID_KEYSTORE` selects another
+path. Back up both files: Android accepts an update only when its signing
+certificate matches the installed app. `--debuggable` uses the debug key;
+a direct Gradle build without release-key configuration also falls back to
+the debug key. Verify a release with `apksigner verify --print-certs` and
+compare its certificate with the [published handoff](DEVELOPMENT-2026-10-21.md).
+Android updates are installed manually from the station and are outside the
+desktop update manifest.
 
 ## Repository layout
 

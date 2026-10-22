@@ -304,3 +304,24 @@ Build log: /tmp/slipstream-0232-release-build.log. Workspace test log:
 /tmp/slipstream-0232-tests.log. Final Cargo caches: 5.23 GiB development/test and
 30.76 GiB release, within the 12/32 GiB budgets. This later documentation commit
 does not change the packaged source/build identity.
+
+## Documentation closeout and next session
+
+Published clients remain **0.23.2 / build 123 / source 83e507b**. This documentation
+commit reconciles the overview, usage, architecture, build/signing/server guides
+and issue queue, including earlier documentation edits kept separate during the
+implementation. It changes no packaged binaries or deployed files.
+
+Start the next session with this handoff and [STATUS.md](STATUS.md). The latest
+requested fixes are implemented and published; continue from the user's next
+observations after installing the updated client. Useful checks in normal use
+are named microphone/camera selection, the Linux camera, screen thumbnails and
+explicit display selection, moving tabs between native groups and using + in
+each group. The tray report was traced to QA clients sharing the desktop bus;
+future native audits must retain the private D-Bus isolation.
+
+Physical 20-person meeting/uplink measurements, Windows-service call behavior,
+Android camera/audio and mixed-DPI native windows remain recorded follow-ups,
+alongside the older platform/device issue checklists. No new feature scope is
+selected for the next session. Existing test/release evidence above remains the
+basis for this documentation-only closeout; no build or publication is needed.

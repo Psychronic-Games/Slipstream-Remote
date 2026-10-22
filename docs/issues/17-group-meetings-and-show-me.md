@@ -154,6 +154,12 @@ Implemented for 0.23.0:
 - [x] Exercise 20 real transport participants with synthetic audio/video,
       lobby overflow, capacity, admission, chat, removal and organizer exit.
 
+Usability fixes through 0.23.2 add Live meeting/Chat/Participants/Devices views,
+named remembered inputs, explicit screen selection with local preview thumbnails,
+clear Cancel call versus Leave/End actions, admission wording and Linux camera
+endpoint/mode negotiation. The [handoff](../DEVELOPMENT-2026-10-21.md) records
+native audit, hardware probe and publication evidence.
+
 Remaining capacity/product follow-up:
 
 - Measure representative 20-person calls on physical machines and constrained

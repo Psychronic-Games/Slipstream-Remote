@@ -1,19 +1,32 @@
 ---
-title: Try privacy mode, copied files and port forwarding on real machines
+title: Verify session windows and support tools on real machines
 labels: [testing]
 ---
 
 ## Background
 
-Three session tools arrived together with protocol v5. Each has an
-end-to-end test (`crates/slipstream-session/src/lib.rs`), but the parts
-that touch the operating system can only be checked on real desktops.
-
-Updated 2026-10-18 for 0.17.1 (current protocol 6). The
-[development handoff](../DEVELOPMENT-2026-10-18.md) records isolated GUI and
-Android emulator evidence. The physical-machine checks below remain open.
+Current release: **0.23.2, protocol 6**. Local encrypted-session tests and
+isolated native Linux/Wine checks cover the implemented tools and windows.
+The [latest handoff](../DEVELOPMENT-2026-10-21.md) records that evidence and
+links earlier releases. The OS/device checks below remain open; run the
+current published build on both peers. Windows service elevation/identity
+checks are in issue 04, and phone hosting is in issue 09.
 
 ## Checklist
+
+Session windows and current UI:
+
+- [ ] On Windows, move tabs between root/floating groups, reorder and tear out
+      without reconnecting; close one member while another remains usable.
+      Try real mixed-DPI monitors and + in each group, including password prompts.
+- [ ] Verify Tabs / Separate windows persists for new links; reconnect returns
+      to the same workstation window with the selected screen/quality.
+- [ ] New Link finds private/shared devices, empty groups and recent links;
+      saved passwords and duplicate numeric IDs use the correct station.
+- [ ] Compact settings, group chooser and sign-in controls remain inside their
+      panels; long workstation/station names leave actions accessible.
+- [ ] Windows Files/receipts/scanner close without black remnants or unwanted
+      native captions; late video/tool repaints do not create placeholder windows.
 
 Copy and paste files:
 
@@ -73,6 +86,25 @@ Files and service-update recovery:
 - [ ] Confirm incoming service chat reaches the signed-in user's LCARS window
       and replies return, including after a host restart.
 
+Support reports, host status and network assistance:
+
+- [ ] Collect/review/copy/export a report; inventory, scan results and completed
+      diagnostics match the selected workstation. An optional screenshot appears
+      only when selected, in its own report folder with the report text.
+- [ ] Closing collection or losing the link cancels pending requests. Reopening
+      starts fresh work; an already-started local export finishes in its folder.
+- [ ] Show/clear host status on full and compact Windows hosts. Dismiss hides
+      the message while retaining the link; Stop ends only its session without
+      automatic recovery. Controls remain visible above the compact footer.
+- [ ] Connect through a discovered TCP service with Port forwarding enabled;
+      closing the scanner retains the tunnel, and ending the link closes it.
+- [ ] With explicit host Wake-on-LAN permission, send a wake packet through the
+      selected LAN adapter and confirm the intended sleeping device wakes.
+- [ ] Gateway/DNS/station diagnostics report bounded results on real networks,
+      including failed lookups and an explicitly entered comparison DNS server.
+- [ ] Disabled host permissions refuse the corresponding tools and preserve
+      the active session.
+
 ## Pointers
 
 - `crates/slipstream-platform/src/privacy.rs`, `generic.rs` (`BlockLocal`)
@@ -81,3 +113,6 @@ Files and service-update recovery:
 - `crates/slipstream-session/src/viewer.rs` (`paste_files`,
   `fetch_clipboard_files`)
 - `apps/slipstream/src/gui/mod.rs` (`raw_input_hook`: Ctrl+V)
+- `apps/slipstream/src/gui/session_tabs.rs`, `remote.rs` (window ownership)
+- `apps/slipstream/src/gui/support_report.rs`, `support_status.rs`
+- `crates/slipstream-session/src/support.rs`, `network.rs`

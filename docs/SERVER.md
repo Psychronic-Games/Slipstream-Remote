@@ -36,8 +36,9 @@ the whole setup step by step. This page is the reference.
   `mod_rewrite` + `mod_proxy_http` (2.4.47+) and `.htaccess` allowed. That's
   the default on Virtualmin, cPanel/WHM and most VPS setups.
 
-Without the last point everything except your own relay still works — apps
-then fall back to the free public relays. (See *Other web servers* below.)
+Without the last point the directory and download page still work. Relay-only
+connections need public fallback enabled by both the station and client, or a
+separately managed relay. (See *Other web servers* below.)
 
 ## Install
 
@@ -68,12 +69,16 @@ yet. Your settings and device list live in the data folder and are
 untouched. The full release checklist is in [BUILDING.md](BUILDING.md).
 
 `clients/manifest.json` (written by the build script) records the version,
-build number, checksums and release signatures. Apps check your station about 20 seconds after
+build number, checksums and release signatures. Desktop apps check your station about 20 seconds after
 they start and every 6 hours; when a newer build is there they offer
 **Install & restart**. The update is downloaded from your station
 (preconfigured, like the download page), checked against the release key
 built into the app, swapped in, and the app restarts — keeping its settings, ID and passwords.
 Headless machines can run `slipstream update`.
+
+Android APKs use their own release certificate and are outside the desktop
+update manifest. Users install the newer APK from the station over the existing
+app; Android self-update is not implemented.
 
 The release key stays on the machine that builds the package. Someone who
 breaks into the web server can't push their own app as an update: the apps
@@ -104,6 +109,22 @@ your site's own user on a private local port, restarts it automatically if
 it stops (e.g. after a reboot, the next app check-in revives it), and
 `.htaccess` forwards `/relay` to it. Start, stop and its log are on the
 admin page.
+
+## Meetings
+
+Private-station meeting guests need the scoped relay-lease support introduced
+in 0.23.0. Upgrade both the station API and managed relay binary, then restart
+the relay when upgrading a pre-meetings station. A client-only update does not
+add this server support. The production station received that runtime upgrade
+with 0.23.0; 0.23.1 and 0.23.2 were client-only publications.
+
+The authenticated `meeting_relay` operation issues expiring relay-only guest
+credentials. These do not authorize directory/account access and keep the
+station-wide access key out of invitations. Admission remains the organizer's
+responsibility. Media is forwarded by the organizer's client; the station
+provides directory/relay services rather than a meeting media server. See
+[meeting usage](MEETINGS.md) and the
+[deployment handoff](DEVELOPMENT-2026-10-21.md) for limits and rollback details.
 
 ## Access control
 

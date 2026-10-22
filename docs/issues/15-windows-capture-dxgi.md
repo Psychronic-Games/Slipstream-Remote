@@ -1,23 +1,24 @@
 ---
-title: "Windows: capture straight from DXGI (fewer full-frame copies)"
+title: "Windows: measure direct DXGI capture on real hardware"
 labels: [platform:windows, performance]
 ---
 
 ## Background
 
-Windows capture goes through xcap's DXGI recorder. Each frame:
+Before 0.7.1, Windows capture went through xcap's DXGI recorder. Each frame:
 
-- creates a new staging texture,
-- copies to it and maps it at once (a CPU/GPU stall),
-- copies it row by row into a `Vec`,
-- clones that `Vec`,
-- swaps BGRA → RGBA in scalar code.
+- created a new staging texture,
+- copied to it and mapped it at once (a CPU/GPU stall),
+- copied it row by row into a `Vec`,
+- cloned that `Vec`,
+- swapped BGRA → RGBA in scalar code.
 
-Then `generic.rs` copies it once more to draw the pointer. That is about
+Then `generic.rs` copied it once more to draw the pointer. That was about
 four full-frame copies plus a swizzle: roughly 60 MB per frame at 1440p and
-130 MB at 4K. It likely keeps 4K below 60 fps on Windows. Under Wine the
-recorder isn't available, so this path can only be measured on real
-Windows.
+130 MB at 4K. Direct duplication replaced that path in 0.7.1. The remaining
+work is measuring current capture/encoding on real Windows hardware and
+deciding from those measurements whether dirty-rectangle copies are useful.
+Wine does not exercise real DXGI duplication.
 
 ## Progress
 

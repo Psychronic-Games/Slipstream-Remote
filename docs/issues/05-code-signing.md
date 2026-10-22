@@ -5,62 +5,48 @@ labels: [platform:windows, platform:macos, infra, priority:high]
 
 ## Background
 
-Unsigned downloads hit three separate barriers:
+As of 0.23.2, desktop updates have Ed25519 release signatures and Android
+APKs use the established Android release certificate. Windows publisher
+signing and macOS Developer ID signing/notarisation remain pending. These
+are separate from the signed desktop update manifest.
 
-- **The browser.** Chrome and Edge rate downloads by how common the file
-  and its signer are. A station appends its config trailer
-  (`[json][u32 len]SLIPCFG1`) to every download, so **every download is a
-  file nobody has seen before** and always counts as "uncommon". Signing
-  alone doesn't fix that while each copy differs.
-- **SmartScreen** on Windows: "Windows protected your PC". Its reputation
-  attaches to the signing identity and to the file hash. Microsoft says no
-  certificate (not even EV, not Azure Artifact Signing) gives instant
-  trust any more; reputation builds over consecutive signed releases.
-- **Gatekeeper** on macOS: an app that isn't Developer ID signed *and*
-  notarised is blocked. Users must go to *System Settings → Privacy &
-  Security → Open Anyway* (the right-click → Open shortcut is reportedly
-  gone in recent macOS). Ad-hoc signed apps are also expected to lose their
-  Screen Recording and Accessibility permissions whenever the binary
-  changes, so every self-update would need someone at the Mac. That makes
-  unattended Mac access impractical without proper signing.
+The Windows executable is not Authenticode-signed and may trigger download
+or SmartScreen warnings. Unsigned Linux/Windows downloads carry a station
+config trailer, so their complete file hash varies by station. Files marked
+as code-signed, Mac bundles and Android APKs are served unchanged.
 
-Self-updates are not affected: the app downloads them itself, so they
-carry no Mark-of-the-Web or quarantine flag. Only the first install meets
-these warnings.
+macOS packaging currently uses ad-hoc signing. The intended first-install
+workaround is *System Settings → Privacy & Security → Open Anyway*;
+permission retention after updates and native install behavior still need
+the real-Mac checks in issue 03. Publisher signing does not by itself
+guarantee that browsers or operating systems will trust a download.
 
-## Proposed design
+## Prepared release design
 
-1. **One identical, signed file per platform and release**, for every
-   station. Hash reputation then builds globally instead of starting from
-   zero on every download.
-2. The station config travels **outside** the binary:
+1. **An unchanged publisher-signed executable or bundle per release**,
+   shared by stations once publisher signing is configured.
+2. Station config travels **outside** files served unchanged:
    - *Zero clicks:* the app reads where it was downloaded from (Windows:
      the `Zone.Identifier` stream's `HostUrl`; macOS: the
      `kMDItemWhereFroms` attribute). That URL is the station's
      `download.php?os=…&c=<setup code>`. The app redeems the code at
      the station for the address, access key and name.
-   - *One click:* the download page's step 2 is a *Connect this app to
+   - *One click on supported platforms:* the download page's step 2 is a *Connect this app to
      Acme IT* button, a `slipstream://link?...` URL that the app registers
-     on first start.
+     on first start. macOS URL delivery remains unimplemented; setup codes
+     are the fallback there.
    - *By hand:* type the station address and a short setup code.
-3. Releases are built and signed in CI (GitHub Actions; macOS needs a Mac
-   runner anyway). `build-station.sh` assembles a station from a release
-   instead of compiling, and copies its pre-signed `manifest.json`: the
-   update signature covers platform, version, build, size and hash, none
-   of which depend on the station.
-
-## Signing options
-
-| | Cost | Notes |
-|---|---|---|
-| SignPath Foundation | free | Open-source projects with a public repo, builds from CI, and a published signing policy. The publisher shown is "SignPath Foundation". |
-| Azure Artifact Signing | about $10/month | Individuals in the USA and Canada; organisations in the USA, Canada, EU and UK. Needs a paid Azure subscription and identity validation. |
-| OV certificate | about $150–300/year | Needs a hardware token or cloud HSM. |
-| Apple Developer Program | $99/year | Required for Developer ID signing and notarisation. No free route. |
+3. The prepared GitHub Actions workflow builds Linux, Windows and macOS
+   artifacts plus `release.json`. Its Windows SignPath step is conditional
+   on configuration. CI has not run. `build-station.sh --from-release DIR`
+   assembles downloaded artifacts and **creates/signs the update manifest
+   locally**; the private update key stays out of CI and off the station.
 
 ## Decided
 
-Windows: **SignPath** (free). Apple Developer Program: **not yet**.
+Windows: pursue **SignPath Foundation**; application/acceptance and workflow
+credentials are pending. Apple Developer Program enrollment and notarisation
+are also pending. See the [current signing policy](../CODE-SIGNING.md).
 
 ## Tasks
 
@@ -71,12 +57,14 @@ Windows: **SignPath** (free). Apple Developer Program: **not yet**.
       and the Mac zip served untouched; the trailer kept for unsigned builds.
 - [x] Release workflow (`.github/workflows/release.yml`) with the SignPath
       step, and `build-station.sh --from-release`.
-- [x] Signing policy page (`docs/CODE-SIGNING.md`): fill in the GitHub
-      username.
+- [x] Draft the signing policy page (`docs/CODE-SIGNING.md`).
+- [ ] Name the actual GitHub reviewers and signing approvers in the policy
+      before applying/submitting a signing request.
 - [ ] Make the repository public; apply at signpath.org; set the
       repository variables and secret listed in `release.yml`.
-- [ ] First tagged release; confirm the signed .exe and that SmartScreen
-      reputation builds over a few releases.
+- [ ] First CI-tagged release with signing configured: verify the Windows
+      publisher signature, unchanged station download bytes, station linking
+      and update signatures. Record browser/SmartScreen behavior on real Windows.
 - [ ] macOS: Developer ID signing, notarisation and stapling in the
       workflow, once the Apple membership is there.
 

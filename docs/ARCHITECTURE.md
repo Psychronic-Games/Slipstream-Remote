@@ -80,14 +80,17 @@ from their download (`slipstream_core::provision`):
 
 ## Authentication
 
-The directory server is *not* trusted. A viewer types an ID + password; the
-password never leaves the machine:
+Remote-session authentication does not trust the directory server. A viewer
+types an ID and remote-session password; that password is proved through
+SPAKE2 without sending it to the host or directory:
 
-1. Viewer → Host: `Hello` + SPAKE2 message A, bound to (viewer EndpointId,
-   host EndpointId as resolved).
-2. Host → Viewer: one SPAKE2 message B per accepted password (temporary
-   one-time password and, optionally, the permanent unattended password).
-3. Viewer → Host: HMAC key confirmations for each B.
+1. Viewer → Host: `Hello` with protocol version and viewer name.
+2. Host → Viewer: `AuthChallenge` with one SPAKE2 side-A message per accepted
+   password (temporary one-time password and, optionally, the permanent
+   unattended password), bound to the host and viewer EndpointIds.
+3. Viewer → Host: `AuthResponse` with a SPAKE2 side-B message and a
+   domain-separated key confirmation for each challenge, using the host
+   EndpointId resolved by the viewer and its own EndpointId.
 4. Host → Viewer: `AuthOk` + host confirmation (mutual authentication).
 
 Registrations are signed, so nobody else can claim or move a device's ID.
@@ -395,7 +398,7 @@ existing active-console-session backend and require no portal approval.
 | Linux (X11) | MIT-SHM (GetImage fallback) via pure-Rust `x11rb`, RandR monitors, pointer composited from XFixes | XTest via `enigo` |
 | Windows | DXGI Desktop Duplication of our own (`win_dxgi.rs`, one copy per frame, created per session); under the service, DXGI on the normal desktop and a reusable GDI capturer (`win_gdi.rs`) on the login screen and UAC's secure desktop. Pointer composited by us (`win_cursor.rs`) | `SendInput` via `enigo` |
 | macOS | ScreenCaptureKit via `xcap` | CGEvent via `enigo` |
-| Android (planned, issue 09) | MediaProjection | AccessibilityService |
+| Android (implemented; emulator-tested, issue 09) | MediaProjection + bounded ImageReader frames, software H.264 | AccessibilityService with active full-display sharing and explicit enablement |
 
 Keyboard events travel as physical key codes (W3C `code` names) and are
 mapped to evdev / Windows scancodes / macOS keycodes on the host.
@@ -530,8 +533,9 @@ plus the tray app if it's on.
   machine profile (`%ProgramData%\Slipstream Remote`, SYSTEM and
   administrators only). It writes a fresh file and renames it in, and
   checks the copy matches. The ID therefore stays the app's.
-  `Store::identity` only ever creates a key when none exists: an
-  unreadable one is retried and then an error, never replaced.
+  `Store::identity` creates a key when none exists, or when recorded hardware
+  evidence proves a clone/change as described below. An unreadable key is
+  retried and then an error, never replaced just because reading failed.
 * **Permissions.** The profile's ACL is set on the folder alone, and
   everything inside is reset to inherit it (`icacls … /reset`); the service
   repeats that repair at every start. An `icacls /T` grant used to leave
@@ -568,8 +572,9 @@ plus the tray app if it's on.
   compromised station can't push its own build. Apps ask with
   `update_check` 20 s after start and every 6 h, and only offer a newer
   build whose signature checks out. They download through `download.php`
-  (which appends the station trailer; the trailer only holds station
-  settings, not code), hash the signed app prefix incrementally, validate the
+  (which appends a station trailer to unsigned desktop executables and
+  preserves code-signed files and Mac bundles unchanged), hash the signed app
+  prefix incrementally, validate the
   bounded trailer and clean stream end with response/idle deadlines, and
   swap themselves in: rename over on Unix,
   move the running `.exe` aside on Windows. Then they restart with
@@ -583,28 +588,50 @@ plus the tray app if it's on.
   window to its icon). Autostart uses XDG autostart, the Windows `Run` key,
   or a macOS LaunchAgent.
 
+## Meetings and calls
+
+Meetings use separate version-1 ALPNs and endpoint-bound membership; remote
+support stays on protocol 6. The organizer admits guests and forwards selected
+encoded H.264/Opus sources with bounded queues. Pending guests receive no room
+content. Private stations issue scoped, expiring relay-only guest leases through
+`meeting_relay`; invitations never contain station access keys. Call offers
+prove station access and bind both endpoints to a one-use invitation. Windows
+service signaling crosses the authenticated local bridge while the interactive
+app owns microphone, camera and speaker output.
+
+`crates/slipstream-session/src/meetings/` owns room/call/media lifecycles;
+`crates/slipstream-core/src/meeting.rs` defines shared types. Device selection
+is remembered. Screen thumbnails use a bounded local worker, one capture at a
+time; closing the chooser cancels it. Only explicit screen confirmation starts
+a meeting publisher. Android Show me uses Camera2 independently of remote-screen
+capture and accessibility. See [usage and limits](MEETINGS.md) and the
+[October 21 handoff](DEVELOPMENT-2026-10-21.md) for verification and deployment.
+
 ## UI
 
 The [desktop session preview](screenshots/session-0.19.0.png) shows the
 workstation in the title bar and the performance/quality controls together.
 
 Outgoing sessions are shared `Arc<Mutex<RemoteTab>>` objects owned by the
-console. A session may render in the root or a deferred native viewport with
-a stable ID derived from its tab ID. Moving it changes the presentation, not
-the connection or GPU stream ID. Deferred callbacks send lifecycle actions
-back to the root; the root polls sessions/reconnects and registers session,
+console. A session belongs to the root tab group or a floating group rendered
+in a deferred native viewport. Moving a tab between groups changes the
+presentation, not the connection or GPU stream ID. Deferred callbacks send
+lifecycle actions back to the root; the root polls sessions/reconnects and registers session,
 Files and Network Scan windows even while hidden. Each session queues its
-own captured keys and consumes them in its own viewport, so full-screen
-commands and shortcuts target the right window. Focus changes release other
-sessions; unfocused tool repaints do not. Ending a link explicitly disconnects
+own captured keys; only the selected tab in a group consumes remote input,
+so full-screen commands and shortcuts target the right session. Focus changes
+release other sessions; unfocused tool repaints do not. Ending a link explicitly disconnects
 it before dropping shared callbacks, and texture retention includes detached
 sessions. Manual reconnect now uses the same retained-session recovery path.
 
 `gui/session_tabs.rs` adds a shared tab strip and drag coordinator. Root tabs
-snapshot attached sessions; floating sessions show a draggable single tab.
+snapshot attached sessions; each floating group has its own selectable strip.
 Drops queue placement actions so session locks are released before reordering,
-docking or creating a viewport. Targets and pointer positions use physical
-screen pixels across viewport scale factors. During a tab drag only, Windows
+merging groups or creating a viewport. Closing the last member or moving it
+away releases an empty floating window. New-link actions and password prompts
+carry their source viewport into the connection attempt; + adds to that group
+regardless of the global separate-windows preference. Targets and pointer
+positions use physical screen pixels across viewport scale factors. During a tab drag only, Windows
 and X11 sample the native pointer and synthesize missing pointer-up events:
 winit can drop them after CursorLeft. The destination may also accept release
 locally when a compositor withholds global positions. Hidden/minimized root
@@ -642,7 +669,9 @@ native compact window (`gui/lite.rs`) after a crash. The
 host-side chat is a separate native window (an egui *deferred* viewport;
 immediate viewports don't map on KDE Wayland).
 
-egui also targets Android, so the same UI can ship on mobile later.
+Android already uses the shared egui interface, with phone layouts, touch
+controls and a Java activity for keyboard/insets and sharing consent. Desktop
+tool layouts and viewer keyboard behavior still need phone-specific work.
 
 ### Desktop session frame
 
@@ -714,9 +743,15 @@ CLI hosts record only a generic status event, not the potentially sensitive text
 Store::identity reads firmware evidence once per process. Windows uses the
 bounded RawSMBIOSData API ([Microsoft documentation](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemfirmwaretable));
 SMBIOS 2.6+ UUID bytes are normalized to canonical order. Linux/macOS use their
-firmware UUID and serial sources. Only context-separated hashes are persisted
+firmware UUID and serial sources. Linux also records permanent built-in PCI
+network-adapter evidence for a fallback when firmware is unreadable; virtual,
+randomized, user-assigned and removable USB addresses are excluded. Learning
+the fallback preserves an existing identity. Firmware comparisons take priority;
+adapter additions/removals preserve identity while a known adapter remains.
+Only context-separated hashes are persisted
 in device-binding.json. An exclusive OS file lock serializes binding/identity
-updates across processes. UUID comparison takes priority; serial is a fallback.
+updates across processes. UUID comparison takes priority; serial and then
+Linux adapter evidence provide fallbacks.
 A proven change creates a fresh random key, clears cached/public IDs and saves
 the new binding after configuration cleanup. Missing evidence and damaged or
 unknown binding metadata never silently replace the key. Client startup binds
