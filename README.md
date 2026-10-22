@@ -157,7 +157,7 @@ Build dependencies, cross-compiling and the release checklist are in
 | [Architecture](docs/ARCHITECTURE.md) | Networking, authentication, protocol, platform backends |
 | [Status](docs/STATUS.md) | What's verified, known gaps, next steps |
 | [Meetings and Show me](docs/MEETINGS.md) | Calls, admission, devices, screen previews and mobile camera sharing |
-| [2026-10-21 handoff](docs/DEVELOPMENT-2026-10-21.md) | Published 0.23.2, verification, rollback and next-session starting point |
+| [Latest development handoff](docs/DEVELOPMENT-2026-10-21.md) | Published 0.24.0, verification, rollback and next-session starting point |
 | [2026-10-20 handoff](docs/DEVELOPMENT-2026-10-20.md) | Earlier 0.22.1 publication and verification |
 | [2026-10-19 handoff](docs/DEVELOPMENT-2026-10-19.md) | Support features, audit and remaining device checks |
 | [2026-10-18 handoff](docs/DEVELOPMENT-2026-10-18.md) | Earlier features, verification and deployment history |

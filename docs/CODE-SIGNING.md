@@ -1,6 +1,6 @@
 # Code signing policy
 
-*Current status: 2026-10-21, published release 0.23.2.*
+*Current status: 2026-10-22, published release 0.24.0.*
 
 Desktop update signing is active. Windows publisher signing through
 [SignPath](https://signpath.org/) is planned; the repository has no GitHub
@@ -22,6 +22,28 @@ storage and backup instructions. A plain Cargo build without configured update
 public keys cannot install signed updates.
 
 ## Planned Windows publisher signing
+
+### SmartScreen and signing routes
+
+The desktop update manifest authenticates Slipstream releases to the app; Windows
+uses Authenticode publisher signatures and its own download reputation. Sign each
+Windows release with a consistent publisher identity and serve the signed bytes
+unchanged. Signing reduces warnings over time but does not guarantee that a new
+download starts without a prompt. EV certificates no longer provide an immediate
+SmartScreen bypass. See [Microsoft's SmartScreen guidance](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
+
+Microsoft recommends Artifact Signing for direct distribution outside the Store;
+its published starting price is about $9.99/month and it requires identity
+validation. Microsoft Store MSIX distribution provides another route, with
+Store-managed signing. Neither route is configured for Slipstream. See
+[Microsoft's signing options](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options).
+
+The existing workflow prepares SignPath integration, but acceptance is pending.
+The Foundation offers free signing to qualifying open-source projects; its
+[terms](https://signpath.org/terms) restrict security diagnosis/port-scanning
+tools. Slipstream's network scanner therefore needs an eligibility review before
+assuming the free Foundation certificate is available. No provider enrollment,
+payment or public repository publication has been performed.
 
 The intended policy is to submit only artifacts built by this repository's
 GitHub Actions release workflow from reviewed source on `main`. The workflow

@@ -239,8 +239,10 @@ Typing on the remote computer from the phone's keyboard is next.
 
 To let a computer see the phone, tap **Start sharing**, approve Android's
 screen-sharing prompt and give the viewer the phone's ID and password.
-Enable Slipstream's accessibility service through the app's setup controls
-to allow remote input. On Android 13+, sideloaded apps may first need
+After linking the station, **Bridge → This device → Enable remote control**
+opens Android Accessibility settings while remote input is disabled. The nearby
+**App info** button opens Slipstream's own Android settings, where **Permissions**
+manages its app permissions. On Android 13+, sideloaded apps may first need
 **App info → ⋮ → Allow restricted settings**. Input also requires active
 full-display sharing; partial-app capture is view-only.
 

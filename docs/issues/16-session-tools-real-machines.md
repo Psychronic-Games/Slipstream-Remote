@@ -5,7 +5,7 @@ labels: [testing]
 
 ## Background
 
-Current release: **0.23.2, protocol 6**. Local encrypted-session tests and
+Current release: **0.24.0, protocol 6**. Local encrypted-session tests and
 isolated native Linux/Wine checks cover the implemented tools and windows.
 The [latest handoff](../DEVELOPMENT-2026-10-21.md) records that evidence and
 links earlier releases. The OS/device checks below remain open; run the

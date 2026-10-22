@@ -5,7 +5,7 @@ labels: [platform:windows, platform:macos, infra, priority:high]
 
 ## Background
 
-As of 0.23.2, desktop updates have Ed25519 release signatures and Android
+As of 0.24.0, desktop updates have Ed25519 release signatures and Android
 APKs use the established Android release certificate. Windows publisher
 signing and macOS Developer ID signing/notarisation remain pending. These
 are separate from the signed desktop update manifest.
@@ -48,6 +48,12 @@ Windows: pursue **SignPath Foundation**; application/acceptance and workflow
 credentials are pending. Apple Developer Program enrollment and notarisation
 are also pending. See the [current signing policy](../CODE-SIGNING.md).
 
+The October 22 review records Microsoft Artifact Signing as an alternative for
+direct downloads, and the Foundation's scanner-related eligibility restriction.
+Confirm eligibility before relying on free SignPath signing; no change of
+provider or enrollment is selected. Publisher signing builds reputation over
+time; EV certificates do not guarantee an immediate SmartScreen exemption.
+
 ## Tasks
 
 - [x] App: read the download origin, redeem setup codes, register
@@ -60,6 +66,8 @@ are also pending. See the [current signing policy](../CODE-SIGNING.md).
 - [x] Draft the signing policy page (`docs/CODE-SIGNING.md`).
 - [ ] Name the actual GitHub reviewers and signing approvers in the policy
       before applying/submitting a signing request.
+- [ ] Confirm SignPath Foundation eligibility for the network scanner, or
+      select another publisher-signing provider and complete its validation.
 - [ ] Make the repository public; apply at signpath.org; set the
       repository variables and secret listed in `release.yml`.
 - [ ] First CI-tagged release with signing configured: verify the Windows

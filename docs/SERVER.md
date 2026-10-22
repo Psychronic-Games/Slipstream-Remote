@@ -116,7 +116,7 @@ Private-station meeting guests need the scoped relay-lease support introduced
 in 0.23.0. Upgrade both the station API and managed relay binary, then restart
 the relay when upgrading a pre-meetings station. A client-only update does not
 add this server support. The production station received that runtime upgrade
-with 0.23.0; 0.23.1 and 0.23.2 were client-only publications.
+with 0.23.0; 0.23.1, 0.23.2 and 0.24.0 were client-only publications.
 
 The authenticated `meeting_relay` operation issues expiring relay-only guest
 credentials. These do not authorize directory/account access and keep the

@@ -325,3 +325,85 @@ Android camera/audio and mixed-DPI native windows remain recorded follow-ups,
 alongside the older platform/device issue checklists. No new feature scope is
 selected for the next session. Existing test/release evidence above remains the
 basis for this documentation-only closeout; no build or publication is needed.
+
+## 0.24.0 publication — 2026-10-22
+
+Published **0.24.0 / build 127 / source 49b60e7** to
+https://relay.slipstreamremote.com. Implementation is 69a63a8; the release
+commit changes version/lockfile/changelog metadata. Later documentation commits
+do not change packaged identity. This is a clients-only publication: station
+PHP, relay runtime, configuration, accounts and device identities were unchanged.
+
+The user's CachyOS autostart entry still referenced a deleted Desktop download.
+It now points to `/home/doug/Slipstream Remote/Slipstream Remote - Section 31 - Tech`
+with `--minimized`; its original is backed up under
+/tmp/slipstream-autostart-repair-yjvhkwxm. Desktop-file validation and command
+argument parsing pass. Actual startup at the next desktop login remains to check.
+The new app refreshes enabled Linux autostart entries after a move/rename, skips
+side profiles, respects desktop-disabled entries and refreshes the command on
+Config save. Hidden startup already requires a working tray icon; without one,
+the window remains visible.
+
+Bridge's Saved devices now has case-insensitive, multiword search across
+private/shared lists and stations, matching names, IDs, groups and stations.
+Matching groups open during search; Clear restores the list. The New link picker
+shares this filtering. Native verification caught loss of text focus when Clear
+first appeared; a stable field ID fixes continued typing.
+
+The full release check initially exposed a pre-existing video teardown race:
+a writer waiting for an encoder with no frame credit could miss peer
+STOP_SENDING. The regression now consumes the only permitted frame without
+acknowledging it before cancelling. That reproduces the failure consistently;
+watching stream cancellation alongside the encoder queue fixes it without a
+protocol change.
+
+Verification:
+
+- Workspace tests: **165 passed, five existing ignored**, using
+  `cargo test --workspace --locked -- --test-threads=2` through scripts/check.sh.
+  Strict Linux workspace/all-target, Windows desktop/all-target and arm64 Android
+  Clippy passed. Logs: /tmp/slipstream-0240-tests.log and
+  /tmp/slipstream-0240-{linux,windows,android}-clippy.log.
+- Linux, Windows and arm64 Android release builds passed through the bounded
+  wrapper. Log: /tmp/slipstream-0240-release-build.log. Both Linux ELF programs
+  reference at most glibc 2.30, with no GLIBC_ABI_DT_RELR requirement. Linux CLI
+  reports the expected version/build/commit. Windows file version is 0.24.0.127;
+  embedded Mesa and delay-loaded optional Media Foundation components verify.
+- Desktop update signatures/hashes and embedded trust keys match the unchanged
+  release key. Android is non-debuggable, arm64, versionName 0.24.0 / versionCode
+  127, with unchanged capture permissions and certificate
+  d6ae3771378e9c00a82902e728012992834b9bf7e234fefed80dc85a4b879c6c.
+  Package checks: /tmp/slipstream-0240-package-check.log.
+- The packaged Linux client passed isolated Xvfb/private-D-Bus search checks:
+  mixed-case name/station, shared ID/station with duplicate IDs on other stations,
+  revealing a collapsed group, empty results and Clear. Evidence:
+  /tmp/slipstream-saved-search-7ah53ues; log:
+  /tmp/slipstream-0240-search-audit.log. Fixture clients and Xvfb were stopped.
+  The earlier 0.23.2 meeting/camera/tab-group checks were not rerun in this release.
+
+Publication required **0.23.2 / 123 / 83e507b**, verified staging/replacements,
+preserved owner/modes and published the manifest last. Private rollback backup:
+/home/doug/WebServer/home/relay/tmp/slipstream-rollback-0.23.2-to-0.24.0-xbjh3qjw.
+Restore verified backup client files with preserved deployed ownership/modes and
+the old manifest last if rollback is needed. Keep the backup.
+
+Authenticated live Linux/Windows update offers and full HTTPS downloads for
+Linux, Windows and Android passed; desktop provisioning trailers match the
+station, and signed APK bytes remain unchanged. Publication/live logs:
+/tmp/slipstream-0240-publication.log and /tmp/slipstream-0240-live-check.log.
+Final cache sizes: **10.12 GiB development/test / 31.12 GiB release**, within
+12/32 GiB limits. Only the two newest generated Android release APKs are retained.
+
+The user also asked about Android permission shortcuts and Windows warnings.
+Android already has Enable remote control (Accessibility) and App info (the
+app's own Android settings) on Bridge after linking the station, while remote
+control is disabled. No new Android permission code was needed. The usage guide
+now makes these entry points explicit. Publisher signing remains unconfigured:
+review Microsoft Artifact Signing or SignPath eligibility, particularly the
+Foundation's port-scanning restriction. The signing policy records current
+Microsoft guidance that EV does not automatically bypass SmartScreen.
+
+Install desktop updates via About → Check for updates → Install & restart;
+install the new station APK on Android. Publication does not replace the running
+client. Continue from the user's normal-use observations, including the next
+Linux login; physical-device follow-ups in STATUS.md remain open.

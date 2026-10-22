@@ -1,6 +1,6 @@
 # Open issues
 
-The work queue, reviewed 2026-10-21 against published **0.23.2, build 123**. Each
+The work queue, reviewed 2026-10-22 against published **0.24.0, build 127**. Each
 file is one issue: background, tasks or a test checklist, a "done when" where
 it applies, and pointers into the code.
 Once the repository is on GitHub, `scripts/file-issues.sh` files them all as

@@ -1,13 +1,23 @@
 # Project status
 
-*Updated 2026-10-21; latest published release 0.23.2.
+*Updated 2026-10-22; latest published release 0.24.0.
 Read this first when picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-21.md)
-records **0.23.2, build 123, source commit 83e507b**, published on
+records **0.24.0, build 127, source commit 49b60e7**, published on
 https://relay.slipstreamremote.com with verified live update offers and full
 Linux/Windows/Android downloads. Later documentation commits do not change
 the packaged build identity.
+
+0.24.0 repairs enabled Linux autostart entries after an executable is moved or
+renamed. The reported CachyOS entry pointed to a deleted Desktop download;
+the workstation entry now points to the current app with `--minimized`. New
+normal launches refresh enabled entries, preserve desktop-disabled entries and
+skip side profiles. A real next-login check remains open. Bridge's Saved devices
+now searches name, ID, group and station across private/shared lists; matching
+groups open during filtering. New link uses the same filtering. Release checks
+also exposed and fixed video cancellation being missed while frame credit was
+exhausted; the strengthened regression fails before the fix and passes after it.
 
 [Group meetings and Android Show me](MEETINGS.md) are implemented, with a
 20-person default and configurable capacity up to 32. An organizer's client
@@ -24,17 +34,19 @@ floating groups, reorder or tear them out without reconnecting. Each window's
 native QA clients inheriting the desktop D-Bus session; the audit now isolates
 both D-Bus and Xvfb. Linux tray destruction explicitly shuts down its service.
 
-Latest verification: **161 workspace tests passed, five ignored**; strict Linux
-workspace/all-target Clippy passed. Linux, Windows and Android release builds,
-artifact signatures/hashes and live publication checks passed. Isolated native
-meeting and three-client tab-group audits passed. A local C920 probe captured
-and discarded valid frames. Physical 20-person load, Windows-service calls,
-Android camera/audio and mixed-DPI window behavior remain follow-ups; the
+Latest verification: **165 workspace tests passed, five ignored**, with two
+test cases at a time; strict Linux workspace/all-target, Windows desktop/all-target
+and arm64 Android Clippy passed. Linux, Windows and Android release builds,
+artifact signatures/hashes and live publication checks passed. An isolated native
+check of the packaged Linux app passed name/station and shared-ID searches,
+collapsed-group discovery, empty results and Clear. The meeting/tab-group audits
+and C920 probe recorded below are from 0.23.2. Physical 20-person load,
+Windows-service calls, Android camera/audio and mixed-DPI window behavior remain follow-ups; the
 synthetic room test does not establish full-camera capacity on real uplinks.
 
 Build/check scripts trim caches automatically at 12 GiB development/test and
 32 GiB release, with incremental caching off and two generated Android package
-versions per variant. Latest recorded sizes are **5.23 / 30.76 GiB**. Use
+versions per variant. Latest recorded sizes are **10.12 / 31.12 GiB**. Use
 `scripts/check.sh` for substantial checks. Rollback paths, verification limits
 and the next-session starting point are in the latest handoff. Earlier
 support-tool scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).
@@ -357,8 +369,8 @@ The verification table below also records earlier releases.
 | Android viewer and host | ⚠️ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; real phones still need confirmation. Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
-The latest recorded workspace run passed **161 tests, with five ignored**
-(0.23.2). Unit tests and in-process sessions cover video and input, files,
+The latest recorded workspace run passed **165 tests, with five ignored**
+(0.24.0). Unit tests and in-process sessions cover video and input, files,
 chat, clipboard text and files, sound and port forwarding. Use
 `scripts/check.sh` to rerun the workspace suite.
 
@@ -418,8 +430,9 @@ implemented and emulator-tested, alongside the touch viewer. Remaining work
 includes real-phone checks, viewer keyboard polish, hardware encoding and
 host audio/clipboard/files/updates. The steps below carry on alongside it.
 
-1. **Continue from published 0.23.2 and the user's next observations**: today's
-   camera, screen-preview, call controls and grouped-window fixes are complete.
+1. **Continue from published 0.24.0 and the user's next observations**: verify
+   Linux autostart at the next login and use the new Saved devices search.
+   The earlier camera, screen-preview, call controls and grouped-window fixes are complete.
    Check the updated client on the user's normal setup; retain real-machine
    meeting/load and mixed-DPI follow-ups in issues 17 and 16. Publication and
    signed HTTPS checks are complete. Confirm automatic device recognition
