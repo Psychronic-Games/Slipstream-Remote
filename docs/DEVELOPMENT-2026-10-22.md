@@ -1,6 +1,79 @@
 # Development handoff — 2026-10-22
 
-## Latest publication — 0.26.1
+## Latest publication — 0.26.2
+
+Published **0.26.2 / build 143 / source 687ed6d** to both
+https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
+Later documentation commits do not change packaged build identity.
+
+Partner ID and Password now share the same 22-point font for hints and values,
+field width, height and centered alignment. Native border-line measurements
+changed from 48/42 pixels to matching 35 pixels. Shared `theme::text_input`
+and `text_area` apply their compact chrome directly to TextEdit, avoiding
+separately padded frames and making the inset clickable. Settings, saved-device
+search/editing, station login, New Link, network tools, tunnels, meetings,
+reports, chat and file locations use these helpers. Single-line Android inputs
+and action buttons retain a 40-point minimum; multiline inputs retain their row
+counts and top alignment. Ordinary actions use 6-point rounded rectangles and
+less horizontal padding. Icon navigation/transfer caps, title controls and
+console framing keep their larger curves; compact Windows actions also use
+6-pixel corners.
+
+Strict Linux workspace/all-target, Windows desktop/all-target and arm64 Android
+Clippy pass. Native checks verify station defaults, separate per-station drafts,
+narrow layout, settings and New Link/manual forms, saved-device editing, group
+selection and multiline notes growing then shrinking after deletion. Evidence:
+`/tmp/slipstream-form-layout-rkk_n8hm`; final log:
+`/tmp/slipstream-forms-final-ui.log`. Cross-platform logs are
+`/tmp/slipstream-form-{linux,windows,android}-clippy.log`. Verification focused
+on compilation and native layout for these style changes; the preceding full
+workspace suite remains 175 passed/five ignored from 0.26.1 preparation.
+
+All three release builds and signatures/hashes passed. Linux maximum glibc
+remains 2.30. Windows resources are 0.26.2.143 with embedded Mesa and optional
+camera delay imports. Android is non-debuggable arm64, version 0.26.2 / 143,
+with the existing signing certificate and capture permissions. Final packaged
+Linux station/draft/narrow checks pass; evidence:
+`/tmp/slipstream-station-tabs-27zcrq3s`. Fixture station errors are intentional.
+The packaged Windows app starts in an isolated Wine prefix; pixel checks verify
+6-pixel action corners and retained title caps. Evidence:
+`/tmp/slipstream-form-windows-_fmikmo1/compact.png`; log:
+`/tmp/slipstream-0262-windows-layout.log`. Prefix, Xvfb and private D-Bus
+processes were cleaned up. Physical Windows DPI and Android keyboard/form
+execution remain device checks.
+
+Both stations were verified as 0.26.1 / 140 / 389cb81 before client-only
+publication. Clients were backed up outside the web roots; ownership/modes
+were preserved, hashes checked and manifests published last. Station settings
+fingerprints stayed unchanged. Both sites passed signed update-offer checks
+and full Linux/Windows/Android HTTPS download verification, including desktop
+provisioning trailers and unchanged signed APK bytes. Relay runtime, web
+configuration and admin passwords were preserved.
+
+Rollback copies:
+
+- Public: `/home/doug/WebServer/home/public/tmp/slipstream-rollback-0.26.1-to-0.26.2-jk_88zf2`
+- Private: `/home/doug/WebServer/home/relay/tmp/slipstream-rollback-0.26.1-to-0.26.2-tqyjo8rp`
+
+The previous assembled station is retained at
+`dist/station-archives/0.26.1-140`. Restore verified old clients with current
+ownership/modes and the old manifest last for a client rollback; preserve backups.
+
+| Artifact | SHA-256 |
+|---|---|
+| Linux | `d005afa92a02d0cc7bfbe8e9b479befa1014ddad27fa99dc983de8835c308741` |
+| Windows | `41cc15393843209f9652e7909d8382801559fbb3aad92510a900eda615f97838` |
+| Android | `9cdb938b7ca729e97a98c7e5d1838cea7c3209ba4ae2ea88fb74c138c67eb162` |
+
+Release, package and publication/live logs:
+`/tmp/slipstream-0262-release-build.log`,
+`/tmp/slipstream-0262-package-checks.log`,
+`/tmp/slipstream-0262-publication-live.log`.
+Final caches: **11.92 GiB development/test, 22.22 GiB release**, inside 12/32 GiB
+budgets. All heavy work ran serially under the wrapper. Use About → Check for
+updates → Install & restart; Android installs the station's APK.
+
+## Previous publication — 0.26.1
 
 Published **0.26.1 / build 140 / source 389cb81** to both
 https://public.slipstreamremote.com and https://relay.slipstreamremote.com.

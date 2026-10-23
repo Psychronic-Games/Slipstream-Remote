@@ -1,13 +1,21 @@
 # Project status
 
-*Updated 2026-10-22; latest published release 0.26.1.
+*Updated 2026-10-22; latest published release 0.26.2.
 Read this first when picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-22.md)
-records **0.26.1, build 140, source commit 389cb81**, published on both
+records **0.26.2, build 143, source commit 687ed6d**, published on both
 https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
 Live update offers and full Linux/Windows/Android downloads passed on both.
 Later documentation/test-style commits do not change packaged build identity.
+
+0.26.2 matches Partner ID/Password font, field height, alignment and padding.
+Shared compact input styles cover settings, saved devices, New Link, network
+and meeting tools, reports, chat and file locations. Ordinary actions now use
+rounded rectangles with tighter padding; navigation and console framing retain
+their larger curves. Native checks cover narrow layouts, station drafts, forms,
+group selection and multiline notes shrinking after deletion. The packaged
+Windows compact renderer also passed its shape/startup check under Wine.
 
 0.26.1 removes the repeated app download/install/restart during older-service
 catch-up. It verifies and reuses the app already installed, updates only the
@@ -73,7 +81,9 @@ floating groups, reorder or tear them out without reconnecting. Each window's
 native QA clients inheriting the desktop D-Bus session; the audit now isolates
 both D-Bus and Xvfb. Linux tray destruction explicitly shuts down its service.
 
-Latest verification: **175 workspace tests passed, five ignored**. Final core
+The last full workspace suite, during 0.26.1 preparation, had **175 passed, five ignored**.
+0.26.2 verification focused on strict cross-platform compilation and native form
+layouts, including the packaged Windows compact app under Wine. Final core
 and session suites passed after the last refinements. Final strict Linux
 workspace/all-target, Windows desktop/all-target and arm64 Android Clippy
 passed. All three
@@ -87,7 +97,7 @@ window behavior remain follow-ups.
 
 Build/check scripts trim caches automatically at 12 GiB development/test and
 32 GiB release, with incremental caching off and two generated Android package
-versions per variant. Latest recorded sizes are **11.28 / 21.86 GiB**. Use
+versions per variant. Latest recorded sizes are **11.92 / 22.22 GiB**. Use
 `scripts/check.sh` for substantial checks. Rollback paths, verification limits
 and the next-session starting point are in the latest handoff. Earlier
 support-tool scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).
