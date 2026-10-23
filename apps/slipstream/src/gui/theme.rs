@@ -440,9 +440,22 @@ pub enum ConsoleIcon {
     Performance,
     End,
     Console,
+    /// Meeting layouts: one large picture with the others along an edge.
+    Speaker,
+    StripTop,
+    StripLeft,
+    StripRight,
+    /// Everyone the same size.
+    Gallery,
+    People,
+    Camera,
+    Microphone,
+    MicrophoneOff,
+    ShareScreen,
+    Record,
 }
 impl ConsoleIcon {
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::Back => "Bridge",
             Self::Fullscreen => "Full screen",
@@ -456,6 +469,14 @@ impl ConsoleIcon {
             Self::Performance => "Picture quality",
             Self::End => "End link",
             Self::Console => "Console",
+            Self::Speaker | Self::StripTop | Self::StripLeft | Self::StripRight => "Speaker layout",
+            Self::Gallery => "Gallery layout",
+            Self::People => "People",
+            Self::Camera => "Camera",
+            Self::Microphone => "Microphone",
+            Self::MicrophoneOff => "Microphone off",
+            Self::ShareScreen => "Share screen",
+            Self::Record => "Record",
         }
     }
 }
@@ -553,7 +574,7 @@ pub fn chat_body(ui: &Ui, area: Rect) -> Rect {
     Rect::from_min_max(pos2(x + elbow + 8.0, top + 10.0), area.max - vec2(10.0, 24.0))
 }
 
-fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color32, fill: Color32) {
+pub fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color32, fill: Color32) {
     let at = |(x, y): (f32, f32)| rect.min + vec2(x * rect.width(), y * rect.height());
     let stroke = Stroke::new(1.5, ink);
     let line = |points: &[(f32, f32)]| p.add(Shape::line(points.iter().copied().map(at).collect(), stroke));
@@ -651,6 +672,55 @@ fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color32, 
             p.rect_stroke(box_at((0.04, 0.1), (0.96, 0.9)), 2.0, stroke, egui::StrokeKind::Inside);
             line(&[(0.21, 0.31), (0.39, 0.5), (0.21, 0.69)]);
             line(&[(0.5, 0.69), (0.77, 0.69)]);
+        }
+        ConsoleIcon::Speaker | ConsoleIcon::StripTop | ConsoleIcon::StripLeft | ConsoleIcon::StripRight => {
+            // The large picture, filled, and three small ones along an edge.
+            type Box4 = (f32, f32, f32, f32);
+            let (main, small): (Box4, [Box4; 3]) = match icon {
+                ConsoleIcon::StripTop => ((0.04, 0.36, 0.96, 0.94), [(0.04, 0.06, 0.32, 0.27), (0.36, 0.06, 0.64, 0.27), (0.68, 0.06, 0.96, 0.27)]),
+                ConsoleIcon::StripLeft => ((0.32, 0.06, 0.96, 0.94), [(0.04, 0.06, 0.24, 0.32), (0.04, 0.37, 0.24, 0.63), (0.04, 0.68, 0.24, 0.94)]),
+                ConsoleIcon::StripRight => ((0.04, 0.06, 0.68, 0.94), [(0.76, 0.06, 0.96, 0.32), (0.76, 0.37, 0.96, 0.63), (0.76, 0.68, 0.96, 0.94)]),
+                _ => ((0.04, 0.06, 0.96, 0.64), [(0.04, 0.73, 0.32, 0.94), (0.36, 0.73, 0.64, 0.94), (0.68, 0.73, 0.96, 0.94)]),
+            };
+            p.rect_filled(box_at((main.0, main.1), (main.2, main.3)), 2.0, ink);
+            for b in small {
+                p.rect_stroke(box_at((b.0, b.1), (b.2, b.3)), 1.0, stroke, egui::StrokeKind::Inside);
+            }
+        }
+        ConsoleIcon::Gallery => {
+            for (x, y) in [(0.04, 0.08), (0.54, 0.08), (0.04, 0.54), (0.54, 0.54)] {
+                p.rect_filled(box_at((x, y), (x + 0.42, y + 0.38)), 2.0, ink);
+            }
+        }
+        ConsoleIcon::People => {
+            p.circle_stroke(at((0.36, 0.3)), rect.width() * 0.16, stroke);
+            line(&[(0.06, 0.9), (0.1, 0.66), (0.36, 0.56), (0.62, 0.66), (0.66, 0.9)]);
+            p.circle_stroke(at((0.72, 0.26)), rect.width() * 0.12, stroke);
+            line(&[(0.76, 0.5), (0.9, 0.56), (0.95, 0.78)]);
+        }
+        ConsoleIcon::Camera => {
+            p.rect_stroke(box_at((0.04, 0.26), (0.66, 0.76)), 2.0, stroke, egui::StrokeKind::Inside);
+            p.add(Shape::convex_polygon(vec![at((0.7, 0.51)), at((0.96, 0.28)), at((0.96, 0.74))], ink, Stroke::NONE));
+        }
+        ConsoleIcon::Microphone | ConsoleIcon::MicrophoneOff => {
+            p.rect_stroke(box_at((0.36, 0.04), (0.64, 0.6)), 6.0, stroke, egui::StrokeKind::Inside);
+            line(&[(0.2, 0.42), (0.22, 0.6), (0.36, 0.73), (0.5, 0.76), (0.64, 0.73), (0.78, 0.6), (0.8, 0.42)]);
+            line(&[(0.5, 0.76), (0.5, 0.94)]);
+            line(&[(0.32, 0.94), (0.68, 0.94)]);
+            if matches!(icon, ConsoleIcon::MicrophoneOff) {
+                p.line_segment([at((0.1, 0.06)), at((0.9, 0.94))], Stroke::new(2.4, fill));
+                line(&[(0.1, 0.06), (0.9, 0.94)]);
+            }
+        }
+        ConsoleIcon::ShareScreen => {
+            p.rect_stroke(box_at((0.04, 0.1), (0.96, 0.74)), 2.0, stroke, egui::StrokeKind::Inside);
+            line(&[(0.36, 0.92), (0.64, 0.92)]);
+            line(&[(0.5, 0.6), (0.5, 0.26)]);
+            line(&[(0.36, 0.4), (0.5, 0.26), (0.64, 0.4)]);
+        }
+        ConsoleIcon::Record => {
+            p.circle_stroke(at((0.5, 0.5)), rect.width() * 0.44, stroke);
+            p.circle_filled(at((0.5, 0.5)), rect.width() * 0.26, ink);
         }
     }
 }

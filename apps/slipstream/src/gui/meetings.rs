@@ -19,6 +19,9 @@ use slipstream_session::{
 use std::{collections::VecDeque, time::Duration};
 use tokio::{runtime::Runtime, sync::oneshot};
 mod devices;
+mod reactions;
+#[cfg(not(target_os = "android"))]
+mod recording;
 mod room;
 mod screens;
 
@@ -106,6 +109,8 @@ struct Active {
     message: String,
     /// Layout, spotlight, speaker, side column and reactions.
     room: room::View,
+    #[cfg(not(target_os = "android"))]
+    recording: recording::Recording,
     microphone_name: String,
     video_name: String,
     next_video_name: String,
@@ -132,6 +137,8 @@ impl Active {
             chat: VecDeque::new(),
             message: String::new(),
             room: room::View::default(),
+            #[cfg(not(target_os = "android"))]
+            recording: Default::default(),
             microphone_name: String::new(),
             video_name: String::new(),
             next_video_name: String::new(),
@@ -294,6 +301,8 @@ impl Meetings {
         if let Some(active) = self.active.as_mut() {
             let state = active.state();
             if state.ended.is_some() {
+                #[cfg(not(target_os = "android"))]
+                recording::stop(active, app, ctx);
                 self.screen_picker = None;
                 self.calling = None;
                 self.outgoing = None;
@@ -394,6 +403,8 @@ impl Meetings {
                     active.room.levels = sound.levels();
                 }
                 active.room.update_speaker(&state);
+                #[cfg(not(target_os = "android"))]
+                recording::poll(active, &state, app, ctx);
                 // The organizer forwards a few videos to each of us: the
                 // spotlight, pin and speaker first, then screens, then cameras.
                 let subscriptions: Vec<u64> =
@@ -905,20 +916,13 @@ fn toolbar(
         ui.add_enabled_ui(
             active.mic_job.is_none() && (active.microphone.is_some() || active.sound.is_some()),
             |ui| {
-                if theme::pill(
-                    ui,
-                    if active.microphone.is_some() {
-                        "Mute"
-                    } else {
-                        "Unmute"
-                    },
-                    if active.microphone.is_some() {
-                        pal::GREEN
-                    } else {
-                        pal::BLUE
-                    },
-                )
-                .clicked()
+                let on = active.microphone.is_some();
+                let (label, icon, color) = if on {
+                    ("Mute", theme::ConsoleIcon::Microphone, pal::GREEN)
+                } else {
+                    ("Unmute", theme::ConsoleIcon::MicrophoneOff, pal::BLUE)
+                };
+                if theme::console_button(ui, label, color, icon, false).clicked()
                 {
                     if active.microphone.is_some() {
                         stop_microphone(active);
@@ -940,41 +944,25 @@ fn toolbar(
             } else {
                 "Camera"
             };
-            if theme::pill(ui, label, pal::VIOLET).clicked() {
+            if theme::console_button(ui, label, pal::VIOLET, theme::ConsoleIcon::Camera, false).clicked() {
                 if active.source == Source::Camera {
                     stop_video(active);
                 } else {
                     start_camera(active, meetings, app, ui.ctx());
                 }
             }
-            if theme::pill(
-                ui,
-                if active.source == Source::Screen {
-                    "Change screen"
-                } else {
-                    "Share screen"
-                },
-                pal::BLUE,
-            )
-            .clicked()
-            {
+            let share = if active.source == Source::Screen { "Change screen" } else { "Share screen" };
+            if theme::console_button(ui, share, pal::BLUE, theme::ConsoleIcon::ShareScreen, false).clicked() {
                 meetings.screen_picker = Some(screens::Picker::new(app, ui.ctx()));
             }
         });
-        if active.source == Source::Screen && theme::pill(ui, "Stop sharing", pal::PEACH).clicked()
+        if active.source == Source::Screen
+            && theme::console_button(ui, "Stop sharing", pal::PEACH, theme::ConsoleIcon::ShareScreen, false).clicked()
         {
             stop_video(active);
         }
-        if theme::pill(
-            ui,
-            if state.host {
-                "End meeting"
-            } else {
-                "Leave meeting"
-            },
-            pal::RED,
-        )
-        .clicked()
+        if theme::console_button(ui, if state.host { "End meeting" } else { "Leave meeting" }, pal::RED, theme::ConsoleIcon::End, false)
+            .clicked()
         {
             if state.host {
                 meetings.confirm_end = true;

@@ -1,6 +1,7 @@
 //! Participant-hosted meetings. One upload per source; admission precedes media.
 pub mod calls;
 pub mod media;
+pub mod record;
 #[cfg(test)]
 mod tests;
 mod wire;
@@ -49,13 +50,22 @@ pub enum Command {
 pub struct Publisher {
     video: mpsc::Sender<Arc<Video>>,
     audio: mpsc::Sender<Bytes>,
+    /// A copy of our voice for a recording (see `record`).
+    tap: Arc<std::sync::Mutex<Option<std::sync::mpsc::SyncSender<Bytes>>>>,
 }
 impl Publisher {
     pub fn video(&self, video: Video) -> bool {
         self.video.try_send(Arc::new(video)).is_ok()
     }
     pub fn audio(&self, packet: Bytes) {
+        if let Some(tap) = self.tap.lock().unwrap().as_ref() {
+            let _ = tap.try_send(packet.clone());
+        }
         let _ = self.audio.try_send(packet);
+    }
+    /// Also send our voice packets here (None stops).
+    pub fn tap_audio(&self, tap: Option<std::sync::mpsc::SyncSender<Bytes>>) {
+        *self.tap.lock().unwrap() = tap;
     }
 }
 pub struct Meeting {
@@ -260,6 +270,7 @@ fn channels(invitation: Invitation, state: State) -> (Meeting, Channels) {
             publisher: Publisher {
                 video: vi,
                 audio: ai,
+                tap: Arc::default(),
             },
             commands: ct,
         },
@@ -442,7 +453,7 @@ impl Room {
                 }
             }
             ClientMessage::React { chat, reaction } => {
-                if usize::from(reaction) >= REACTIONS.len() {
+                if usize::from(reaction) >= REACTIONS {
                     return;
                 }
                 let Some((_, reactions)) = self.reactions.iter_mut().find(|(c, _)| *c == chat) else { return };

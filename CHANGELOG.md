@@ -13,6 +13,18 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Record meetings to MP4 or MKV: choose the size (720p–1440p), frame rate,
+  quality and file format, then where to save. Records the large picture and
+  everyone's voices (H.264 and Opus); fragmented MP4 stays playable even if
+  the recording is cut short.
+- Colour reaction images (Fluent Emoji), with + for 34 more; the React button
+  appears when hovering a message, and reaction chips only once someone
+  reacted.
+- Meeting controls have icons, and the Layout menu shows each arrangement
+  (speaker with the others below, above, left or right; gallery).
+- The macOS app is built on GitHub's Macs (`scripts/fetch-macos.sh`) and is
+  offered on station download pages.
+
 ## 0.29.0 — 2026-10-23
 
 - Meetings: the room has its own tab beside the workstation tabs and fills the

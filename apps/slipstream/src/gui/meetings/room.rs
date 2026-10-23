@@ -4,7 +4,7 @@
 use super::{Active, Meetings, STREAM_BASE, devices, participants, toolbar};
 use crate::gui::{App, theme, theme::pal, video};
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, Ui, UiBuilder, Vec2, vec2};
-use slipstream_core::meeting::{REACTIONS, Source, State};
+use slipstream_core::meeting::{Source, State};
 use slipstream_session::meetings::Command;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -218,60 +218,105 @@ fn header(meetings: &mut Meetings, active: &mut Active, state: &State, app: &mut
         }
         ui.add_space(12.0);
         let room = &mut active.room;
-        let chat = if room.unread > 0 { format!("Chat · {}", room.unread) } else { "Chat".into() };
-        let people = if state.host && !state.lobby.is_empty() {
-            format!("People · {} waiting", state.lobby.len())
-        } else {
-            format!("People · {}", state.participants.len())
-        };
-        for (side, label, waiting) in [
-            (Side::Chat, chat.as_str(), room.unread > 0),
-            (Side::People, people.as_str(), state.host && !state.lobby.is_empty()),
-            (Side::Devices, "Devices", false),
+        let chat = if room.unread > 0 { format!("Chat {}", room.unread) } else { "Chat".into() };
+        let waiting = state.host && !state.lobby.is_empty();
+        let people = if waiting { format!("People · {} waiting", state.lobby.len()) } else { format!("People {}", state.participants.len()) };
+        for (side, label, icon, attention) in [
+            (Side::Chat, chat.as_str(), theme::ConsoleIcon::Chat, room.unread > 0),
+            (Side::People, people.as_str(), theme::ConsoleIcon::People, waiting),
+            (Side::Devices, "Devices", theme::ConsoleIcon::Camera, false),
         ] {
-            let color = if room.side == side { pal::GREEN } else if waiting { pal::GOLD } else { pal::BLUE };
-            if theme::pill(ui, label, color).clicked() {
+            let color = if room.side == side { pal::GREEN } else if attention { pal::GOLD } else { pal::BLUE };
+            if theme::console_button(ui, label, color, icon, false).clicked() {
                 room.side = if room.side == side { Side::None } else { side };
             }
         }
         layout_menu(&mut active.room, ui);
+        #[cfg(not(target_os = "android"))]
+        super::recording::button(active, app, ui);
     });
     toolbar(meetings, active, state, app, ui, leave);
 }
 
+impl View {
+    /// The icon for the current arrangement.
+    fn icon(&self) -> theme::ConsoleIcon {
+        match (self.layout, self.strip) {
+            (Layout::Gallery, _) => theme::ConsoleIcon::Gallery,
+            (Layout::Speaker, Strip::Bottom) => theme::ConsoleIcon::Speaker,
+            (Layout::Speaker, Strip::Top) => theme::ConsoleIcon::StripTop,
+            (Layout::Speaker, Strip::Left) => theme::ConsoleIcon::StripLeft,
+            (Layout::Speaker, Strip::Right) => theme::ConsoleIcon::StripRight,
+        }
+    }
+}
+
+/// One choice in the layout menu: its icon, its name, and whether it's in use.
+fn icon_row(ui: &mut Ui, icon: theme::ConsoleIcon, label: &str, selected: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(250.0, 32.0), Sense::click());
+    let fill = if selected { pal::VIOLET } else if response.hovered() { pal::GRID } else { Color32::TRANSPARENT };
+    ui.painter().rect_filled(rect, 6.0, fill);
+    let ink = if selected { pal::BG } else { pal::TAN };
+    let symbol = Rect::from_center_size(Pos2::new(rect.left() + 20.0, rect.center().y), vec2(20.0, 20.0));
+    theme::console_icon(ui.painter(), symbol, icon, ink, fill);
+    ui.painter().text(Pos2::new(rect.left() + 40.0, rect.center().y), Align2::LEFT_CENTER, label, theme::body(16.0), ink);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
 fn layout_menu(room: &mut View, ui: &mut Ui) {
-    let label = match room.layout {
-        Layout::Speaker => "Layout: speaker",
-        Layout::Gallery => "Layout: gallery",
-    };
-    ui.menu_button(RichText::new(label).color(pal::LAVENDER), |ui| {
-        ui.label(RichText::new("Arrange participants").color(pal::DIM));
-        if ui.radio(room.layout == Layout::Speaker, "Speaker · the current speaker large").clicked() {
-            room.layout = Layout::Speaker;
-            room.focus = None;
-        }
-        if ui.radio(room.layout == Layout::Gallery, "Gallery · everyone the same size").clicked() {
-            room.layout = Layout::Gallery;
-            room.focus = None;
-        }
-        ui.separator();
-        ui.label(RichText::new("Others in speaker layout").color(pal::DIM));
-        for (strip, name) in [(Strip::Bottom, "Along the bottom"), (Strip::Top, "Along the top"), (Strip::Left, "Down the left"), (Strip::Right, "Down the right")] {
-            if ui.radio(room.layout == Layout::Speaker && room.strip == strip, name).clicked() {
-                room.layout = Layout::Speaker;
-                room.strip = strip;
+    let button = theme::console_button(ui, "Layout", pal::LAVENDER, room.icon(), true).on_hover_text("Arrange the participants");
+    egui::Popup::menu(&button).show(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        let mut pick = |ui: &mut Ui, icon, label: &str, layout, strip: Option<Strip>| {
+            let selected = room.layout == layout && strip.is_none_or(|s| s == room.strip);
+            if icon_row(ui, icon, label, selected) {
+                room.layout = layout;
+                if let Some(strip) = strip {
+                    room.strip = strip;
+                }
                 room.focus = None;
+                ui.close();
             }
-        }
+        };
+        pick(ui, theme::ConsoleIcon::Speaker, "Speaker · others below", Layout::Speaker, Some(Strip::Bottom));
+        pick(ui, theme::ConsoleIcon::StripTop, "Speaker · others above", Layout::Speaker, Some(Strip::Top));
+        pick(ui, theme::ConsoleIcon::StripLeft, "Speaker · others on the left", Layout::Speaker, Some(Strip::Left));
+        pick(ui, theme::ConsoleIcon::StripRight, "Speaker · others on the right", Layout::Speaker, Some(Strip::Right));
+        pick(ui, theme::ConsoleIcon::Gallery, "Gallery · everyone the same size", Layout::Gallery, None);
         if room.pin.is_some() {
             ui.separator();
             if ui.button("Unpin · follow whoever speaks").clicked() {
                 room.pin = None;
+                ui.close();
             }
         }
         ui.separator();
         ui.label(RichText::new("Double-click anyone to fill the stage with them.").small().color(pal::DIM));
     });
+}
+
+/// Who gets the large picture: the spotlight, pin or speaker, else a shared
+/// screen, someone with video, or anyone else.
+fn main_id(room: &View, tiles: &[Tile]) -> Option<u64> {
+    room.focus
+        .or(room.pin)
+        .or(room.speaker.map(|s| s.0))
+        .filter(|id| tiles.iter().any(|t| t.id == *id))
+        .or_else(|| tiles.iter().find(|t| !t.me && t.source == Source::Screen).map(|t| t.id))
+        .or_else(|| tiles.iter().find(|t| !t.me && t.video.is_some()).map(|t| t.id))
+        .or_else(|| tiles.iter().find(|t| !t.me).map(|t| t.id))
+        .or_else(|| tiles.first().map(|t| t.id))
+}
+
+#[cfg(not(target_os = "android"))]
+/// The large picture's current frame, for a recording. When the large
+/// picture has no video (camera off), whoever has some: others before us.
+pub(super) fn main_picture(active: &Active, state: &State) -> Option<Arc<slipstream_codec::YuvFrame>> {
+    let tiles = tiles(active, state);
+    let id = main_id(&active.room, &tiles)?;
+    let main = tiles.iter().find(|t| t.id == id && t.video.is_some());
+    let shown = main.or_else(|| tiles.iter().find(|t| !t.me && t.video.is_some())).or_else(|| tiles.iter().find(|t| t.video.is_some()))?;
+    shown.video.as_ref().map(|v| v.2.clone())
 }
 
 fn stage(active: &mut Active, state: &State, ui: &mut Ui, rect: Rect) {
@@ -315,13 +360,7 @@ fn stage(active: &mut Active, state: &State, ui: &mut Ui, rect: Rect) {
             }
         }
         Layout::Speaker => {
-            let main_id = room
-                .pin
-                .or(room.speaker.map(|s| s.0))
-                .or_else(|| tiles.iter().find(|t| !t.me && t.source == Source::Screen).map(|t| t.id))
-                .or_else(|| tiles.iter().find(|t| !t.me && t.video.is_some()).map(|t| t.id))
-                .or_else(|| tiles.iter().find(|t| !t.me).map(|t| t.id))
-                .unwrap_or(tiles[0].id);
+            let main_id = main_id(room, &tiles).unwrap_or(tiles[0].id);
             let horizontal = matches!(room.strip, Strip::Bottom | Strip::Top);
             let thickness = if horizontal { (rect.height() * 0.2).clamp(90.0, 150.0) } else { (rect.width() * 0.2).clamp(150.0, 240.0) };
             let (main, strip) = match room.strip {
@@ -455,41 +494,59 @@ fn chat(meetings: &mut Meetings, active: &mut Active, state: &State, ui: &mut Ui
         }
         for line in &active.chat {
             ui.push_id(line.id, |ui| {
+                let top = ui.cursor().min;
                 ui.label(RichText::new(&line.name).color(if line.sender == state.local { pal::GREEN } else { pal::LAVENDER }));
-                let message = ui.label(&line.text);
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let reactions = active.room.reactions.get(&line.id);
-                    for (reaction, who) in reactions.into_iter().flatten() {
-                        if who.is_empty() {
-                            continue;
-                        }
-                        let mine = who.contains(&state.local);
-                        let names: Vec<String> = who
-                            .iter()
-                            .filter_map(|id| state.participants.iter().find(|p| p.id == *id).map(|p| p.name.clone()))
-                            .collect();
-                        let chip = egui::Button::new(RichText::new(format!("{} {}", REACTIONS[*reaction as usize], who.len())).size(15.0))
-                            .fill(if mine { pal::VIOLET.gamma_multiply(0.45) } else { pal::GRID })
-                            .stroke(Stroke::new(1.0, if mine { pal::VIOLET } else { pal::GRID }))
-                            .corner_radius(10.0);
-                        if ui.add(chip).on_hover_text(names.join(", ")).clicked() {
-                            active.meeting.command(Command::React { chat: line.id, reaction: *reaction });
-                        }
-                    }
-                    let add = ui.add(egui::Button::new(RichText::new("☺+").size(14.0).color(pal::DIM)).frame(false)).on_hover_text("React");
-                    egui::Popup::menu(&add).show(|ui| {
-                        ui.horizontal(|ui| {
-                            for (i, emoji) in REACTIONS.iter().enumerate() {
-                                if ui.add(egui::Button::new(RichText::new(*emoji).size(22.0)).frame(false)).clicked() {
-                                    active.meeting.command(Command::React { chat: line.id, reaction: i as u8 });
-                                    ui.close();
-                                }
+                ui.label(&line.text);
+                let reactions = active.room.reactions.get(&line.id).filter(|r| r.values().any(|who| !who.is_empty()));
+                if let Some(reactions) = reactions {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for (reaction, who) in reactions {
+                            if who.is_empty() {
+                                continue;
                             }
-                        });
+                            let mine = who.contains(&state.local);
+                            let names: Vec<String> = who
+                                .iter()
+                                .filter_map(|id| state.participants.iter().find(|p| p.id == *id).map(|p| p.name.clone()))
+                                .collect();
+                            let chip = egui::Frame::new()
+                                .fill(if mine { pal::VIOLET.gamma_multiply(0.45) } else { pal::GRID })
+                                .stroke(Stroke::new(1.0, if mine { pal::VIOLET } else { pal::GRID }))
+                                .corner_radius(10.0)
+                                .inner_margin(egui::Margin::symmetric(6, 2))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 3.0;
+                                        super::reactions::image(ui, *reaction, 18.0);
+                                        ui.label(RichText::new(who.len().to_string()).color(pal::TEXT));
+                                    });
+                                });
+                            let chip = ui.interact(chip.response.rect, ui.scope_id().with(("chip", *reaction)), Sense::click());
+                            let hover = format!("{} · {}", super::reactions::NAMES[*reaction as usize], names.join(", "));
+                            if chip.on_hover_text(hover).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                active.meeting.command(Command::React { chat: line.id, reaction: *reaction });
+                            }
+                        }
                     });
-                });
-                let _ = message;
+                }
+                // React: on hover, at the message's top right.
+                let rect = Rect::from_min_max(top, Pos2::new(ui.max_rect().right(), ui.cursor().min.y));
+                let popup = egui::Id::unique(("meeting-react", line.id));
+                if ui.rect_contains_pointer(rect) || egui::Popup::is_id_open(ui.ctx(), popup) {
+                    let spot = Rect::from_min_size(Pos2::new(rect.right() - 64.0, rect.top()), vec2(62.0, 22.0));
+                    let button = ui.put(spot, egui::Button::new(RichText::new("+ React").size(13.0).color(pal::TAN)).fill(pal::PANEL).corner_radius(8.0))
+                        .on_hover_text("React to this message");
+                    egui::Popup::menu(&button).id(popup).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+                        let mut more = ui.data(|d| d.get_temp::<bool>(popup.with("more")).unwrap_or(false));
+                        if let Some(reaction) = super::reactions::picker(ui, &mut more) {
+                            active.meeting.command(Command::React { chat: line.id, reaction });
+                            more = false;
+                            ui.close();
+                        }
+                        ui.data_mut(|d| d.insert_temp(popup.with("more"), more));
+                    });
+                }
                 ui.add_space(6.0);
             });
         }

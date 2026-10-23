@@ -202,6 +202,8 @@ pub struct Sound {
     members: Arc<Mutex<Vec<u64>>>,
     /// How loud each participant is right now, 0–1 (see [`Sound::levels`]).
     levels: Arc<Mutex<HashMap<u64, f32>>>,
+    /// A copy of the mix for a recording.
+    tap: Arc<Mutex<Option<std::sync::mpsc::SyncSender<Vec<i16>>>>>,
     stop: Arc<AtomicBool>,
     _guard: slipstream_audio::voice::PlaybackGuard,
 }
@@ -221,6 +223,8 @@ impl Sound {
         let active = members.clone();
         let levels = Arc::new(Mutex::new(HashMap::new()));
         let loudness = levels.clone();
+        let tap: Arc<Mutex<Option<std::sync::mpsc::SyncSender<Vec<i16>>>>> = Arc::default();
+        let recording = tap.clone();
         std::thread::Builder::new()
             .name("meeting-audio-mix".into())
             .spawn(move || {
@@ -285,6 +289,9 @@ impl Sound {
                     let mut mix = [0i16; opus::FRAME_SAMPLES];
                     let refs: Vec<_> = sources.iter().map(Vec::as_slice).collect();
                     slipstream_audio::voice::mix(&refs, &mut mix);
+                    if let Some(tap) = recording.lock().unwrap().as_ref() {
+                        let _ = tap.try_send(mix.to_vec());
+                    }
                     output.push(&mix);
                     next += Duration::from_millis(20);
                     std::thread::sleep(next.saturating_duration_since(std::time::Instant::now()));
@@ -298,6 +305,7 @@ impl Sound {
             tx,
             members,
             levels,
+            tap,
             stop,
             _guard: Default::default(),
         })
@@ -306,6 +314,10 @@ impl Sound {
     /// quiet speech and 0.1 loud.
     pub fn levels(&self) -> HashMap<u64, f32> {
         self.levels.lock().unwrap().clone()
+    }
+    /// Also send each 20 ms of the mix here (None stops).
+    pub fn tap(&self, tap: Option<std::sync::mpsc::SyncSender<Vec<i16>>>) {
+        *self.tap.lock().unwrap() = tap;
     }
     pub fn members(&self, ids: Vec<u64>) {
         *self.members.lock().unwrap() = ids;

@@ -23,6 +23,13 @@ serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
 tempfile.workspace = true
+# Colour reaction images (assets/reactions), drawn once into textures.
+resvg = { version = "0.48", default-features = false }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+# "Save as" for meeting recordings: the desktop portal on Linux (pure Rust D-Bus).
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "common-controls-v6"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # GameActivity (not NativeActivity): it has soft keyboard and IME support.

@@ -120,15 +120,19 @@ def main():
                             visited.add((nx,ny));queue.append((nx,ny))
                 left*=3;top*=3;right=(right+1)*3;bottom=(bottom+1)*3
                 if right-left<35 or not 15<=bottom-top<=42: continue
-                # Tight inset: 0.26.2's compact actions leave little padding around the label.
-                crop=image.crop((left+6,top+4,right-6,bottom-4))
-                crop=ImageOps.grayscale(crop).resize((crop.width*5,crop.height*5)).point(lambda p:255 if p>100 else 0)
-                crop=ImageOps.expand(crop,border=20,fill=255);path=base/'button-ocr.png';crop.save(path)
-                text=subprocess.run(['tesseract',str(path),'stdout','--psm','6'],capture_output=True,text=True,check=True).stdout
-                observed=normalize(text)
-                if len(observed)==len(wanted):
-                    observed=''.join(expected if expected.isdigit() and character in {'I','L','O','Z'} and {'I':'1','L':'1','O':'0','Z':'2'}[character]==expected else character for character,expected in zip(observed,wanted))
-                if observed.replace("G","C")==wanted.replace("G","C"): matches.append(((left+right)//2,(top+bottom)//2))
+                # Tight inset: 0.26.2's compact actions leave little padding
+                # around the label; console buttons start with an 18 px icon.
+                for inset in (6,32):
+                    if right-left-inset-6<20: continue
+                    crop=image.crop((left+inset,top+4,right-6,bottom-4))
+                    crop=ImageOps.grayscale(crop).resize((crop.width*5,crop.height*5)).point(lambda p:255 if p>100 else 0)
+                    crop=ImageOps.expand(crop,border=20,fill=255);path=base/'button-ocr.png';crop.save(path)
+                    text=subprocess.run(['tesseract',str(path),'stdout','--psm','6'],capture_output=True,text=True,check=True).stdout
+                    observed=normalize(text)
+                    if len(observed)==len(wanted):
+                        observed=''.join(expected if expected.isdigit() and character in {'I','L','O','Z'} and {'I':'1','L':'1','O':'0','Z':'2'}[character]==expected else character for character,expected in zip(observed,wanted))
+                    if observed.replace("G","C")==wanted.replace("G","C"):
+                        matches.append(((left+right)//2,(top+bottom)//2));break
         return matches[-1 if last else 0] if matches else None
 
     def click(win, phrase, name, last=False):
@@ -200,7 +204,7 @@ def main():
             profile.mkdir()
             profiles.append(profile)
             (profile / 'settings.toml').write_text(f'device_name = {json.dumps(name)}\n[server]\nurl = "http://127.0.0.1:{port}"\nkey = "fixture-meeting-access"\nuse_public_relays = false\n')
-            local = env | {'SLIPSTREAM_HOME': str(profile), 'SLIPSTREAM_TEST_SCREENS':'2'}
+            local = env | {'SLIPSTREAM_HOME': str(profile), 'SLIPSTREAM_TEST_SCREENS':'2', 'SLIPSTREAM_TEST_RECORD_TO': str(base/'recording.mp4')}
             if args.tabs:
                 subprocess.run([str(args.client.resolve()),'set-password','fixture-tab-password'],env=local,check=True,capture_output=True)
             process = launch([str(args.client.resolve()), '--test-pattern', '--page', 'meetings', '--window-size', '1140x1100'], f'client-{index}', local)
@@ -309,12 +313,30 @@ def main():
         xdo('key','Return')
         click(guest,'Chat 1','guest-unread-chat')
         wait(lambda:locate(guest,'Meeting fixture message','guest-chat'),'group Subspace chat')
-        # React to the message (the ☺+ under it, then the first reaction).
-        click_point(guest,820,306,'guest-react-menu')
-        click_point(guest,828,336,'guest-react-chosen')
+        # Hovering the message shows + React at its top right (1140x1100
+        # fixture); its picker offers the six quick reactions and +.
+        g=geometry(guest);xdo('mousemove',g['X']+950,g['Y']+280);time.sleep(.6)
+        click_point(guest,1080,272,'guest-react-hover')
+        time.sleep(.6);words(guest,'guest-react-picker')
+        click_point(guest,1100,310,'guest-react-more')
+        time.sleep(.6);click_point(guest,916,307,'guest-react-all')
         time.sleep(1);words(guest,'guest-reacted')
         # The organizer's chat column is still open from sending.
-        time.sleep(.5);words(host,'host-sees-reaction')
+        words(host,'host-sees-reaction')
+        # Recording settings (Save as needs a desktop portal: not opened here).
+        click(host,'Record','host-record')
+        time.sleep(.6);words(host,'host-record-settings')
+        # Its ellipsis defeats OCR: the dialog's red action (1140x1100 fixture).
+        click_point(host,435,713,'host-record-start')
+        time.sleep(5)
+        # "Stop · 00:05": the timer changes, so click the header button's place.
+        click_point(host,860,105,'host-record-stop')
+        recording=base/'recording.mp4'
+        wait(lambda:recording.exists() and recording.stat().st_size>20000 and b'moof' in recording.read_bytes()[-400000:],'meeting recording written')
+        time.sleep(1)
+        probe=subprocess.run(['ffprobe','-v','error','-count_frames','-show_entries','stream=codec_name,nb_read_frames','-of','csv=p=0',str(recording)],capture_output=True,text=True)
+        print('Recording:',probe.stdout.replace('\n',' '),flush=True)
+        assert 'h264' in probe.stdout and 'opus' in probe.stdout, probe.stderr
         click(host, 'Stop camera', 'host-stopping-camera')
         click(guest,'Chat','guest-live-again')
         wait(lambda:not camera_visible(guest,'guest-camera-stopped'),'camera stopped on peer')

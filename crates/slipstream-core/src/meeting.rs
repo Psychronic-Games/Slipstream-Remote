@@ -15,8 +15,9 @@ pub const MAX_SUBSCRIPTIONS: usize = 4;
 pub const MAX_VIDEO: usize = 1024 * 1024;
 pub const MAX_CONTROL: usize = 16 * 1024;
 pub const AUDIO_TAG: u8 = 0xb1;
-/// Reactions to chat messages, by index on the wire.
-pub const REACTIONS: [&str; 6] = ["👍", "❤", "🎉", "😂", "😮", "👏"];
+/// How many reactions to chat messages there are; the wire carries an
+/// index (the app's assets/reactions, in order).
+pub const REACTIONS: usize = 40;
 
 pub fn random_secret() -> String {
     crate::directory::hex(&rand::random::<[u8; 32]>())
@@ -145,7 +146,7 @@ pub enum ClientMessage {
         seq: u64,
     },
     Leave,
-    /// Toggle this participant's reaction (an index into [`REACTIONS`]).
+    /// Toggle this participant's reaction (an index below [`REACTIONS`]).
     React { chat: u64, reaction: u8 },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

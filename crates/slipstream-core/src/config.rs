@@ -174,6 +174,25 @@ pub struct ViewerSettings {
     pub separate_windows: bool,
 }
 
+/// Meeting recording choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordingPrefs {
+    /// Picture height: 720, 1080 or 1440 (16:9).
+    pub height: u32,
+    pub fps: u32,
+    /// 0 standard, 1 high, 2 maximum.
+    pub quality: u8,
+    /// Matroska instead of MP4.
+    pub mkv: bool,
+}
+
+impl Default for RecordingPrefs {
+    fn default() -> Self {
+        Self { height: 720, fps: 30, quality: 0, mkv: false }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -182,6 +201,8 @@ pub struct AppSettings {
     /// Stable input identity; None follows the system default.
     pub meeting_microphone: Option<String>,
     pub meeting_camera: Option<u32>,
+    /// How meetings are recorded (the choices last used).
+    pub meeting_recording: RecordingPrefs,
     /// Closing the window keeps Slipstream running in the system tray
     /// (for unattended access). Off by default: closing ends access.
     pub run_in_tray: bool,

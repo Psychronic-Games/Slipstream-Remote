@@ -44,8 +44,17 @@ initials.
 **Chat**, **People** and **Devices** open in a column on the right, so the
 participants stay in view (on a phone they take the screen, with a back
 button). Chat shows an unread count when it's closed; Enter sends a message
-and Shift+Enter inserts a new line. React to a message with **☺+** (👍 ❤ 🎉 😂
-😮 👏); click a reaction again to take it back, and hover it to see who reacted.
+and Shift+Enter inserts a new line. Hover a message and press **+ React** for
+the six quick reactions, or **+** for 34 more; click a reaction again to take
+it back, and hover it to see who reacted.
+
+**Record** (on computers) asks for the picture size (720p, 1080p, 1440p),
+frame rate, quality and file format (MP4 or MKV), then where to save. It
+records the large picture (the spotlight, pin or speaker, or whoever has video
+when they don't) and everyone's voices, as H.264 and Opus. MP4 plays in VLC,
+Windows' Media Player, web browsers and mpv; on a Mac use VLC or IINA, because
+QuickTime can't play Opus sound. The header shows Stop with the elapsed time;
+leaving the meeting also finishes the file.
 
 Press **Unmute** to enable your microphone. **Camera** and **Share screen** are
 separate explicit actions. **Share screen** opens a chooser with screen names,
