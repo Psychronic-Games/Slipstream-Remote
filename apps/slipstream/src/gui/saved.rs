@@ -266,6 +266,7 @@ fn own_device(app: &App, account: &StationAccount) -> Option<SavedDevice> {
         };
         return own_device_entry(account, slipstream_core::config::PUBLIC_STATION_URL, id, &settings.device_name);
     }
+    if app.via_service && !app.service_station_matches() { return None; }
     let id = match app.dir_status {
         slipstream_session::DirStatus::Online { id } => Some(id),
         _ => settings.host.last_device_id,

@@ -20,7 +20,7 @@ fn service_state() -> (bool, &'static str) {
 fn service_id(app: &App) -> Option<slipstream_core::directory::DeviceId> {
     #[cfg(windows)]
     if app.via_service {
-        return crate::service::hosted_id();
+        return app.service_station_matches().then(crate::service::hosted_id).flatten();
     }
     let _ = app;
     None
@@ -116,7 +116,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         };
         let own_id = match &directory {
             DirStatus::Online { id } => Some(*id),
-            _ if app.via_service && public => None,
+            _ if app.via_service && (public || !app.service_station_matches()) => None,
             _ if public => app.client.settings().host.public_device_id,
             _ => app.client.settings().host.last_device_id,
         };
@@ -135,6 +135,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         });
         ui.add_space(4.0);
         if app.via_service {
+            if let DirStatus::Error(error) = &directory { ui.label(RichText::new(error).color(pal::GOLD)); }
             // The service owns both its one-time code and permanent password.
             one_time_password(app, ui);
             ui.label(RichText::new("REACHABLE THROUGH THE SLIPSTREAM SERVICE").font(theme::display(15.0)).color(pal::LAVENDER));

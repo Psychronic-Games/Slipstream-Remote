@@ -347,6 +347,7 @@ pub struct App {
     pub station_draft: (String, String),
     pub primary_station: Option<String>,
     pub service_public_status: Option<DirStatus>,
+    pub service_station: Option<String>,
     pub password: String,
     pub service_password: Option<String>,
     pub connect_id: String,
@@ -444,6 +445,7 @@ impl App {
             station_draft: Default::default(),
             primary_station: client.settings().server.url.filter(|url| !slipstream_core::config::is_public_station(url)),
             service_public_status: None,
+            service_station: None,
             rt,
             client,
             render_state,
@@ -530,7 +532,8 @@ impl App {
             while let Ok(event)=bridge.events.try_recv() {
                 match event {
                     Event::Password(password) => self.service_password = password,
-                    Event::Directories { primary, public } => {
+                    Event::Directories { primary, public, station } => {
+                        self.service_station = station;
                         self.dir_status = primary.unwrap_or(DirStatus::Connecting);
                         self.service_public_status = public;
                     },
@@ -631,10 +634,19 @@ impl App {
         }
     }
 
+    pub fn service_station_matches(&self) -> bool {
+        self.service_station.as_deref().is_none_or(|actual| {
+            let norm = slipstream_core::directory::normalize_server_url;
+            self.client.station_settings().url.as_deref().is_some_and(|expected| norm(expected).ok() == norm(actual).ok())
+        })
+    }
+
     pub fn selected_dir_status(&self) -> DirStatus {
         if self.selected_public {
             if self.via_service { self.service_public_status.clone().unwrap_or(DirStatus::Connecting) }
             else { self.public_status.clone() }
+        } else if self.via_service && !self.service_station_matches() {
+            DirStatus::Error("Update the Windows service to use this station: Config → Windows service → Update".into())
         } else { self.dir_status.clone() }
     }
 
@@ -884,6 +896,10 @@ impl App {
         self.link_job = None;
         match result {
             Ok(cfg) => {
+                if slipstream_core::config::is_public_station(&cfg.server) && self.client.has_custom_station() {
+                    if asked { self.select_public(true); self.toast("Slipstream Public is available on its tab", pal::GREEN); }
+                    return;
+                }
                 self.client.update_settings(|s| {
                     if asked {
                         s.server.provisioned = true;

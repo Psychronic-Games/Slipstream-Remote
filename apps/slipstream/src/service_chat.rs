@@ -33,6 +33,8 @@ struct Snapshot {
     directory: Option<slipstream_session::DirStatus>,
     #[serde(default)]
     public_directory: Option<slipstream_session::DirStatus>,
+    #[serde(default)]
+    station: Option<String>,
 }
 
 impl Snapshot {
@@ -92,7 +94,7 @@ struct Proof {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    Directories { primary: Option<slipstream_session::DirStatus>, public: Option<slipstream_session::DirStatus> },
+    Directories { primary: Option<slipstream_session::DirStatus>, public: Option<slipstream_session::DirStatus>, station: Option<String> },
     MeetingCall(Option<slipstream_session::meetings::calls::IncomingCall>),
     Started {
         session: u64,
@@ -119,14 +121,16 @@ struct Cursor {
     statuses: BTreeMap<u64, String>,
     directory: Option<slipstream_session::DirStatus>,
     public_directory: Option<slipstream_session::DirStatus>,
+    station: Option<String>,
 }
 impl Cursor {
     fn update(&mut self, snapshot: &Snapshot) -> Vec<Event> {
         let mut events = Vec::new();
-        if self.directory != snapshot.directory || self.public_directory != snapshot.public_directory {
+        if self.directory != snapshot.directory || self.public_directory != snapshot.public_directory || self.station != snapshot.station {
+            self.station = snapshot.station.clone();
             self.directory = snapshot.directory.clone();
             self.public_directory = snapshot.public_directory.clone();
-            events.push(Event::Directories { primary: self.directory.clone(), public: self.public_directory.clone() });
+            events.push(Event::Directories { primary: self.directory.clone(), public: self.public_directory.clone(), station: self.station.clone() });
         }
         if self.call != snapshot.call || self.epoch != Some(snapshot.epoch) {
             if self.call.is_some() || snapshot.call.is_some() {
@@ -386,6 +390,7 @@ mod native {
                 call: None,
                 directory: Some(client.dir_status()),
                 public_directory: Some(client.public_dir_status()),
+                station: client.station_settings().url,
             };
             let state = Arc::new(Mutex::new(initial.clone()));
             let (changes, _) = watch::channel(initial);
@@ -620,7 +625,8 @@ mod native {
                     c.store(false, Ordering::Release);
                     cursor.directory = None;
                     cursor.public_directory = None;
-                    let _ = tx.send(Event::Directories { primary: None, public: None });
+                    cursor.station = None;
+                    let _ = tx.send(Event::Directories { primary: None, public: None, station: None });
                     if cursor.call.take().is_some() {
                         let _ = tx.send(Event::MeetingCall(None));
                     }
@@ -659,14 +665,19 @@ mod tests {
         let mut snapshot: Snapshot = serde_json::from_str(r#"{"epoch":1,"sequence":0,"sessions":[]}"#).unwrap();
         let mut cursor = Cursor::default();
         assert!(cursor.update(&snapshot).is_empty());
+        snapshot.station = Some("https://first.example/".into());
         snapshot.directory = Some(DirStatus::Online { id: DeviceId(123456789) });
         snapshot.public_directory = Some(DirStatus::Online { id: DeviceId(987654321) });
         assert_eq!(cursor.update(&snapshot), vec![Event::Directories {
-            primary: snapshot.directory.clone(), public: snapshot.public_directory.clone(),
+            primary: snapshot.directory.clone(), public: snapshot.public_directory.clone(), station: snapshot.station.clone(),
         }]);
         assert!(cursor.update(&snapshot).is_empty());
+        snapshot.station = Some("https://second.example/".into());
+        assert_eq!(cursor.update(&snapshot), vec![Event::Directories {
+            primary: snapshot.directory.clone(), public: snapshot.public_directory.clone(), station: snapshot.station.clone(),
+        }]);
         let older: Snapshot = serde_json::from_str(r#"{"epoch":2,"sequence":0,"sessions":[]}"#).unwrap();
-        assert_eq!(cursor.update(&older), vec![Event::Directories { primary: None, public: None }]);
+        assert_eq!(cursor.update(&older), vec![Event::Directories { primary: None, public: None, station: None }]);
     }
 
     #[test]
@@ -741,6 +752,7 @@ mod tests {
             call: None,
             directory: None,
             public_directory: None,
+            station: None,
         };
         snapshot.message(0, false, "Hello".into());
         let mut cursor = Cursor::default();

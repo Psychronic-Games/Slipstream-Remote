@@ -200,9 +200,9 @@ fn guest_routes(
         address.addrs.retain(|route| match route {
             iroh::TransportAddr::Relay(url) => {
                 let legacy = public.urls::<Vec<_>>().iter().any(|known| known.host_str() == url.host_str());
-                let backup = slipstream_core::config::is_public_station(url.as_str())
-                    && !server.url.as_deref().is_some_and(slipstream_core::config::is_public_station);
-                !legacy && !backup
+                // An explicitly invited Slipstream Public meeting uses that
+                // station's own relay, regardless of private backup preferences.
+                !legacy
             },
             _ => true,
         });

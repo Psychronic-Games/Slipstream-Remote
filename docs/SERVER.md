@@ -33,9 +33,11 @@ the whole setup step by step. This page is the reference.
 The built-in public station and every self-hosted station have separate ID
 registries. An ID is meaningful only on the station that issued it; the same
 number can exist on different stations. A configured self-hosted station is
-the default on Bridge. Tabs above **Your ID** show one station's ID at a time,
+the default on Bridge, including after installing a generic public download.
+Tabs above **Your ID** show one station's ID at a time,
 and **Establish link** looks up the partner on that selected station. New link
-also offers a station picker. Saved devices and recent links keep their station.
+also offers a station picker. The tabs retain separate partner ID/password
+drafts and recent lists. Saved devices and recent links keep their station.
 
 Clients maintain a separate, stable public endpoint derived from their local
 identity. Both endpoints use the same local passwords, permissions, session

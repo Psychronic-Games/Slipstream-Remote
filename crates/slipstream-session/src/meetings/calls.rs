@@ -201,6 +201,7 @@ impl Outgoing {
         id: DeviceId,
         invitation: Invitation,
     ) -> Self {
+        let server = client.call_settings(server);
         let (tx, state) = watch::channel(Progress::Calling);
         let (cancel, mut cancelled) = oneshot::channel();
         tokio::spawn(async move {
@@ -209,12 +210,13 @@ impl Outgoing {
                     .url
                     .as_deref()
                     .context("Configure a station before calling a device")?;
-                let directory = DirectoryClient::new(url, server.key.clone())?;
+                let mut directory = DirectoryClient::new(url, server.key.clone())?;
+                let hello = directory.hello().await?;
                 let Lookup::Online { addr, .. } = directory.lookup(id).await? else {
                     bail!("That device is offline");
                 };
                 let endpoint = client.endpoint_for_address(server.url.as_deref());
-                slipstream_core::net::add_relays(&endpoint, &server.relays).await;
+                slipstream_core::net::add_relays(&endpoint, &hello.relays).await;
                 let conn = tokio::time::timeout(
                     Duration::from_secs(15),
                     endpoint.connect(addr, CALL_ALPN),

@@ -185,6 +185,11 @@ fn attr_urls(bytes: &[u8]) -> Vec<String> {
 pub fn apply(settings: &mut Settings, cfg: &StationConfig) -> bool {
     let s = &mut settings.server;
     let same_server = s.url.as_deref().map(str::trim) == Some(cfg.server.trim());
+    // A generic/public download must preserve a provider's configured station.
+    if crate::config::is_public_station(&cfg.server)
+        && s.url.as_deref().is_some_and(|url| !url.trim().is_empty() && !crate::config::is_public_station(url)) {
+        return false;
+    }
     if s.url.as_deref().is_some_and(|url| !crate::config::is_public_station(url)) && !s.provisioned && !same_server {
         return false;
     }
@@ -219,6 +224,12 @@ mod tests {
         assert!(apply(&mut s, &cfg));
         assert_eq!(s.server.key.as_deref(), Some("k123"));
         assert!(!apply(&mut s, &cfg), "idempotent");
+        let public = StationConfig { server: crate::config::PUBLIC_STATION_URL.into(), key: None, org: Some("Slipstream Public".into()) };
+        assert!(!apply(&mut s, &public), "public downloads preserve a provisioned private station");
+        assert_eq!(s.server.url.as_deref(), Some("relay.example.com"));
+        let mut default_public = Settings::default();
+        default_public.server = crate::config::ServerSettings::public_station();
+        assert!(apply(&mut default_public, &cfg), "a provider's download replaces the public default");
         // A hand-entered server is not overridden by a different station.
         let mut manual = Settings::default();
         manual.server.url = Some("other.example.org".into());

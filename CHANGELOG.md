@@ -24,6 +24,8 @@ show in small print: `0.6.0 (build N · commit)`.
   of public registrations. Windows displays the service's authoritative IDs.
 - Add optional per-connection relay bandwidth and total connection limits to
   standalone and PHP-managed stations.
+- Preserve the normal peer-disconnect reason when the video writer observes
+  connection closure before the control reader.
 
 ## 0.24.0 — 2026-10-22
 

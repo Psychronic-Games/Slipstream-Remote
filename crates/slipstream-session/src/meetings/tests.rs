@@ -36,6 +36,13 @@ fn invitation_routes_respect_both_stations_public_relay_policy() {
     );
     invitation.address = iroh::EndpointAddr::new(invitation.address.id).with_relay_url(public);
     assert!(guest_routes(&invitation, &allowed).is_err());
+    // An explicit public-station meeting is a chosen station route, not a
+    // fallback from the guest's private endpoint.
+    let own_public: iroh::RelayUrl = slipstream_core::config::PUBLIC_STATION_URL.parse().unwrap();
+    invitation.address = iroh::EndpointAddr::new(invitation.address.id).with_relay_url(own_public.clone());
+    let (settings, address) = guest_routes(&invitation, &server).unwrap();
+    assert!(settings.key.is_none());
+    assert!(address.relay_urls().all(|url| url == &own_public));
 }
 fn local() -> ServerSettings {
     ServerSettings {

@@ -172,7 +172,8 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     let controlled = capabilities.input;
     let reason = match session_loop(&inner, &conn, id, &viewer_name, send, recv, displays, capabilities, cmd_rx).await {
         Ok(r) => r,
-        Err(e) => format!("{e:#}"),
+        // The video writer may observe a peer close before the control reader.
+        Err(e) => conn.close_reason().map(|r| crate::closed_reason(&r, "they")).unwrap_or_else(|| format!("{e:#}")),
     };
     // The backend is cached across connections, so dropping a viewer does
     // not drop its held keyboard/mouse state. Release it on every exit path.

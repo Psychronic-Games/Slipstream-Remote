@@ -106,6 +106,20 @@ impl Client {
         }
     }
 
+    /// Public calls must never inherit a private station's cached routes/key.
+    pub(crate) fn call_settings(&self, server: ServerSettings) -> ServerSettings {
+        if let Some(public) = &self.inner.public_station {
+            let configured = public.settings.lock().unwrap().clone();
+            let norm = slipstream_core::directory::normalize_server_url;
+            if let (Some(requested), Some(url)) = (server.url.as_deref(), configured.url.as_deref())
+                && norm(requested).ok() == norm(url).ok()
+            {
+                return configured;
+            }
+        }
+        server
+    }
+
     pub(crate) async fn public_directory(&self) -> Result<DirectoryClient> {
         let public = self
             .inner
@@ -404,6 +418,16 @@ mod tests {
             host.settings().host.last_device_id,
             host.settings().host.public_device_id
         );
+        let mut stale = host.settings().server;
+        stale.url = Some(public.url.clone());
+        stale.relays = vec![
+            "http://127.0.0.1:9/?token=private-relay-key"
+                .parse()
+                .unwrap(),
+        ];
+        let isolated = host.call_settings(stale);
+        assert!(isolated.key.is_none());
+        assert!(isolated.relays.is_empty());
         assert_eq!(host.endpoint_id(), private_id);
         assert_eq!(host.endpoint_for_address(Some(&public.url)).id(), public_id);
         let viewer_store = slipstream_core::config::Store::open(viewer_home.path()).unwrap();
@@ -419,6 +443,69 @@ mod tests {
             assert_eq!(session.info().host_name, "Dual-station host");
             session.send(crate::ViewerCmd::Disconnect);
         }
+        // Saved-account calls may arrive with another station's cached key/routes.
+        // Exercise the actual public call path, including its endpoint-bound proof.
+        let broker = host.call_broker();
+        let receiver = broker.receiver();
+        let mut contaminated = host.settings().server;
+        contaminated.url = Some(public.url.clone());
+        contaminated.relays = vec![
+            "http://127.0.0.1:9/?token=private-relay-key"
+                .parse()
+                .unwrap(),
+        ];
+        let invitation = slipstream_core::meeting::Invitation {
+            version: slipstream_core::meeting::VERSION,
+            address: viewer
+                .inner
+                .public_station
+                .as_ref()
+                .unwrap()
+                .endpoint
+                .addr(),
+            token: slipstream_core::meeting::random_secret(),
+            title: "Public identity isolation".into(),
+            expires: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 3600,
+            public_relays: false,
+        };
+        let mut call = crate::meetings::calls::Outgoing::start(
+            viewer.clone(),
+            contaminated,
+            DeviceId(123456789),
+            invitation,
+        );
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                if let Some(incoming) = broker.incoming() {
+                    broker.answer(incoming.id, true);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            loop {
+                match call.state.borrow().clone() {
+                    crate::meetings::calls::Progress::Answered => break,
+                    crate::meetings::calls::Progress::Ended(reason) => {
+                        panic!("Public call failed: {reason}")
+                    }
+                    _ => {}
+                }
+                call.state.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("Public call timed out");
+        drop(call);
+        drop(receiver);
+        let public_data = serde_json::to_string(&*public.requests.lock().unwrap()).unwrap();
+        assert!(
+            !public_data.contains("private-station-key")
+                && !public_data.contains("private-relay-key")
+        );
         host.update_settings(|s| {
             s.server = ServerSettings {
                 use_public_relays: false,
