@@ -1,13 +1,25 @@
 # Project status
 
-*Updated 2026-10-22; latest published release 0.25.1.
+*Updated 2026-10-22; latest published release 0.26.0.
 Read this first when picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-22.md)
-records **0.25.1, build 134, source commit ee0f156**, published on both
+records **0.26.0, build 137, source commit 2949b2d**, published on both
 https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
 Live update offers and full Linux/Windows/Android downloads passed on both.
 Later documentation/test-style commits do not change packaged build identity.
+
+0.26.0 updates an installed Windows service alongside the full/compact app or
+CLI, with UAC when needed, a freshly verified protected snapshot, downgrade
+protection and rollback. Machine IDs, station and unattended settings stay in
+the existing profile. Startup catches an older service after the first upgrade
+from an old updater; **Apply settings** explicitly copies configuration changes.
+The updater refreshes signed offers before downloading and retries a publication
+race once with a newer verified offer. An old .24 app blocked by checksum errors
+should reopen/recheck or download the latest app directly once, retaining its
+profile. The reported machine's cause is unconfirmed. Isolated Wine checks pass
+for SCM replacement, profile preservation and rollback; real UAC and a running
+Windows service's helper restart remain device checks.
 
 0.25.1 ships blue/violet station tabs with clear selected states. The final
 packaged Linux app passed station switching, separate drafts and narrow layout.
@@ -54,10 +66,10 @@ floating groups, reorder or tear them out without reconnecting. Each window's
 native QA clients inheriting the desktop D-Bus session; the audit now isolates
 both D-Bus and Xvfb. Linux tray destruction explicitly shuts down its service.
 
-Latest verification: **169 workspace tests passed, five ignored**. Final core
+Latest verification: **175 workspace tests passed, five ignored**. Final core
 and session suites passed after the last refinements. Final strict Linux
-workspace/all-target Clippy passed; Windows desktop and arm64 Android Clippy
-passed during preparation. All three
+workspace/all-target, Windows desktop/all-target and arm64 Android Clippy
+passed. All three
 final release builds and artifact signatures/hashes passed. An isolated native
 check verified private-tab default, separate IDs/drafts and narrow layouts.
 A fresh packaged Linux app registered its public ID using ordinary trusted HTTPS
@@ -68,7 +80,7 @@ window behavior remain follow-ups.
 
 Build/check scripts trim caches automatically at 12 GiB development/test and
 32 GiB release, with incremental caching off and two generated Android package
-versions per variant. Latest recorded sizes are **4.31 / 31.84 GiB**. Use
+versions per variant. Latest recorded sizes are **9.73 / 21.50 GiB**. Use
 `scripts/check.sh` for substantial checks. Rollback paths, verification limits
 and the next-session starting point are in the latest handoff. Earlier
 support-tool scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).

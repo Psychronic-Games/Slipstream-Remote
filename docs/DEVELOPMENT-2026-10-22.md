@@ -1,6 +1,62 @@
 # Development handoff — 2026-10-22
 
-## Windows service and checksum updates — prepared for 0.26.0
+## Latest publication — 0.26.0
+
+Published **0.26.0 / build 137 / source 2949b2d** to both
+https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
+This release includes automatic Windows app/service updates and fresh signed
+update offers, described below. Later documentation commits do not change
+packaged build identity.
+
+All three platforms were rebuilt serially under the resource wrapper. Package
+verification passed for signatures and hashes, Linux portability (maximum glibc
+2.30, no RELR requirement), Windows 0.26.0.137 resources, embedded Mesa and
+optional camera DLL delay imports, and Android 0.26.0 / 137, arm64,
+non-debuggable, with the existing release certificate and capture permissions.
+The packaged Linux app passed private default, one own ID, separate per-station
+partner drafts and narrow layout. Evidence:
+`/tmp/slipstream-station-tabs-xm82iwfk` (fixture connection errors are intentional).
+
+Both mounted stations were verified as 0.25.1 / 134 / ee0f156 before publishing.
+Clients were backed up outside the web roots, copied with preserved ownership
+and modes, verified, and each manifest published last. Both station settings
+fingerprints stayed unchanged. Relay runtime, web configuration and admin
+passwords were not changed. Ordinary trusted HTTPS checks passed for both
+stations' signed update offers and full Linux, Windows and Android downloads,
+including desktop provisioning trailers and unchanged signed APK bytes.
+
+Rollback copies:
+
+- Public: `/home/doug/WebServer/home/public/tmp/slipstream-rollback-0.25.1-to-0.26.0-_vnkuv_3`
+- Private: `/home/doug/WebServer/home/relay/tmp/slipstream-rollback-0.25.1-to-0.26.0-oc7of36q`
+
+The previous assembled station is preserved at
+`dist/station-archives/0.25.1-134`. Restore verified old clients with current
+ownership/modes and the old manifest last for a client rollback. Preserve backups.
+
+| Artifact | SHA-256 |
+|---|---|
+| Linux | `2d3000c0e45086d687fbfbb0ce8e7b5128f5d45fa9a53a18f3ddfaeeb87e0d9b` |
+| Windows | `2e870fac3fd1d58ca62c75e7c89c9fd815bb727e603be593caef952ada7094cd` |
+| Android | `dff31e28698e4daa55eff816205908d21c192262170bc56558a41a9e786b4f20` |
+
+Release, package and publication/live-check logs:
+`/tmp/slipstream-0260-release-build.log`,
+`/tmp/slipstream-0260-package-checks.log`,
+`/tmp/slipstream-0260-publication-live.log`.
+Final caches: **9.73 GiB development/test, 21.50 GiB release**, within 12/32 GiB
+budgets. Obsolete generated workspace release artifacts were cleaned before
+building; assembled station packages, keys, profiles and rollback copies remain.
+No paid Windows publisher signing was added.
+
+Use About → Check for updates → Install & restart. Windows may request UAC;
+updating the app now includes an installed service. If an old .24 updater still
+reports a bad checksum after reopening/rechecking, download the latest app from
+the station once and retain its existing profile. The new app checks for an
+older service on startup. Real Windows UAC and running-service restart remain
+physical-device checks; the Wine and automated evidence below has narrower scope.
+
+## Windows service and checksum implementation — 0.26.0
 
 Windows full/compact app and CLI updates now include an already-installed
 service. The UAC helper verifies a protected snapshot again, resolves the
@@ -33,7 +89,7 @@ Wine evidence: `/tmp/slipstream-service-update-toobf8lj`; summary log:
 were stopped and the prefix removed. Real Windows UAC and a running service's
 capture/helper restart remain device checks; Wine is not evidence for those.
 
-## Latest publication — 0.25.1
+## Previous publication — 0.25.1
 
 Published **0.25.1 / build 134 / source ee0f156** to both
 https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
