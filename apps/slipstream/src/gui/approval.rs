@@ -7,7 +7,7 @@ use slipstream_session::approval::{LinkRequest, ReceiverGuard};
 /// Shown beside the warning: the people scammers pretend to be.
 pub const SCAM_WARNING: &str = "Only allow this if you asked someone you know for help. Banks, Microsoft, Apple, \
      internet providers and \"tech support\" never phone or message you out of the blue to connect to your computer. \
-     If someone told you to install this app, press Decline and hang up.";
+     If someone told you to install this app, decline and hang up.";
 
 #[derive(Default)]
 pub struct LinkApproval {
