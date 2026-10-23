@@ -1,18 +1,19 @@
 # Project status
 
-*Updated 2026-10-22; latest published release 0.25.0.
+*Updated 2026-10-22; latest published release 0.25.1.
 Read this first when picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-22.md)
-records **0.25.0, build 131, source commit 4732fea**, published on both
+records **0.25.1, build 134, source commit ee0f156**, published on both
 https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
 Live update offers and full Linux/Windows/Android downloads passed on both.
 Later documentation/test-style commits do not change packaged build identity.
 
-Unreleased source changes give station tabs blue/violet selected states. The
-extended integration regression verifies one shared authentication lockout across
-private and public listeners; temporary codes remain shared. These follow-ups
-are locally built and checked, and have not been republished.
+0.25.1 ships blue/violet station tabs with clear selected states. The final
+packaged Linux app passed station switching, separate drafts and narrow layout.
+The extended integration regression verifies one shared authentication lockout
+across private and public listeners; temporary codes remain shared. Both sites
+received a client-only update, with station settings fingerprints unchanged.
 
 Raw apps use Slipstream Public by default. Configured private stations stay
 the default, with a shared station tab bar above Your ID and Establish link.
@@ -67,7 +68,7 @@ window behavior remain follow-ups.
 
 Build/check scripts trim caches automatically at 12 GiB development/test and
 32 GiB release, with incremental caching off and two generated Android package
-versions per variant. Latest recorded sizes are **4.31 / 31.48 GiB**. Use
+versions per variant. Latest recorded sizes are **4.31 / 31.84 GiB**. Use
 `scripts/check.sh` for substantial checks. Rollback paths, verification limits
 and the next-session starting point are in the latest handoff. Earlier
 support-tool scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).
