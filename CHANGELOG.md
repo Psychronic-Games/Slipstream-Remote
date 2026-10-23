@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.26.0 — 2026-10-22
+
 - Update an installed Windows service with the desktop app, including protected
   installations and automatic service catch-up after upgrading an older app.
   Preserve the machine profile and restore both executables if replacement or
