@@ -195,6 +195,11 @@ else
   SIGNED=""
   # The macOS app is built on a Mac (scripts/build-macos.sh writes
   # dist/slipstream-macos.zip). Only take it if it's from this same build.
+  # One started on GitHub (`scripts/fetch-macos.sh --start`) has been
+  # building while the others built here: download it now.
+  if [ -f dist/macos-run ] && [ "$(cut -d' ' -f2 dist/macos-run)" = "$(git rev-parse HEAD)" ]; then
+    scripts/fetch-macos.sh
+  fi
   if [ -f dist/slipstream-macos.zip ]; then
     MAC_BUILD=$(mac_build dist/slipstream-macos.zip)
     if [ "$MAC_BUILD" = "$BUILD" ]; then

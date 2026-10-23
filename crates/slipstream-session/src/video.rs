@@ -521,6 +521,8 @@ mod tests {
         let producer = slot.clone();
         let frames: Vec<Vec<u8>> =
             (0..8u32).map(|t| (0..w * h).flat_map(|i| [((i % w + t * 7) % 256) as u8, ((i / w) % 256) as u8, 128, 255]).collect()).collect();
+        let moving = Arc::new(AtomicBool::new(true));
+        let motion = moving.clone();
         std::thread::spawn(move || {
             // 3 s of motion, then a still picture (nothing more captured).
             for t in 0..180usize {
@@ -529,6 +531,7 @@ mod tests {
                 producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
                 std::thread::sleep(Duration::from_micros(16_667));
             }
+            motion.store(false, Ordering::Relaxed);
         });
         let flow = Flow::new();
         let (tx, mut rx) = mpsc::channel(4);
@@ -536,7 +539,13 @@ mod tests {
         let _p = Pipeline::start_with(FrameStream::new(slot), flow.clone(), StreamSettings { adaptive_resolution: true, ..Default::default() }, tx, etx, Some(30.0));
         let start = Instant::now();
         let (mut widths, mut late) = (Vec::new(), 0);
-        while start.elapsed() < Duration::from_secs(4) {
+        // Slow machines (CI's Macs) take longer than 3 s to play the motion:
+        // wait for it to end, then a second and a half for the sharp frame.
+        let mut still_since: Option<Instant> = None;
+        while still_since.is_none_or(|t| t.elapsed() < Duration::from_millis(1500)) && start.elapsed() < Duration::from_secs(30) {
+            if still_since.is_none() && !moving.load(Ordering::Relaxed) {
+                still_since = Some(Instant::now());
+            }
             // Nothing comes once the picture is still: poll, don't block.
             let Ok(f) = rx.try_recv() else {
                 std::thread::sleep(Duration::from_millis(2));

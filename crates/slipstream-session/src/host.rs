@@ -421,6 +421,23 @@ async fn session_loop(
     loop {
         tokio::select! {
             result = &mut writer_guard.0 => {
+                // Hanging up stops the video stream too, sometimes before
+                // the viewer's Bye arrives: give that a moment to say why.
+                let hung_up = tokio::time::timeout(Duration::from_millis(500), async {
+                    loop {
+                        match recv.next().await {
+                            Ok(Some(ViewerMsg::Bye)) | Ok(None) => return Some("they ended the session".to_string()),
+                            Ok(Some(_)) => {}
+                            Err(_) => return conn.close_reason().map(|r| crate::closed_reason(&r, "they")),
+                        }
+                    }
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(reason) = hung_up {
+                    return Ok(reason);
+                }
                 let reason=match result {
                     Ok(Err(error))=>format!("Video stream stopped: {error:#}"),
                     Err(error)=>format!("Video stream stopped: {error}"),

@@ -67,7 +67,7 @@ impl Broker {
 }
 pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection, local: iroh::EndpointId, public: bool) -> Result<()> {
     let broker = &inner.calls;
-    let _permit = broker
+    let permit = broker
         .slot
         .try_acquire()
         .context("Another call is already ringing")?;
@@ -161,6 +161,8 @@ pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection,
         false
     };
     broker.answer.lock().unwrap().take();
+    // The next call may ring while this one says goodbye.
+    drop(permit);
     broker.incoming.send_replace(None);
     inner.emit(ClientEvent::CallChanged);
     #[cfg(target_os = "android")]

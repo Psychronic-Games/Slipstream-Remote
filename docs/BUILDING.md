@@ -273,7 +273,9 @@ No Mac is needed to build it: `scripts/fetch-macos.sh` runs
 (pushed) commit and downloads the universal app (Apple Silicon and Intel) to
 `dist/slipstream-macos.zip`, where `build-station.sh` includes it when its
 build number matches. Run it after pushing the release commit, before
-`build-station.sh`. The repository variable `SLIPSTREAM_UPDATE_KEYS` holds
+`build-station.sh`; or run `scripts/fetch-macos.sh --start` first, which
+returns at once, and `build-station.sh` downloads the app after its own
+builds, so the two run side by side. The repository variable `SLIPSTREAM_UPDATE_KEYS` holds
 the release public key, so the app installs signed updates.
 
 On a Mac with the Xcode command line tools, Rust and `brew install nasm`,

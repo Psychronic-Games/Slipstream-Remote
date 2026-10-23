@@ -13,6 +13,13 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- When the viewer hangs up, the host says "they ended the session" rather
+  than sometimes "Video stream stopped".
+- A meeting call that arrives just after another stopped ringing rings,
+  instead of being hung up.
+- Releases build the macOS app on GitHub alongside the other builds
+  (`scripts/fetch-macos.sh --start`), with its dependencies cached.
+
 ## 0.30.0 — 2026-10-23
 
 - Record meetings to MP4 or MKV: choose the size (720p–1440p), frame rate,

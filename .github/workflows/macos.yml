@@ -26,6 +26,8 @@ jobs:
           fetch-depth: 0 # the build number is the commit count
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
+      # Compiled dependencies from the last release: most of them don't change.
+      - uses: Swatinem/rust-cache@v2
       - run: brew install nasm
       - run: scripts/build-macos.sh
       - uses: actions/upload-artifact@v4

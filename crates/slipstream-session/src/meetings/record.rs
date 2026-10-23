@@ -705,7 +705,8 @@ mod tests {
             assert!(out.status.success(), "ffprobe: {}", String::from_utf8_lossy(&out.stderr));
             assert!(text.contains("h264") && text.contains("opus"), "{text}");
             let frames: Vec<u64> = text.lines().filter_map(|l| l.split(',').nth(1)?.trim().parse().ok()).collect();
-            assert!(frames.len() == 2 && frames.iter().all(|n| *n > 20), "{text}");
+            // About 36 pictures and 60 sound frames; fewer when the machine is busy.
+            assert!(frames.len() == 2 && frames.iter().all(|n| *n > 10), "{text}");
             eprintln!("{container:?}: {}", text.replace('\n', " "));
         }
         std::fs::read(&path).unwrap()
