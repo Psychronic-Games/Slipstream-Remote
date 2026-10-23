@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.29.0 — 2026-10-23
+
 - Meetings: the room has its own tab beside the workstation tabs and fills the
   window. Choose **Speaker** (the current speaker large, the others along any
   edge) or **Gallery** layout, double-click anyone to fill the stage, and pin
