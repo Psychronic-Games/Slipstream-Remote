@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.25.1 — 2026-10-22
+
 - Use blue and violet station tabs with clear selected states instead of the
   brown/orange selection fill.
 
