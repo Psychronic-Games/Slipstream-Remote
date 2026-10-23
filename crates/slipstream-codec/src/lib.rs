@@ -19,8 +19,13 @@ use openh264::{
 };
 use yuv::{YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix};
 
+mod hardware;
+#[cfg(target_os = "linux")]
+mod vaapi;
 #[cfg(all(target_arch = "x86_64", any(windows, target_os = "linux")))]
 mod nvenc;
+#[cfg(windows)]
+mod mf;
 /// No NVENC on this platform: the encoder stays in software.
 #[cfg(not(all(target_arch = "x86_64", any(windows, target_os = "linux"))))]
 mod nvenc {
@@ -180,8 +185,10 @@ pub struct Encoder {
     /// Encode at this fraction of the frame's size (see [`Encoder::set_scale`]).
     scale: f32,
     /// The hardware encoder, while it works.
-    hw: Option<nvenc::NvEncoder>,
-    /// Hardware is off: not wanted, not available, or it failed once.
+    hw: Option<hardware::Hardware>,
+    /// Hardware encoders that failed here (each is tried once).
+    hw_failed: Vec<hardware::Kind>,
+    /// Hardware is off: not wanted, or none could be used.
     hw_off: bool,
 }
 
@@ -206,13 +213,14 @@ impl Encoder {
             packed: Vec::new(),
             scale: 1.0,
             hw: None,
+            hw_failed: Vec::new(),
             hw_off: !hardware,
         }
     }
 
     /// What is encoding right now, for the viewer's statistics.
     pub fn backend(&self) -> &'static str {
-        if self.hw.is_some() { "video encoding (NVIDIA hardware)" } else { "video encoding (processor)" }
+        self.hw.as_ref().map_or("video encoding (processor)", |hw| hw.kind().label())
     }
 
     /// Encodes frames at `scale` (0.25–1) of their size from the next one
@@ -348,8 +356,8 @@ impl Encoder {
         Ok(RawFrame { width: w, height: h, stride: w * 4, format: frame.format, data: buf })
     }
 
-    /// Opens the hardware encoder for `w`×`h` frames of `format` if needed.
-    /// False if there's none to use.
+    /// Opens a hardware encoder for `w`×`h` frames of `format` if needed,
+    /// the first that works. False if there's none to use.
     fn hardware_ready(&mut self, w: u32, h: u32, format: PixelFormat) -> bool {
         if self.hw_off {
             return false;
@@ -359,18 +367,25 @@ impl Encoder {
         }
         self.hw = None;
         let kbps = self.kbps(w as usize, h as usize);
-        match nvenc::NvEncoder::new(w, h, self.settings.max_fps, kbps, format) {
-            Ok(hw) => {
-                tracing::debug!(device = hw.device(), w, h, "hardware encoder opened");
-                self.hw = Some(hw);
-                true
+        for kind in hardware::Kind::all() {
+            if self.hw_failed.contains(&kind) {
+                continue;
             }
-            Err(e) => {
-                tracing::info!("hardware video encoding unavailable, using the processor: {e:#}");
-                self.hw_off = true;
-                false
+            match hardware::Hardware::open(kind, w, h, self.settings.max_fps, kbps, format) {
+                Ok(hw) => {
+                    tracing::debug!(?kind, device = hw.device(), w, h, "hardware encoder opened");
+                    self.hw = Some(hw);
+                    return true;
+                }
+                Err(e) => {
+                    tracing::info!(?kind, "hardware video encoder unavailable: {e:#}");
+                    self.hw_failed.push(kind);
+                }
             }
         }
+        tracing::info!("no hardware video encoder: using the processor");
+        self.hw_off = true;
+        false
     }
 
     /// Encodes a frame. Returns `None` if the encoder chose to skip it.
@@ -398,10 +413,11 @@ impl Encoder {
             match result {
                 Ok(encoded) => return Ok(Some(encoded)),
                 Err(e) => {
-                    // Carry on in software, starting with a keyframe.
-                    tracing::warn!("hardware video encoding failed, switching to the processor: {e:#}");
-                    self.hw = None;
-                    self.hw_off = true;
+                    // Carry on in software from a keyframe; the next frame
+                    // tries any other hardware encoder.
+                    let kind = self.hw.take().map(|hw| hw.kind());
+                    tracing::warn!(?kind, "hardware video encoding failed: {e:#}");
+                    self.hw_failed.extend(kind);
                     force_keyframe = true;
                 }
             }
@@ -611,24 +627,11 @@ mod tests {
         sum as f64 / (w * h * 3) as f64
     }
 
-    /// Where the NVIDIA driver is present: hardware output decodes with the
-    /// viewer's decoder, with colours as close to the picture as software
-    /// encoding gets (same BT.601 limited-range matrix the viewer assumes),
-    /// keyframes come on request only, and bitrate changes keep the stream.
-    #[test]
-    fn nvenc_output_decodes_with_matching_colours() {
-        #[cfg(all(target_arch = "x86_64", any(windows, target_os = "linux")))]
-        if let Err(e) = nvenc::available() {
-            eprintln!("skipped: {e:#}");
-            return;
-        }
-        #[cfg(not(all(target_arch = "x86_64", any(windows, target_os = "linux"))))]
-        return;
-        let (w, h) = (640, 480);
-        let mut hw = match nvenc::NvEncoder::new(w, h, 60.0, 8000, PixelFormat::Bgra) {
-            Ok(hw) => hw,
-            Err(e) => panic!("NVENC loads but won't open: {e:#}"),
-        };
+    /// A hardware encoder's output decodes with the viewer's decoder, with
+    /// colours as close to the picture as software encoding gets (the same
+    /// BT.601 limited-range matrix the viewer assumes), keyframes come on
+    /// request only, and a bitrate change keeps the stream going.
+    fn check_hardware(mut hw: hardware::Hardware, w: u32, h: u32) {
         let mut sw = Encoder::with_hardware(EncoderSettings { bitrate_kbps: 8000, max_fps: 60.0 }, false);
         let (mut hd, mut sd) = (Decoder::new().unwrap(), Decoder::new().unwrap());
         let mut kinds = Vec::new();
@@ -649,6 +652,37 @@ mod tests {
         assert_eq!(kinds, [true, false, false, false, false, false, false, false, false, true, false, false]);
         eprintln!("{}: mean colour error {herr:.2}, OpenH264 {serr:.2}", hw.device());
         assert!(herr < serr + 3.0, "hardware colours are off: {herr:.2} vs {serr:.2}");
+    }
+
+    /// Where the NVIDIA driver is present.
+    #[test]
+    fn nvenc_output_decodes_with_matching_colours() {
+        #[cfg(all(target_arch = "x86_64", any(windows, target_os = "linux")))]
+        if let Err(e) = nvenc::available() {
+            eprintln!("skipped: {e:#}");
+            return;
+        }
+        #[cfg(not(all(target_arch = "x86_64", any(windows, target_os = "linux"))))]
+        return;
+        match hardware::Hardware::open(hardware::Kind::Nvenc, 640, 480, 60.0, 8000, PixelFormat::Bgra) {
+            Ok(hw) => check_hardware(hw, 640, 480),
+            Err(e) => panic!("NVENC loads but won't open: {e:#}"),
+        }
+    }
+
+    /// Where a VA-API driver can encode H.264 (AMD, Intel). 1270×714 isn't a
+    /// multiple of 16, so the driver must crop the padded macroblocks.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn vaapi_output_decodes_with_matching_colours() {
+        if let Err(e) = vaapi::available() {
+            eprintln!("skipped: {e:#}");
+            return;
+        }
+        match hardware::Hardware::open(hardware::Kind::Vaapi, 1270, 714, 60.0, 8000, PixelFormat::Bgra) {
+            Ok(hw) => check_hardware(hw, 1270, 714),
+            Err(e) => panic!("VA-API finds an encoder but won't open it: {e:#}"),
+        }
     }
 
     /// Adaptive bitrate must not cost a keyframe (a burst of 10x the bytes

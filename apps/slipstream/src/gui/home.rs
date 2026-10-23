@@ -399,11 +399,60 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
                     }
                     app.connect_id = r.id.to_string();
                     app.connect_pw.clear();
-                    app.toast(format!("Enter the password for {}", r.name), pal::BLUE);
+                    app.recent_prompt = Some(RecentPrompt {
+                        id: r.id,
+                        name: if r.name.is_empty() { r.id.to_string() } else { r.name.clone() },
+                        via: route.unwrap_or_default(),
+                        password: String::new(),
+                    });
                 }
             }
         });
     });
+}
+
+/// Asking for the password of a recent link, then connecting (Recent links).
+pub struct RecentPrompt {
+    id: slipstream_core::directory::DeviceId,
+    name: String,
+    via: slipstream_session::StationRef,
+    password: String,
+}
+
+pub(super) fn recent_prompt(app: &mut App, ctx: &egui::Context) {
+    let Some(mut p) = app.recent_prompt.take() else { return };
+    let (mut open, mut go) = (true, false);
+    let title = format!("Connect to {}", p.name);
+    theme::window("recent-prompt", pal::ORANGE)
+        .id(egui::Id::unique("recent-prompt"))
+        .collapsible(false)
+        .resizable(false)
+        .default_width(380.0)
+        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            let chrome = theme::window_header(ui, &title, pal::ORANGE);
+            open = !chrome.close;
+            ui.label(RichText::new(format!("{} · its one-time or unattended password", p.id)).color(pal::DIM));
+            let field = ui.add(theme::text_input(&mut p.password).hint_text("password").password(true).desired_width(300.0f32.min(ui.available_width())));
+            field.request_focus();
+            go = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                go |= theme::pill(ui, "Engage", pal::ORANGE).clicked();
+                if theme::pill(ui, "Cancel", pal::BLUE).clicked() {
+                    open = false;
+                }
+            });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                open = false;
+            }
+            chrome.footer(ui);
+        });
+    if go && !p.password.trim().is_empty() {
+        app.start_connect_at(ctx, p.id, std::mem::take(&mut p.password), p.via);
+    } else if open {
+        app.recent_prompt = Some(p);
+    }
 }
 
 pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {

@@ -21,6 +21,10 @@ show in small print: `0.6.0 (build N · commit)`.
 - React to meeting chat messages (👍 ❤ 🎉 😂 😮 👏). Meeting protocol 2:
   everyone in a meeting needs this version.
 - Incoming meeting calls now announce an **Incoming transmission**.
+- Encode video on AMD and Intel graphics too: VA-API on Linux and Media
+  Foundation on Windows, after NVIDIA's NVENC and before the processor.
+  `SLIPSTREAM_HWENC=nvenc|vaapi|mf` tries only one (for testing).
+- Clicking a recent link asks for its password in a prompt and connects.
 
 ## 0.28.0 — 2026-10-23
 

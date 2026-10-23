@@ -404,6 +404,8 @@ pub struct App {
     /// Station sign-ins and saved devices.
     saved: saved::Saved,
     pub link_code: String,
+    /// Asking for a recent link's password (Bridge → Recent links).
+    pub recent_prompt: Option<home::RecentPrompt>,
     window_title: String,
     logo: Option<egui::TextureHandle>,
     pub update: Option<UpdateState>,
@@ -497,6 +499,7 @@ impl App {
             link_station: String::new(),
             saved: saved::Saved::default(),
             link_code: String::new(),
+            recent_prompt: None,
             logo: None,
             window_title: String::new(),
             update: None,
@@ -1838,6 +1841,7 @@ impl eframe::App for App {
         self.update_tray();
         home::incoming_windows(self, ctx);
         saved::windows(self, ctx);
+        home::recent_prompt(self, ctx);
         quick_connect::window(self, ctx);
         if self.start_hidden {
             self.start_hidden = false;

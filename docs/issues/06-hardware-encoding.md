@@ -38,9 +38,12 @@ on real Windows hardware, including the Windows service (session 0).
 - [ ] Add an encoder implementation per backend in
       `slipstream-codec`, chosen at runtime with OpenH264 as the fallback:
   - [x] NVENC (Windows, Linux).
-  - [ ] Windows: Media Foundation H.264 for Intel and AMD.
-  - [ ] Linux: VA-API (Intel, AMD). Load the libraries with `dlopen`
-    like PipeWire, to keep the binary portable.
+  - [x] Windows: Media Foundation H.264 for Intel and AMD (`src/mf/`;
+    hardware MFTs, system-memory NV12 with a Direct3D 11 fallback; tested
+    only against Wine's software MFT so far: needs real Intel/AMD/NVIDIA).
+  - [x] Linux: VA-API (Intel, AMD), libva loaded at run time, packed
+    SPS/PPS/slice headers written in `src/vaapi/headers.rs` (radeonsi needs
+    them). Verified on a Radeon 610M (Mesa 26.2); Intel iHD untested.
   - [ ] macOS: VideoToolbox.
 - [ ] Keep the low-latency settings: no B-frames, infinite GOP with
       on-demand IDR, CBR or VBV-limited rate control, and slice output if
