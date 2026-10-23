@@ -473,8 +473,22 @@ struct DeviceBinding {
 
 /// Writes a file readable only by the current user.
 fn write_private(path: &Path, data: &[u8]) -> Result<()> {
-    private_temp(path, data)?.persist(path).map_err(|e| e.error)?;
-    Ok(())
+    let mut temp = private_temp(path, data)?;
+    // Windows refuses to replace a file another program (or another
+    // replacement) has open for a moment: antivirus, backup and indexing
+    // tools do that. Try again for up to a second before giving up.
+    let mut attempt = 0;
+    loop {
+        match temp.persist(path) {
+            Ok(_) => return Ok(()),
+            Err(e) if cfg!(windows) && e.error.kind() == std::io::ErrorKind::PermissionDenied && attempt < 50 => {
+                attempt += 1;
+                temp = e.file;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => return Err(e.error.into()),
+        }
+    }
 }
 
 fn private_temp(path: &Path, data: &[u8]) -> Result<tempfile::NamedTempFile> {
