@@ -26,6 +26,12 @@ show in small print: `0.6.0 (build N · commit)`.
   (speaker with the others below, above, left or right; gallery).
 - The macOS app is built on GitHub's Macs (`scripts/fetch-macos.sh`) and is
   offered on station download pages.
+- macOS: "Connect this app" and meeting invitation links (`slipstream://`)
+  now reach the app, so a Mac downloaded from a private station links to it
+  with one click (Safari keeps the download's origin on the zip, not the app).
+- Bridge offers **Link to my organisation** on apps that only use Slipstream
+  Public: enter the station's address and the setup code from its download
+  page.
 
 ## 0.29.0 — 2026-10-23
 

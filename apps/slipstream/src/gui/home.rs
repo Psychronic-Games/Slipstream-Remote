@@ -84,8 +84,25 @@ fn station_tabs(app: &mut App, ui: &mut Ui) {
     }
     if !custom {
         if app.client.public_dir_status() != DirStatus::NotConfigured { app.select_public(true); }
-        ui.label(RichText::new("SLIPSTREAM PUBLIC").font(theme::display_bold(18.0)).color(pal::LAVENDER));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("SLIPSTREAM PUBLIC").font(theme::display_bold(18.0)).color(pal::LAVENDER));
+            if !app.link_open
+                && theme::pill(ui, "Link to my organisation", pal::BLUE)
+                    .on_hover_text("Use your support provider's own station: its address and setup code are on its download page")
+                    .clicked()
+            {
+                app.link_open = true;
+            }
+        });
+        if app.link_open {
+            ui.add_space(4.0);
+            link_fields(app, ui);
+            if theme::pill(ui, "Cancel", pal::BLUE).clicked() {
+                app.link_open = false;
+            }
+        }
     } else {
+        app.link_open = false;
         let mut public = app.selected_public;
         ui.horizontal_wrapped(|ui| {
             let label = app.org.as_deref().unwrap_or("My station");
@@ -263,6 +280,11 @@ fn link_form(app: &mut App, ui: &mut Ui, t: f64) {
         theme::lamp(ui.painter(), rect.center(), pal::RED, t);
         ui.label(RichText::new("NOT CONNECTED TO A STATION").font(theme::display(17.0)).color(pal::RED));
     });
+    link_fields(app, ui);
+}
+
+/// A station's address and setup code (both on its download page), and Connect.
+fn link_fields(app: &mut App, ui: &mut Ui) {
     ui.label(
         RichText::new(
             "Press “Connect this app” on your support provider's download page, or enter the station address \

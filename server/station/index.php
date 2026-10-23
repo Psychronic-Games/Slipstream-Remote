@@ -90,9 +90,10 @@ and you've shared your password.</p>
         <b>Android:</b> open the downloaded file. The first time, Android asks to let your browser install apps:
         choose <i>Settings</i>, turn on <i>Allow from this source</i>, go back and choose <i>Install</i>.
         Then come back to this page for the next step.</li>
-      <li>The app connects to <?= h($org) ?> by itself. If it asks for your station instead, press
+      <li>The app connects to <?= h($org) ?> by itself (on a Mac, press the button below once). If it shows only
+        <i>Slipstream Public</i> or asks for your station instead, press
         <a class="btn small" href="<?= h(slip_link_url()) ?>">Connect this app</a>
-        or enter <b class="mono"><?= h(slip_server_address()) ?></b> and the setup code
+        or choose <i>Link to my organisation</i> on its Bridge page and enter <b class="mono"><?= h(slip_server_address()) ?></b> and the setup code
         <b class="mono"><?= h(slip_code_display($code)) ?></b>.</li>
       <li>Read the <b>ID</b> and <b>password</b> in the app to your technician.</li>
       <li>Close the app any time to end access. A new password is made after every session.</li>

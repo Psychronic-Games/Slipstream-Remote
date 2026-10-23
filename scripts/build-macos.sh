@@ -71,6 +71,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>Slipstream link</string>
+      <key>CFBundleURLSchemes</key><array><string>slipstream</string></array>
+    </dict>
+  </array>
   <key>NSCameraUsageDescription</key>
   <string>Slipstream uses your camera when you choose to share it in a meeting.</string>
   <key>NSMicrophoneUsageDescription</key>

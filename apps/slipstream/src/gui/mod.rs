@@ -11,6 +11,8 @@ mod desktop;
 mod home;
 mod network;
 mod keys;
+#[cfg(target_os = "macos")]
+mod macos_links;
 #[cfg(windows)]
 mod lite;
 mod meetings;
@@ -95,6 +97,8 @@ pub fn run(opts: GuiOptions) -> Result<()> {
         tracing::info!("Slipstream is already running; showing its window");
         return Ok(());
     };
+    #[cfg(target_os = "macos")]
+    macos_links::install();
     #[cfg(target_os = "linux")]
     if let Err(e) = desktop::integrate() {
         tracing::debug!("desktop integration skipped: {e:#}");
@@ -234,6 +238,11 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             #[cfg(target_os = "android")]
             let requests = single::inbox::open(move || wake.request_repaint());
             app.show_requests = Some(requests);
+            #[cfg(target_os = "macos")]
+            {
+                let wake = cc.egui_ctx.clone();
+                app.link_inbox = Some(single::inbox::open(move || wake.request_repaint()));
+            }
             // Link to a station: as asked, or (no station yet) from where the
             // browser says this download came from.
             let link = opts.link.as_deref().and_then(StationLink::parse).map(|l| (l, true)).or_else(|| {
@@ -391,6 +400,11 @@ pub struct App {
     hidden: bool,
     /// Another launch asked us to show the window (or to link).
     show_requests: Option<mpsc::Receiver<single::Request>>,
+    /// macOS: links from Apple Events (see `macos_links`).
+    #[cfg(target_os = "macos")]
+    link_inbox: Option<mpsc::Receiver<single::Request>>,
+    #[cfg(target_os = "macos")]
+    links_installed: bool,
     /// Exchanging a setup code with a station: (asked by the user, result).
     link_job: Option<(bool, oneshot::Receiver<Result<StationConfig, String>>)>,
     /// The Windows service hosts this computer (see `crate::service`).
@@ -401,6 +415,8 @@ pub struct App {
     service_job: Option<ServiceJob>,
     /// The Bridge/Config "connect to your station" form.
     pub link_station: String,
+    /// Bridge: linking a Public-only app to an organisation's station.
+    pub link_open: bool,
     /// Station sign-ins and saved devices.
     saved: saved::Saved,
     pub link_code: String,
@@ -491,12 +507,17 @@ impl App {
             start_hidden: false,
             hidden: false,
             show_requests: None,
+            #[cfg(target_os = "macos")]
+            link_inbox: None,
+            #[cfg(target_os = "macos")]
+            links_installed: false,
             link_job: None,
             via_service: false,
             #[cfg(windows)]
             service_chat: None,
             service_job: None,
             link_station: String::new(),
+            link_open: false,
             saved: saved::Saved::default(),
             link_code: String::new(),
             recent_prompt: None,
@@ -1848,7 +1869,19 @@ impl eframe::App for App {
             self.set_visible(ctx, false);
         }
         let mut show = false;
-        while let Some(req) = self.show_requests.as_ref().and_then(|rx| rx.try_recv().ok()) {
+        #[cfg(target_os = "macos")]
+        if !self.links_installed {
+            // AppKit sets its own 'GURL' handler while launching: take it back.
+            self.links_installed = true;
+            macos_links::install();
+        }
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        let mut requests: Vec<single::Request> = self.show_requests.as_ref().map(|rx| rx.try_iter().collect()).unwrap_or_default();
+        #[cfg(target_os = "macos")]
+        if let Some(rx) = &self.link_inbox {
+            requests.extend(rx.try_iter());
+        }
+        for req in requests {
             show = true;
             if let single::Request::Link(url) = req {
                 if url.starts_with("slipstream://meeting") {

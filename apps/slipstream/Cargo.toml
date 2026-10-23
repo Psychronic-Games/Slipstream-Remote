@@ -41,6 +41,10 @@ x11rb = { version = "0.13.2", features = ["shape"] }
 winit = { version = "0.30.13", default-features = false, features = ["x11"] }
 ksni = { version = "0.3.6", default-features = false, features = ["tokio"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Catching slipstream:// links (Apple Events) that winit doesn't pass on.
+objc2 = "0.6"
+
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tray-icon = "0.26.1"
 

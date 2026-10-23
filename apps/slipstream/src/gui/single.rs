@@ -1,7 +1,8 @@
 //! Single-instance guard: the first Slipstream (per settings profile)
 //! listens on a loopback port derived from its profile path; later launches
 //! connect to it, ask it to show its window (or pass on a `slipstream://`
-//! link they were opened with), and exit. Android has its own [`inbox`].
+//! link they were opened with), and exit. Android has its own [`inbox`],
+//! which macOS also uses for links that arrive as Apple Events.
 #![cfg_attr(target_os = "android", allow(dead_code, unused_imports))]
 
 use std::{
@@ -115,7 +116,7 @@ impl Instance {
 /// Android: the activity is the one instance, so there are no later
 /// launches to listen for, and loopback ports are open to every app on the
 /// device. Links from the activity's intents come straight in here instead.
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "macos"))]
 pub mod inbox {
     use std::sync::{Mutex, mpsc};
 

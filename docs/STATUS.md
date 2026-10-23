@@ -71,8 +71,8 @@ releases.
   Not notarised (Apple Developer Program not joined yet), so users choose
   *Open Anyway*, and permissions may need granting again after updates. Its
   capture may or may not show the pointer (`cursor_in_video` is false, so
-  the viewer keeps its own pointer visible). `slipstream://` links don't
-  reach the app on macOS (winit doesn't pass URL events on); setup codes do.
+  the viewer keeps its own pointer visible). `slipstream://` links reach the app on macOS through its own Apple Event
+  handler (0.30, to confirm on a Mac); setup codes work too.
 - **Windows elevation**: without the Slipstream service the app runs as
   the user, so it can't control UAC prompts, elevated windows or the login
   screen. The service does (it runs on real Server 2016), but UAC and the
