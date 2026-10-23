@@ -89,12 +89,27 @@ fn station_tabs(app: &mut App, ui: &mut Ui) {
         let mut public = app.selected_public;
         ui.horizontal_wrapped(|ui| {
             let label = app.org.as_deref().unwrap_or("My station");
-            ui.selectable_value(&mut public, false, RichText::new(label).font(theme::display_bold(18.0)));
-            ui.selectable_value(&mut public, true, RichText::new("Slipstream Public").font(theme::display_bold(18.0)));
+            station_tab(ui, &mut public, false, label, pal::BLUE);
+            station_tab(ui, &mut public, true, "Slipstream Public", pal::VIOLET);
         });
         app.select_public(public);
     }
     ui.add_space(10.0);
+}
+
+fn station_tab(ui: &mut Ui, selected: &mut bool, value: bool, label: &str, color: Color32) {
+    ui.scope(|ui| {
+        let visuals = ui.visuals_mut();
+        visuals.selection.bg_fill = color;
+        visuals.selection.stroke = egui::Stroke::new(1.5, color);
+        visuals.widgets.hovered.bg_fill = color.gamma_multiply(0.2);
+        visuals.widgets.hovered.weak_bg_fill = color.gamma_multiply(0.2);
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, color);
+        visuals.widgets.active.bg_fill = color.gamma_multiply(0.35);
+        visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, color);
+        let ink = if *selected == value { pal::BG } else { color };
+        ui.selectable_value(selected, value, RichText::new(label).font(theme::display_bold(18.0)).color(ink));
+    });
 }
 
 fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {

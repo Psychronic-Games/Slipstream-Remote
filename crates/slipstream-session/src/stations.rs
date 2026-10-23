@@ -435,6 +435,28 @@ mod tests {
         let (viewer, _) = Client::start(viewer_store, options(public_settings, false))
             .await
             .unwrap();
+        // The public listener must not provide another password-guessing budget.
+        for route in [StationRef::Primary, StationRef::Public, StationRef::Primary] {
+            assert!(viewer
+                .connect_on(&route, DeviceId(123456789), "incorrect-password", |_| {})
+                .await
+                .is_err());
+        }
+        assert!(host.inner.throttle.lock().await.locked().is_some());
+        for route in [StationRef::Primary, StationRef::Public] {
+            let error = viewer
+                .connect_on(&route, DeviceId(123456789), "dual-station-password", |_| {})
+                .await
+                .err()
+                .expect("both stations must enforce the shared lockout");
+            assert!(format!("{error:#}").contains("too many wrong passwords"), "{error:#}");
+        }
+        // Wait for the actual lockout rather than depending on a fixed delay.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while host.inner.throttle.lock().await.locked().is_some() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.expect("initial authentication lockout did not expire");
         for route in [StationRef::Primary, StationRef::Public] {
             let (session, _) = viewer
                 .connect_on(&route, DeviceId(123456789), "dual-station-password", |_| {})

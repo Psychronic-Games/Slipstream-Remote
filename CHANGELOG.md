@@ -13,6 +13,9 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Use blue and violet station tabs with clear selected states instead of the
+  brown/orange selection fill.
+
 ## 0.25.0 — 2026-10-22
 
 - Use Slipstream Public (`public.slipstreamremote.com`) for unconfigured apps

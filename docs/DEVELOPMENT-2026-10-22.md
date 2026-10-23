@@ -166,3 +166,33 @@ running desktop app: use About → Check for updates → Install & restart. Andr
 users install the new APK. Update installed Windows services for the new public-ID
 snapshot support. Previous 0.24.0 autostart/search work and its verification are
 preserved in the [October 21 handoff](DEVELOPMENT-2026-10-21.md).
+
+## Unreleased follow-up — station colors and authentication review
+
+Station tabs now use blue for the configured private station and violet for
+Slipstream Public, with solid selected fills and matching hover/focus accents.
+The override is scoped to these controls. The local debug app passed the existing
+native audit for private default, separate partner drafts, exactly one station's
+ID and narrow layout. Visual evidence:
+`/tmp/slipstream-station-tabs-87q7mabl`. Fixture server errors in these screenshots
+are intentional: the test uses cached IDs and an unreachable local station.
+This styling has not been packaged or published; both sites still serve build 131.
+
+Reviewed the shared-code design: both listeners share one temporary code and
+unattended password because they control the same host. The SPAKE2 exchange
+binds the actual listening host and viewer endpoint identities. Core authentication
+checks pass for correct/wrong passwords, both password types, endpoint identity
+mismatch and lockout. Extended the existing dual-station integration regression
+to alternate wrong passwords between the listeners, then verify both reject even
+a correct password during the resulting shared lockout. It passes. This verifies
+the reviewed path, not a comprehensive security audit. No authentication policy
+change was made. Separate temporary codes were proposed to the user; either route
+still grants access to the same computer, and the unattended password remains shared.
+
+Public administration is at https://public.slipstreamremote.com/admin/ and asks
+only for the admin password. The local mode-0600 JSON credential file documented
+above contains `admin_password`; the app's one-time code is unrelated to it.
+
+The follow-up Linux build, five core authentication checks, extended dual-station
+regression, native UI audit and strict desktop/session all-target Clippy all pass.
+Follow-up caches: 4.31 GiB development/test and 31.48 GiB release.

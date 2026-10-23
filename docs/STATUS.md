@@ -9,6 +9,11 @@ https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
 Live update offers and full Linux/Windows/Android downloads passed on both.
 Later documentation/test-style commits do not change packaged build identity.
 
+Unreleased source changes give station tabs blue/violet selected states. The
+extended integration regression verifies one shared authentication lockout across
+private and public listeners; temporary codes remain shared. These follow-ups
+are locally built and checked, and have not been republished.
+
 Raw apps use Slipstream Public by default. Configured private stations stay
 the default, with a shared station tab bar above Your ID and Establish link.
 Public/private endpoints, IDs, lookup namespaces, partner drafts, recent links,
@@ -62,7 +67,7 @@ window behavior remain follow-ups.
 
 Build/check scripts trim caches automatically at 12 GiB development/test and
 32 GiB release, with incremental caching off and two generated Android package
-versions per variant. Latest recorded sizes are **2.69 / 31.48 GiB**. Use
+versions per variant. Latest recorded sizes are **4.31 / 31.48 GiB**. Use
 `scripts/check.sh` for substantial checks. Rollback paths, verification limits
 and the next-session starting point are in the latest handoff. Earlier
 support-tool scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).

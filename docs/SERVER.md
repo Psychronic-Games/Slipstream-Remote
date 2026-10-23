@@ -46,6 +46,14 @@ endpoint's address and device information, never the private relay token or
 station access key. The Windows service supplies its own public ID to the GUI.
 The public ID remains available when a self-hosted station is configured.
 
+The two IDs reach the same computer and currently accept the same temporary
+code and unattended password. A private station's access key protects that
+station's directory; it does not prevent a valid login through the public ID.
+Failed password guesses share one host-side lockout across both listeners.
+The temporary code changes when a session ends or the user selects New code.
+Station separation protects routing and station credentials, rather than
+creating separate permission sets on the computer.
+
 The optional **Public backup relay** setting lets the private endpoint use
 Slipstream's relay as well, when permitted by both client and station. It is
 separate from the public ID. No n0-operated relay is added to new endpoints;
