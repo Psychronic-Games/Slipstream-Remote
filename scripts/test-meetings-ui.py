@@ -84,7 +84,7 @@ def main():
         result = subprocess.run(['tesseract', str(path), 'stdout', '--psm', '11', 'tsv'], capture_output=True, text=True, check=True)
         return [row for row in csv.DictReader(io.StringIO(result.stdout), delimiter='\t') if row.get('text', '').strip()]
 
-    def locate(win, phrase, name, last=False, controls=False):
+    def locate(win, phrase, name, last=False, controls=False, prefix=False):
         rows = words(win, name)
         normalize = lambda text: ''.join(c for c in text.upper() if c.isalnum())
         wanted = normalize(phrase)
@@ -92,7 +92,9 @@ def main():
         for index in range(0 if controls else len(rows)):
           for count in range(1,min(12,len(rows)-index)+1):
             group = rows[index:index + count]
-            if ''.join(normalize(row['text']) for row in group) == wanted:
+            joined=''.join(normalize(row['text']) for row in group)
+            # prefix: OCR runs a trailing number into a word ("Testcameral").
+            if joined == wanted or (prefix and count == 1 and joined.startswith(wanted)):
                 left = min(int(row['left']) for row in group)
                 top = min(int(row['top']) for row in group)
                 right = max(int(row['left']) + int(row['width']) for row in group)
@@ -118,7 +120,8 @@ def main():
                             visited.add((nx,ny));queue.append((nx,ny))
                 left*=3;top*=3;right=(right+1)*3;bottom=(bottom+1)*3
                 if right-left<35 or not 15<=bottom-top<=42: continue
-                crop=image.crop((left+12,top+4,right-12,bottom-4))
+                # Tight inset: 0.26.2's compact actions leave little padding around the label.
+                crop=image.crop((left+6,top+4,right-6,bottom-4))
                 crop=ImageOps.grayscale(crop).resize((crop.width*5,crop.height*5)).point(lambda p:255 if p>100 else 0)
                 crop=ImageOps.expand(crop,border=20,fill=255);path=base/'button-ocr.png';crop.save(path)
                 text=subprocess.run(['tesseract',str(path),'stdout','--psm','6'],capture_output=True,text=True,check=True).stdout
@@ -148,8 +151,11 @@ def main():
             video=image.crop((380,350,min(800,image.width),min(780,image.height))).convert('RGB')
             pixels=getattr(video,'get_flattened_data',video.getdata)()
             return sum(r<45 and 35<green<140 and 45<b<180 and b>green for r,green,b in pixels)>100
-        video=image.crop((200,360,min(980,image.width),min(920,image.height))).convert('RGB').resize((200,160))
-        return sum(r>200 and green>90 and b<80 for r,green,b in getattr(video,'get_flattened_data',video.getdata)())>50
+        # Anywhere on the meeting stage (below the room's header): the test
+        # camera's orange bar may be in a small strip tile.
+        video=image.crop((0,200,image.width,image.height)).convert('RGB')
+        video=video.resize((video.width//4,video.height//4))
+        return sum(r>200 and 90<green<180 and b<80 for r,green,b in getattr(video,'get_flattened_data',video.getdata)())>20
 
     try:
         # The fixture key authorizes the directory, while its lease authorizes
@@ -208,8 +214,8 @@ def main():
             except (OSError, ValueError):
                 return None
         target = wait(device_id, 'remote device ID')
-        def click_text(win, phrase, name, last=False):
-            point=wait(lambda:locate(win,phrase,name,last),f'{name}: {phrase}')
+        def click_text(win, phrase, name, last=False, prefix=False):
+            point=wait(lambda:locate(win,phrase,name,last,prefix=prefix),f'{name}: {phrase}')
             g=geometry(win);xdo('windowfocus',win);xdo('mousemove',g['X']+point[0],g['Y']+point[1],'click','1');time.sleep(.25)
             return point
         if args.tabs:
@@ -270,16 +276,15 @@ def main():
             print('Floating tear-out, floating-to-floating merge, root/group moves and closing one member passed',flush=True)
             return
         click(host, 'Devices', 'host-setup-devices')
-        click_text(host,'Test camera','host-camera-picker')
+        click_text(host,'Test camera','host-camera-picker',prefix=True)
         click_text(host,'Test camera 2','host-second-camera')
         wait(lambda:tomllib.loads((profiles[0]/'settings.toml').read_text()).get('app',{}).get('meeting_camera')==1,'remember selected camera')
         wait(lambda:locate(host,'System default','host-microphone-name'),'named default microphone')
         click(host,'Start or join','host-back-to-setup')
         click(host, 'Create meeting', 'host-create')
-        click(host,'Participants 1','host-people')
-        point = wait(lambda: locate(host, 'System', 'host-room',last=True), 'call form')
-        g = geometry(host)
-        xdo('mousemove', g['X'] + point[0] + 125, g['Y'] + point[1], 'click', '1')
+        click(host,'People 1','host-people')
+        # The ID field's faint hint defeats OCR: People column, 1140x1100 fixture.
+        click_point(host,960,293,'host-room')
         xdo('type', '--clearmodifiers', '--delay', '0', str(target))
         click(host, 'Call system', 'host-calling-first')
         wait(lambda:locate(guest,'Answer','guest-ringing',controls=True),'incoming call prompt')
@@ -288,29 +293,34 @@ def main():
         time.sleep(5.1)
         click(host, 'Call system', 'host-calling')
         click(guest, 'Answer', 'guest-incoming', last=True)
-        wait(lambda:locate(host,'Participants 2','host-answered',controls=True),'answered peer joining')
+        wait(lambda:locate(host,'People 2','host-answered',controls=True),'answered peer joining')
         assert not locate(host,'Close call','host-no-close-call',controls=True)
         assert not locate(host,'Cancel call','host-no-cancel-call',controls=True)
-        click(host,'Live meeting','host-live')
+        click(host,'People 2','host-live')
         click(host, 'Camera', 'host-camera')
         wait(lambda: camera_visible(host,'host-preview'), 'local decoded camera preview')
         wait(lambda: camera_visible(guest,'guest-video'), 'remote decoded camera tile')
         wait(lambda:locate(host,'Test camera 2','host-selected-camera'),'selected camera in sharing status')
         print('Named camera choice/persistence, cancelled call, Answer, call-status cleanup and live camera passed',flush=True)
-        click(host,'Chat','host-chat-tab')
-        point = wait(lambda: locate(host, 'Message everyone', 'host-chat'), 'meeting message field')
-        g=geometry(host)
-        xdo('mousemove', g['X'] + point[0] + 100, g['Y'] + point[1], 'click', '1')
+        click(host,'Chat','host-chat-column')
+        # The message box sits at the foot of the chat column (1140x1100 fixture).
+        click_point(host,960,1018,'host-chat')
         xdo('type', '--clearmodifiers', '--delay', '0', 'Meeting fixture message')
         xdo('key','Return')
-        click(guest,'Chat 1 new','guest-unread-chat')
+        click(guest,'Chat 1','guest-unread-chat')
         wait(lambda:locate(guest,'Meeting fixture message','guest-chat'),'group Subspace chat')
+        # React to the message (the ☺+ under it, then the first reaction).
+        click_point(guest,820,306,'guest-react-menu')
+        click_point(guest,828,336,'guest-react-chosen')
+        time.sleep(1);words(guest,'guest-reacted')
+        # The organizer's chat column is still open from sending.
+        time.sleep(.5);words(host,'host-sees-reaction')
         click(host, 'Stop camera', 'host-stopping-camera')
-        click(guest,'Live meeting','guest-live-again')
-        wait(lambda:locate(guest,'Cameras','guest-camera-stopped'),'camera stopped on peer')
+        click(guest,'Chat','guest-live-again')
+        wait(lambda:not camera_visible(guest,'guest-camera-stopped'),'camera stopped on peer')
         click(host,'Share screen','host-screen-chooser-cancel')
         wait(lambda:camera_visible(host,'host-screen-thumbnails',preview=True),'local chooser thumbnails')
-        assert locate(guest,'Cameras','guest-not-sharing-preview')
+        assert not camera_visible(guest,'guest-not-sharing-preview')
         click_text(host,'Screen 2 Test Pattern 2 1280 x 720','host-choose-screen-cancel')
         # Fixed 1140×1100/two-screen fixture: Antonio's Cancel caption is
         # intermittently misread by OCR; click the verified footer hit area.
@@ -330,7 +340,7 @@ def main():
         click(host,'End meeting','host-end-again')
         click(host,'End for everyone','host-ended')
         wait(lambda:locate(guest,'Close meeting','guest-ended',controls=True),'organizer ending the room')
-        print('Separate Chat/unread count, persistent media controls, screen choice/Cancel, narrow live view and confirmed teardown passed',flush=True)
+        print('Chat column/unread count, persistent media controls, screen choice/Cancel, narrow live view and confirmed teardown passed',flush=True)
     finally:
         for child in reversed(children):
             if child.poll() is None:

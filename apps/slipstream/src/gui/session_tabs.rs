@@ -96,9 +96,13 @@ impl Tabs {
 }
 
 /// Returns content below the strip and actions to apply after releasing UI locks.
+/// `meeting`: the meeting we're in (title, and whether it's showing), for
+/// its own tab after Bridge in the main window.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     shared: &Arc<Mutex<Tabs>>, ui: &mut Ui, area: Rect,
     entries: &[(u64, String)], active: Option<u64>, root: bool, visible: bool,
+    meeting: Option<(&str, bool)>,
 ) -> (Rect, Vec<SessionAction>) {
     let ctx = ui.ctx().clone();
     let viewport = ctx.viewport_id();
@@ -120,8 +124,19 @@ pub(super) fn show(
         .show(&mut child, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                if root && theme::pill(ui, "Bridge", if active.is_none() {pal::PEACH} else {pal::BLUE}).clicked() {
+                let meeting_shown = meeting.is_some_and(|m| m.1);
+                if root && theme::pill(ui, "Bridge", if active.is_none() && !meeting_shown {pal::PEACH} else {pal::BLUE}).clicked() {
                     actions.push((0, TabAction::Bridge));
+                }
+                if root && let Some((title, shown)) = meeting {
+                    let (rect, response) = ui.allocate_exact_size(vec2(200.0, 29.0), Sense::click());
+                    let response = response.on_hover_text(format!("Meeting: {title}"));
+                    let color = if shown {pal::GREEN} else if response.hovered() {pal::TAN} else {pal::GREEN.gamma_multiply(0.6)};
+                    ui.painter().rect_filled(rect, 6.0, color);
+                    ui.painter().circle_filled(rect.left_center() + vec2(14.0, 0.0), 5.0, pal::RED);
+                    ui.painter().with_clip_rect(rect.shrink(4.0)).text(rect.left_center() + vec2(26.0, 0.0), Align2::LEFT_CENTER,
+                        title.to_uppercase(), theme::display(17.0), pal::BG);
+                    if response.clicked() { actions.push((0, TabAction::Meeting)); }
                 }
                 for (id, name) in entries {
                     let (rect, _) = ui.allocate_exact_size(vec2(180.0, 29.0), Sense::hover());
@@ -269,7 +284,7 @@ mod tests {
             raw.viewports.insert(viewport, ViewportInfo {inner_rect: Some(area.translate(origin.to_vec2())), native_pixels_per_point: Some(scale), ..Default::default()});
             let mut actions = Vec::new();
             let mut output = self.ctx.run_ui(raw, |ui| {
-                actions.extend(show(&self.tabs, ui, area, entries, entries.first().map(|(id,_)|*id), root, true).1);
+                actions.extend(show(&self.tabs, ui, area, entries, entries.first().map(|(id,_)|*id), root, true, None).1);
             });
             output.textures_delta.clear();
             actions
@@ -386,7 +401,7 @@ mod tests {
                     let mut raw=RawInput {viewport_id:viewport,screen_rect:Some(area),events,..Default::default()};
                     raw.viewports.insert(viewport,ViewportInfo {inner_rect:Some(area),..Default::default()});
                     let mut output = ctx.run_ui(raw, |ui| {
-                        actions.extend(show(&shared,ui,area,&entries,Some(1),root,true).1);
+                        actions.extend(show(&shared,ui,area,&entries,Some(1),root,true,None).1);
                         // Root slots locate the last tab without depending on font widths.
                         point = if let Some((_,last))=shared.lock().unwrap().targets.get(&ViewportId::ROOT).and_then(|t|t.slots.last()) {
                             pos2(last.right()+20.0,15.0)

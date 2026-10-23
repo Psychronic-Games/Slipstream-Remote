@@ -100,7 +100,7 @@ pub(super) fn show(
             let body = theme::native_session_title_bar(ui, &app_title, Some(&host));
             let visible = ctx.input(|i| i.viewport().minimized != Some(true));
             let (body, tab_actions) =
-                session_tabs::show(&tabs, ui, body, &entries, Some(id), false, visible);
+                session_tabs::show(&tabs, ui, body, &entries, Some(id), false, visible, None);
             for (id, action) in tab_actions {
                 for tab in &members {
                     tab.lock().unwrap().release_keyboard();

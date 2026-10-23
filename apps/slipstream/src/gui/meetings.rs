@@ -6,7 +6,7 @@ use slipstream_audio::voice::Microphone;
 use slipstream_core::{
     config::ServerSettings,
     directory::DeviceId,
-    meeting::{CAPACITY, Invitation, Source, State},
+    meeting::{CAPACITY, Invitation, MAX_SUBSCRIPTIONS, Source, State},
 };
 use slipstream_session::{
     Client,
@@ -19,6 +19,7 @@ use slipstream_session::{
 use std::{collections::VecDeque, time::Duration};
 use tokio::{runtime::Runtime, sync::oneshot};
 mod devices;
+mod room;
 mod screens;
 
 pub(super) const STREAM_BASE: u64 = 1 << 63;
@@ -60,14 +61,6 @@ fn ready<T>(job: &mut Option<Pending<T>>) -> Option<Result<T>> {
     };
     job.take();
     Some(result)
-}
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum RoomTab {
-    #[default]
-    Live,
-    Chat,
-    Participants,
-    Devices,
 }
 #[derive(Default)]
 pub(super) struct Meetings {
@@ -111,9 +104,8 @@ struct Active {
     sound_attempted: bool,
     chat: VecDeque<slipstream_core::meeting::Chat>,
     message: String,
-    pin: Option<u64>,
-    tab: RoomTab,
-    unread: usize,
+    /// Layout, spotlight, speaker, side column and reactions.
+    room: room::View,
     microphone_name: String,
     video_name: String,
     next_video_name: String,
@@ -139,9 +131,7 @@ impl Active {
             sound_attempted: false,
             chat: VecDeque::new(),
             message: String::new(),
-            pin: None,
-            tab: RoomTab::Live,
-            unread: 0,
+            room: room::View::default(),
             microphone_name: String::new(),
             video_name: String::new(),
             next_video_name: String::new(),
@@ -176,6 +166,13 @@ impl Drop for Active {
 }
 
 impl Meetings {
+    /// The meeting we're in (admitted, not ended): its title, for the tab strip.
+    pub(super) fn room_title(&self) -> Option<String> {
+        let active = self.active.as_ref()?;
+        let state = active.meeting.state.borrow();
+        (!state.waiting && state.ended.is_none()).then(|| state.title.clone())
+    }
+
     pub(super) fn call_target(&mut self, id: DeviceId, server: ServerSettings) {
         self.target = Some((id, server));
     }
@@ -370,10 +367,10 @@ impl Meetings {
                 while let Ok(event) = active.meeting.events.try_recv() {
                     match event {
                         Event::Chat(chat) => {
-                            if (active.tab != RoomTab::Chat || app.page != Page::Meetings)
+                            if (active.room.side != room::Side::Chat || app.page != Page::Meetings)
                                 && chat.sender != state.local
                             {
-                                active.unread = active.unread.saturating_add(1);
+                                active.room.unread = active.room.unread.saturating_add(1);
                             }
                             active.chat.push_back(chat);
                             while active.chat.len() > 128 {
@@ -387,29 +384,20 @@ impl Meetings {
                                     .store(true, std::sync::atomic::Ordering::Release);
                             }
                         }
+                        Event::Reaction { chat, reaction, participant, on } => {
+                            active.room.react(chat, reaction, participant, on);
+                        }
                         Event::Notice(text) => self.error = Some(text),
                     }
                 }
-                let mut subscriptions = Vec::new();
-                if let Some(pin) = active.pin
-                    && state
-                        .participants
-                        .iter()
-                        .any(|p| p.id == pin && p.source != Source::None)
-                {
-                    subscriptions.push(pin);
+                if let Some(sound) = &active.sound {
+                    active.room.levels = sound.levels();
                 }
-                for source in [Source::Screen, Source::Camera] {
-                    for member in &state.participants {
-                        if member.id != state.local
-                            && member.source == source
-                            && !subscriptions.contains(&member.id)
-                            && subscriptions.len() < 4
-                        {
-                            subscriptions.push(member.id);
-                        }
-                    }
-                }
+                active.room.update_speaker(&state);
+                // The organizer forwards a few videos to each of us: the
+                // spotlight, pin and speaker first, then screens, then cameras.
+                let subscriptions: Vec<u64> =
+                    active.room.video_priority(&state).into_iter().take(MAX_SUBSCRIPTIONS).collect();
                 if subscriptions != active.subscriptions {
                     active
                         .meeting
@@ -501,7 +489,7 @@ fn incoming(meetings: &mut Meetings, app: &mut App, ctx: &egui::Context) {
     };
     let mut accepted = None;
     theme::modal("incoming-meeting-call",pal::GREEN).show(ctx,|ui|{
-        ui.set_width(theme::dialog_width(ctx,440.0));if theme::window_header_with_close(ui,"Incoming call",pal::GREEN,pal::PEACH).close{accepted=Some(false);}
+        ui.set_width(theme::dialog_width(ctx,440.0));if theme::window_header_with_close(ui,"Incoming transmission",pal::GREEN,pal::PEACH).close{accepted=Some(false);}
         ui.label(RichText::new(&call.name).font(theme::display(24.0)).color(pal::TAN));
         ui.label(format!("Inviting you to {}",call.invitation.title));
         ui.label("Answer with your microphone muted. You can unmute or share your camera in the meeting.");
@@ -620,78 +608,36 @@ fn start_video(
     active.video_job = Some(job);
 }
 fn call_form(meetings: &mut Meetings, app: &App, ui: &mut Ui, allow: bool) {
-    ui.horizontal_wrapped(|ui| {
+    // In the meeting's side column the button goes below the field.
+    let narrow = ui.available_width() < 340.0;
+    ui.horizontal(|ui| {
         ui.label("System ID");
         ui.add(
             theme::text_input(&mut meetings.call_id)
                 .hint_text("9-digit ID")
-                .desired_width(150.0),
+                .desired_width(if narrow { (ui.available_width() - 8.0).max(90.0) } else { 150.0 }),
         );
-        let available = allow && meetings.calling.is_none() && meetings.outgoing.is_none();
-        if ui
-            .add_enabled_ui(available, |ui| theme::pill(ui, "Call system", pal::GREEN))
-            .inner
-            .clicked()
-        {
-            match meetings.call_id.parse::<DeviceId>() {
-                Ok(id) => meetings.call_target(id, app.client.station_settings()),
-                Err(e) => meetings.error = Some(format!("{e:#}")),
-            }
+        if !narrow {
+            call_button(meetings, app, ui, allow);
         }
     });
+    if narrow {
+        call_button(meetings, app, ui, allow);
+    }
 }
-fn room_video(active: &mut Active, state: &State, ui: &mut Ui) {
-    let frames = active.video.frames.lock().unwrap().clone();
-    let mut tiles = Vec::new();
-    for id in &active.subscriptions {
-        if let Some((serial, frame)) = frames.get(id) {
-            let name = state
-                .participants
-                .iter()
-                .find(|p| p.id == *id)
-                .map(|p| p.name.clone())
-                .unwrap_or_default();
-            tiles.push((*id, *serial, frame.clone(), name));
+fn call_button(meetings: &mut Meetings, app: &App, ui: &mut Ui, allow: bool) {
+    let available = allow && meetings.calling.is_none() && meetings.outgoing.is_none();
+    if ui
+        .add_enabled_ui(available, |ui| theme::pill(ui, "Call system", pal::GREEN))
+        .inner
+        .clicked()
+    {
+        match meetings.call_id.parse::<DeviceId>() {
+            Ok(id) => meetings.call_target(id, app.client.station_settings()),
+            Err(e) => meetings.error = Some(format!("{e:#}")),
         }
     }
-    if let Some(sender) = &active.sender
-        && let Some((serial, frame)) = sender.preview.lock().unwrap().clone()
-    {
-        tiles.push((0, serial, frame, "You · preview".into()));
-    }
-    if tiles.is_empty() {
-        ui.label(RichText::new("Cameras and shared screens appear here").color(pal::DIM));
-        return;
-    }
-    let columns = if ui.available_width() > 720.0 && tiles.len() > 1 {
-        2
-    } else {
-        1
-    };
-    for row in tiles.chunks(columns) {
-        ui.columns(columns, |cols| {
-            for (ui, (id, serial, frame, name)) in cols.iter_mut().zip(row) {
-                ui.label(RichText::new(name).color(pal::TAN));
-                let width = ui.available_width();
-                let height = (width * 0.6).clamp(100.0, 380.0);
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 4.0, egui::Color32::BLACK);
-                let fit = video::fit_rect(rect, (frame.width, frame.height));
-                ui.painter()
-                    .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                        fit,
-                        video::VideoCallback {
-                            stream: STREAM_BASE + id,
-                            serial: *serial,
-                            frame: frame.clone(),
-                        },
-                    ));
-            }
-        });
-    }
 }
-
 fn stop_microphone(active: &mut Active) {
     active.microphone = None;
     active.announce();
@@ -814,128 +760,23 @@ pub(super) fn ui(app: &mut App, ui: &mut Ui) {
     let mut leave = false;
     if let Some(mut active) = meetings.active.take() {
         let state = active.state();
-        theme::panel(ui, &state.title, pal::GREEN, |ui| {
-            if let Some(reason) = &state.ended {
-                ui.label(RichText::new(reason).color(pal::GOLD));
-                if theme::pill(ui, "Close meeting", pal::PEACH).clicked() {
-                    leave = true;
-                }
-            } else if state.waiting {
-                ui.label(RichText::new("Waiting for the organizer to admit you…").color(pal::GOLD));
-                ui.label("Your microphone and camera are off while you wait.");
-                if theme::pill(ui, "Cancel join request", pal::PEACH).clicked() {
-                    leave = true;
-                }
-            } else {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(format!(
-                        "{} / {} participants{}",
-                        state.participants.len(),
-                        state.capacity,
-                        if state.host {
-                            " · You are the organizer"
-                        } else {
-                            ""
-                        }
-                    ));
-                    if state.locked {
-                        ui.label(RichText::new("Joining closed").color(pal::GOLD));
+        if state.ended.is_some() || state.waiting {
+            theme::panel(ui, &state.title, pal::GREEN, |ui| {
+                if let Some(reason) = &state.ended {
+                    ui.label(RichText::new(reason).color(pal::GOLD));
+                    if theme::pill(ui, "Close meeting", pal::PEACH).clicked() {
+                        leave = true;
                     }
-                    if !state.lobby.is_empty()
-                        && theme::pill(
-                            ui,
-                            &format!("{} waiting to join", state.lobby.len()),
-                            pal::GOLD,
-                        )
-                        .clicked()
-                    {
-                        active.tab = RoomTab::Participants;
-                    }
-                });
-                toolbar(&mut meetings, &mut active, &state, app, ui, &mut leave);
-            }
-        });
-        if !state.waiting && state.ended.is_none() {
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                let chat = if active.unread > 0 {
-                    format!("Chat · {} new", active.unread)
                 } else {
-                    "Chat".into()
-                };
-                let people = format!("Participants · {}", state.participants.len());
-                for (tab, label) in [
-                    (RoomTab::Live, "Live meeting"),
-                    (RoomTab::Chat, chat.as_str()),
-                    (RoomTab::Participants, people.as_str()),
-                    (RoomTab::Devices, "Devices"),
-                ] {
-                    if theme::pill(
-                        ui,
-                        label,
-                        if active.tab == tab {
-                            pal::GREEN
-                        } else {
-                            pal::BLUE
-                        },
-                    )
-                    .clicked()
-                    {
-                        active.tab = tab;
-                        if tab == RoomTab::Chat {
-                            active.unread = 0;
-                        }
+                    ui.label(RichText::new("Waiting for the organizer to admit you…").color(pal::GOLD));
+                    ui.label("Your microphone and camera are off while you wait.");
+                    if theme::pill(ui, "Cancel join request", pal::PEACH).clicked() {
+                        leave = true;
                     }
                 }
             });
-            ui.add_space(10.0);
-            match active.tab {
-                RoomTab::Live => {
-                    theme::panel(ui, "Live meeting", pal::BLUE, |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("meeting-gallery")
-                            .max_height(body_height(ui, 110.0))
-                            .show(ui, |ui| {
-                                room_video(&mut active, &state, ui);
-                            });
-                        if active.sender.is_none() && active.subscriptions.is_empty() {
-                            ui.add_space(12.0);
-                            ui.label(
-                                RichText::new("You're in the meeting")
-                                    .font(theme::display(24.0))
-                                    .color(pal::TAN),
-                            );
-                            ui.label("Turn on your camera or share a screen. Voice and Subspace chat work with cameras off.");
-                            if state.host
-                                && theme::pill(ui, "Invite participants", pal::LAVENDER).clicked()
-                            {
-                                active.tab = RoomTab::Participants;
-                            }
-                            ui.add_space(12.0);
-                        }
-                    });
-                }
-                RoomTab::Chat => {
-                    active.unread = 0;
-                    chat(&mut meetings, &mut active, ui);
-                }
-                RoomTab::Participants => {
-                    egui::ScrollArea::vertical()
-                        .id_salt("meeting-people")
-                        .max_height(body_height(ui, 70.0))
-                        .show(ui, |ui| {
-                            participants(&mut meetings, &mut active, &state, app, ui);
-                        });
-                }
-                RoomTab::Devices => {
-                    egui::ScrollArea::vertical()
-                        .id_salt("meeting-device-page")
-                        .max_height(body_height(ui, 70.0))
-                        .show(ui, |ui| {
-                            devices::ui(&mut meetings, Some(&mut active), app, ui);
-                        });
-                }
-            }
+        } else {
+            room::ui(&mut meetings, &mut active, &state, app, ui, &mut leave);
         }
         meetings.active = Some(active);
     }
@@ -1253,8 +1094,8 @@ fn participants(
         }
     }
     theme::panel(ui, "Participants", pal::BLUE, |ui| {
-        if active.pin.is_some() && theme::pill(ui, "Unpin video", pal::BLUE).clicked() {
-            active.pin = None;
+        if active.room.pin.is_some() && theme::pill(ui, "Unpin video", pal::BLUE).clicked() {
+            active.room.pin = None;
         }
         for member in &state.participants {
             ui.push_id(member.id, |ui| {
@@ -1286,7 +1127,7 @@ fn participants(
                         && member.id != state.local
                         && theme::pill(
                             ui,
-                            if active.pin == Some(member.id) {
+                            if active.room.pin == Some(member.id) {
                                 "Pinned"
                             } else {
                                 "Pin video"
@@ -1295,8 +1136,8 @@ fn participants(
                         )
                         .clicked()
                     {
-                        active.pin = Some(member.id);
-                        active.tab = RoomTab::Live;
+                        active.room.pin = Some(member.id);
+                        active.room.layout = room::Layout::Speaker;
                     }
                     if state.host
                         && member.id != state.local
@@ -1309,56 +1150,4 @@ fn participants(
             });
         }
     });
-}
-fn chat(meetings: &mut Meetings, active: &mut Active, ui: &mut Ui) {
-    theme::panel(ui, "Subspace chat", pal::VIOLET, |ui| {
-        ui.label("Messages are shared with everyone in this meeting.");
-        egui::ScrollArea::vertical()
-            .id_salt("meeting-chat")
-            .max_height(body_height(ui, 180.0))
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                if active.chat.is_empty() {
-                    ui.label(
-                        RichText::new("No messages yet. Say hello to the meeting.").color(pal::DIM),
-                    );
-                }
-                for line in &active.chat {
-                    ui.label(RichText::new(&line.name).color(pal::LAVENDER));
-                    ui.label(&line.text);
-                    ui.add_space(8.0);
-                }
-            });
-        ui.add_space(8.0);
-        let response = ui.add(
-            theme::text_area(&mut active.message)
-                .desired_rows(2)
-                .desired_width(ui.available_width())
-                .hint_text("Message everyone · Enter to send · Shift+Enter for a new line")
-                .return_key(egui::KeyboardShortcut::new(
-                    egui::Modifiers::SHIFT,
-                    egui::Key::Enter,
-                )),
-        );
-        let enter = response.has_focus()
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-        let can_send = !active.message.trim().is_empty();
-        let mut send = false;
-        ui.add_enabled_ui(can_send, |ui| {
-            send = theme::pill(ui, "Send", pal::BLUE).clicked();
-        });
-        if can_send && (send || enter) {
-            if active.message.len() <= 4000 {
-                active
-                    .meeting
-                    .command(Command::Chat(std::mem::take(&mut active.message)));
-            } else {
-                meetings.error = Some("Keep messages under 4000 bytes".into());
-            }
-        }
-    });
-}
-
-fn body_height(ui: &Ui, reserved: f32) -> f32 {
-    (ui.ctx().content_rect().bottom() - ui.cursor().top() - reserved).clamp(60.0, 720.0)
 }

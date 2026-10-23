@@ -22,6 +22,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 pub enum Event {
     Chat(Chat),
+    Reaction { chat: u64, reaction: u8, participant: u64, on: bool },
     Keyframe,
     Notice(String),
 }
@@ -32,6 +33,8 @@ pub struct AudioPacket {
 }
 pub enum Command {
     Chat(String),
+    /// Toggle our reaction to a chat message.
+    React { chat: u64, reaction: u8 },
     Admit(u64),
     Reject(u64),
     Remove(u64),
@@ -314,6 +317,9 @@ struct Room {
     tickets: HashMap<String, u64>,
     blocked: HashSet<iroh::EndpointId>,
     keyframes: HashMap<u64, std::time::Instant>,
+    next_chat: u64,
+    /// Who reacted how to the recent chat messages (oldest first).
+    reactions: VecDeque<(u64, BTreeMap<u8, HashSet<u64>>)>,
 }
 impl Room {
     fn snapshot(&self, local: u64) -> State {
@@ -419,14 +425,36 @@ impl Room {
                 } else {
                     self.peers[&id].member.name.clone()
                 };
+                self.next_chat += 1;
                 let chat = Chat {
+                    id: self.next_chat,
                     sender: id,
                     name,
                     text,
                 };
+                self.reactions.push_back((chat.id, BTreeMap::new()));
+                while self.reactions.len() > 128 {
+                    self.reactions.pop_front();
+                }
                 let _ = self.channels.events.try_send(Event::Chat(chat.clone()));
                 for peer in self.peers.values().filter(|p| p.admitted) {
                     let _ = peer.control.try_send(ServerMessage::Chat(chat.clone()));
+                }
+            }
+            ClientMessage::React { chat, reaction } => {
+                if usize::from(reaction) >= REACTIONS.len() {
+                    return;
+                }
+                let Some((_, reactions)) = self.reactions.iter_mut().find(|(c, _)| *c == chat) else { return };
+                let who = reactions.entry(reaction).or_default();
+                // A second click takes the reaction back.
+                let on = !who.remove(&id);
+                if on {
+                    who.insert(id);
+                }
+                let _ = self.channels.events.try_send(Event::Reaction { chat, reaction, participant: id, on });
+                for peer in self.peers.values().filter(|p| p.admitted) {
+                    let _ = peer.control.try_send(ServerMessage::Reaction { chat, reaction, participant: id, on });
                 }
             }
             ClientMessage::Media { microphone, source } => {
@@ -627,6 +655,8 @@ async fn host(endpoint: Endpoint, invitation: Invitation, channels: Channels) {
         tickets: HashMap::new(),
         blocked: HashSet::new(),
         keyframes: HashMap::new(),
+        next_chat: 0,
+        reactions: VecDeque::new(),
     };
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let reason = loop {
@@ -635,6 +665,7 @@ async fn host(endpoint: Endpoint, invitation: Invitation, channels: Channels) {
                 match command {
                     None|Some(Command::Leave)=>break "The organizer ended the meeting",
                     Some(Command::Chat(text))=>room.message(1,ClientMessage::Chat(text)),
+                    Some(Command::React{chat,reaction})=>room.message(1,ClientMessage::React{chat,reaction}),
                     Some(Command::Media{microphone,source})=>room.message(1,ClientMessage::Media{microphone,source}),
                     Some(Command::Subscribe(ids))=>room.message(1,ClientMessage::Subscribe(ids)),
                     Some(Command::Keyframe(id))=>room.keyframe(id),
@@ -877,6 +908,7 @@ async fn guest(
             message=cr.recv()=>match message{
                 Some(ServerMessage::State(state))=>{channels.state.send_replace(state);}
                 Some(ServerMessage::Chat(chat))=>{let _=channels.events.try_send(Event::Chat(chat));}
+                Some(ServerMessage::Reaction{chat,reaction,participant,on})=>{let _=channels.events.try_send(Event::Reaction{chat,reaction,participant,on});}
                 Some(ServerMessage::Keyframe)=>{let _=channels.events.try_send(Event::Keyframe);}
                 Some(ServerMessage::VideoAck{generation,seq})=>{upload_ack.send_replace((generation,seq));}
                 Some(ServerMessage::Ended(reason))=>break reason,
@@ -886,6 +918,7 @@ async fn guest(
                 let message=match command{
                     None|Some(Command::Leave)=>{let _=wire::write(&mut send,&ClientMessage::Leave,MAX_CONTROL).await;break "You left the meeting".into();}
                     Some(Command::Chat(text))=>ClientMessage::Chat(text),
+                    Some(Command::React{chat,reaction})=>ClientMessage::React{chat,reaction},
                     Some(Command::Media{microphone,source})=>ClientMessage::Media{microphone,source},
                     Some(Command::Subscribe(ids))=>ClientMessage::Subscribe(ids),
                     Some(Command::Keyframe(id))=>ClientMessage::Keyframe(id),

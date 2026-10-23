@@ -7,13 +7,16 @@ use sha2::Sha256;
 
 pub const ALPN: &[u8] = b"slipstream/meeting/1";
 pub const CALL_ALPN: &[u8] = b"slipstream/call/1";
-pub const VERSION: u32 = 1;
+/// 2 (0.29): chat messages carry ids, and reactions.
+pub const VERSION: u32 = 2;
 pub const CAPACITY: usize = 20;
 pub const MAX_CAPACITY: usize = 32;
 pub const MAX_SUBSCRIPTIONS: usize = 4;
 pub const MAX_VIDEO: usize = 1024 * 1024;
 pub const MAX_CONTROL: usize = 16 * 1024;
 pub const AUDIO_TAG: u8 = 0xb1;
+/// Reactions to chat messages, by index on the wire.
+pub const REACTIONS: [&str; 6] = ["👍", "❤", "🎉", "😂", "😮", "👏"];
 
 pub fn random_secret() -> String {
     crate::directory::hex(&rand::random::<[u8; 32]>())
@@ -116,6 +119,8 @@ pub struct State {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Chat {
+    /// Numbered by the organizer, for reactions.
+    pub id: u64,
     pub sender: u64,
     pub name: String,
     pub text: String,
@@ -140,6 +145,8 @@ pub enum ClientMessage {
         seq: u64,
     },
     Leave,
+    /// Toggle this participant's reaction (an index into [`REACTIONS`]).
+    React { chat: u64, reaction: u8 },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
@@ -148,6 +155,8 @@ pub enum ServerMessage {
     Keyframe,
     VideoAck { generation: u64, seq: u64 },
     Ended(String),
+    /// `participant` added (`on`) or took back a reaction to chat message `chat`.
+    Reaction { chat: u64, reaction: u8, participant: u64, on: bool },
 }
 #[derive(Serialize, Deserialize)]
 pub struct Video {

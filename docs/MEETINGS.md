@@ -10,23 +10,42 @@ Prefer a desktop organizer and a good upload connection for larger rooms.
 **Copy invitation** shares a link that another installed Slipstream client can
 paste into Meetings or open as a Slipstream link. Guests wait for the organizer
 to admit them. The organizer can decline requests, remove participants and end the room.
-In **Participants**, **Allow new join requests** controls admission: turn it off to block new arrivals while current members
+In **People**, **Allow new join requests** controls admission: turn it off to block new arrivals while current members
 stay connected. Existing waiting requests can still be admitted. Invitations expire after four
 hours. A removed participant's old admission is invalid; a new endpoint still requires approval.
 
 Use **Meeting** beside a saved system, or **Call system** in the room, to ring
-that client. The recipient sees **Answer** and **Decline**. Answer joins the
+that client. The recipient sees an **Incoming transmission** with **Answer** and **Decline**. Answer joins the
 inviting room muted. **Cancel call** stops a dialing/ringing invitation; it
 appears only before Answer. After joining, **Leave meeting** exits the room;
 the organizer's **End meeting** ends it for everyone after confirmation.
 Calling requires authorization for the recipient's station;
 a meeting invitation itself grants no remote-control or station directory rights.
 Installed clients must be updated for meetings; update the Windows service too.
+Meetings from 0.29 on use meeting protocol 2 (chat reactions): everyone in a
+room needs 0.29 or newer, and older apps are asked to update.
 
-During a meeting, use **Live meeting**, **Chat**, **Participants** and
-**Devices** to switch views. Mute, camera, screen sharing and Leave/End controls
-stay above the selected view. Chat shows an unread badge when you are elsewhere;
-Enter sends a message and Shift+Enter inserts a new line.
+A meeting you're in gets its own green tab after **Bridge**, beside your
+workstation tabs, and fills the window like a workstation does. Mute, camera,
+screen sharing and Leave/End stay along the top.
+
+**Layout** arranges the room:
+
+- **Speaker** (default): the person speaking is large, everyone else small
+  along the bottom, top, left or right. Click someone small to pin them as the
+  large picture; **Unpin** goes back to following whoever speaks.
+- **Gallery**: everyone the same size in a grid.
+- **Double-click** anyone to fill the stage with them; double-click again or
+  press Esc to go back. Right-click a picture for the same choices.
+
+A green outline shows who is speaking. People without a camera appear as their
+initials.
+
+**Chat**, **People** and **Devices** open in a column on the right, so the
+participants stay in view (on a phone they take the screen, with a back
+button). Chat shows an unread count when it's closed; Enter sends a message
+and Shift+Enter inserts a new line. React to a message with **☺+** (👍 ❤ 🎉 😂
+😮 👏); click a reaction again to take it back, and hover it to see who reacted.
 
 Press **Unmute** to enable your microphone. **Camera** and **Share screen** are
 separate explicit actions. **Share screen** opens a chooser with screen names,
@@ -34,9 +53,10 @@ resolution, main-display labels and a layout map. Refreshed thumbnails show
 each screen’s current contents locally, including inside the map; previewing
 does not send them to the meeting. Choose a screen and confirm
 **Share selected screen**. **Change screen** opens the chooser again; Cancel
-keeps your current sharing unchanged. Up to four selected remote sources and a
-local preview are displayed; screen shares have priority, and a participant can be
-pinned. The organizer forwards encoded streams rather than transcoding them.
+keeps your current sharing unchanged. Each participant receives up to four
+videos: whoever fills the stage or is pinned, then the current speaker, then
+screen shares, then cameras; others show as initials until they're chosen.
+The organizer forwards encoded streams rather than transcoding them.
 The organizer's upload and each participant's connection determine video capacity.
 
 Windows Server/N camera sharing requires the optional Media Foundation feature

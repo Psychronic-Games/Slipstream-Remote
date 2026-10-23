@@ -235,7 +235,7 @@ pub(super) fn ui(meetings: &mut Meetings, app: &App, ctx: &egui::Context) {
                 &app.rt,
                 ctx,
             );
-            active.tab = RoomTab::Live;
+            active.room.side = room::Side::None;
         }
         close = true;
     }

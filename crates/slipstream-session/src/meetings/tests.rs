@@ -65,6 +65,17 @@ async fn state(meeting: &mut Meeting, predicate: impl Fn(&State) -> bool) -> Sta
     .await
     .unwrap_or_else(|_| panic!("meeting state timed out: {:?}", *meeting.state.borrow()))
 }
+async fn reaction(meeting: &mut Meeting) -> (u64, u8, u64, bool) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(Event::Reaction { chat, reaction, participant, on }) = meeting.events.recv().await {
+                return (chat, reaction, participant, on);
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
 async fn chat(meeting: &mut Meeting) -> Chat {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -119,8 +130,18 @@ async fn twenty_participant_meeting_admission_chat_media_removal_and_capacity() 
     let reason = ended.ended.unwrap();
     assert!(reason.contains("full"), "{reason}");
     guests[0].command(Command::Chat("Hello room".into()));
-    assert_eq!(chat(&mut host).await.text, "Hello room");
+    let hello = chat(&mut host).await;
+    assert_eq!(hello.text, "Hello room");
     assert_eq!(chat(&mut guests[18]).await.text, "Hello room");
+    // A reaction reaches everyone, and a second click takes it back.
+    let reactor = guests[18].state.borrow().local;
+    guests[18].command(Command::React { chat: hello.id, reaction: 1 });
+    assert_eq!(reaction(&mut host).await, (hello.id, 1, reactor, true));
+    assert_eq!(reaction(&mut guests[0]).await, (hello.id, 1, reactor, true));
+    guests[18].command(Command::React { chat: hello.id, reaction: 1 });
+    assert_eq!(reaction(&mut host).await, (hello.id, 1, reactor, false));
+    guests[18].command(Command::React { chat: hello.id + 99, reaction: 1 });
+    guests[18].command(Command::React { chat: hello.id, reaction: 200 });
     let source = guests[0].state.borrow().local;
     guests[0].command(Command::Media {
         microphone: true,

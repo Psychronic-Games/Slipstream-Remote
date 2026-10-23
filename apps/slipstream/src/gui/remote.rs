@@ -56,6 +56,8 @@ impl Drop for Reconnecting {fn drop(&mut self) {self.task.abort();}}
 pub enum TabAction {
     None,
     Bridge,
+    /// Show the meeting we're in (its tab in the strip).
+    Meeting,
     NewLink(egui::ViewportId),
     Close,
     Detach,

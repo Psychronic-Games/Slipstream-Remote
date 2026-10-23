@@ -13,6 +13,15 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Meetings: the room has its own tab beside the workstation tabs and fills the
+  window. Choose **Speaker** (the current speaker large, the others along any
+  edge) or **Gallery** layout, double-click anyone to fill the stage, and pin
+  a participant. Speaking is detected and outlined, and video follows the
+  speaker. Chat, People and Devices open in a column on the right.
+- React to meeting chat messages (👍 ❤ 🎉 😂 😮 👏). Meeting protocol 2:
+  everyone in a meeting needs this version.
+- Incoming meeting calls now announce an **Incoming transmission**.
+
 ## 0.28.0 — 2026-10-23
 
 - Encode video on NVIDIA graphics cards (NVENC) on Windows and Linux hosts,

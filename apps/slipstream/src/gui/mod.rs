@@ -1104,6 +1104,13 @@ impl App {
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
             },
+            remote::TabAction::Meeting => {
+                for tab in &self.tabs {tab.lock().unwrap().release_keyboard();}
+                self.page = Page::Meetings;
+                self.set_visible(ctx, true);
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+            },
             remote::TabAction::Close => {
                 let old=self.tab(id).map(|t|t.lock().unwrap().viewport_id());
                 self.close_tab(id);
@@ -1991,7 +1998,9 @@ impl eframe::App for App {
         let mut content_ui = {
             let active = if let Page::Remote(id) = self.page {Some(id)} else {None};
             let visible = !self.hidden && ctx.input(|i| i.viewport().minimized != Some(true));
-            let (body, actions) = session_tabs::show(&self.session_tabs, ui, ui.max_rect(), &entries, active, true, visible);
+            let meeting = self.meetings.room_title();
+            let meeting = meeting.as_deref().map(|title| (title, self.page == Page::Meetings));
+            let (body, actions) = session_tabs::show(&self.session_tabs, ui, ui.max_rect(), &entries, active, true, visible, meeting);
             for (id, action) in actions { self.session_action(&ctx, id, action); }
             ui.new_child(UiBuilder::new().max_rect(body))
         };
@@ -2016,6 +2025,11 @@ impl eframe::App for App {
             if ctx.input(|i| i.viewport().fullscreen == Some(true)) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
             }
+            // A meeting we're in fills the window below the tabs, like a workstation.
+            if self.page == Page::Meetings && self.meetings.room_title().is_some() {
+                let mut room = ui.new_child(UiBuilder::new().max_rect(ui.max_rect().shrink(6.0)));
+                meetings::ui(self, &mut room);
+            } else {
             let content = self.draw_frame(ui);
             let mut child = ui.new_child(UiBuilder::new().max_rect(content));
             egui::ScrollArea::vertical()
@@ -2032,6 +2046,7 @@ impl eframe::App for App {
                         Page::Remote(_) => {}
                     }
                 });
+            }
         }
 
         // Animate at the display's refresh rate whenever the window can be

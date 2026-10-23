@@ -200,6 +200,8 @@ pub struct Sound {
     pub player: Arc<Player>,
     tx: std::sync::mpsc::SyncSender<AudioPacket>,
     members: Arc<Mutex<Vec<u64>>>,
+    /// How loud each participant is right now, 0–1 (see [`Sound::levels`]).
+    levels: Arc<Mutex<HashMap<u64, f32>>>,
     stop: Arc<AtomicBool>,
     _guard: slipstream_audio::voice::PlaybackGuard,
 }
@@ -217,6 +219,8 @@ impl Sound {
         let flag = stop.clone();
         let members = Arc::new(Mutex::new(Vec::new()));
         let active = members.clone();
+        let levels = Arc::new(Mutex::new(HashMap::new()));
+        let loudness = levels.clone();
         std::thread::Builder::new()
             .name("meeting-audio-mix".into())
             .spawn(move || {
@@ -266,11 +270,18 @@ impl Sound {
                         }
                     }
                     let mut sources = Vec::new();
-                    for speaker in speakers.values() {
+                    let mut heard = loudness.lock().unwrap();
+                    heard.retain(|id, _| speakers.contains_key(id));
+                    for (id, speaker) in &speakers {
                         let mut pcm = vec![0; opus::FRAME_SAMPLES];
                         speaker.jitter.pull(&mut pcm);
+                        // Quick to rise, slow to fall, so a speaker doesn't flicker between words.
+                        let level = rms(&pcm);
+                        let held = heard.entry(*id).or_insert(0.0);
+                        *held = level.max(*held * 0.9);
                         sources.push(pcm);
                     }
+                    drop(heard);
                     let mut mix = [0i16; opus::FRAME_SAMPLES];
                     let refs: Vec<_> = sources.iter().map(Vec::as_slice).collect();
                     slipstream_audio::voice::mix(&refs, &mut mix);
@@ -286,9 +297,15 @@ impl Sound {
             player,
             tx,
             members,
+            levels,
             stop,
             _guard: Default::default(),
         })
+    }
+    /// How loud each participant is right now: 0 is silence, about 0.02 is
+    /// quiet speech and 0.1 loud.
+    pub fn levels(&self) -> HashMap<u64, f32> {
+        self.levels.lock().unwrap().clone()
     }
     pub fn members(&self, ids: Vec<u64>) {
         *self.members.lock().unwrap() = ids;
@@ -296,4 +313,13 @@ impl Sound {
     pub fn push(&self, packet: AudioPacket) {
         let _ = self.tx.try_send(packet);
     }
+}
+
+/// Root-mean-square loudness of 16-bit samples, 0–1.
+fn rms(pcm: &[i16]) -> f32 {
+    if pcm.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = pcm.iter().map(|&s| (s as f64 / 32768.0).powi(2)).sum();
+    (sum / pcm.len() as f64).sqrt() as f32
 }
