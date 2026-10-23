@@ -444,8 +444,9 @@ function slip_update_cleanup(int $keep = 0): void
 /**
  * Called after an API request has been answered: checks GitHub every few
  * hours and, if automatic updates are on, installs a newer release in the
- * background. Needs PHP-FPM (or LiteSpeed) to finish the request first;
- * otherwise the admin page offers the update instead.
+ * background. With PHP-FPM (or LiteSpeed) it carries on after finishing the
+ * request; elsewhere (fcgid, mod_php) it starts PHP's command-line program
+ * detached, as for the relay. Without either, the admin page offers it.
  */
 function slip_update_background(): void
 {
@@ -459,13 +460,37 @@ function slip_update_background(): void
     if (!$due) {
         return;
     }
+    // Claim this round, so concurrent requests don't start it again.
+    $state['step_at'] = time();
+    if (!$installing) {
+        $state['checked'] = time();
+    }
+    slip_update_save($state);
     $finish = function_exists('fastcgi_finish_request') ? 'fastcgi_finish_request'
         : (function_exists('litespeed_finish_request') ? 'litespeed_finish_request' : null);
-    if (!$finish) {
-        return;
+    if ($finish) {
+        $finish();
+        ignore_user_abort(true);
+        slip_update_run();
+    } elseif (slip_can_exec() && ($php = slip_php_cli())) {
+        // setsid -f: the update runs on in its own session and this request
+        // returns at once (dropping the handle doesn't wait for it).
+        $args = [$php, __DIR__ . '/update-cli.php'];
+        if (is_executable('/usr/bin/setsid')) {
+            array_unshift($args, '/usr/bin/setsid', '-f');
+        }
+        $log = slip_update_dir() . '/update.log';
+        if (is_file($log) && filesize($log) > 262144) {
+            @rename($log, "$log.old");
+        }
+        @proc_open($args, [0 => ['file', '/dev/null', 'r'], 1 => ['file', $log, 'a'], 2 => ['file', $log, 'a']],
+            $pipes, slip_data_dir(), ['PATH' => '/usr/bin:/bin']);
     }
-    $finish();
-    ignore_user_abort(true);
+}
+
+/** Checks GitHub and, with automatic updates on, installs what it finds. */
+function slip_update_run(): void
+{
     @set_time_limit(1800);
     $state = slip_update_check(true);
     if (!slip_update_auto() || !slip_update_available($state)) {
@@ -480,4 +505,16 @@ function slip_update_background(): void
             break;
         }
     }
+}
+
+/** PHP's command-line program, of the same version as this one if possible. */
+function slip_php_cli(): ?string
+{
+    $v = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
+    foreach (array_unique([(string)(slip_config()['php_cli'] ?? ''), PHP_BINDIR . "/php$v", "/usr/bin/php$v", "/usr/local/bin/php$v", PHP_BINDIR . '/php', '/usr/bin/php', '/usr/local/bin/php']) as $php) {
+        if (@is_file($php) && @is_executable($php)) {
+            return $php;
+        }
+    }
+    return null;
 }

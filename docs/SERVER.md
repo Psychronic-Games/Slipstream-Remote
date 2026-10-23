@@ -120,8 +120,11 @@ Stations update themselves from the project's GitHub releases
 - `config.php`, the managed `.htaccess` and the data folder are never touched.
 - **Automatic** (Settings, on by default): every 6 hours, after answering an
   app's request, the station checks GitHub and installs a newer release in
-  the background. This needs PHP-FPM or LiteSpeed (`fastcgi_finish_request`);
-  elsewhere the admin page shows the release and **Install update** does it.
+  the background: with PHP-FPM or LiteSpeed after finishing the request,
+  elsewhere (fcgid, mod_php) through PHP's command-line program started
+  detached like the relay (`php_cli` in `config.php` if it isn't found).
+  Without either, the admin page shows the release and **Install update**
+  does it.
 - Downloads use PHP's curl extension, or HTTPS streams with `allow_url_fopen`.
   `update_repo`, `update_releases_url` (a mirror of the GitHub releases API)
   and extra `release_keys` can be set in `config.php`.

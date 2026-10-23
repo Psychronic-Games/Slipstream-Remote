@@ -23,7 +23,7 @@ server and no root access. This guide takes about 15 minutes.
 |---|---|
 | **A (sub)domain** | e.g. `support.example.com`. The station must be at the root of it, not in a subfolder. |
 | **Linux web hosting** | Apache with `.htaccess` allowed, `mod_rewrite` and `mod_proxy_http` (Apache 2.4.47+). This is the default on Virtualmin, cPanel/WHM and most VPS panels. Nginx works too ([SERVER.md](SERVER.md#other-web-servers)). |
-| **PHP 8.0 or newer** | With the standard `sodium` extension. PHP-FPM is recommended: it lets the station update itself in the background. |
+| **PHP 8.0 or newer** | With the standard `sodium` extension. |
 | **HTTPS** | A free Let's Encrypt certificate is fine. |
 | **About 400 MB of disk space** | The apps for every platform, plus room for one update. |
 
@@ -165,8 +165,10 @@ release's `station-update.json` against the release key in
 signed list before installing. A compromised download path can't push files
 to your station: it would need the project's private release key.
 
-- **Automatic** (the default, needs PHP-FPM or LiteSpeed): the station
-  installs new releases in the background after answering an app.
+- **Automatic** (the default): the station installs new releases in the
+  background after answering an app. It needs PHP-FPM, or a host where PHP
+  may start programs and PHP's command-line program is installed (the usual
+  case; the status page says if neither works).
 - **One click**: **Status → Station software → Install update**. Use **Check
   now** to look straight away. This works on any PHP setup.
 

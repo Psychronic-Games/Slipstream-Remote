@@ -253,8 +253,12 @@ slip_page_start('Station admin', '../');
     $bin = slip_relay_binary();
     // Is Apache forwarding /relay to us? (/ping answers 200 only from the relay.)
     $ctx = stream_context_create(['http' => ['timeout' => 3, 'ignore_errors' => true]]);
-    @file_get_contents(slip_base_url() . 'ping', false, $ctx);
-    $proxied = isset($http_response_header[0]) && strpos($http_response_header[0], ' 200') !== false;
+    $ping = @fopen(slip_base_url() . 'ping', 'r', false, $ctx);
+    $status = $ping ? (string)(stream_get_meta_data($ping)['wrapper_data'][0] ?? '') : '';
+    if ($ping) {
+        fclose($ping);
+    }
+    $proxied = strpos($status, ' 200') !== false;
     $dataDir = realpath(slip_data_dir());
     $docRoot = realpath($_SERVER['DOCUMENT_ROOT'] ?? '') ?: '';
     $dataInWebRoot = $docRoot && $dataDir && strpos($dataDir, $docRoot) === 0;
@@ -303,7 +307,8 @@ slip_page_start('Station admin', '../');
     }
     $installed = slip_installed();
     $avail = slip_update_available($upd);
-    $fpm = function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+    $fpm = function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request')
+        || (slip_can_exec() && slip_php_cli() !== null);
   ?>
   <h2 class="violet">Station software</h2>
   <div class="panel">
@@ -317,7 +322,7 @@ slip_page_start('Station admin', '../');
     <?php endif ?></p>
     <?php if (!empty($upd['error'])): ?><p class="warn">Last update problem: <?= h($upd['error']) ?></p><?php endif ?>
     <p class="dim"><?= slip_update_auto()
-        ? ($fpm ? 'New releases install automatically in the background.' : 'Automatic installs need PHP-FPM; this server will only show new releases here.')
+        ? ($fpm ? 'New releases install automatically in the background.' : 'Automatic installs need PHP-FPM or PHP\'s command-line program (php_cli in config.php); this server will only show new releases here.')
         : 'Automatic installs are off (Settings).' ?>
       Updates replace the station's files, relay and apps; settings, devices and accounts stay as they are.</p>
     <form method="post" style="display:inline"><?= $form() ?><input type="hidden" name="action" value="update_check"><button class="lav">Check now</button></form>

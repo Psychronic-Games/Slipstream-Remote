@@ -21,6 +21,9 @@ return [
     // 'update_repo' => 'Psychronic-Games/Slipstream-Remote',
     // 'update_releases_url' => 'https://mirror.example.com/releases/latest.json',
     // 'release_keys' => '',
+    // PHP's command-line program, for background installs without PHP-FPM
+    // (found by itself in the usual places).
+    // 'php_cli' => '/usr/bin/php8.4',
 
     // Use a database instead of files (for very large installs).
     // 'db' => [
