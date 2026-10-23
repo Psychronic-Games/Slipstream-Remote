@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.27.0 — 2026-10-23
+
 - Protect against phone scams: on Slipstream Public, a link made with the
   one-time password waits until the person at the computer presses **Allow**,
   beside a plain warning; it declines after a minute and replaces the code.
