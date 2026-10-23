@@ -293,8 +293,10 @@ The device's one-time code and its optional unattended password both work
 with the same ID. A code changes after a session ends; changing it does not
 change the unattended password or disconnect an existing controller. Windows
 service hosts show their code in the signed-in user's app, with Copy and New
-controls. If an older service has no code to show, update it under
-**Config → Windows service → Update**. An unattended password is still
+controls. The desktop app updates an older installed service automatically;
+Windows may ask for administrator approval. **Config → Windows service →
+Apply settings** sends saved station and unattended-access settings to it.
+An unattended password is still
 required when installing the service for access before sign-in.
 
 Desktop links start as tabs by default. Switch workstations from the strip
@@ -575,6 +577,22 @@ start and then every 6 hours. When a newer build is there, a banner offers
 *About → Check for updates* checks right away, and `slipstream
 update` does the same on the command line.
 
+**Updating an installed Windows service.** Updating the app also updates the
+service, keeping its machine identity, IDs, station and unattended password.
+Windows may ask for administrator approval; active connections pause while the
+service restarts. After an upgrade from an older app, the new app also detects
+and updates an older installed service. A failed replacement/restart restores
+the previous executables. If no service is installed, updating does not add one.
+Use **Config → Windows service → Apply settings** only when you want to send
+saved app settings to the service.
+
+If an older app reports a checksum mismatch, check for updates again or close
+and reopen it, then retry. If it still fails, download the current app directly
+from your station and run that copy; retain your existing settings folder.
+Current apps refresh the signed offer immediately before downloading and retry
+a publication race once with a newer verified release. Hash/signature checks
+remain mandatory.
+
 **Updating Android.** Download the latest APK from the station and install
 it over the existing app. It must use the same Android signing certificate.
 Android does not yet offer *Install & restart* updates.
@@ -605,7 +623,7 @@ broken session.
 | Low frame rate, stats say **DIRECT** | Hover over the stats. Long *video encoding* times mean the remote computer's processor is the limit. Long *screen capture* times point at capture. Long *waiting for the viewer* times mean the network. The 30-second lines in the log show the same, over time. |
 | Black or frozen screen from a Wayland computer | Check *Config → Screen permission*. Approve the desktop dialog, use *Cancel request* / *Approve now* for a stalled request, or reset the selection. KDE's stale Qt services are refreshed automatically only when idle; if another sharing session prevents repair, close it or sign out and back in. |
 | Mac shows a black screen or ignores the mouse | Grant **Screen Recording** and **Accessibility** to Slipstream in *System Settings → Privacy & Security*, then restart the app. |
-| Update fails: "installed in a protected folder" | The app can't replace itself there. Download the new version from the station page instead. |
+| An older app says "installed in a protected folder" | Download the current app from your station once. Current Windows apps request administrator approval to update protected installations and an installed service. |
 | Station relay is red | See [Step 4](#step-4-check-the-status-page). The relay log on the admin page usually says why. |
 
 Each app writes a log file, `slipstream.log`, in its settings folder.

@@ -1,5 +1,38 @@
 # Development handoff — 2026-10-22
 
+## Windows service and checksum updates — prepared for 0.26.0
+
+Windows full/compact app and CLI updates now include an already-installed
+service. The UAC helper verifies a protected snapshot again, resolves the
+actual SCM executable, refuses downgrades and replaces both programs with
+rollback on replacement/restart failure. Failed recovery retains the original
+executables. Machine identity, station and unattended settings are preserved;
+**Apply settings** is the explicit configuration-copy action. No service is
+installed implicitly. A newly upgraded app catches an older service at startup,
+covering the first update from an old updater. Service run/host and the helper
+ignore unsigned provisioning trailers; machine settings remain authoritative.
+
+The updater refreshes its signed offer before downloading and puts the hash
+in the URL. A publication race retries once only with a separately verified
+newer signed offer. The user's reported 0.24 checksum failure has not been
+reproduced on their machine; OS/station/offered-version details were requested.
+Live 0.25.1 Windows offers matched the manifest on both stations. Older apps
+should reopen/recheck; if still blocked, download the latest app directly once
+and retain the existing profile. The fix takes effect after upgrading.
+
+Final workspace verification: **175 passed, five ignored**. Strict all-target
+Linux workspace, Windows desktop and arm64 Android Clippy pass. Logs:
+`/tmp/slipstream-service-update-final-tests.log` and the matching
+`final-{linux,windows,android}-clippy.log` files. Isolated Wine checks pass for
+actual SCM stopped-service updates, unchanged profile bytes, retaining a newer
+service, damaged staging rejection, app-only updates, Windows argument parsing
+and fixed-directory error reports. Four transaction tests pass on Linux and
+Windows, including partial replacement, restart failure and blocked recovery.
+Wine evidence: `/tmp/slipstream-service-update-toobf8lj`; summary log:
+`/tmp/slipstream-service-update-wine.log`. Temporary Wine/Xvfb/D-Bus processes
+were stopped and the prefix removed. Real Windows UAC and a running service's
+capture/helper restart remain device checks; Wine is not evidence for those.
+
 ## Latest publication — 0.25.1
 
 Published **0.25.1 / build 134 / source ee0f156** to both

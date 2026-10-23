@@ -5,6 +5,7 @@
 pub mod cli;
 pub mod gui;
 pub mod logging;
+pub mod update;
 #[cfg(windows)]
 pub mod service;
 #[cfg(any(windows, test))]

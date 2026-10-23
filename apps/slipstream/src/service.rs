@@ -58,6 +58,10 @@ use windows_sys::Win32::{
 pub const NAME: &str = "SlipstreamRemote";
 const DISPLAY_NAME: &str = "Slipstream Remote";
 
+#[path = "service_update.rs"]
+mod updates;
+pub use updates::{UpdateGuard, apply_app_update, install_app_update, needs_app_update, update_in_progress};
+
 /// The machine profile the service's host uses.
 pub fn machine_home() -> PathBuf {
     let base = std::env::var_os("ProgramData").map(PathBuf::from).unwrap_or_else(|| r"C:\ProgramData".into());
@@ -188,7 +192,7 @@ pub fn keep_running() {
             // install stops the service to replace the program: starting
             // it then would run the old one), nor just after.
             let busy = BUSY.load(std::sync::atomic::Ordering::Relaxed);
-            if !busy && !was_busy && state() == Some(ServiceState::Stopped) && failures < 3 {
+            if !busy && !was_busy && !update_in_progress() && state() == Some(ServiceState::Stopped) && failures < 3 {
                 match start() {
                     Ok(()) => {
                         tracing::info!("started the Slipstream service, which wasn't running");
@@ -320,7 +324,14 @@ fn wide(s: &str) -> Vec<u16> {
 /// Runs this program with `args` as administrator (the UAC prompt) and
 /// waits for it. Returns its exit code. For the GUI's install button.
 pub fn run_elevated(args: &str) -> Result<u32> {
+    use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
     use windows_sys::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
+    struct Apartment(bool);
+    impl Drop for Apartment {
+        fn drop(&mut self) { if self.0 { unsafe { CoUninitialize(); } } }
+    }
+    // ShellExecute may use COM shell extensions on this worker thread.
+    let _apartment = Apartment(unsafe { CoInitializeEx(std::ptr::null(), (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32) } >= 0);
     let exe = wide(&std::env::current_exe()?.display().to_string());
     let (verb, params) = (wide("runas"), wide(args));
     // SAFETY: ShellExecuteExW with valid strings; the process handle it

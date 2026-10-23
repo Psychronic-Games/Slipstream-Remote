@@ -14,7 +14,7 @@ use std::{
     },
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use slipstream_core::{directory::DirectoryClient, provision::StationLink};
 use slipstream_session::{Client, ClientEvent, DirStatus, update::UpdateInfo};
 use tokio::{runtime::Runtime, sync::mpsc};
@@ -56,6 +56,7 @@ struct View {
     note: String,
     support: super::support_status::SupportStatuses,
     update: Option<UpdateInfo>,
+    installing: bool,
     /// The update (or the software renderer) is installed: relaunch from here.
     relaunch: Option<PathBuf>,
 }
@@ -149,6 +150,7 @@ pub fn run(
     instance: single::Instance,
     screenshot: Option<(PathBuf, f64)>,
     via_service: bool,
+    sync_service: bool,
 ) -> Result<()> {
     let view = Arc::new(Mutex::new(View {
         title: "SLIPSTREAM REMOTE".into(),
@@ -163,6 +165,25 @@ pub fn run(
         },
         ..Default::default()
     }));
+
+    if sync_service {
+        view.lock().unwrap().installing = true;
+        let (client, view) = (client.clone(), view.clone());
+        rt.spawn(async move {
+            view.lock().unwrap().note = "Updating the installed Windows service… Windows may ask for administrator approval.".into();
+            let result = async {
+                let info = client.available_update().await?.context("the station has no signed update package")?;
+                view.lock().unwrap().update = Some(info.clone());
+                crate::update::install(&client, &info, |_, _| {}).await
+            }.await;
+            match result {
+                Ok(exe) => view.lock().unwrap().relaunch = Some(exe),
+                Err(error) => view.lock().unwrap().note = format!("The service update failed: {error:#}"),
+            }
+            view.lock().unwrap().installing = false;
+            wake(WM_REFRESH);
+        });
+    }
 
     // Client events → view.
     {
@@ -202,6 +223,7 @@ pub fn run(
                         ClientEvent::HostChat { text, .. } => v.note = format!("Message: {text}"),
                         ClientEvent::Notice(n) | ClientEvent::Motd(n) => v.note = n,
                         ClientEvent::UpdateAvailable(u) => {
+                            if v.installing { continue; }
                             v.note = format!("Version {} is available: press Install update.", u.label());
                             v.update = Some(u);
                         }
@@ -853,14 +875,21 @@ fn retry_full_window(ui: &Ui) {
 
 /// Downloads and installs the offered update, then relaunches.
 fn install_update(ui: &Ui) {
-    let Some(info) = ui.view.lock().unwrap().update.clone() else { return };
+    let info = {
+        let mut view = ui.view.lock().unwrap();
+        if view.installing { return; }
+        let Some(info) = view.update.clone() else { return };
+        view.installing = true;
+        info
+    };
     let (client, view) = (ui.client.clone(), ui.view.clone());
     view.lock().unwrap().note = format!("Installing {}…", info.label());
     wake(WM_REFRESH);
     ui.rt.spawn(async move {
-        let result = client.install_update(&info, |_, _| {}).await;
+        let result = crate::update::install(&client, &info, |_, _| {}).await;
         {
             let mut v = view.lock().unwrap();
+            v.installing = false;
             match result {
                 Ok(exe) => v.relaunch = Some(exe),
                 Err(e) => v.note = format!("The update failed: {e:#}"),

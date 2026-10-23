@@ -565,6 +565,26 @@ plus the tray app if it's on.
 * **Install over a running copy.** The installed `.exe` is usually still
   running (the tray app at sign-in), so it's renamed aside and replaced,
   and the leftover is removed at the next install.
+* **App and service updates.** Full/compact GUI and CLI updates replace the
+  app and an existing service together. A new app also checks for an older
+  service on startup, covering the first upgrade from an older updater.
+  Downloading happens without elevation. A UAC helper copies the candidate
+  into the protected Program Files directory and verifies its release
+  signature, bounded size and checksum again before changing either program.
+  It reads the service executable from SCM, refuses downgrades, stages copies
+  beside each target, stops a running service, replaces both programs and
+  verifies the restarted service stays running. Failed replacement/restart
+  restores the previous executables; failed recovery preserves their backups.
+  A stopped service stays stopped during replacement, and no service is
+  installed implicitly. The machine profile is never imported from the GUI
+  during a program update. Service run/host and the update helper ignore
+  unsigned station provisioning trailers. **Apply settings** remains the
+  explicit operation for station/unattended-settings changes.
+* **Update coordination.** A protected exclusive marker coordinates app,
+  service and watchdog updates. Elevated update errors use a random nonce
+  under a fixed protected report directory, never a caller-selected output
+  path. Successful `.old` leftovers can be cleaned on startup; failed-recovery
+  backups are retained.
 
 ## Stations, updates and the app
 
@@ -591,6 +611,10 @@ plus the tray app if it's on.
   move the running `.exe` aside on Windows. Then they restart with
   `SLIPSTREAM_RESTARTED=1`, so the single-instance guard waits for the old
   copy to exit.
+  Before downloading, the updater refreshes the signed offer and adds its
+  hash to the download URL to distinguish cached releases. If publication
+  races a download, it retries once only when a separately verified newer
+  signed offer exists. Unchanged damaged files still fail verification.
 * **Single instance:** a loopback TCP port derived from the settings folder.
   A second launch asks the first to show its window. `SLIPSTREAM_HOME` gives
   an independent instance.

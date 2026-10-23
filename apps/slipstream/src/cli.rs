@@ -108,6 +108,11 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
                     ClientEvent::Notice(n) => println!("notice: {n}"),
                     ClientEvent::CallChanged => {},
                     ClientEvent::UpdateAvailable(u) if service => {
+                        #[cfg(windows)]
+                        let _guard = match crate::service::UpdateGuard::acquire() {
+                            Ok(guard) => guard,
+                            Err(error) => { tracing::info!("service update deferred: {error:#}");continue; }
+                        };
                         tracing::info!(version = %u.label(), "installing update");
                         match client.install_update(&u, |_, _| {}).await {
                             Ok(_) => break, // the service restarts with the new program
@@ -402,12 +407,14 @@ pub async fn update() -> Result<()> {
     let (client, _events) = Client::start(store, ClientOptions::production()).await?;
     println!("this is Slipstream {}", slipstream_core::version_string());
     let result = async {
-        match client.check_update().await? {
+        let info = client.check_update().await?;
+        #[cfg(windows)]
+        let info = if info.is_none() && crate::service::needs_app_update()? { client.available_update().await? } else { info };
+        match info {
             None => println!("up to date"),
             Some(info) => {
                 println!("installing {}…", info.label());
-                let exe = client
-                    .install_update(&info, |done, total| {
+                let exe = crate::update::install(&client, &info, |done, total| {
                         if total > 0 && done == total {
                             println!("downloaded {} bytes", total);
                         }

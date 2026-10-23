@@ -168,6 +168,16 @@ enum Command {
 #[cfg(windows)]
 #[derive(Debug, Subcommand)]
 enum ServiceCmd {
+    /// Replace an existing app/service from a signed update; does not import settings.
+    #[command(hide = true)]
+    ApplyUpdate {
+        #[arg(long)]
+        staged: std::path::PathBuf,
+        #[arg(long)]
+        info: std::path::PathBuf,
+        #[arg(long)]
+        report_id: String,
+    },
     /// Install and start the service (as administrator). Uses this
     /// computer's station and unattended password.
     Install {
@@ -218,7 +228,12 @@ fn main() -> anyhow::Result<()> {
         }
     }
     slipstream::logging::init();
-    if !matches!(args.command, Some(Command::ExportIcon { .. })) {
+    let provision = !matches!(args.command, Some(Command::ExportIcon { .. }));
+    #[cfg(windows)]
+    // Machine profiles are authoritative; unsigned station trailers must
+    // not reconfigure the SYSTEM host or privileged update helper.
+    let provision = provision && !matches!(args.command, Some(Command::Service { action: ServiceCmd::Run | ServiceCmd::Host | ServiceCmd::ApplyUpdate { .. } }));
+    if provision {
         slipstream::apply_station_config();
     }
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
@@ -226,6 +241,7 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Host { password }) => rt.block_on(cli::host(args.test_pattern, password, false)),
         #[cfg(windows)]
         Some(Command::Service { action }) => match action {
+            ServiceCmd::ApplyUpdate { staged, info, report_id } => service::apply_app_update(&staged, &info, &report_id),
             ServiceCmd::Install { password, from, report } => reported(report, service::install(password.as_deref(), from.as_deref())),
             ServiceCmd::Uninstall { report } => reported(report, service::uninstall()),
             ServiceCmd::Start => service::start(),

@@ -29,6 +29,12 @@ These matter for real IT support and for unattended servers.
   install`).
 - Self-update replaces the program; the supervisor restarts on the changed
   executable and restores the helper. Recovery needs the real-Windows checks below.
+- Full/compact app and CLI updates now update an already-installed service in
+  the same transaction, with UAC when needed. Startup catches an older service
+  after the first upgrade from an older app. Program updates preserve the
+  machine identity and unattended/station settings; **Apply settings** copies
+  deliberate configuration changes. Failed replacement/restart rolls back both
+  executables and preserves backups if recovery cannot finish.
 
 ## Status
 
@@ -57,11 +63,22 @@ On real Windows Server 2016 (a VMware VM), as of 0.6.0–0.7.0:
 - Once, after *Update*, the service was left stopped. The cause is still
   unknown: the app restarts it now, and the public log should show why.
 
+October 22, 2026: isolated Wine checks pass for the actual SCM stopped-service
+update with a signed release fixture, profile preservation, rejecting corrupted
+staging, retaining a newer service and updating an app without implicitly
+installing a service. Portable transaction tests also cover restart failure,
+partial replacement and preserving recovery backups. Windows argument parsing
+passes with spaces, Unicode, quotes and trailing backslashes. These checks do
+not exercise real UAC or a running Windows service's capture/helper restart.
+
 ## Still to check on real Windows
 
 - [ ] Install from Config on Windows 11 (Server 2016: done).
 - [ ] *Update* leaves the service running (it was found stopped once on
       Server 2016).
+- [ ] App **Install & restart** updates both programs after UAC, keeps the same
+      ID/password/settings and restores an active host. Repeat starting from
+      0.24.0 to exercise the new app's older-service startup check.
 - [ ] Approve a UAC prompt remotely; type into an elevated window.
 - [ ] Ctrl+Alt+Del from *Keys*; log in at the login screen; lock and unlock.
 - [ ] Log off and back on, switch users: the host follows the session.

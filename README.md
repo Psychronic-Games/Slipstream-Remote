@@ -59,7 +59,8 @@ MIT licensed.
   bitrate adaptation.
 - **Runs in the tray**, starts with the system, stays reachable.
 - **Desktop apps update themselves** from your station — upload a new build,
-  and they offer *Install & restart* and keep their settings. Android updates
+  and they offer *Install & restart* and keep their settings. Windows app updates
+  also update an installed service. Android updates
   are installed from the station's APK.
 - **Works immediately, with self-hosting available** — raw downloads use
   `public.slipstreamremote.com`. A configured self-hosted station stays the

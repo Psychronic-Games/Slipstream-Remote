@@ -245,7 +245,7 @@ fn one_time_password(app: &mut App, ui: &mut Ui) {
         ui.label(RichText::new(help).small().color(pal::DIM));
     } else {
         ui.label(RichText::new("Waiting for the service's code…").color(pal::GOLD))
-            .on_hover_text("If the service is running an older build, use Config → Windows service → Update. Your unattended password continues to work.");
+            .on_hover_text("Restart Slipstream to bring an older service up to date. Your unattended password continues to work.");
     }
     ui.add_space(6.0);
 }
@@ -441,7 +441,9 @@ pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if installing {
                         let frac = if total == 0 { 0.0 } else { done as f32 / total as f32 };
-                        let text = if total == 0 {
+                        let text = if total > 0 && done >= total {
+                            "INSTALLING…".to_string()
+                        } else if total == 0 {
                             "DOWNLOADING…".to_string()
                         } else {
                             format!("DOWNLOADING {:.0}% · {} / {}", frac * 100.0, files::human_size(done), files::human_size(total))
@@ -457,6 +459,10 @@ pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {
                 ui.label(RichText::new(e).color(pal::RED));
             }
             ui.label(RichText::new("Your settings, ID and passwords are kept.").small().color(pal::DIM));
+            #[cfg(windows)]
+            if app.via_service {
+                ui.label(RichText::new("Updates the app and Windows service together. Connections pause during the service restart; Windows may ask for administrator approval.").small().color(pal::DIM));
+            }
         });
     if install {
         app.start_update(&ctx);

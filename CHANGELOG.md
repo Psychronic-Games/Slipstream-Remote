@@ -13,6 +13,15 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Update an installed Windows service with the desktop app, including protected
+  installations and automatic service catch-up after upgrading an older app.
+  Preserve the machine profile and restore both executables if replacement or
+  service restart fails. Windows requests administrator approval when required.
+- Refresh the signed update offer before downloading, and retry once if a newer
+  verified release appears during download, avoiding stale-offer checksum errors.
+- Label the manual Windows service action Apply settings to distinguish saved
+  station/password configuration from automatic program updates.
+
 ## 0.25.1 — 2026-10-22
 
 - Use blue and violet station tabs with clear selected states instead of the

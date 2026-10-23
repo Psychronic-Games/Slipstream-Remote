@@ -484,25 +484,30 @@ impl Client {
 
     /// Asks our station for a newer app build. `Ok(None)` = up to date.
     pub async fn check_update(&self) -> Result<Option<update::UpdateInfo>> {
-        let dc = self.directory().await?;
-        let Some(v) = dc.update_check(&slipstream_core::platform()).await? else { return Ok(None) };
-        let info: update::UpdateInfo = serde_json::from_value(v).context("unreadable update info")?;
-        if !info.is_newer() {
-            return Ok(None);
-        }
-        // Don't offer what we wouldn't install.
-        if let Err(e) = info.verify_signature(&slipstream_core::release::trusted_keys()) {
-            warn!(version = %info.label(), "not offering update: {e:#}");
-            return Err(e);
-        }
-        Ok(Some(info))
+        Ok(self.available_update().await?.filter(update::UpdateInfo::is_newer))
     }
 
-    /// Downloads, verifies and installs an update. Returns the app path to
-    /// relaunch; the caller restarts.
+    /// The signed station release, also used to bring an older installed
+    /// Windows service up to the already-running app's version.
+    pub async fn available_update(&self) -> Result<Option<update::UpdateInfo>> {
+        update::available(&self.directory().await?, &slipstream_core::release::trusted_keys()).await
+    }
+
+    async fn download_latest_update(&self, requested: &update::UpdateInfo, staged: &std::path::Path, progress: impl FnMut(u64, u64)) -> Result<update::UpdateInfo> {
+        update::download_latest(&self.directory().await?, requested, staged, &slipstream_core::release::trusted_keys(), progress).await
+    }
+
+    /// Downloads into a temporary directory for a privileged installer. The
+    /// guard removes staging data on cancellation or any installation failure.
+    pub async fn stage_update(&self, info: &update::UpdateInfo, progress: impl FnMut(u64, u64)) -> Result<(update::UpdateInfo, tempfile::TempPath)> {
+        let staged = tempfile::NamedTempFile::with_prefix("slipstream-update-")?.into_temp_path();
+        let info = self.download_latest_update(info, &staged, progress).await?;
+        Ok((info, staged))
+    }
+
     pub async fn install_update(&self, info: &update::UpdateInfo, progress: impl FnMut(u64, u64)) -> Result<std::path::PathBuf> {
-        let dc = self.directory().await?;
-        let staged = update::download(dc.base_url(), dc.key(), info, progress).await?;
+        let staged = update::staging_path()?;
+        self.download_latest_update(info, &staged, progress).await?;
         self.notify_restarting().await;
         let staged2 = staged.clone();
         tokio::task::spawn_blocking(move || update::install(&staged2)).await?

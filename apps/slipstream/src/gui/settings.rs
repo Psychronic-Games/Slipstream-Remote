@@ -265,7 +265,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                     if service_busy {
                         theme::pill(ui, "Working…", pal::BLUE);
                     } else if crate::service::is_running() {
-                        if theme::pill(ui, "Update", pal::BLUE).on_hover_text("Give the service this page's saved settings").clicked() {
+                        if theme::pill(ui, "Apply settings", pal::BLUE).on_hover_text("Apply this app's saved station and unattended-access settings to the service").clicked() {
                             service_clicked = Some((true, false));
                         }
                         if theme::pill(ui, "Remove", pal::RED).clicked() {

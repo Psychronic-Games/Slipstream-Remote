@@ -128,6 +128,9 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     // requires an explicit MediaProjection grant on the phone.
     let accept_sessions = !via_service;
     let (client, events) = rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions, public_station: (!opts.test_pattern).then(slipstream_core::config::ServerSettings::public_station), ..Default::default() }))?;
+    #[cfg(windows)]
+    let sync_service = via_service && !opts.test_pattern && opts.screenshot.is_none()
+        && !crate::service::update_in_progress() && crate::service::needs_app_update().unwrap_or(false);
 
     // Graphics wgpu can't use (Windows Server 2016's Direct3D 12 can't run
     // the shaders it needs, for one) get the built-in software renderer,
@@ -140,7 +143,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             Renderer::Full => {}
             Renderer::Compact => {
                 tracing::warn!("no usable graphics: using the compact window");
-                return lite::run(rt, client, events, instance, opts.screenshot, via_service);
+                return lite::run(rt, client, events, instance, opts.screenshot, via_service, sync_service);
             }
             Renderer::Relaunch(exe) => {
                 // The copy waits for this one to let go of the instance port.
@@ -220,6 +223,8 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             }
             app.screenshot = opts.screenshot;
             app.via_service = via_service;
+            #[cfg(windows)]
+            if sync_service { app.check_service_update(&cc.egui_ctx); }
             #[cfg(windows)]
             if via_service { app.service_chat = Some(crate::service_chat::Gui::start(&app.rt,cc.egui_ctx.clone())); }
             let wake = cc.egui_ctx.clone();
@@ -400,6 +405,7 @@ pub struct App {
     logo: Option<egui::TextureHandle>,
     pub update: Option<UpdateState>,
     update_check: Option<oneshot::Receiver<Result<Option<slipstream_session::update::UpdateInfo>, String>>>,
+    service_update_check: bool,
     /// Showing the "keeps running in the tray" explanation.
     tray_hint: bool,
     open_files: bool,
@@ -491,6 +497,7 @@ impl App {
             window_title: String::new(),
             update: None,
             update_check: None,
+            service_update_check: false,
             tray_hint: false,
             open_files: false,
         }
@@ -617,7 +624,7 @@ impl App {
                 ClientEvent::Notice(n) => self.toast(n, pal::GOLD),
                 ClientEvent::CallChanged => {}
                 ClientEvent::UpdateAvailable(info) => {
-                    if self.update.as_ref().is_none_or(|u| u.info != info) {
+                    if self.update.as_ref().is_none_or(|u| !u.installing && u.info != info) {
                         self.update = Some(UpdateState::new(info));
                     }
                 }
@@ -646,7 +653,7 @@ impl App {
             if self.via_service { self.service_public_status.clone().unwrap_or(DirStatus::Connecting) }
             else { self.public_status.clone() }
         } else if self.via_service && !self.service_station_matches() {
-            DirStatus::Error("Update the Windows service to use this station: Config → Windows service → Update".into())
+            DirStatus::Error("Apply the saved station settings to the Windows service: Config → Windows service → Apply settings".into())
         } else { self.dir_status.clone() }
     }
 
@@ -738,6 +745,8 @@ impl App {
 
     /// Downloads and installs the pending update in the background.
     pub fn start_update(&mut self, ctx: &egui::Context) {
+        #[cfg(windows)]
+        if self.service_busy() { self.toast("Wait for the Windows service operation to finish before updating", pal::GOLD);return; }
         let Some(u) = &mut self.update else { return };
         if u.installing {
             return;
@@ -749,8 +758,7 @@ impl App {
         let (client, info, progress, wake) = (self.client.clone(), u.info.clone(), u.progress.clone(), ctx.clone());
         self.rt.spawn(async move {
             let w = wake.clone();
-            let r = client
-                .install_update(&info, move |done, total| {
+            let r = crate::update::install(&client, &info, move |done, total| {
                     *progress.lock().unwrap() = (done, total);
                     w.request_repaint_after(Duration::from_millis(100));
                 })
@@ -765,9 +773,21 @@ impl App {
         self.update_check.is_some()
     }
 
+    #[cfg(windows)]
+    fn check_service_update(&mut self, ctx: &egui::Context) {
+        self.service_update_check = true;
+        let (tx, rx) = oneshot::channel();
+        self.update_check = Some(rx);
+        let (client, wake) = (self.client.clone(), ctx.clone());
+        self.rt.spawn(async move {
+            let _ = tx.send(client.available_update().await.map_err(|e| format!("{e:#}")));
+            wake.request_repaint();
+        });
+    }
+
     /// Asks the station for an update right now (About page).
     pub fn check_update_now(&mut self, ctx: &egui::Context) {
-        if self.update_check.is_some() {
+        if self.update_check.is_some() || self.update.as_ref().is_some_and(|update| update.installing) {
             return;
         }
         let (client, wake) = (self.client.clone(), ctx.clone());
@@ -803,6 +823,9 @@ impl App {
     /// Windows lets this user, and reinstalled only if not.
     #[cfg(windows)]
     pub fn service_action(&mut self, ctx: &egui::Context, install: bool, start_first: bool) {
+        if self.update.as_ref().is_some_and(|update| update.installing) {
+            self.toast("Wait for the app update to finish before changing the service", pal::GOLD);return;
+        }
         if install && self.client.settings().host.permanent_password_secret.is_none() {
             self.toast("Set and save an unattended password first: the service has no one-time passwords", pal::RED);
             return;
@@ -924,11 +947,14 @@ impl App {
             && let Ok(r) = rx.try_recv()
         {
             self.update_check = None;
+            let sync_service = std::mem::take(&mut self.service_update_check);
             match r {
                 Ok(Some(info)) => {
                     self.toast(format!("Slipstream {} is available", info.label()), pal::GREEN);
                     self.update = Some(UpdateState::new(info));
+                    if sync_service { self.start_update(ctx); }
                 }
+                Ok(None) if sync_service => self.toast("The Windows service needs an update, but the station has no signed package available", pal::RED),
                 Ok(None) => self.toast("Slipstream is up to date", pal::GREEN),
                 Err(e) => self.toast(format!("Update check failed: {e}"), pal::RED),
             }
