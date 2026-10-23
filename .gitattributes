@@ -1,0 +1,3 @@
+# The official libopus source, built by crates/slipstream-audio: not our code,
+# so leave it out of GitHub's language statistics.
+crates/slipstream-audio/opus/** linguist-vendored
