@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.28.0 — 2026-10-23
+
 - Encode video on NVIDIA graphics cards (NVENC) on Windows and Linux hosts,
   falling back to the processor automatically. Encoding takes a few
   milliseconds a frame on the graphics card instead of tens on a laptop
@@ -20,6 +22,8 @@ show in small print: `0.6.0 (build N · commit)`.
   encoder runs; `SLIPSTREAM_NO_HWENC=1` turns it off.
 - Balanced and Quality now run at **Config → Max frame rate** (up to 144 fps)
   instead of falling back to 60 after choosing a preset or reconnecting.
+- On Windows, retry saving settings for a moment when another program
+  (antivirus, backup, indexing) briefly holds the file open.
 
 ## 0.27.0 — 2026-10-23
 
