@@ -234,9 +234,6 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
                     .on_hover_text(&log);
             }
         }
-        if !custom {
-            egui::CollapsingHeader::new("Connect a self-hosted station").id_salt("link-private-station").show(ui, |ui| link_form(app, ui, t));
-        }
         #[cfg(target_os="android")]
         super::android::hosting_panel(ui);
         if app.client.settings().host.permanent_password_secret.is_some() {
