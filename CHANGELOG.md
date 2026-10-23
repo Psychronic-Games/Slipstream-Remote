@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.26.2 — 2026-10-22
+
 - Match Partner ID and Password field typography, height and alignment. Use
   compact shared single-line/multiline input styles throughout forms instead
   of separately padded text boxes, retaining mobile touch target sizes.
