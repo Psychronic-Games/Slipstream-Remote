@@ -589,18 +589,23 @@ fn save_screenshot(hwnd: HWND, path: &std::path::Path) -> Result<()> {
 /// asked (GDI's own shapes are jagged), plus 2 px black seams at `seams`
 /// (x offsets), blended over the background.
 unsafe fn bar(hdc: HDC, at: RECT, color: u32, round: (bool, bool), seams: &[i32]) {
+    unsafe { rounded_bar(hdc, at, color, round, seams, (at.bottom-at.top) as f32/2.0); }
+}
+
+unsafe fn rounded_bar(hdc: HDC, at: RECT, color: u32, round: (bool, bool), seams: &[i32], radius: f32) {
     let (w, h) = (at.right - at.left, at.bottom - at.top);
     if w <= 0 || h <= 0 {
         return;
     }
-    let r = h as f32 / 2.0;
+    let r = radius.min(h as f32 / 2.0).min(w as f32 / 2.0).max(0.5);
     let channels = |c: u32| [(c & 0xff) as f32, ((c >> 8) & 0xff) as f32, ((c >> 16) & 0xff) as f32];
     let (fg, bg) = (channels(color), channels(BG));
     let mut px = vec![0u32; (w * h) as usize];
     for py in 0..h {
         for qx in 0..w {
             let (fx, fy) = (qx as f32 + 0.5, py as f32 + 0.5);
-            // Distance outside the shape: rounded ends are circles of radius r.
+            // Clamp to the straight middle for rounded rectangles; capsules
+            // use h/2 and therefore keep their original circular ends.
             let cx = if round.0 && fx < r {
                 r
             } else if round.1 && fx > w as f32 - r {
@@ -608,7 +613,8 @@ unsafe fn bar(hdc: HDC, at: RECT, color: u32, round: (bool, bool), seams: &[i32]
             } else {
                 fx
             };
-            let d = ((fx - cx).powi(2) + (fy - r).powi(2)).sqrt() - r;
+            let cy = fy.clamp(r, h as f32-r);
+            let d = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() - r;
             let cover = (0.5 - d).clamp(0.0, 1.0);
             let ink = if seams.iter().any(|&sx| qx == sx || qx == sx - 1) { [0.0; 3] } else { fg };
             let mix = |i: usize| (bg[i] + (ink[i] - bg[i]) * cover) as u32;
@@ -648,18 +654,16 @@ unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
         _ => ("", DIM),
     };
     let (hdc, mut r) = (d.hDC, d.rcItem);
-    let (w, h) = (r.right - r.left, r.bottom - r.top);
     let text = wide(label);
     // SAFETY: drawing into the DC Windows handed us for this button.
     unsafe {
         let old_font = SelectObject(hdc, BUTTON_FONT.load(Ordering::Relaxed) as HFONT);
-        let mut size = std::mem::zeroed();
-        GetTextExtentPoint32W(hdc, text.as_ptr(), label.len() as i32, &mut size);
-        // Seams like the main app's pills, where the label clears them.
-        let cap = h * 55 / 100;
-        let seams: &[i32] = if w - 2 * cap > size.cx + 12 { &[cap, w - cap] } else { &[] };
         let fill = if d.itemState & ODS_SELECTED != 0 { WHITE } else { color };
-        bar(hdc, r, fill, (true, true), seams);
+        if [BTN_MIN,BTN_CLOSE].contains(&(d.CtlID as i32)) {
+            bar(hdc, r, fill, (true, true), &[]);
+        } else {
+            rounded_bar(hdc, r, fill, (true, true), &[], 6.0);
+        }
         SetBkMode(hdc, TRANSPARENT as i32);
         SetTextColor(hdc, 0);
         if [BTN_MIN,BTN_CLOSE].contains(&(d.CtlID as i32)) {draw_window_symbol(hdc,r,d.CtlID as i32,fill);} else {

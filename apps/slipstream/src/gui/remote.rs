@@ -1291,11 +1291,11 @@ impl RemoteTab {
                 ui.horizontal(|ui| {
                     let (local, host, port) = &mut self.tunnel_form;
                     ui.label("Local port");
-                    ui.add(egui::TextEdit::singleline(local).align(egui::Align2::LEFT_CENTER).hint_text("auto").desired_width(60.0));
+                    ui.add(theme::text_input(local).align(egui::Align2::LEFT_CENTER).hint_text("auto").desired_width(60.0));
                     ui.label("→");
-                    ui.add(egui::TextEdit::singleline(host).align(egui::Align2::LEFT_CENTER).hint_text("localhost").desired_width(130.0));
+                    ui.add(theme::text_input(host).align(egui::Align2::LEFT_CENTER).hint_text("localhost").desired_width(130.0));
                     ui.label(":");
-                    ui.add(egui::TextEdit::singleline(port).align(egui::Align2::LEFT_CENTER).hint_text("3389").desired_width(60.0));
+                    ui.add(theme::text_input(port).align(egui::Align2::LEFT_CENTER).hint_text("3389").desired_width(60.0));
                     add = theme::pill(ui, "Forward", pal::GOLD).clicked();
                 });
                 if let Some(e) = &self.tunnel_error {

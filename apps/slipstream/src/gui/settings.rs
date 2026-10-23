@@ -96,18 +96,8 @@ fn text_field(ui: &mut Ui, value: &mut String, hint: &str, password: bool) -> eg
 }
 
 fn text_field_sized(ui: &mut Ui, value: &mut String, hint: &str, password: bool, width: f32) -> egui::Response {
-    let width=width.min((ui.available_width()-28.0).max(40.0));
-    theme::input_frame()
-        .show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::singleline(value).align(egui::Align2::LEFT_CENTER)
-                    .hint_text(hint)
-                    .password(password)
-                    .frame(egui::Frame::NONE)
-                    .desired_width(width),
-            )
-        })
-        .inner
+    ui.add(theme::text_input(value).hint_text(hint).password(password)
+        .desired_width(width.min(ui.available_width())))
 }
 
 pub fn ui(app: &mut App, ui: &mut Ui) {
@@ -305,7 +295,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                     }
                 });
                 let mut text = why.as_str();
-                ui.add(egui::TextEdit::multiline(&mut text).desired_width(f32::INFINITY).desired_rows(3).font(egui::TextStyle::Small));
+                ui.add(theme::text_area(&mut text).desired_width(f32::INFINITY).desired_rows(3).font(egui::TextStyle::Small));
             }
             #[cfg(windows)]
             if via_service {
@@ -372,10 +362,10 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         ui.label(RichText::new(e).color(pal::RED));
     }
     ui.horizontal(|ui| {
-        if theme::pill_sized(ui, "Save configuration", pal::ORANGE, vec2(220.0, 40.0)).clicked() {
+        if theme::pill_sized(ui, "Save configuration", pal::ORANGE, vec2(200.0, 34.0)).clicked() {
             save(app);
         }
-        if theme::pill_sized(ui, "Revert", pal::LAVENDER, vec2(120.0, 40.0)).clicked() {
+        if theme::pill_sized(ui, "Revert", pal::LAVENDER, vec2(100.0, 34.0)).clicked() {
             app.settings_form = SettingsForm::from(&app.client.settings());
         }
     });

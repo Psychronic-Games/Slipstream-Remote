@@ -115,7 +115,7 @@ pub fn install(ctx: &egui::Context) {
         v.window_corner_radius = CornerRadius::same(18);
         v.window_shadow = Shadow { offset: [0, 0], blur: 24, spread: 0, color: pal::VIOLET.gamma_multiply(0.25) };
         v.popup_shadow = v.window_shadow;
-        let r = CornerRadius::same(14);
+        let r = CornerRadius::same(6);
         for w in [
             &mut v.widgets.noninteractive,
             &mut v.widgets.inactive,
@@ -323,7 +323,7 @@ pub fn progress(ui: &mut Ui, fraction: f32, width: f32, color: Color32, text: &s
     resp
 }
 
-/// A pill button sized to its label.
+/// A compact rounded action button sized to its label.
 pub fn pill(ui: &mut Ui, label: &str, color: Color32) -> Response {
     pill_sized(ui, label, color, vec2(0.0, if cfg!(target_os="android") {32.0} else {29.0}))
 }
@@ -384,27 +384,28 @@ fn pill_with(ui: &mut Ui, label: &str, color: Color32, min: Vec2, icon: Option<P
     let text = label.to_uppercase();
     let galley = ui.painter().layout_no_wrap(text, display(17.0), Color32::BLACK);
     let icon_w = if icon.is_some() { 22.0 } else { 0.0 };
-    // Padding follows the style's button padding (14 → 20 px a side).
-    let pad = 12.0 + 2.0 * ui.spacing().button_padding.x;
-    let size = vec2((galley.size().x + pad + icon_w).max(min.x), min.y.max(28.0));
+    let navigation = icon.is_some();
+    let pad = 2.0 * ui.spacing().button_padding.x + if navigation { 12.0 } else { 0.0 };
+    let size = vec2((galley.size().x + pad + icon_w).max(min.x), min.y.max(if cfg!(target_os="android") {40.0} else {28.0}));
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let enabled = ui.is_enabled();
         let mut fill = if enabled { color } else { color.gamma_multiply(0.35) };
+        let radius = if navigation { rect.height() / 2.0 } else { 6.0 };
         if enabled && resp.hovered() {
             fill = lighten(color, 0.3);
-            glow(painter, rect, rect.height() / 2.0, color, 1.0);
+            glow(painter, rect, radius, color, 1.0);
         }
         if enabled && resp.is_pointer_button_down_on() {
             fill = Color32::WHITE;
         }
-        let r = (rect.height() / 2.0) as u8;
+        let r = radius as u8;
         painter.rect_filled(rect, CornerRadius::same(r), fill);
         // Black seams near both ends, like segmented console buttons —
         // only when the label clears them.
         let cap = rect.height() * 0.55;
-        if rect.width() - 2.0 * cap > galley.size().x + icon_w + 12.0 {
+        if navigation && rect.width() - 2.0 * cap > galley.size().x + icon_w + 12.0 {
             // With an icon in front, only the far seam (the icon takes the near one's place).
             let seams = if icon.is_some() { &[rect.right() - cap][..] } else { &[rect.left() + cap, rect.right() - cap][..] };
             for &x in seams {
@@ -1136,13 +1137,28 @@ pub fn readout(seed: u64, t: f64, digits: usize) -> String {
         .collect()
 }
 
-/// A rounded "LCARS-like" text field frame color for inputs.
+/// Shared input chrome. Apply directly to TextEdit so padding is counted once
+/// and the whole field (including its inset) accepts focus.
 pub fn input_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(Color32::from_rgb(4, 6, 12))
         .stroke(Stroke::new(1.5, pal::ORANGE.gamma_multiply(0.7)))
-        .corner_radius(CornerRadius::same(16))
-        .inner_margin(egui::Margin::symmetric(14, 6))
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(9, 4))
+}
+
+/// Single-line form field with compact insets and a centered text baseline.
+/// Width includes the frame, so equal widths also mean equal visible bounds.
+pub fn text_input(value: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
+    egui::TextEdit::singleline(value)
+        .align(Align2::LEFT_CENTER)
+        .frame(input_frame())
+        .min_size(vec2(0.0, if cfg!(target_os="android") {40.0} else {28.0}))
+}
+
+/// Matching multiline input, preserving top alignment and caller row counts.
+pub fn text_area(value: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
+    egui::TextEdit::multiline(value).frame(input_frame()).align(Align2::LEFT_TOP)
 }
 
 /// Draws an arc stroke (used for small radar/spinner flourishes).

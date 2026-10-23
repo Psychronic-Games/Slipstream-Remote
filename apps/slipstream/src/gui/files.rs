@@ -786,7 +786,7 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
         }
     });
     {
-        let r = ui.add(egui::TextEdit::singleline(&mut pane.path_edit).align(egui::Align2::LEFT_CENTER).desired_width(ui.available_width()).font(theme::mono(14.0)));
+        let r = ui.add(theme::text_input(&mut pane.path_edit).align(egui::Align2::LEFT_CENTER).desired_width(ui.available_width()).font(theme::mono(14.0)));
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             nav = Some(Some(pane.path_edit.clone()));
         }

@@ -190,13 +190,10 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
             if !app.saved.search.is_empty() && theme::pill(ui, "Clear", pal::BLUE).clicked() {
                 app.saved.search.clear();
             }
-            theme::input_frame().show(ui, |ui| {
-                ui.add(egui::TextEdit::singleline(&mut app.saved.search)
-                    .id_salt("saved-device-search")
-                    .frame(egui::Frame::NONE)
-                    .hint_text("Find a device by name, ID, group or station…")
-                    .desired_width(ui.available_width()));
-            });
+            ui.add(theme::text_input(&mut app.saved.search)
+                .id_salt("saved-device-search")
+                .hint_text("Find a device by name, ID, group or station…")
+                .desired_width(ui.available_width()));
         });
         let filter = app.saved.search.to_lowercase();
         let total = accounts.iter().map(|a| a.devices.len() + a.shared.len()).sum::<usize>();
@@ -467,26 +464,20 @@ fn open_editor(app: &mut App, r: &AccountRef, d: Option<&SavedDevice>, shared: b
 }
 
 fn field(ui: &mut Ui, value: &mut String, hint: &str, password: bool, width: f32) -> egui::Response {
-    let width=width.min((ui.available_width()-28.0).max(40.0));
-    theme::input_frame()
-        .show(ui, |ui| ui.add(egui::TextEdit::singleline(value).align(egui::Align2::LEFT_CENTER).hint_text(hint).password(password).frame(egui::Frame::NONE).desired_width(width)))
-        .inner
+    ui.add(theme::text_input(value).hint_text(hint).password(password)
+        .desired_width(width.min(ui.available_width())))
 }
 
 /// An editable group name with its chooser integrated into the same field.
 fn group_field(ui: &mut Ui, value: &mut String, groups: BTreeSet<&str>) {
-    let frame=theme::input_frame().show(ui,|ui| {
-        ui.horizontal(|ui| {
-            let input=ui.add(egui::TextEdit::singleline(value).hint_text("Ungrouped or new group")
-                .char_limit(64).frame(egui::Frame::NONE).desired_width(246.0));
-            ui.allocate_exact_size(vec2(28.0,input.rect.height()),Sense::hover());
-        });
-    });
-    let rect=frame.response.rect;
+    let input = ui.add(theme::text_input(value).hint_text("Ungrouped or new group")
+        .char_limit(64).desired_width(280.0)
+        .frame(theme::input_frame().inner_margin(egui::Margin {left:9,right:36,top:4,bottom:4})));
+    let rect = input.rect;
     let cap=egui::Rect::from_min_max(egui::pos2(rect.right()-34.0,rect.top()+2.0),rect.max-vec2(2.0,2.0));
     let response=ui.interact(cap,ui.make_persistent_id("group-choices"),Sense::click()).on_hover_text("Choose a group, or type a new name");
     let color=if response.hovered() {pal::TAN} else {pal::ORANGE};
-    ui.painter().rect_filled(cap,egui::CornerRadius {ne:14,se:14,..Default::default()},color);
+    ui.painter().rect_filled(cap,egui::CornerRadius {ne:4,se:4,..Default::default()},color);
     let center=cap.center();
     ui.painter().line_segment([center+vec2(-5.0,-2.0),center+vec2(0.0,3.0)],egui::Stroke::new(2.0,pal::BG));
     ui.painter().line_segment([center+vec2(0.0,3.0),center+vec2(5.0,-2.0)],egui::Stroke::new(2.0,pal::BG));
@@ -583,10 +574,8 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                 // Keep the text editor out of the grid layout: a frame that
                 // inherits its cached row height cannot shrink after deleting lines.
                 ui.vertical(|ui| {
-                    theme::input_frame().show(ui, |ui| {
-                        ui.add(egui::TextEdit::multiline(&mut e.notes).hint_text("Optional notes…")
-                            .desired_rows(1).char_limit(500).frame(egui::Frame::NONE).desired_width(280.0));
-                    });
+                    ui.add(theme::text_area(&mut e.notes).hint_text("Optional notes…")
+                        .desired_rows(1).char_limit(500).desired_width(280.0));
                 });
                 ui.end_row();
                 if !e.shared {
@@ -770,7 +759,7 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
             let a=field(ui,&mut app.saved.station,hint,false,width-28.0);
             go|=enter(&a);
             ui.horizontal(|ui| {ui.with_layout(Layout::right_to_left(Align::Center),|ui| {
-                go|=ui.add_enabled_ui(!busy,|ui|theme::pill_sized(ui,label,pal::VIOLET,vec2(0.0,42.0))).inner.clicked();
+                go|=ui.add_enabled_ui(!busy,|ui|theme::pill_sized(ui,label,pal::VIOLET,vec2(0.0,34.0))).inner.clicked();
                 let field_width=(ui.available_width()-6.0)/2.0-28.0;
                 ui.with_layout(Layout::left_to_right(Align::Center),|ui| {
                     let b=field(ui,&mut app.saved.username,"Username",false,field_width);

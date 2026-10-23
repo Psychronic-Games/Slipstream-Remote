@@ -160,7 +160,7 @@ impl Report {
                         }
                     });
                 });
-                ui.add(egui::TextEdit::singleline(&mut self.status).desired_width(f32::INFINITY).char_limit(160).hint_text("What are you doing?"));
+                ui.add(theme::text_input(&mut self.status).desired_width(f32::INFINITY).char_limit(160).hint_text("What are you doing?"));
                 ui.horizontal_wrapped(|ui| {
                     let enabled=source.connected && source.can_control && self.status_rx.is_none();
                     if ui.add_enabled(enabled,egui::Button::new("Show status")).clicked(){status_send=Some(self.status.clone());}
@@ -176,18 +176,18 @@ impl Report {
                 if self.fetch.is_some(){ui.spinner();ui.label("Collecting inventory and public IP…");}
                 if self.inventory.is_some(){ui.label(format!("Inventory: {}",slipstream_core::clock::format_utc(self.inventory_at)));}
             });
-            ui.label("Technician notes");ui.add(egui::TextEdit::multiline(&mut self.notes).desired_rows(3).desired_width(f32::INFINITY).char_limit(8000));
+            ui.label("Technician notes");ui.add(theme::text_area(&mut self.notes).desired_rows(3).desired_width(f32::INFINITY).char_limit(8000));
             ui.add_enabled_ui(source.frame.is_some(),|ui| {ui.checkbox(&mut self.screenshot,"Include the latest received remote-screen image (screen.png)");});
             if self.screenshot {ui.label(RichText::new("The screenshot may contain sensitive on-screen information. Check the remote screen before saving; it may be the last frame from an interrupted link.").small().color(pal::GOLD));}
             let text=self.text(&source);
             egui::CollapsingHeader::new("Review report text").default_open(true).show(ui,|ui| {
-                egui::ScrollArea::vertical().id_salt("report-preview").max_height(270.0).show(ui,|ui| {let mut view=text.as_str();ui.add(egui::TextEdit::multiline(&mut view).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));});
+                egui::ScrollArea::vertical().id_salt("report-preview").max_height(270.0).show(ui,|ui| {let mut view=text.as_str();ui.add(theme::text_area(&mut view).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));});
             });
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Copy report text").clicked(){ctx.copy_text(text.clone());}
                 ui.label("Save into existing local folder");
             });
-            ui.add(egui::TextEdit::singleline(&mut self.directory).desired_width(f32::INFINITY));
+            ui.add(theme::text_input(&mut self.directory).desired_width(f32::INFINITY));
             save=ui.add_enabled(self.save.is_none() && self.fetch.is_none() && self.inventory.is_some(),egui::Button::new("Save report folder")).clicked();
             if self.save.is_some(){ui.spinner();}
             if let Some(result)=&self.notice {match result {Ok(s)=>{ui.label(RichText::new(s).color(pal::GREEN));},Err(e)=>{ui.label(RichText::new(e).color(pal::RED));}}}

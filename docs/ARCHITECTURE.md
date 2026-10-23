@@ -693,6 +693,14 @@ with a neon-on-dark palette, glow strokes and HUD corner brackets. Video
 frames are converted from YUV to RGB on the GPU (a WGSL shader in an
 egui_wgpu paint callback).
 
+Forms use `theme::text_input` and `theme::text_area`, applying compact chrome
+directly to the text editor so padding and width are counted once. Single-line
+text is vertically centered; multiline text remains top-aligned. Partner ID and
+Password share the same font for hints and values. Mobile fields/actions retain
+at least 40-point touch targets. Ordinary text actions use 6-point corners and
+compact label padding; icon navigation/transfer caps and console framing keep
+their larger curves. The compact Windows action renderer follows the same split.
+
 The UI redraws at the display's refresh rate while visible (60 fps when
 unfocused) and slows to one tick a second when hidden or minimized. On a
 CPU renderer (Mesa llvmpipe, detected from the adapter) animations run at 8

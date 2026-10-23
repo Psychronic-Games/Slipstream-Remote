@@ -13,6 +13,12 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Match Partner ID and Password field typography, height and alignment. Use
+  compact shared single-line/multiline input styles throughout forms instead
+  of separately padded text boxes, retaining mobile touch target sizes.
+- Use rounded rectangles and tighter horizontal padding for ordinary actions,
+  including the compact Windows window, while retaining console navigation caps.
+
 ## 0.26.1 — 2026-10-22
 
 - Reuse the already-installed signed Windows app to catch up an older service,

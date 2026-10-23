@@ -623,7 +623,7 @@ fn call_form(meetings: &mut Meetings, app: &App, ui: &mut Ui, allow: bool) {
     ui.horizontal_wrapped(|ui| {
         ui.label("System ID");
         ui.add(
-            egui::TextEdit::singleline(&mut meetings.call_id)
+            theme::text_input(&mut meetings.call_id)
                 .hint_text("9-digit ID")
                 .desired_width(150.0),
         );
@@ -1020,7 +1020,7 @@ fn setup(meetings: &mut Meetings, app: &App, ui: &mut Ui) {
     theme::panel(ui, "Join a meeting", pal::BLUE, |ui| {
         ui.label("Paste the invitation your organizer shared with you.");
         ui.add(
-            egui::TextEdit::multiline(&mut meetings.join_text)
+            theme::text_area(&mut meetings.join_text)
                 .desired_rows(2)
                 .desired_width(ui.available_width())
                 .hint_text("Slipstream meeting invitation"),
@@ -1331,7 +1331,7 @@ fn chat(meetings: &mut Meetings, active: &mut Active, ui: &mut Ui) {
             });
         ui.add_space(8.0);
         let response = ui.add(
-            egui::TextEdit::multiline(&mut active.message)
+            theme::text_area(&mut active.message)
                 .desired_rows(2)
                 .desired_width(ui.available_width())
                 .hint_text("Message everyone · Enter to send · Shift+Enter for a new line")

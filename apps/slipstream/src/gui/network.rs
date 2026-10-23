@@ -386,7 +386,7 @@ impl NetworkScanner {
                         if ui.add(button).clicked() { self.topology = topology; }
                     }
                     ui.label(RichText::new(format!("{} DEVICE{}", self.devices.len(), if self.devices.len() == 1 { "" } else { "S" })).font(theme::display(18.0)).color(pal::GOLD));
-                    ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Filter name, IP, MAC, port or service").desired_width(210.0));
+                    ui.add(theme::text_input(&mut self.filter).hint_text("Filter name, IP, MAC, port or service").desired_width(210.0));
                     if ui.add_enabled(!self.devices.is_empty(), egui::Button::new("Copy results")).on_hover_text("Copy the filtered devices, scan scope and tested ports as text").clicked() { ui.ctx().copy_text(self.export(host)); }
                 });
                 if self.total > 0 {
@@ -487,13 +487,13 @@ impl NetworkScanner {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Target subnet");
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.cidr)
+                    theme::text_input(&mut self.cidr)
                         .desired_width(170.0)
                         .hint_text("192.168.1.0/24"),
                 ).on_hover_text("Enter any reachable subnet or VLAN; scans run from the selected remote adapter");
                 ui.label("TCP ports");
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.ports)
+                    theme::text_input(&mut self.ports)
                         .desired_width(ui.available_width().clamp(160.0, 300.0))
                         .hint_text("22,80,443,3389 or 1-1024"),
                 );
@@ -678,14 +678,14 @@ impl NetworkScanner {
             if let Some(i)=remove {self.tunnels.remove(i);}
             ui.separator();
             ui.horizontal_wrapped(|ui| {
-                ui.label("Wake MAC");ui.add(egui::TextEdit::singleline(&mut self.wake_mac).desired_width(180.0).hint_text("00:11:22:33:44:55"));
+                ui.label("Wake MAC");ui.add(theme::text_input(&mut self.wake_mac).desired_width(180.0).hint_text("00:11:22:33:44:55"));
                 wake=ui.add_enabled(connected && self.can_open_web && !busy,egui::Button::new("Send wake packet")).clicked();
             });
             ui.label(RichText::new("Uses the selected adapter's LAN broadcast. The host must allow Wake-on-LAN, Control and Network scan; the sleeping device must have wake enabled. Packet delivery does not confirm it woke.").small().color(pal::DIM));
             ui.separator();
             ui.horizontal_wrapped(|ui| {
-                ui.label("DNS name");ui.add(egui::TextEdit::singleline(&mut self.diagnostic_name).desired_width(190.0));
-                ui.label("Compare resolver");ui.add(egui::TextEdit::singleline(&mut self.comparison_dns).desired_width(160.0).hint_text("optional IP"));
+                ui.label("DNS name");ui.add(theme::text_input(&mut self.diagnostic_name).desired_width(190.0));
+                ui.label("Compare resolver");ui.add(theme::text_input(&mut self.comparison_dns).desired_width(160.0).hint_text("optional IP"));
                 diagnose=ui.add_enabled(connected && !busy && self.scan.is_none(),egui::Button::new("Run diagnostics")).clicked();
             });
             ui.label(RichText::new("Queries the host's configured resolvers and optional comparison resolver, checks gateway ICMP and verifies its station API. The DNS name is sent to those resolvers.").small().color(pal::DIM));

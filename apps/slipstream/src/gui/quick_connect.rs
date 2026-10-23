@@ -44,16 +44,8 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
             picker.open = false;
         }
         if picker.destination.is_some() {ui.label("This link will be added to the window where you clicked +.");}
-        let search = theme::input_frame()
-            .show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut picker.search)
-                        .frame(egui::Frame::NONE)
-                        .hint_text("Find a system, group or station…")
-                        .desired_width(ui.available_width()),
-                )
-            })
-            .inner;
+        let search = ui.add(theme::text_input(&mut picker.search)
+            .hint_text("Find a system, group or station…").desired_width(ui.available_width()));
         if std::mem::take(&mut picker.focus) {
             search.request_focus();
         }
@@ -240,26 +232,10 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
                     }
                 });
             ui.horizontal_wrapped(|ui| {
-                let width = ((ui.available_width() - 156.0) / 2.0).clamp(90.0, 190.0);
-                theme::input_frame().show(ui, |ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut picker.id)
-                            .frame(egui::Frame::NONE)
-                            .hint_text("Partner ID")
-                            .desired_width(width),
-                    );
-                });
-                let password = theme::input_frame()
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut picker.password)
-                                .frame(egui::Frame::NONE)
-                                .password(true)
-                                .hint_text("Password")
-                                .desired_width(width),
-                        )
-                    })
-                    .inner;
+                let width = ((ui.available_width() - 88.0) / 2.0).clamp(90.0, 220.0);
+                ui.add(theme::text_input(&mut picker.id).hint_text("Partner ID").desired_width(width));
+                let password = ui.add(theme::text_input(&mut picker.password)
+                    .password(true).hint_text("Password").desired_width(width));
                 let ready = app.attempt.is_none()
                     && picker.id.parse::<DeviceId>().is_ok()
                     && !picker.password.trim().is_empty();

@@ -267,17 +267,7 @@ fn link_form(app: &mut App, ui: &mut Ui, t: f64) {
     );
     ui.add_space(4.0);
     let field = |ui: &mut Ui, value: &mut String, hint: &str, width: f32| {
-        theme::input_frame()
-            .show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(value).align(egui::Align2::LEFT_CENTER)
-                        .hint_text(hint)
-                        .font(theme::mono(18.0))
-                        .frame(egui::Frame::NONE)
-                        .desired_width(width),
-                )
-            })
-            .inner
+        ui.add(theme::text_input(value).hint_text(hint).font(theme::mono(18.0)).desired_width(width))
     };
     let mut go = false;
     // On a phone the address gets a line of its own.
@@ -314,39 +304,32 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
         } else { "Looking up IDs on your self-hosted station" }).small().color(pal::LAVENDER));
         ui.add_space(8.0);
         ui.label(RichText::new("PARTNER ID").font(theme::display(15.0)).color(pal::ORANGE));
-        let id_resp = theme::input_frame()
-            .show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.connect_id).id_salt(("partner-id", app.selected_public, &app.primary_station)).align(egui::Align2::LEFT_CENTER)
-                        .hint_text("482 913 077")
-                        .font(theme::mono(30.0))
-                        .frame(egui::Frame::NONE)
-                        .desired_width(f32::INFINITY),
-                )
-            })
-            .inner;
+        let field_font = theme::mono(22.0);
+        let id_resp = ui.add(
+            theme::text_input(&mut app.connect_id)
+                .id_salt(("partner-id", app.selected_public, &app.primary_station))
+                .hint_text(RichText::new("482 913 077").font(field_font.clone()))
+                .font(field_font.clone())
+                .desired_width(f32::INFINITY),
+        );
         ui.add_space(4.0);
         ui.label(RichText::new("PASSWORD").font(theme::display(15.0)).color(pal::ORANGE));
-        let pw_resp = theme::input_frame()
-            .show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.connect_pw).id_salt(("partner-password", app.selected_public, &app.primary_station)).align(egui::Align2::LEFT_CENTER)
-                        .hint_text("partner's password")
-                        .password(true)
-                        .font(theme::mono(24.0))
-                        .frame(egui::Frame::NONE)
-                        .desired_width(f32::INFINITY),
-                )
-            })
-            .inner;
+        let pw_resp = ui.add(
+            theme::text_input(&mut app.connect_pw)
+                .id_salt(("partner-password", app.selected_public, &app.primary_station))
+                .hint_text(RichText::new("partner's password").font(field_font.clone()))
+                .password(true)
+                .font(field_font)
+                .desired_width(f32::INFINITY),
+        );
         let enter = (id_resp.lost_focus() || pw_resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if id_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && app.connect_pw.is_empty() {
             pw_resp.request_focus();
         }
-        ui.add_space(12.0);
-        ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::right_to_left(Align::Center), |ui| {
+        ui.add_space(8.0);
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), if cfg!(target_os="android") {42.0} else {36.0}), Layout::right_to_left(Align::Center), |ui| {
             let busy = app.attempt.is_some();
-            let engage = ui.add_enabled_ui(!busy, |ui| theme::pill_sized(ui, "Engage", pal::ORANGE, vec2(150.0, 40.0))).inner;
+            let engage = ui.add_enabled_ui(!busy, |ui| theme::pill_sized(ui, "Engage", pal::ORANGE, vec2(120.0, 34.0))).inner;
             if (engage.clicked() || (enter && !app.connect_pw.is_empty())) && !busy {
                 app.start_connect(&ctx);
             }
@@ -628,13 +611,8 @@ fn chat_ui_with_echo(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut Str
     });
     ui.horizontal(|ui| {
         let input_width = (ui.available_width() - 108.0).max(40.0);
-        let resp = egui::Frame::new().fill(pal::PANEL).corner_radius(6.0)
-            .stroke(egui::Stroke::new(1.0, pal::BLUE.gamma_multiply(0.6)))
-            .inner_margin(egui::Margin::symmetric(8, 6))
-            .show(ui, |ui| {
-                ui.add(egui::TextEdit::singleline(input).align(egui::Align2::LEFT_CENTER)
-                    .hint_text("Transmit a message…").frame(egui::Frame::NONE).desired_width(input_width))
-            }).inner;
+        let resp = ui.add(theme::text_input(input)
+            .hint_text("Transmit a message…").desired_width(input_width));
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (theme::console_button(ui, "Send", pal::ORANGE, theme::ConsoleIcon::Chat, false).clicked() || enter) && !input.trim().is_empty() {
             let text = std::mem::take(input);
