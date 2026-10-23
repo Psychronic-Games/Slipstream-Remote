@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.30.0 — 2026-10-23
+
 - Record meetings to MP4 or MKV: choose the size (720p–1440p), frame rate,
   quality and file format, then where to save. Records the large picture and
   everyone's voices (H.264 and Opus); fragmented MP4 stays playable even if
