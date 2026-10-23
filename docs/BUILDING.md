@@ -268,18 +268,25 @@ scripts/check.sh python3 scripts/test-publish-station-clients.py
 
 ### The macOS app
 
-On a Mac with the Xcode command line tools, Rust and `brew install nasm`:
+No Mac is needed to build it: `scripts/fetch-macos.sh` runs
+`.github/workflows/macos.yml` on GitHub's Apple Silicon Macs for the current
+(pushed) commit and downloads the universal app (Apple Silicon and Intel) to
+`dist/slipstream-macos.zip`, where `build-station.sh` includes it when its
+build number matches. Run it after pushing the release commit, before
+`build-station.sh`. The repository variable `SLIPSTREAM_UPDATE_KEYS` holds
+the release public key, so the app installs signed updates.
+
+On a Mac with the Xcode command line tools, Rust and `brew install nasm`,
+the same build runs locally:
 
 ```sh
-SLIPSTREAM_UPDATE_KEYS=PUBLIC_KEY scripts/check.sh scripts/build-macos.sh
+SLIPSTREAM_UPDATE_KEYS=PUBLIC_KEY scripts/build-macos.sh
 ```
 
-`target/release/slipstream-release pubkey` on the build machine prints the
-key. The script writes `dist/slipstream-macos.zip`. If the project folder
-syncs between the machines (Dropbox), `build-station.sh` finds it there;
-otherwise copy it over. Build both from the same commit, or the script
-leaves the Mac app out (a mismatched build number would make Macs update in
-a loop).
+One universal app runs natively on both kinds of Mac; an Intel Mac can
+build it, though only an Apple Silicon Mac can run its Apple Silicon half.
+The app is ad-hoc signed (no Apple Developer ID yet), so users choose
+**Open Anyway** the first time.
 
 ### Release candidates from CI (signed apps)
 
