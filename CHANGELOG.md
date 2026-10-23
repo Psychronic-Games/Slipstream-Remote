@@ -13,6 +13,11 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Reuse the already-installed signed Windows app to catch up an older service,
+  without downloading or installing the same app again or restarting its window.
+  Keep normal app and service updates in one download/install/restart sequence.
+  Leave an already-current or newer service untouched.
+
 ## 0.26.0 — 2026-10-22
 
 - Update an installed Windows service with the desktop app, including protected

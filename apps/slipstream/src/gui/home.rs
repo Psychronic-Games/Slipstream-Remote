@@ -421,7 +421,7 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
 pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let Some(u) = &app.update else { return };
-    let (label, installing, error) = (u.info.label(), u.installing, u.error.clone());
+    let (label, installing, error, service_only) = (u.info.label(), u.installing, u.error.clone(), u.service_only);
     let (done, total) = *u.progress.lock().unwrap();
     let mut install = false;
     let mut dismiss = false;
@@ -433,15 +433,15 @@ pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new("◆ UPDATE AVAILABLE").font(theme::display_bold(18.0)).color(pal::GREEN));
+                ui.label(RichText::new(if service_only { "◆ WINDOWS SERVICE UPDATE" } else { "◆ UPDATE AVAILABLE" }).font(theme::display_bold(18.0)).color(pal::GREEN));
                 ui.label(
-                    RichText::new(format!("Slipstream {label} — you have {}", slipstream_core::version_string()))
+                    RichText::new(if service_only { format!("Bring the service up to Slipstream {label}") } else { format!("Slipstream {label} — you have {}", slipstream_core::version_string()) })
                         .font(theme::body(16.0)),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if installing {
                         let frac = if total == 0 { 0.0 } else { done as f32 / total as f32 };
-                        let text = if total > 0 && done >= total {
+                        let text = if service_only || total > 0 && done >= total {
                             "INSTALLING…".to_string()
                         } else if total == 0 {
                             "DOWNLOADING…".to_string()
@@ -450,7 +450,7 @@ pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {
                         };
                         theme::progress(ui, frac, 260.0, pal::GREEN, &text);
                     } else {
-                        install = theme::pill(ui, "Install & restart", pal::GREEN).clicked();
+                        install = theme::pill(ui, if service_only { "Update service" } else { "Install & restart" }, pal::GREEN).clicked();
                         dismiss = ui.small_button("Later").clicked();
                     }
                 });
@@ -461,7 +461,7 @@ pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {
             ui.label(RichText::new("Your settings, ID and passwords are kept.").small().color(pal::DIM));
             #[cfg(windows)]
             if app.via_service {
-                ui.label(RichText::new("Updates the app and Windows service together. Connections pause during the service restart; Windows may ask for administrator approval.").small().color(pal::DIM));
+                ui.label(RichText::new(if service_only { "Uses the app already installed. This window stays open; connections pause during the service restart. Windows may ask for administrator approval." } else { "Updates the app and Windows service together. Connections pause during the service restart; Windows may ask for administrator approval." }).small().color(pal::DIM));
             }
         });
     if install {

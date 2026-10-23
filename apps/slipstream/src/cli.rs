@@ -413,6 +413,12 @@ pub async fn update() -> Result<()> {
         match info {
             None => println!("up to date"),
             Some(info) => {
+                #[cfg(windows)]
+                if info.version_key() == slipstream_session::update::UpdateInfo::current_version_key() {
+                    crate::update::sync_service(&info).await?;
+                    println!("Windows service updated from this app; no app restart needed");
+                    return Ok(());
+                }
                 println!("installing {}…", info.label());
                 let exe = crate::update::install(&client, &info, |done, total| {
                         if total > 0 && done == total {

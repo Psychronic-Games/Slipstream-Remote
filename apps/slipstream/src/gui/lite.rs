@@ -39,7 +39,7 @@ use windows_sys::Win32::{
         DestroyWindow, DispatchMessageW, GetClientRect, GetDlgCtrlID, GetMessageW, IDC_ARROW, LoadCursorW, LoadIconW, MSG,
         PostMessageW, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_RESTORE, SW_SHOW, SendMessageW, SetForegroundWindow,
         SetTimer, SetWindowTextW, ShowWindow, TranslateMessage, WM_APP, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY,
-        WM_NCHITTEST, HTCAPTION, SW_MINIMIZE, WM_DRAWITEM, WM_PAINT, WM_SETFONT, WM_TIMER, WNDCLASSEXW, WS_POPUP, WS_CHILD, WS_MINIMIZEBOX, WS_SYSMENU, WS_VISIBLE,
+        GetWindowTextW, WM_NCHITTEST, HTCAPTION, SW_MINIMIZE, WM_DRAWITEM, WM_PAINT, WM_SETFONT, WM_TIMER, WNDCLASSEXW, WS_POPUP, WS_CHILD, WS_MINIMIZEBOX, WS_SYSMENU, WS_VISIBLE,
     },
 };
 
@@ -57,6 +57,7 @@ struct View {
     support: super::support_status::SupportStatuses,
     update: Option<UpdateInfo>,
     installing: bool,
+    service_only: bool,
     /// The update (or the software renderer) is installed: relaunch from here.
     relaunch: Option<PathBuf>,
 }
@@ -173,13 +174,22 @@ pub fn run(
             view.lock().unwrap().note = "Updating the installed Windows service… Windows may ask for administrator approval.".into();
             let result = async {
                 let info = client.available_update().await?.context("the station has no signed update package")?;
-                view.lock().unwrap().update = Some(info.clone());
-                crate::update::install(&client, &info, |_, _| {}).await
+                let same = info.version_key() == UpdateInfo::current_version_key();
+                {
+                    let mut v = view.lock().unwrap();
+                    v.service_only = same;
+                    v.update = Some(info.clone());
+                }
+                if same { crate::update::sync_service(&info).await?; }
+                else { bail!("Use Install update to update the app and service together to {}", info.label()); }
+                anyhow::Ok(())
             }.await;
+            let mut v = view.lock().unwrap();
             match result {
-                Ok(exe) => view.lock().unwrap().relaunch = Some(exe),
-                Err(error) => view.lock().unwrap().note = format!("The service update failed: {error:#}"),
+                Ok(()) => { v.update = None; v.note = "Windows service updated from this app. This window stays open.".into(); }
+                Err(error) => v.note = format!("The service update did not finish: {error:#}"),
             }
+            drop(v);
             view.lock().unwrap().installing = false;
             wake(WM_REFRESH);
         });
@@ -225,6 +235,7 @@ pub fn run(
                         ClientEvent::UpdateAvailable(u) => {
                             if v.installing { continue; }
                             v.note = format!("Version {} is available: press Install update.", u.label());
+                            v.service_only = false;
                             v.update = Some(u);
                         }
                         _ => {}
@@ -466,11 +477,11 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
             view.status = if view.online {"SERVICE RUNNING".into()} else {format!("SERVICE {}", crate::service::status_text().to_uppercase())};
         }
     }
-    let (title, id, pw, status, online, note, update, support) = {
+    let (title, id, pw, status, online, note, update, support, service_only) = {
         let v = ui.view.lock().unwrap();
         (v.title.clone(), v.id.clone(), v.password.clone(), v.status.clone(), v.online,
          v.support.current().map(|(_,text)|format!("Support: {text}")).unwrap_or_else(||v.note.clone()),
-         v.update.is_some(), v.support.current().is_some())
+         v.update.is_some(), v.support.current().is_some(), v.service_only)
     };
     // In the update's slot (an update comes first): after the software
     // renderer failed to start, a way to give it another go.
@@ -488,7 +499,7 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     set_text(ui, ID_NOTE, &note);
     set_text(ui, BTN_NEW, "New code");
     set_text(ui, BTN_COPY, "Copy");
-    set_text(ui, BTN_UPDATE, "Install update");
+    set_text(ui, BTN_UPDATE, if service_only { "Update service" } else { "Install update" });
     set_text(ui, BTN_FULL, "Try full window");
     set_text(ui, BTN_QUIT, "Quit");
     set_text(ui, BTN_STOP, "Stop support");
@@ -621,10 +632,13 @@ unsafe fn bar(hdc: HDC, at: RECT, color: u32, round: (bool, bool), seams: &[i32]
 /// A button drawn as the app's pill: colour, black capitals, seams near the
 /// ends (white while pressed).
 unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
+    let mut label_buffer = [0u16; 64];
+    let length = unsafe { GetWindowTextW(d.hwndItem, label_buffer.as_mut_ptr(), label_buffer.len() as i32) }.max(0) as usize;
+    let update_label = String::from_utf16_lossy(&label_buffer[..length]).to_uppercase();
     let (label, color) = match d.CtlID as i32 {
         BTN_NEW => ("NEW PASSWORD", VIOLET),
         BTN_COPY => ("COPY", LAVENDER),
-        BTN_UPDATE => ("INSTALL UPDATE", GREEN),
+        BTN_UPDATE => (update_label.as_str(), GREEN),
         BTN_FULL => ("FULL WINDOW", BLUE),
         BTN_QUIT => ("QUIT", RED),
         BTN_STOP => ("STOP SUPPORT", RED),
@@ -875,23 +889,28 @@ fn retry_full_window(ui: &Ui) {
 
 /// Downloads and installs the offered update, then relaunches.
 fn install_update(ui: &Ui) {
-    let info = {
+    let (info, service_only) = {
         let mut view = ui.view.lock().unwrap();
         if view.installing { return; }
         let Some(info) = view.update.clone() else { return };
         view.installing = true;
-        info
+        (info, view.service_only)
     };
     let (client, view) = (ui.client.clone(), ui.view.clone());
-    view.lock().unwrap().note = format!("Installing {}…", info.label());
+    view.lock().unwrap().note = if service_only { "Updating Windows service from this app…".into() } else { format!("Installing {}…", info.label()) };
     wake(WM_REFRESH);
     ui.rt.spawn(async move {
-        let result = crate::update::install(&client, &info, |_, _| {}).await;
+        let result = if service_only {
+            crate::update::sync_service(&info).await.map(|()| None)
+        } else {
+            crate::update::install(&client, &info, |_, _| {}).await.map(Some)
+        };
         {
             let mut v = view.lock().unwrap();
             v.installing = false;
             match result {
-                Ok(exe) => v.relaunch = Some(exe),
+                Ok(Some(exe)) => v.relaunch = Some(exe),
+                Ok(None) => { v.update = None; v.note = "Windows service updated. This window stays open.".into(); }
                 Err(e) => v.note = format!("The update failed: {e:#}"),
             }
         }

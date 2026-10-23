@@ -223,11 +223,26 @@ fn quoted(path: &Path) -> Result<String> {
 }
 
 pub fn install_app_update(staged: &Path, info: &UpdateInfo) -> Result<PathBuf> {
+    install_update(staged, info, false)
+}
+
+/// Catch up an older service from the already-installed signed app. There is
+/// no package download, app replacement or app restart in this path.
+pub fn sync_app_service(info: &UpdateInfo) -> Result<()> {
+    anyhow::ensure!(info.version_key() == UpdateInfo::current_version_key(),
+        "the station package does not match this app — use Install & restart to update both together");
+    if !needs_app_update()? { return Ok(()); }
+    install_update(&std::env::current_exe()?, info, true)?;
+    Ok(())
+}
+
+fn install_update(staged: &Path, info: &UpdateInfo, service_only: bool) -> Result<PathBuf> {
     let exe = std::env::current_exe()?;
     let has_service = installed(ServiceAccess::QUERY_STATUS)?.is_some();
-    let writable = exe.parent().is_some_and(|p| {
+    let writable = !service_only && exe.parent().is_some_and(|p| {
         tempfile::NamedTempFile::with_prefix_in(".slipstream-write-test-", p).is_ok()
     });
+    if !has_service && service_only { return Ok(exe); }
     if !has_service && writable {
         // TEMP may be on another drive; the final rename must be local.
         let local = slipstream_session::update::verified_copy(
@@ -247,10 +262,11 @@ pub fn install_app_update(staged: &Path, info: &UpdateInfo) -> Result<PathBuf> {
     // Close the handles before the elevated process opens these files.
     let metadata = metadata.into_temp_path();
     let args = format!(
-        "service apply-update --staged {} --info {} --report-id {}",
+        "service apply-update --staged {} --info {} --report-id {}{}",
         quoted(staged)?,
         quoted(&metadata)?,
-        report_id
+        report_id,
+        if service_only { " --service-only" } else { "" }
     );
     let code = run_elevated(&args)?;
     if code != 0 {
@@ -305,13 +321,13 @@ fn write_report(id: &str, error: &anyhow::Error) -> Result<()> {
     Ok(())
 }
 
-pub fn apply_app_update(staged: &Path, metadata: &Path, report_id: &str) -> Result<()> {
+pub fn apply_app_update(staged: &Path, metadata: &Path, report_id: &str, service_only: bool) -> Result<()> {
     // An elevated helper accepts only a nonce, never a caller-chosen path
     // that could turn an error report into an arbitrary privileged write.
     report_path(report_id)?;
     let result = (|| {
         let info: UpdateInfo = serde_json::from_reader(File::open(metadata)?.take(16384))?;
-        apply_update_to(staged, &info, &std::env::current_exe()?)
+        apply_update_to(staged, &info, &std::env::current_exe()?, service_only)
     })();
     if let Err(error) = &result
         && let Err(report_error) = write_report(report_id, error)
@@ -321,7 +337,7 @@ pub fn apply_app_update(staged: &Path, metadata: &Path, report_id: &str) -> Resu
     result
 }
 
-fn apply_update_to(staged: &Path, info: &UpdateInfo, app: &Path) -> Result<()> {
+fn apply_update_to(staged: &Path, info: &UpdateInfo, app: &Path, service_only: bool) -> Result<()> {
     let _guard = UpdateGuard::acquire()?;
     // A privileged snapshot prevents a changed user-writable download from
     // becoming a SYSTEM service executable after it was checked in the GUI.
@@ -337,16 +353,18 @@ fn apply_update_to(staged: &Path, info: &UpdateInfo, app: &Path) -> Result<()> {
             | ServiceAccess::STOP
             | ServiceAccess::START,
     )?;
-    let mut targets = vec![app.clone()];
+    anyhow::ensure!(!service_only || info.version_key() == version(&app)?,
+        "service catch-up requires the signed package for the installed app version");
+    let mut targets = if service_only { Vec::new() } else { vec![app.clone()] };
     let mut restart = false;
     let mut update_service = false;
     if let Some(service) = &service {
         let path = program(service)?;
         // Keep a service that already has a newer build; never downgrade it.
-        if version(&path)? <= info.version_key() {
+        if version(&path)? < info.version_key() {
             update_service = true;
             restart = service.query_status()?.current_state != ServiceState::Stopped;
-            if !path
+            if service_only || !path
                 .to_string_lossy()
                 .eq_ignore_ascii_case(&app.to_string_lossy())
             {
@@ -354,6 +372,7 @@ fn apply_update_to(staged: &Path, info: &UpdateInfo, app: &Path) -> Result<()> {
             }
         }
     }
+    if targets.is_empty() { return Ok(()); }
     let checked = std::cell::Cell::new(false);
     let stop = || -> Result<()> {
         if update_service
@@ -427,7 +446,7 @@ mod tests {
             "123",
             "0123456789abcdef0123456789abcde/",
         ] {
-            let error = apply_app_update(Path::new("missing.exe"), Path::new("missing.json"), id)
+            let error = apply_app_update(Path::new("missing.exe"), Path::new("missing.json"), id, false)
                 .unwrap_err();
             assert!(error.to_string().contains("report identifier"));
         }
@@ -546,10 +565,10 @@ mod tests {
         let mut cleanup = Cleanup(Some(service));
         let corrupt = root.path().join("damaged.exe");
         std::fs::write(&corrupt, b"damaged").unwrap();
-        assert!(apply_update_to(&corrupt, &info, &app).is_err());
+        assert!(apply_update_to(&corrupt, &info, &app, false).is_err());
         assert!(std::fs::read(&app).unwrap() == old);
         assert!(std::fs::read(&service_exe).unwrap() == old);
-        apply_update_to(&source, &info, &app).unwrap();
+        apply_update_to(&source, &info, &app, false).unwrap();
         assert!(std::fs::read(&app).unwrap() == bytes);
         assert!(std::fs::read(&service_exe).unwrap() == bytes);
         assert_eq!(
@@ -570,11 +589,30 @@ mod tests {
             std::fs::read(&settings).unwrap(),
             b"private station, cached IDs and unattended password fixture"
         );
+        std::fs::write(&service_exe, &old).unwrap();
+        let app_handle = OpenOptions::new().read(true).share_mode(1).open(&app).unwrap();
+        apply_update_to(&app, &info, &app, true).unwrap();
+        assert!(std::fs::read(&service_exe).unwrap() == bytes,
+            "catch-up must install the already-present app into the service");
+        assert!(std::fs::read(&app).unwrap() == bytes);
+        // An already-current service must not be replaced either.
+        let service_handle = OpenOptions::new().read(true).share_mode(1).open(&service_exe).unwrap();
+        apply_update_to(&app, &info, &app, true).unwrap();
+        drop(app_handle);
+        std::fs::write(&app, &old).unwrap();
+        assert!(apply_update_to(&source, &info, &app, true).is_err(),
+            "service-only catch-up cannot advance beyond the installed app");
+        apply_update_to(&source, &info, &app, false).unwrap();
+        assert!(std::fs::read(&app).unwrap() == bytes,
+            "a normal app update must leave the already-current locked service alone");
+        drop(service_handle);
+        assert_eq!(std::fs::read(&identity).unwrap(), b"service machine identity fixture");
+        assert_eq!(std::fs::read(&settings).unwrap(), b"private station, cached IDs and unattended password fixture");
         let mut newer = bytes.clone();
         newer[offset + 8..offset + 12].copy_from_slice(&99u32.to_le_bytes());
         std::fs::write(&service_exe, &newer).unwrap();
         std::fs::write(&app, &old).unwrap();
-        apply_update_to(&source, &info, &app).unwrap();
+        apply_update_to(&source, &info, &app, false).unwrap();
         assert!(
             std::fs::read(&service_exe).unwrap() == newer,
             "a newer installed service must not be downgraded"
@@ -590,11 +628,15 @@ mod tests {
             std::thread::sleep(Duration::from_millis(100));
         }
         std::fs::write(&app, &old).unwrap();
-        apply_update_to(&source, &info, &app).unwrap();
+        apply_update_to(&source, &info, &app, false).unwrap();
         assert!(
             installed(ServiceAccess::QUERY_STATUS).unwrap().is_none(),
             "updating an app must not install a new service"
         );
         assert!(std::fs::read(&app).unwrap() == bytes);
+        let app_handle = OpenOptions::new().read(true).share_mode(1).open(&app).unwrap();
+        apply_update_to(&app, &info, &app, true).unwrap();
+        assert!(installed(ServiceAccess::QUERY_STATUS).unwrap().is_none());
+        drop(app_handle);
     }
 }

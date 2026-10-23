@@ -67,7 +67,10 @@ October 22, 2026: isolated Wine checks pass for the actual SCM stopped-service
 update with a signed release fixture, profile preservation, rejecting corrupted
 staging, retaining a newer service and updating an app without implicitly
 installing a service. Portable transaction tests also cover restart failure,
-partial replacement and preserving recovery backups. Windows argument parsing
+partial replacement and preserving recovery backups. Service-only catch-up
+also passes while the app is held open without delete sharing, so replacing it
+would fail; a normal app update leaves an already-current locked service alone.
+Windows argument parsing
 passes with spaces, Unicode, quotes and trailing backslashes. These checks do
 not exercise real UAC or a running Windows service's capture/helper restart.
 

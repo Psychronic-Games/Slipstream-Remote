@@ -581,7 +581,10 @@ update` does the same on the command line.
 service, keeping its machine identity, IDs, station and unattended password.
 Windows may ask for administrator approval; active connections pause while the
 service restarts. After an upgrade from an older app, the new app also detects
-and updates an older installed service. A failed replacement/restart restores
+and updates an older installed service using the app already on disk. It fetches
+only matching signed release information, without another app download,
+replacement or restart. Normal updates download once, update the app and service,
+then restart the app once. A failed replacement/restart restores
 the previous executables. If no service is installed, updating does not add one.
 Use **Config → Windows service → Apply settings** only when you want to send
 saved app settings to the service.

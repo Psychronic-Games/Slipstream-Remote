@@ -21,6 +21,14 @@ pub async fn install(
     }
 }
 
+/// Reuse the installed app for service catch-up; only its signed release
+/// metadata is fetched by the caller. The privileged helper rechecks the bytes.
+#[cfg(windows)]
+pub async fn sync_service(info: &UpdateInfo) -> Result<()> {
+    let info = info.clone();
+    tokio::task::spawn_blocking(move || crate::service::sync_app_service(&info)).await?
+}
+
 #[cfg(any(windows, test))]
 pub(crate) mod transaction {
     use anyhow::{Context, Result, bail};

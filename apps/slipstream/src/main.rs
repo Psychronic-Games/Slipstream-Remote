@@ -177,6 +177,8 @@ enum ServiceCmd {
         info: std::path::PathBuf,
         #[arg(long)]
         report_id: String,
+        #[arg(long)]
+        service_only: bool,
     },
     /// Install and start the service (as administrator). Uses this
     /// computer's station and unattended password.
@@ -241,7 +243,7 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Host { password }) => rt.block_on(cli::host(args.test_pattern, password, false)),
         #[cfg(windows)]
         Some(Command::Service { action }) => match action {
-            ServiceCmd::ApplyUpdate { staged, info, report_id } => service::apply_app_update(&staged, &info, &report_id),
+            ServiceCmd::ApplyUpdate { staged, info, report_id, service_only } => service::apply_app_update(&staged, &info, &report_id, service_only),
             ServiceCmd::Install { password, from, report } => reported(report, service::install(password.as_deref(), from.as_deref())),
             ServiceCmd::Uninstall { report } => reported(report, service::uninstall()),
             ServiceCmd::Start => service::start(),

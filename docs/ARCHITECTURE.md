@@ -567,7 +567,10 @@ plus the tray app if it's on.
   and the leftover is removed at the next install.
 * **App and service updates.** Full/compact GUI and CLI updates replace the
   app and an existing service together. A new app also checks for an older
-  service on startup, covering the first upgrade from an older updater.
+  service on startup, covering the first upgrade from an older updater. That
+  catch-up fetches only signed metadata matching the installed app, reuses the
+  app's local bytes and updates only the service, leaving the app open. A newer
+  station release remains a normal user-triggered update of both programs.
   Downloading happens without elevation. A UAC helper copies the candidate
   into the protected Program Files directory and verifies its release
   signature, bounded size and checksum again before changing either program.

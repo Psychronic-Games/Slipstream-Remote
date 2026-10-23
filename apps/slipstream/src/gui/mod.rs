@@ -309,13 +309,14 @@ pub struct UpdateState {
     pub info: slipstream_session::update::UpdateInfo,
     pub progress: Arc<Mutex<(u64, u64)>>,
     pub installing: bool,
+    pub service_only: bool,
     pub error: Option<String>,
-    rx: Option<oneshot::Receiver<Result<std::path::PathBuf, String>>>,
+    rx: Option<oneshot::Receiver<Result<Option<std::path::PathBuf>, String>>>,
 }
 
 impl UpdateState {
     fn new(info: slipstream_session::update::UpdateInfo) -> Self {
-        Self { info, progress: Arc::new(Mutex::new((0, 0))), installing: false, error: None, rx: None }
+        Self { info, progress: Arc::new(Mutex::new((0, 0))), installing: false, service_only: false, error: None, rx: None }
     }
 }
 
@@ -756,13 +757,23 @@ impl App {
         let (tx, rx) = oneshot::channel();
         u.rx = Some(rx);
         let (client, info, progress, wake) = (self.client.clone(), u.info.clone(), u.progress.clone(), ctx.clone());
+        #[cfg(windows)]
+        let service_only = u.service_only;
         self.rt.spawn(async move {
             let w = wake.clone();
+            #[cfg(windows)]
+            if service_only {
+                let r = crate::update::sync_service(&info).await.map(|()| None).map_err(|e| format!("{e:#}"));
+                let _ = tx.send(r);
+                wake.request_repaint();
+                return;
+            }
             let r = crate::update::install(&client, &info, move |done, total| {
                     *progress.lock().unwrap() = (done, total);
                     w.request_repaint_after(Duration::from_millis(100));
                 })
                 .await
+                .map(Some)
                 .map_err(|e| format!("{e:#}"));
             let _ = tx.send(r);
             wake.request_repaint();
@@ -949,10 +960,21 @@ impl App {
             self.update_check = None;
             let sync_service = std::mem::take(&mut self.service_update_check);
             match r {
+                Ok(Some(info)) if sync_service && info.version_key() < slipstream_session::update::UpdateInfo::current_version_key() => {
+                    self.toast("The station has an older package than this app; service catch-up needs matching signed release information", pal::RED);
+                }
                 Ok(Some(info)) => {
-                    self.toast(format!("Slipstream {} is available", info.label()), pal::GREEN);
+                    let catch_up = sync_service && info.version_key() == slipstream_session::update::UpdateInfo::current_version_key();
+                    if catch_up {
+                        self.toast("Updating the Windows service from this app — Windows may request administrator approval", pal::GREEN);
+                    } else {
+                        self.toast(format!("Slipstream {} is available", info.label()), pal::GREEN);
+                    }
                     self.update = Some(UpdateState::new(info));
-                    if sync_service { self.start_update(ctx); }
+                    if catch_up {
+                        self.update.as_mut().unwrap().service_only = true;
+                        self.start_update(ctx);
+                    }
                 }
                 Ok(None) if sync_service => self.toast("The Windows service needs an update, but the station has no signed package available", pal::RED),
                 Ok(None) => self.toast("Slipstream is up to date", pal::GREEN),
@@ -965,7 +987,11 @@ impl App {
         u.rx = None;
         u.installing = false;
         match result {
-            Ok(exe) => {
+            Ok(None) => {
+                self.update = None;
+                self.toast("The Windows service is up to date; this app stays open", pal::GREEN);
+            }
+            Ok(Some(exe)) => {
                 // Relaunch the new version; it waits for us to exit first.
                 let started = std::process::Command::new(&exe).env("SLIPSTREAM_RESTARTED", "1").spawn();
                 match started {

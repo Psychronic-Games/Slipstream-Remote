@@ -60,7 +60,7 @@ const DISPLAY_NAME: &str = "Slipstream Remote";
 
 #[path = "service_update.rs"]
 mod updates;
-pub use updates::{UpdateGuard, apply_app_update, install_app_update, needs_app_update, update_in_progress};
+pub use updates::{UpdateGuard, apply_app_update, install_app_update, needs_app_update, sync_app_service, update_in_progress};
 
 /// The machine profile the service's host uses.
 pub fn machine_home() -> PathBuf {
