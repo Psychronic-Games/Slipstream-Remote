@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.26.1 — 2026-10-22
+
 - Reuse the already-installed signed Windows app to catch up an older service,
   without downloading or installing the same app again or restarting its window.
   Keep normal app and service updates in one download/install/restart sequence.
