@@ -28,7 +28,8 @@ echo "==> Building for Apple Silicon and Intel"
 rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
 for t in aarch64-apple-darwin x86_64-apple-darwin; do
   cargo build --release --target "$t" -p slipstream
-  if grep -qs "not using any assembly" "$CARGO_TARGET_DIR/$t/release/build/"openh264-sys2-*/output; then
+  # openh264-sys2 has assembly for x86 only; Apple Silicon builds plain C.
+  if [ "$t" = x86_64-apple-darwin ] && grep -qs "not using any assembly" "$CARGO_TARGET_DIR/$t/release/build/"openh264-sys2-*/output; then
     echo "error: OpenH264 for $t was built without assembly — cargo clean --release --target $t -p openh264-sys2" >&2
     exit 1
   fi
