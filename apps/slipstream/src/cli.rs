@@ -31,6 +31,21 @@ pub fn set_password(password: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// `slipstream encode-test`: every hardware encoder, on a moving picture.
+pub fn encode_test(size: &str) -> Result<()> {
+    let (w, h) = size.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?))).context("size like 1920x1080")?;
+    println!("Testing hardware video encoders at {w}×{h} (decoded as a viewer would)…");
+    for test in slipstream_codec::test_hardware(w, h, 120) {
+        match test.result {
+            Ok(report) => println!("  {:6} works: {report}", test.name),
+            Err(e) => println!("  {:6} unavailable: {e:#}", test.name),
+        }
+    }
+    println!("In use by default: NVIDIA (nvenc) first, then VA-API on Linux; the processor otherwise.");
+    println!("SLIPSTREAM_HWENC=mf turns on Media Foundation on Windows while it's being proven.");
+    Ok(())
+}
+
 pub async fn info() -> Result<()> {
     let store = Store::open_default()?;
     let s = store.load_settings();

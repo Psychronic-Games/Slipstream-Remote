@@ -1,8 +1,10 @@
 //! The graphics-card encoders behind one interface, tried in order of
-//! preference: NVIDIA's NVENC, then VA-API (Linux: AMD, Intel) or Media
-//! Foundation (Windows: Intel, AMD and others). `SLIPSTREAM_HWENC=nvenc`,
-//! `vaapi` or `mf` tries only that one (to test it on a machine that has
-//! several); `SLIPSTREAM_NO_HWENC=1` turns them all off.
+//! preference: NVIDIA's NVENC, then VA-API (Linux: AMD, Intel). Media
+//! Foundation (Windows: Intel, AMD and others) is written but not yet
+//! proven on real hardware, so it's used only when asked for:
+//! `SLIPSTREAM_HWENC=nvenc`, `vaapi` or `mf` tries only that one, and
+//! `slipstream encode-test` tries them all. `SLIPSTREAM_NO_HWENC=1` turns
+//! them all off.
 use anyhow::Result;
 
 use crate::{EncodedFrame, PixelFormat, RawFrame, nvenc};
@@ -19,20 +21,33 @@ pub(crate) enum Kind {
 impl Kind {
     /// The encoders to try here, best first.
     pub fn all() -> Vec<Kind> {
-        let every = vec![
+        match std::env::var("SLIPSTREAM_HWENC") {
+            Ok(only) => Self::every().into_iter().filter(|k| k.name().eq_ignore_ascii_case(only.trim())).collect(),
+            Err(_) => Self::every().into_iter().filter(|k| !k.experimental()).collect(),
+        }
+    }
+
+    /// Not used unless asked for by name, until proven on real hardware.
+    fn experimental(self) -> bool {
+        #[cfg(windows)]
+        if self == Kind::Mf {
+            return true;
+        }
+        false
+    }
+
+    /// Every encoder this platform has.
+    pub fn every() -> Vec<Kind> {
+        vec![
             Kind::Nvenc,
             #[cfg(target_os = "linux")]
             Kind::Vaapi,
             #[cfg(windows)]
             Kind::Mf,
-        ];
-        match std::env::var("SLIPSTREAM_HWENC") {
-            Ok(only) => every.into_iter().filter(|k| k.name().eq_ignore_ascii_case(only.trim())).collect(),
-            Err(_) => every,
-        }
+        ]
     }
 
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Kind::Nvenc => "nvenc",
             #[cfg(target_os = "linux")]

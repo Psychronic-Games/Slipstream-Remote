@@ -486,6 +486,64 @@ impl Encoder {
     }
 }
 
+/// One hardware encoder's showing in [`test_hardware`].
+pub struct HardwareTest {
+    pub name: &'static str,
+    /// What it did, or why it couldn't.
+    pub result: Result<String>,
+}
+
+/// Tries every hardware encoder this platform has (including ones not yet
+/// used by default): encodes `frames` moving `width`×`height` pictures,
+/// decodes them as a viewer would, and reports speed and any fault. For
+/// `slipstream encode-test` on a machine that needs checking.
+pub fn test_hardware(width: u32, height: u32, frames: u32) -> Vec<HardwareTest> {
+    hardware::Kind::every()
+        .into_iter()
+        .map(|kind| HardwareTest { name: kind.name(), result: test_one(kind, width & !1, height & !1, frames.max(10)) })
+        .collect()
+}
+
+fn test_one(kind: hardware::Kind, width: u32, height: u32, frames: u32) -> Result<String> {
+    let started = Instant::now();
+    let mut hw = hardware::Hardware::open(kind, width, height, 60.0, 8000, PixelFormat::Bgra)?;
+    let opened = started.elapsed();
+    let mut decoder = Decoder::new()?;
+    let stride = width * 4;
+    let mut data = vec![0u8; (stride * height) as usize];
+    let (mut busy, mut bytes) = (std::time::Duration::ZERO, 0usize);
+    for t in 0..frames {
+        // A moving gradient with a checkerboard, like a scrolling page.
+        for y in 0..height {
+            for x in 0..width {
+                let o = (y * stride + x * 4) as usize;
+                data[o] = ((x + t * 7) % 256) as u8;
+                data[o + 1] = (y % 256) as u8;
+                data[o + 2] = if ((x + t * 7) / 32 + y / 32) % 2 == 0 { 220 } else { 30 };
+                data[o + 3] = 255;
+            }
+        }
+        let frame = RawFrame { width, height, stride, format: PixelFormat::Bgra, data: std::mem::take(&mut data) };
+        let force = t == frames / 2;
+        let t0 = Instant::now();
+        let encoded = hw.encode(&frame, force).with_context(|| format!("frame {t}"))?;
+        busy += t0.elapsed();
+        data = frame.data;
+        bytes += encoded.data.len();
+        let first_or_forced = t == 0 || force;
+        anyhow::ensure!(encoded.keyframe == first_or_forced, "frame {t}: keyframe {} where {} was asked", encoded.keyframe, first_or_forced);
+        let decoded = decoder.decode(&encoded.data).with_context(|| format!("decoding frame {t}"))?;
+        anyhow::ensure!(decoded.is_some_and(|d| (d.width, d.height) == (width, height)), "frame {t} didn't decode to {width}×{height}");
+    }
+    Ok(format!(
+        "{}: opened in {} ms, {:.1} ms a frame at {width}×{height}, {} KB a frame; all {frames} frames decode, keyframes only on request",
+        hw.device(),
+        opened.as_millis(),
+        busy.as_secs_f64() * 1000.0 / frames as f64,
+        bytes / frames as usize / 1024
+    ))
+}
+
 /// A decoded frame in planar I420, ready for GPU upload.
 #[derive(Debug, Clone)]
 pub struct YuvFrame {

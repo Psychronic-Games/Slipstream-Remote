@@ -115,6 +115,13 @@ enum Command {
     SetPassword { password: Option<String> },
     /// Print this device's ID and settings location.
     Info,
+    /// Try each graphics-card video encoder (checks a machine's hardware).
+    #[command(hide = true)]
+    EncodeTest {
+        /// Picture size, e.g. 1920x1080.
+        #[arg(long, default_value = "1920x1080")]
+        size: String,
+    },
     /// Sign in to a station as a technician (any station, not only this
     /// app's own), to reach its devices and keep your list of them there.
     SignIn {
@@ -275,6 +282,7 @@ fn main() -> anyhow::Result<()> {
         Some(Command::SetServer { address, key }) => cli::set_server(&address, key),
         Some(Command::SetPassword { password }) => cli::set_password(password.as_deref()),
         Some(Command::Info) => rt.block_on(cli::info()),
+        Some(Command::EncodeTest { size }) => cli::encode_test(&size),
         Some(Command::Update) => rt.block_on(cli::update()),
         Some(Command::ExportIcon { path, size }) => gui::export_icon(&path, size),
         None => {
