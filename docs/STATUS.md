@@ -84,12 +84,12 @@ releases.
   step. Repository publication, application/acceptance and signing credentials
   remain pending. The published .exe is not Authenticode-signed and may
   trigger SmartScreen warnings; desktop update signatures are already active.
-- **Software video only**: OpenH264 on the CPU (with its SIMD code: builds
-  need `nasm`), in camera mode since 0.7.0. The pipeline figures (60 fps up
-  to 1080p, about 56 at 1440p and 37 at 4K for a fully moving picture) were
-  measured before that and are worth re-measuring. Slow processors now
-  drop resolution while the picture moves, rather than frame rate.
-  Hardware encoding is issue 06.
+- **Hardware encoding is NVIDIA only so far** (NVENC, 0.28, issue 06):
+  other computers encode with OpenH264 on the processor (SIMD; builds need
+  `nasm`), where slow processors drop resolution while the picture moves.
+  Intel/AMD (Media Foundation, VA-API) and macOS are still to come. NVENC
+  needs confirming on real Windows hardware and under the Windows service.
+  Decoding is OpenH264 everywhere.
 - **Windows capture** uses its own DXGI duplication since 0.7.1: one
   copy per frame, BGRA straight to the encoder, released by each session
   (xcap's recorder blocked later sessions). Not yet measured at 1440p and

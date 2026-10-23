@@ -292,7 +292,9 @@ fn encode_loop(
 ) {
     let start = Instant::now();
     let mut applied = *settings.lock().unwrap();
-    let mut encoder = Encoder::new(EncoderSettings { bitrate_kbps: applied.bitrate_kbps, max_fps: applied.max_fps as f32 });
+    let encoder_settings = EncoderSettings { bitrate_kbps: applied.bitrate_kbps, max_fps: applied.max_fps as f32 };
+    // A simulated slow encoder stands for a slow processor: keep it there.
+    let mut encoder = if slow_encode_ms.is_some() { Encoder::with_hardware(encoder_settings, false) } else { Encoder::new(encoder_settings) };
     let mut rate: Option<RateControl> = None;
     let mut last_frame: Option<RawFrame> = None;
     // The newest frame rate control skipped. Damage-driven capture may send
@@ -301,7 +303,8 @@ fn encode_loop(
     // When the last frame was *taken* (not sent), so encode time doesn't
     // stretch the frame interval.
     let mut last_taken = Instant::now() - Duration::from_secs(1);
-    let mut pace = slipstream_platform::pace::Pace::new("video encoding");
+    // Named after what encodes (graphics card or processor), for the viewer's statistics.
+    let mut pace = slipstream_platform::pace::Pace::new(encoder.backend());
     let mut waited_viewer = slipstream_platform::pace::Pace::new("waiting for the viewer");
     let mut waited_screen = slipstream_platform::pace::Pace::new("waiting for a new screen frame");
     let mut speed = Speed::new();
@@ -383,6 +386,9 @@ fn encode_loop(
         let t = Instant::now();
         let encoded = match encoder.encode(&frame, force) {
             Ok(Some(e)) => {
+                if pace.what() != encoder.backend() {
+                    pace = slipstream_platform::pace::Pace::new(encoder.backend());
+                }
                 if let Some(ms) = slow_encode_ms {
                     thread::sleep(Duration::from_secs_f32(ms * scale * scale / 1000.0));
                 }

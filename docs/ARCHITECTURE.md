@@ -21,7 +21,7 @@ Slipstream is a free, MIT-licensed remote desktop app: TeamViewer-style
 | Crate | Purpose |
 |---|---|
 | `crates/slipstream-core` | Wire protocol, framing, password auth (SPAKE2), directory client, config, provisioning, clock correction, iroh endpoint setup |
-| `crates/slipstream-codec` | Video encoder/decoder abstraction (OpenH264 today; hardware encoders later) |
+| `crates/slipstream-codec` | Video encoder/decoder: NVIDIA NVENC where available (driver libraries loaded at run time), OpenH264 otherwise and for decoding |
 | `crates/slipstream-audio` | Remote sound: vendored libopus (built with `cc`), capture (WASAPI loopback, PulseAudio monitor) and playback with a jitter buffer |
 | `crates/slipstream-platform` | Per-OS screen capture, input injection, clipboard |
 | `crates/slipstream-session` | The long-lived `Client`: directory heartbeat, accepting and opening sessions, host & viewer session logic, file transfer, self-update |

@@ -57,6 +57,11 @@ impl Pace {
         Self { what, log: Window::new(), live: Window::new() }
     }
 
+    /// The stage's name.
+    pub fn what(&self) -> &'static str {
+        self.what
+    }
+
     /// One frame that took `took` in this stage.
     pub fn add(&mut self, took: Duration) {
         self.log.add(took);

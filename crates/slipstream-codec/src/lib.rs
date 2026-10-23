@@ -1,8 +1,10 @@
 //! Video encoding and decoding.
 //!
-//! Today this is software H.264 via OpenH264 with SIMD colour conversion.
-//! The [`Encoder`]/[`Decoder`] types are the seam where hardware codecs
-//! (VA-API, NVENC, VideoToolbox, Media Foundation) plug in later.
+//! H.264 throughout. The [`Encoder`] uses NVIDIA's hardware encoder (NVENC)
+//! where the driver offers it, and software OpenH264 with SIMD colour
+//! conversion otherwise or if the hardware fails. Decoding is OpenH264.
+//! Other hardware encoders (Media Foundation, VA-API, VideoToolbox) plug in
+//! the same way.
 
 use std::time::Instant;
 
@@ -16,6 +18,36 @@ use openh264::{
     formats::YUVSource,
 };
 use yuv::{YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix};
+
+#[cfg(all(target_arch = "x86_64", any(windows, target_os = "linux")))]
+mod nvenc;
+/// No NVENC on this platform: the encoder stays in software.
+#[cfg(not(all(target_arch = "x86_64", any(windows, target_os = "linux"))))]
+mod nvenc {
+    use super::{EncodedFrame, PixelFormat, RawFrame};
+    use anyhow::{Result, bail};
+    pub enum NvEncoder {}
+    impl NvEncoder {
+        pub fn new(_: u32, _: u32, _: f32, _: u32, _: PixelFormat) -> Result<Self> {
+            bail!("no NVIDIA hardware encoding on this platform")
+        }
+        pub fn device(&self) -> &str {
+            match *self {}
+        }
+        pub fn size(&self) -> (u32, u32) {
+            match *self {}
+        }
+        pub fn format(&self) -> PixelFormat {
+            match *self {}
+        }
+        pub fn set_bitrate(&mut self, _: f32, _: u32) -> Result<()> {
+            match *self {}
+        }
+        pub fn encode(&mut self, _: &RawFrame, _: bool) -> Result<EncodedFrame> {
+            match *self {}
+        }
+    }
+}
 
 /// Byte order of a captured frame's pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,10 +179,21 @@ pub struct Encoder {
     packed: Vec<u8>,
     /// Encode at this fraction of the frame's size (see [`Encoder::set_scale`]).
     scale: f32,
+    /// The hardware encoder, while it works.
+    hw: Option<nvenc::NvEncoder>,
+    /// Hardware is off: not wanted, not available, or it failed once.
+    hw_off: bool,
 }
 
 impl Encoder {
+    /// An encoder that uses the GPU when it can (unless
+    /// `SLIPSTREAM_NO_HWENC=1`), else the processor.
     pub fn new(settings: EncoderSettings) -> Self {
+        Self::with_hardware(settings, std::env::var_os("SLIPSTREAM_NO_HWENC").is_none())
+    }
+
+    /// `hardware: false` always encodes on the processor (OpenH264).
+    pub fn with_hardware(settings: EncoderSettings, hardware: bool) -> Self {
         Self {
             settings,
             inner: None,
@@ -162,7 +205,14 @@ impl Encoder {
             scaled: Vec::new(),
             packed: Vec::new(),
             scale: 1.0,
+            hw: None,
+            hw_off: !hardware,
         }
+    }
+
+    /// What is encoding right now, for the viewer's statistics.
+    pub fn backend(&self) -> &'static str {
+        if self.hw.is_some() { "video encoding (NVIDIA hardware)" } else { "video encoding (processor)" }
     }
 
     /// Encodes frames at `scale` (0.25–1) of their size from the next one
@@ -180,6 +230,14 @@ impl Encoder {
         }
         let rate_only = settings.max_fps == self.settings.max_fps;
         self.settings = settings;
+        if let Some((w, h)) = self.hw.as_ref().map(|hw| hw.size()) {
+            let (fps, kbps) = (self.settings.max_fps, self.kbps(w as usize, h as usize));
+            let hw = self.hw.as_mut().expect("hardware encoder");
+            if !rate_only || hw.set_bitrate(fps, kbps).is_err() {
+                // Opened again with the new settings on the next frame.
+                self.hw = None;
+            }
+        }
         if rate_only && !self.dirty && self.set_bitrate() {
             return;
         }
@@ -290,8 +348,33 @@ impl Encoder {
         Ok(RawFrame { width: w, height: h, stride: w * 4, format: frame.format, data: buf })
     }
 
+    /// Opens the hardware encoder for `w`×`h` frames of `format` if needed.
+    /// False if there's none to use.
+    fn hardware_ready(&mut self, w: u32, h: u32, format: PixelFormat) -> bool {
+        if self.hw_off {
+            return false;
+        }
+        if self.hw.as_ref().is_some_and(|hw| hw.size() == (w, h) && hw.format() == format) {
+            return true;
+        }
+        self.hw = None;
+        let kbps = self.kbps(w as usize, h as usize);
+        match nvenc::NvEncoder::new(w, h, self.settings.max_fps, kbps, format) {
+            Ok(hw) => {
+                tracing::debug!(device = hw.device(), w, h, "hardware encoder opened");
+                self.hw = Some(hw);
+                true
+            }
+            Err(e) => {
+                tracing::info!("hardware video encoding unavailable, using the processor: {e:#}");
+                self.hw_off = true;
+                false
+            }
+        }
+    }
+
     /// Encodes a frame. Returns `None` if the encoder chose to skip it.
-    pub fn encode(&mut self, frame: &RawFrame, force_keyframe: bool) -> Result<Option<EncodedFrame>> {
+    pub fn encode(&mut self, frame: &RawFrame, mut force_keyframe: bool) -> Result<Option<EncodedFrame>> {
         frame.validate()?;
         // H.264 4:2:0 needs even dimensions (a trailing odd row/column is
         // dropped), and OpenH264 a picture no bigger than 4K.
@@ -304,6 +387,24 @@ impl Encoder {
         let (w, h) = (ew as usize, eh as usize);
         if w < 2 || h < 2 {
             bail!("frame too small");
+        }
+        if self.hardware_ready(ew, eh, frame.format) {
+            let scaled = (ew, eh) != (frame.width & !1, frame.height & !1);
+            let src = if scaled { Some(self.scale(frame, ew, eh)?) } else { None };
+            let result = self.hw.as_mut().expect("hardware encoder").encode(src.as_ref().unwrap_or(frame), force_keyframe);
+            if let Some(src) = src {
+                self.scaled = src.data;
+            }
+            match result {
+                Ok(encoded) => return Ok(Some(encoded)),
+                Err(e) => {
+                    // Carry on in software, starting with a keyframe.
+                    tracing::warn!("hardware video encoding failed, switching to the processor: {e:#}");
+                    self.hw = None;
+                    self.hw_off = true;
+                    force_keyframe = true;
+                }
+            }
         }
         let resized = self.planes.width != w || self.planes.height != h;
         if self.dirty || resized || self.inner.is_none() {
@@ -450,8 +551,8 @@ mod tests {
     #[test]
     #[ignore]
     fn bench_encode_decode() {
-        for (w, h) in [(1920u32, 1080u32), (2560, 1440), (3840, 2160)] {
-            let mut enc = Encoder::new(EncoderSettings::default());
+        for ((w, h), hardware) in [(1920u32, 1080u32), (2560, 1440), (3840, 2160)].into_iter().flat_map(|s| [(s, false), (s, true)]) {
+            let mut enc = Encoder::with_hardware(EncoderSettings::default(), hardware);
             let mut dec = Decoder::new().unwrap();
             let frames: Vec<RawFrame> = (0..4).map(|t| test_frame(w, h, t * 7)).collect();
             let n = 60;
@@ -468,7 +569,8 @@ mod tests {
                 }
             }
             println!(
-                "{w}x{h}: encode {:.1} ms/frame, decode {:.1} ms/frame, {:.0} KB/frame",
+                "{w}x{h} {}: encode {:.1} ms/frame, decode {:.1} ms/frame, {:.0} KB/frame",
+                enc.backend(),
                 te * 1000.0 / n as f64,
                 td * 1000.0 / n as f64,
                 bytes as f64 / n as f64 / 1024.0
@@ -491,11 +593,69 @@ mod tests {
         RawFrame { width: w, height: h, stride, format: PixelFormat::Bgra, data }
     }
 
+    /// Mean absolute difference per channel between two RGB(A) pictures.
+    fn colour_error(raw: &RawFrame, decoded: &YuvFrame) -> f64 {
+        let rgba = decoded.to_rgba();
+        let (w, h) = (decoded.width as usize, decoded.height as usize);
+        let mut sum = 0u64;
+        for y in 0..h {
+            for x in 0..w {
+                let o = y * raw.stride as usize + x * 4;
+                let d = (y * w + x) * 4;
+                // raw is BGRA, rgba is RGBA.
+                for (a, b) in [(raw.data[o + 2], rgba[d]), (raw.data[o + 1], rgba[d + 1]), (raw.data[o], rgba[d + 2])] {
+                    sum += a.abs_diff(b) as u64;
+                }
+            }
+        }
+        sum as f64 / (w * h * 3) as f64
+    }
+
+    /// Where the NVIDIA driver is present: hardware output decodes with the
+    /// viewer's decoder, with colours as close to the picture as software
+    /// encoding gets (same BT.601 limited-range matrix the viewer assumes),
+    /// keyframes come on request only, and bitrate changes keep the stream.
+    #[test]
+    fn nvenc_output_decodes_with_matching_colours() {
+        #[cfg(all(target_arch = "x86_64", any(windows, target_os = "linux")))]
+        if let Err(e) = nvenc::available() {
+            eprintln!("skipped: {e:#}");
+            return;
+        }
+        #[cfg(not(all(target_arch = "x86_64", any(windows, target_os = "linux"))))]
+        return;
+        let (w, h) = (640, 480);
+        let mut hw = match nvenc::NvEncoder::new(w, h, 60.0, 8000, PixelFormat::Bgra) {
+            Ok(hw) => hw,
+            Err(e) => panic!("NVENC loads but won't open: {e:#}"),
+        };
+        let mut sw = Encoder::with_hardware(EncoderSettings { bitrate_kbps: 8000, max_fps: 60.0 }, false);
+        let (mut hd, mut sd) = (Decoder::new().unwrap(), Decoder::new().unwrap());
+        let mut kinds = Vec::new();
+        let (mut herr, mut serr) = (0.0, 0.0);
+        for t in 0..12 {
+            let frame = test_frame(w, h, t * 5);
+            if t == 6 {
+                hw.set_bitrate(60.0, 4000).unwrap();
+            }
+            let e = hw.encode(&frame, t == 9).unwrap();
+            kinds.push(e.keyframe);
+            let decoded = hd.decode(&e.data).unwrap().expect("hardware frame decodes");
+            assert_eq!((decoded.width, decoded.height), (w, h));
+            herr = colour_error(&frame, &decoded);
+            let s = sw.encode(&frame, t == 0).unwrap().unwrap();
+            serr = colour_error(&frame, &sd.decode(&s.data).unwrap().unwrap());
+        }
+        assert_eq!(kinds, [true, false, false, false, false, false, false, false, false, true, false, false]);
+        eprintln!("{}: mean colour error {herr:.2}, OpenH264 {serr:.2}", hw.device());
+        assert!(herr < serr + 3.0, "hardware colours are off: {herr:.2} vs {serr:.2}");
+    }
+
     /// Adaptive bitrate must not cost a keyframe (a burst of 10x the bytes
     /// exactly when the link is congested).
     #[test]
     fn bitrate_changes_in_place() {
-        let mut enc = Encoder::new(EncoderSettings { bitrate_kbps: 8000, max_fps: 30.0 });
+        let mut enc = Encoder::with_hardware(EncoderSettings { bitrate_kbps: 8000, max_fps: 30.0 }, false);
         let mut frames = (0..10).map(|t| test_frame(640, 480, t * 3));
         assert!(enc.encode(&frames.next().unwrap(), true).unwrap().unwrap().keyframe);
         for f in frames.by_ref().take(3) {
@@ -524,7 +684,7 @@ mod tests {
             assert!(((ew as f64 / eh as f64) - (w as f64 / h as f64)).abs() < 0.01, "aspect kept");
         }
         // And the encoder takes them (with padded rows, as PipeWire sends).
-        let mut enc = Encoder::new(EncoderSettings::default());
+        let mut enc = Encoder::with_hardware(EncoderSettings::default(), false);
         let mut dec = Decoder::new().unwrap();
         let mut src = test_frame(5120, 1440, 0);
         src.data.iter_mut().skip(3).step_by(4).for_each(|x| *x = 0); // BGRx with X = 0
@@ -538,7 +698,7 @@ mod tests {
 
     #[test]
     fn roundtrip_preserves_image() {
-        let mut enc = Encoder::new(EncoderSettings { bitrate_kbps: 8000, max_fps: 30.0 });
+        let mut enc = Encoder::with_hardware(EncoderSettings { bitrate_kbps: 8000, max_fps: 30.0 }, false);
         let mut dec = Decoder::new().unwrap();
         let mut decoded = None;
         for t in 0..5 {

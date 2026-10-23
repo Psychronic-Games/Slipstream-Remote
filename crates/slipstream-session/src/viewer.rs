@@ -142,6 +142,8 @@ pub struct ViewerSession {
     frames: Arc<FrameShared>,
     info: SessionInfo,
     peer: DeviceId,
+    /// The frame rate this viewer asked for (Config → Max frame rate).
+    max_fps: u32,
 }
 
 impl ViewerSession {
@@ -177,6 +179,11 @@ impl ViewerSession {
 
     pub fn peer_id(&self) -> DeviceId {
         self.peer
+    }
+
+    /// The frame rate this viewer asked for when it connected.
+    pub fn max_fps(&self) -> u32 {
+        self.max_fps
     }
 
     pub fn frames(&self) -> Arc<FrameShared> {
@@ -357,7 +364,8 @@ pub(crate) async fn connect(
         audio,
         audio_out,
     ));
-    Ok((ViewerSession { cmds: cmd_tx, conn: tunnel_conn, fs, frames, info, peer }, ev_rx))
+    let max_fps = stream_settings.max_fps;
+    Ok((ViewerSession { cmds: cmd_tx, conn: tunnel_conn, fs, frames, info, peer, max_fps }, ev_rx))
 }
 
 /// Opens the speakers and asks the host for its sound. A speaker problem is

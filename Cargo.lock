@@ -7137,6 +7137,7 @@ version = "0.27.0"
 dependencies = [
  "anyhow",
  "fast_image_resize",
+ "libloading 0.8.9",
  "openh264",
  "openh264-sys2",
  "tracing",

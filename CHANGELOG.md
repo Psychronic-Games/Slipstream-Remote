@@ -13,6 +13,14 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Encode video on NVIDIA graphics cards (NVENC) on Windows and Linux hosts,
+  falling back to the processor automatically. Encoding takes a few
+  milliseconds a frame on the graphics card instead of tens on a laptop
+  processor, leaving the processor free. The viewer's statistics show which
+  encoder runs; `SLIPSTREAM_NO_HWENC=1` turns it off.
+- Balanced and Quality now run at **Config → Max frame rate** (up to 144 fps)
+  instead of falling back to 60 after choosing a preset or reconnecting.
+
 ## 0.27.0 — 2026-10-23
 
 - Protect against phone scams: on Slipstream Public, a link made with the

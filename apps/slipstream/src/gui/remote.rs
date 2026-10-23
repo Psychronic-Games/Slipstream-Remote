@@ -65,6 +65,9 @@ pub enum TabAction {
     FloatAt(egui::Pos2),
 }
 
+/// Picture quality presets. Balanced and Quality run at the viewer's own
+/// Config → Max frame rate (see `RemoteTab::preset_settings`); the others
+/// cap it at the rate listed here.
 const PRESETS: [(&str, StreamSettings); 4] = [
     ("Balanced", StreamSettings { bitrate_kbps: 0, max_fps: 60, max_in_flight: 2, adaptive_resolution: false }),
     ("Speed", StreamSettings { bitrate_kbps: 0, max_fps: 30, max_in_flight: 1, adaptive_resolution: true }),
@@ -341,7 +344,7 @@ impl RemoteTab {
         self.held_keys.clear();self.held_buttons.clear();self.touch=touch::Touch::default();
         self.privacy=false;self.audio &= self.info.capabilities.audio;
         self.send(ViewerCmd::SelectDisplay(self.display));
-        self.send(ViewerCmd::Settings(PRESETS[self.preset].1));
+        self.send(ViewerCmd::Settings(self.preset_settings(self.preset)));
         if self.audio!=default_audio {self.send(ViewerCmd::Audio(self.audio));}
         self.files.lock().unwrap().reconnect(self.session.fs(),self.info.host_name.clone());
         self.network.lock().unwrap().reconnect(self.session.fs(),self.info.capabilities.input,self.info.capabilities.tunnels);
@@ -1070,6 +1073,15 @@ impl RemoteTab {
         }
     }
 
+    /// A preset at this viewer's frame rate: the full rate for Balanced and
+    /// Quality, at most the preset's own for Speed and Low bandwidth.
+    fn preset_settings(&self, preset: usize) -> StreamSettings {
+        let mut settings = PRESETS[preset].1;
+        let wanted = self.session.max_fps().clamp(1, 144);
+        settings.max_fps = if settings.adaptive_resolution { settings.max_fps.min(wanted) } else { wanted };
+        settings
+    }
+
     /// The picture quality presets.
     fn quality_menu(&mut self, ui: &mut Ui) {
         for (i, (name, _)) in PRESETS.iter().enumerate() {
@@ -1080,7 +1092,7 @@ impl RemoteTab {
                     "Keeps full picture resolution while moving; frame rate follows the remote computer's encoding speed"
                 }).clicked() {
                 self.preset = i;
-                self.send(ViewerCmd::Settings(PRESETS[i].1));
+                self.send(ViewerCmd::Settings(self.preset_settings(i)));
                 ui.close();
             }
         }
