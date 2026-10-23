@@ -18,8 +18,10 @@ show in small print: `0.6.0 (build N · commit)`.
 - Use Slipstream Public (`public.slipstreamremote.com`) for unconfigured apps
   and as the optional relay backup, replacing n0's hosted relay defaults.
 - Keep a stable, separate public identity beside the configured private station.
-  Tabs above Your ID show one ID at a time, defaulting to the private station;
-  manual links, recent links and reconnections retain their station choice.
+  Shared tabs above Your ID and Establish link show one ID at a time,
+  defaulting to the private station; manual links, recent links, calls and
+  reconnections retain their station choice. Keep separate partner drafts and
+  preserve existing private configuration when installing a public download.
   Share host permissions/passwords while keeping private relay credentials out
   of public registrations. Windows displays the service's authoritative IDs.
 - Add optional per-connection relay bandwidth and total connection limits to

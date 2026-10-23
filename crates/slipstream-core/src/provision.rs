@@ -227,8 +227,10 @@ mod tests {
         let public = StationConfig { server: crate::config::PUBLIC_STATION_URL.into(), key: None, org: Some("Slipstream Public".into()) };
         assert!(!apply(&mut s, &public), "public downloads preserve a provisioned private station");
         assert_eq!(s.server.url.as_deref(), Some("relay.example.com"));
-        let mut default_public = Settings::default();
-        default_public.server = crate::config::ServerSettings::public_station();
+        let mut default_public = Settings {
+            server: crate::config::ServerSettings::public_station(),
+            ..Settings::default()
+        };
         assert!(apply(&mut default_public, &cfg), "a provider's download replaces the public default");
         // A hand-entered server is not overridden by a different station.
         let mut manual = Settings::default();

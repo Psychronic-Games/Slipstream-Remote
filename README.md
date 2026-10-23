@@ -63,7 +63,8 @@ MIT licensed.
   are installed from the station's APK.
 - **Works immediately, with self-hosting available** — raw downloads use
   `public.slipstreamremote.com`. A configured self-hosted station stays the
-  default; tabs above Your ID switch between its ID and your public ID.
+  default; shared tabs above Your ID and Establish link switch both panels
+  between that station and Slipstream Public.
 - **Your own station** — an IT firm or company runs
   one self-contained web folder: a download page with apps preconfigured for
   it, a private directory of its clients' devices, its own relay and an admin
@@ -90,6 +91,12 @@ See [status](docs/STATUS.md) for platform verification and limits.
 **New here? Read [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)**: a
 step-by-step guide from an empty web server to your first session, including
 client installs, unattended access and troubleshooting.
+
+For public access, get the app from
+[Slipstream Public](https://public.slipstreamremote.com/) and connect using
+the Public tab on both computers. No station setup is needed. The steps below
+set up your own station, which gets its own device directory and IDs; its tab
+becomes the default without removing your separate public ID.
 
 ### 1. Set up your station (once)
 
@@ -160,7 +167,7 @@ Build dependencies, cross-compiling and the release checklist are in
 | [Architecture](docs/ARCHITECTURE.md) | Networking, authentication, protocol, platform backends |
 | [Status](docs/STATUS.md) | What's verified, known gaps, next steps |
 | [Meetings and Show me](docs/MEETINGS.md) | Calls, admission, devices, screen previews and mobile camera sharing |
-| [Latest development handoff](docs/DEVELOPMENT-2026-10-21.md) | Published 0.24.0, verification, rollback and next-session starting point |
+| [Latest development handoff](docs/DEVELOPMENT-2026-10-22.md) | Published 0.25.0, public/private stations, verification and rollback |
 | [2026-10-20 handoff](docs/DEVELOPMENT-2026-10-20.md) | Earlier 0.22.1 publication and verification |
 | [2026-10-19 handoff](docs/DEVELOPMENT-2026-10-19.md) | Support features, audit and remaining device checks |
 | [2026-10-18 handoff](docs/DEVELOPMENT-2026-10-18.md) | Earlier features, verification and deployment history |

@@ -6,9 +6,10 @@ For a quick connection, download the app from
 [Slipstream Public](https://public.slipstreamremote.com). It connects to the
 public station automatically. Share the ID and one-time code with your partner.
 When using a self-hosted download, its station is selected by default. Tabs
-above **Your ID** switch to **Slipstream Public**; use the same station on both
-computers when entering an ID. Each station issues its own ID, so the numbers
-can differ. Public and private IDs use the same local passwords and permissions.
+above **Your ID** and **Establish link** switch both panels to **Slipstream Public**;
+use the same station on both computers when entering an ID. Each station issues
+its own ID, so the numbers can differ. Public and private IDs use the same local
+passwords and permissions.
 
 To run your own service:
 

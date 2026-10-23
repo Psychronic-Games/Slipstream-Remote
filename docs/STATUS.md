@@ -1,13 +1,27 @@
 # Project status
 
-*Updated 2026-10-22; latest published release 0.24.0.
+*Updated 2026-10-22; latest published release 0.25.0.
 Read this first when picking the work back up.*
 
-The latest [development and deployment handoff](DEVELOPMENT-2026-10-21.md)
-records **0.24.0, build 127, source commit 49b60e7**, published on
-https://relay.slipstreamremote.com with verified live update offers and full
-Linux/Windows/Android downloads. Later documentation commits do not change
-the packaged build identity.
+The latest [development and deployment handoff](DEVELOPMENT-2026-10-22.md)
+records **0.25.0, build 131, source commit 4732fea**, published on both
+https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
+Live update offers and full Linux/Windows/Android downloads passed on both.
+Later documentation/test-style commits do not change packaged build identity.
+
+Raw apps use Slipstream Public by default. Configured private stations stay
+the default, with a shared station tab bar above Your ID and Establish link.
+Public/private endpoints, IDs, lookup namespaces, partner drafts, recent links,
+reconnects and calls stay separate; local passwords and permissions are shared.
+Public downloads preserve an existing private setup. Windows services supply
+their actual public ID through authenticated snapshots. New endpoints use our
+public relay rather than an n0-operated public relay.
+
+The public station has its own data, directory, relay and protected admin login.
+Trusted Let's Encrypt HTTPS and automatic renewal are enabled. Initial limits
+are 5 MiB/s received per relay connection and 256 concurrent connections,
+including idle endpoints; these do not impose a monthly bandwidth cap.
+The private station's settings and runtime were preserved; only clients changed.
 
 0.24.0 repairs enabled Linux autostart entries after an executable is moved or
 renamed. The reported CachyOS entry pointed to a deleted Desktop download;
@@ -34,19 +48,21 @@ floating groups, reorder or tear them out without reconnecting. Each window's
 native QA clients inheriting the desktop D-Bus session; the audit now isolates
 both D-Bus and Xvfb. Linux tray destruction explicitly shuts down its service.
 
-Latest verification: **165 workspace tests passed, five ignored**, with two
-test cases at a time; strict Linux workspace/all-target, Windows desktop/all-target
-and arm64 Android Clippy passed. Linux, Windows and Android release builds,
-artifact signatures/hashes and live publication checks passed. An isolated native
-check of the packaged Linux app passed name/station and shared-ID searches,
-collapsed-group discovery, empty results and Clear. The meeting/tab-group audits
-and C920 probe recorded below are from 0.23.2. Physical 20-person load,
-Windows-service calls, Android camera/audio and mixed-DPI window behavior remain follow-ups; the
-synthetic room test does not establish full-camera capacity on real uplinks.
+Latest verification: **169 workspace tests passed, five ignored**. Final core
+and session suites passed after the last refinements. Final strict Linux
+workspace/all-target Clippy passed; Windows desktop and arm64 Android Clippy
+passed during preparation. All three
+final release builds and artifact signatures/hashes passed. An isolated native
+check verified private-tab default, separate IDs/drafts and narrow layouts.
+A fresh packaged Linux app registered its public ID using ordinary trusted HTTPS
+and showed Public as the default, without a configured provider. Live public
+relay checks and detailed evidence are recorded in the latest handoff. Physical
+meeting load, Windows-service calls, real Android camera/audio and mixed-DPI
+window behavior remain follow-ups.
 
 Build/check scripts trim caches automatically at 12 GiB development/test and
 32 GiB release, with incremental caching off and two generated Android package
-versions per variant. Latest recorded sizes are **10.12 / 31.12 GiB**. Use
+versions per variant. Latest recorded sizes are **2.69 / 31.48 GiB**. Use
 `scripts/check.sh` for substantial checks. Rollback paths, verification limits
 and the next-session starting point are in the latest handoff. Earlier
 support-tool scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).
