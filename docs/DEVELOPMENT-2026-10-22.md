@@ -1,6 +1,76 @@
 # Development handoff — 2026-10-22
 
-## Latest publication — 0.26.0
+## Latest publication — 0.26.1
+
+Published **0.26.1 / build 140 / source 389cb81** to both
+https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
+Later documentation commits do not change packaged build identity.
+
+The reported repeated update came from startup service catch-up calling the
+full updater after an older app had already replaced itself. Normal updates
+started from 0.26.0 already install app and service from one download before
+restarting. Catch-up now fetches only matching signed release information,
+reuses the installed app and updates only an older service, leaving the app
+window open. It never downloads/replaces the same app or requests another app
+restart. Full/compact GUI and CLI use this path; an already-current or newer
+service stays untouched. The privileged helper still verifies a protected
+snapshot, preserves the machine profile and rolls back a failed replacement or
+restart. Newer station releases remain normal user-triggered app/service updates.
+
+Pre-release checks passed: **175 workspace tests, five ignored**, strict Linux
+workspace/all-target, Windows desktop/all-target and arm64 Android Clippy.
+The extended Wine SCM test passes while the app is held open without delete
+sharing, proving service catch-up does not rename it. A normal app update also
+passes while an already-current service is similarly locked. Tests retain
+profile bytes, reject mismatched catch-up versions, preserve newer services
+and avoid implicitly installing a service. Four transaction rollback cases,
+Windows argument parsing and report-path checks also pass. Final Wine evidence:
+`/tmp/slipstream-service-update-iv76v1qq`; logs:
+`/tmp/slipstream-service-catchup-tests.log`,
+`/tmp/slipstream-service-catchup-{linux,windows,android}-clippy.log`,
+`/tmp/slipstream-service-catchup-wine-final.log`.
+Real Windows UAC and a running service's capture/helper restart remain device
+checks. The user reports the preceding update worked, with redundant steps.
+
+All three release builds, signatures/hashes and package metadata checks pass.
+Linux maximum glibc remains 2.30; Windows resources are 0.26.1.140, with Mesa
+and delayed optional camera imports; Android is non-debuggable arm64, version
+0.26.1 / 140, signed with the existing certificate. The packaged Linux app
+passed station switching, separate partner drafts and narrow layout. Evidence:
+`/tmp/slipstream-station-tabs-jze_0chl` (fixture connection errors intentional).
+
+Both stations were verified as 0.26.0 / 137 / 2949b2d before client-only
+publication. Old clients were backed up outside the web roots; ownership/modes
+were preserved, hashes verified and manifests published last. Station settings
+fingerprints remained unchanged. Both sites passed signed update-offer and full
+Linux/Windows/Android download checks over ordinary trusted HTTPS, including
+desktop provisioning trailers and unchanged signed APK bytes. Relay runtime,
+web configuration and admin passwords were not changed.
+
+Rollback copies:
+
+- Public: `/home/doug/WebServer/home/public/tmp/slipstream-rollback-0.26.0-to-0.26.1-iu2jp9ic`
+- Private: `/home/doug/WebServer/home/relay/tmp/slipstream-rollback-0.26.0-to-0.26.1-inme_10i`
+
+The previous assembled station is preserved at
+`dist/station-archives/0.26.0-137`. Restore verified old clients with current
+ownership/modes and the old manifest last for a client rollback; preserve backups.
+
+| Artifact | SHA-256 |
+|---|---|
+| Linux | `84eab2e53eda9b4551bf29bc49629550da1fd95f024eb281898ff807943046c9` |
+| Windows | `34ea4e73e1e1714b3cfd341366c19855c4067bbb65a773b9df5f354eef937853` |
+| Android | `5c327aca838881329ba65f8742406a429616806946185bfc0d3cf9fcad1e6176` |
+
+Release, package and publication/live logs:
+`/tmp/slipstream-0261-release-build.log`,
+`/tmp/slipstream-0261-package-checks.log`,
+`/tmp/slipstream-0261-publication-live.log`.
+Final caches: **11.28 GiB development/test, 21.86 GiB release**, within 12/32 GiB
+budgets. Builds/checks were serial under the wrapper. Use About → Check for
+updates → Install & restart; Windows may request administrator approval.
+
+## Previous publication — 0.26.0
 
 Published **0.26.0 / build 137 / source 2949b2d** to both
 https://public.slipstreamremote.com and https://relay.slipstreamremote.com.

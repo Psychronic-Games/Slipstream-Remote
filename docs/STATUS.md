@@ -1,13 +1,20 @@
 # Project status
 
-*Updated 2026-10-22; latest published release 0.26.0.
+*Updated 2026-10-22; latest published release 0.26.1.
 Read this first when picking the work back up.*
 
 The latest [development and deployment handoff](DEVELOPMENT-2026-10-22.md)
-records **0.26.0, build 137, source commit 2949b2d**, published on both
+records **0.26.1, build 140, source commit 389cb81**, published on both
 https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
 Live update offers and full Linux/Windows/Android downloads passed on both.
 Later documentation/test-style commits do not change packaged build identity.
+
+0.26.1 removes the repeated app download/install/restart during older-service
+catch-up. It verifies and reuses the app already installed, updates only the
+service and leaves the window open. Full/compact GUI and CLI use it. Normal
+updates use one download for app and service, then restart the app once. An
+already-current or newer service is left untouched. Wine checks pass with
+app/service files locked against replacement to verify these distinctions.
 
 0.26.0 updates an installed Windows service alongside the full/compact app or
 CLI, with UAC when needed, a freshly verified protected snapshot, downgrade
@@ -80,7 +87,7 @@ window behavior remain follow-ups.
 
 Build/check scripts trim caches automatically at 12 GiB development/test and
 32 GiB release, with incremental caching off and two generated Android package
-versions per variant. Latest recorded sizes are **9.73 / 21.50 GiB**. Use
+versions per variant. Latest recorded sizes are **11.28 / 21.86 GiB**. Use
 `scripts/check.sh` for substantial checks. Rollback paths, verification limits
 and the next-session starting point are in the latest handoff. Earlier
 support-tool scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).
