@@ -82,11 +82,14 @@ separately managed relay. (See *Other web servers* below.)
 
 ## Install
 
-1. Build or download the station package: `scripts/build-station.sh` creates
-   `dist/slipstream-station/` with the PHP site, the relay program (`bin/`)
-   and the client apps (`clients/`).
-2. Upload the *contents* of that folder to your site's web root
-   (`public_html`), keeping the folder structure.
+The [station setup guide](STATION-SETUP.md) walks through it step by step.
+In short:
+
+1. Download `slipstream-station.zip` from the
+   [latest release](https://github.com/Psychronic-Games/Slipstream-Remote/releases/latest)
+   (or build it: `scripts/build-station.sh` creates `dist/slipstream-station/`).
+2. Upload the *contents* of its `slipstream-station` folder to your site's
+   web root (`public_html`), keeping the folder structure.
 3. Open `https://support.example.com/admin/`, enter your organisation's name
    and an admin password. The station creates its settings, its access key,
    its relay routing (in `.htaccess`) and starts the relay.
@@ -102,11 +105,31 @@ No Apache or root changes are needed.
 
 ## Updating
 
-Build a new package (`scripts/build-station.sh`) and upload the files
-again, replacing `bin/`, `clients/` and the PHP files. Upload the apps
-before `clients/manifest.json`, so no app is offered a file that isn't there
-yet. Your settings and device list live in the data folder and are
-untouched. The full release checklist is in [BUILDING.md](BUILDING.md).
+Stations update themselves from the project's GitHub releases
+(`server/station/lib/update.php`):
+
+- Each release has a `station-update.json`: every station file with its
+  size and SHA-256, signed with the project's Ed25519 release key. The
+  station checks the signature against `lib/release-keys.txt` before it
+  downloads anything, then checks every file against the list.
+- Installing runs in resumable steps (one download each). Station files,
+  the relay and the apps are swapped in with `rename`, apps before
+  `clients/manifest.json`, the station's `lib/version.json` last. The relay is
+  restarted if its program changed. Replaced files go to
+  `slipstream-data/update/previous/`.
+- `config.php`, the managed `.htaccess` and the data folder are never touched.
+- **Automatic** (Settings, on by default): every 6 hours, after answering an
+  app's request, the station checks GitHub and installs a newer release in
+  the background. This needs PHP-FPM or LiteSpeed (`fastcgi_finish_request`);
+  elsewhere the admin page shows the release and **Install update** does it.
+- Downloads use PHP's curl extension, or HTTPS streams with `allow_url_fopen`.
+  `update_repo`, `update_releases_url` (a mirror of the GitHub releases API)
+  and extra `release_keys` can be set in `config.php`.
+
+To update by hand instead, upload a new package's files over the old ones,
+the apps before `clients/manifest.json`, and press **Restart relay** if
+`bin/` changed. Stations from before 0.27 have no updater: upload a current
+package once.
 
 `clients/manifest.json` (written by the build script) records the version,
 build number, checksums and release signatures. Desktop apps check your station about 20 seconds after
@@ -163,8 +186,7 @@ credentials. These do not authorize directory/account access and keep the
 station-wide access key out of invitations. Admission remains the organizer's
 responsibility. Media is forwarded by the organizer's client; the station
 provides directory/relay services rather than a meeting media server. See
-[meeting usage](MEETINGS.md) and the
-[deployment handoff](DEVELOPMENT-2026-10-21.md) for limits and rollback details.
+[meeting usage](MEETINGS.md) for limits.
 
 ## Access control
 

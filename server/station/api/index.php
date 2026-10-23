@@ -29,6 +29,8 @@ if (!function_exists('sodium_crypto_sign_verify_detached')) {
 if (!slip_station_ready()) {
     fail('this station has not been set up yet — open its /admin/ page', 503);
 }
+// After answering, look for a newer station release now and then (see ../lib/update.php).
+register_shutdown_function('slip_update_background');
 $req = json_decode((string)file_get_contents('php://input'), true);
 if (!is_array($req)) {
     fail('expected a JSON body');
@@ -208,6 +210,7 @@ try {
                 'motd' => ($station['motd'] ?? '') !== '' ? $station['motd'] : null,
                 'org' => ($station['org'] ?? '') !== '' ? $station['org'] : null,
                 'public_relays' => (bool)($station['public_relays'] ?? true),
+                'approve_links' => (bool)($station['approve_links'] ?? false),
             ]);
 
         case 'update_check':

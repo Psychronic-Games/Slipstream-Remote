@@ -1,388 +1,28 @@
 # Project status
 
-*Updated 2026-10-22; latest published release 0.26.2.
-Read this first when picking the work back up.*
+*Updated 2026-10-23. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
+changes: [CHANGELOG.md](../CHANGELOG.md).*
 
-The latest [development and deployment handoff](DEVELOPMENT-2026-10-22.md)
-records **0.26.2, build 143, source commit 687ed6d**, published on both
-https://public.slipstreamremote.com and https://relay.slipstreamremote.com.
-Live update offers and full Linux/Windows/Android downloads passed on both.
-Later documentation/test-style commits do not change packaged build identity.
+## Where things stand
 
-0.26.2 matches Partner ID/Password font, field height, alignment and padding.
-Shared compact input styles cover settings, saved devices, New Link, network
-and meeting tools, reports, chat and file locations. Ordinary actions now use
-rounded rectangles with tighter padding; navigation and console framing retain
-their larger curves. Native checks cover narrow layouts, station drafts, forms,
-group selection and multiline notes shrinking after deletion. The packaged
-Windows compact renderer also passed its shape/startup check under Wine.
+Slipstream Remote is usable day to day between Linux (KDE Wayland) and
+Windows machines, through the free **Slipstream Public** station or a
+self-hosted one. Both of the project's stations run current releases:
+`public.slipstreamremote.com` (keyless, default for raw downloads) and a
+private station. The main features (sessions, files, clipboard, sound, chat,
+support tools, meetings, technician accounts, the Windows service, the
+Android viewer/host, signed self-updates) are implemented and covered by
+automated end-to-end tests: 175+ workspace tests, plus Wine checks for the
+Windows build and native UI audits.
 
-0.26.1 removes the repeated app download/install/restart during older-service
-catch-up. It verifies and reuses the app already installed, updates only the
-service and leaves the window open. Full/compact GUI and CLI use it. Normal
-updates use one download for app and service, then restart the app once. An
-already-current or newer service is left untouched. Wine checks pass with
-app/service files locked against replacement to verify these distinctions.
+What remains is mostly **verification on real hardware** rather than new
+features: the Windows service at UAC prompts and the login screen, real
+Android phones, a native macOS build, and sound/clipboard files between two
+physical machines. See [Next steps](#next-steps).
 
-0.26.0 updates an installed Windows service alongside the full/compact app or
-CLI, with UAC when needed, a freshly verified protected snapshot, downgrade
-protection and rollback. Machine IDs, station and unattended settings stay in
-the existing profile. Startup catches an older service after the first upgrade
-from an old updater; **Apply settings** explicitly copies configuration changes.
-The updater refreshes signed offers before downloading and retries a publication
-race once with a newer verified offer. An old .24 app blocked by checksum errors
-should reopen/recheck or download the latest app directly once, retaining its
-profile. The reported machine's cause is unconfirmed. Isolated Wine checks pass
-for SCM replacement, profile preservation and rollback; real UAC and a running
-Windows service's helper restart remain device checks.
-
-0.25.1 ships blue/violet station tabs with clear selected states. The final
-packaged Linux app passed station switching, separate drafts and narrow layout.
-The extended integration regression verifies one shared authentication lockout
-across private and public listeners; temporary codes remain shared. Both sites
-received a client-only update, with station settings fingerprints unchanged.
-
-Raw apps use Slipstream Public by default. Configured private stations stay
-the default, with a shared station tab bar above Your ID and Establish link.
-Public/private endpoints, IDs, lookup namespaces, partner drafts, recent links,
-reconnects and calls stay separate; local passwords and permissions are shared.
-Public downloads preserve an existing private setup. Windows services supply
-their actual public ID through authenticated snapshots. New endpoints use our
-public relay rather than an n0-operated public relay.
-
-The public station has its own data, directory, relay and protected admin login.
-Trusted Let's Encrypt HTTPS and automatic renewal are enabled. Initial limits
-are 5 MiB/s received per relay connection and 256 concurrent connections,
-including idle endpoints; these do not impose a monthly bandwidth cap.
-The private station's settings and runtime were preserved; only clients changed.
-
-0.24.0 repairs enabled Linux autostart entries after an executable is moved or
-renamed. The reported CachyOS entry pointed to a deleted Desktop download;
-the workstation entry now points to the current app with `--minimized`. New
-normal launches refresh enabled entries, preserve desktop-disabled entries and
-skip side profiles. A real next-login check remains open. Bridge's Saved devices
-now searches name, ID, group and station across private/shared lists; matching
-groups open during filtering. New link uses the same filtering. Release checks
-also exposed and fixed video cancellation being missed while frame credit was
-exhausted; the strengthened regression fails before the fix and passes after it.
-
-[Group meetings and Android Show me](MEETINGS.md) are implemented, with a
-20-person default and configurable capacity up to 32. An organizer's client
-forwards selected encoded media; guests require admission. Incoming calls have
-Answer/Decline and pre-answer cancellation. Live meeting, Chat, Participants
-and Devices views keep controls accessible. Named microphone/camera choices
-are remembered; screen sharing requires an explicit selection with local-only
-preview thumbnails. Linux camera filtering and mode negotiation fix the C920
-metadata-endpoint/CameraFormat failure reproduced on this workstation.
-
-Native session windows now hold tab groups. Drag tabs between the console and
-floating groups, reorder or tear them out without reconnecting. Each window's
-**+** adds the new link to that group. The reported phantom tray icons came from
-native QA clients inheriting the desktop D-Bus session; the audit now isolates
-both D-Bus and Xvfb. Linux tray destruction explicitly shuts down its service.
-
-The last full workspace suite, during 0.26.1 preparation, had **175 passed, five ignored**.
-0.26.2 verification focused on strict cross-platform compilation and native form
-layouts, including the packaged Windows compact app under Wine. Final core
-and session suites passed after the last refinements. Final strict Linux
-workspace/all-target, Windows desktop/all-target and arm64 Android Clippy
-passed. All three
-final release builds and artifact signatures/hashes passed. An isolated native
-check verified private-tab default, separate IDs/drafts and narrow layouts.
-A fresh packaged Linux app registered its public ID using ordinary trusted HTTPS
-and showed Public as the default, without a configured provider. Live public
-relay checks and detailed evidence are recorded in the latest handoff. Physical
-meeting load, Windows-service calls, real Android camera/audio and mixed-DPI
-window behavior remain follow-ups.
-
-Build/check scripts trim caches automatically at 12 GiB development/test and
-32 GiB release, with incremental caching off and two generated Android package
-versions per variant. Latest recorded sizes are **11.92 / 22.22 GiB**. Use
-`scripts/check.sh` for substantial checks. Rollback paths, verification limits
-and the next-session starting point are in the latest handoff. Earlier
-support-tool scope remains in the [October 19 handoff](DEVELOPMENT-2026-10-19.md).
-
-## Earlier release history
-
-The entries below retain each release's original verification evidence.
-The latest published version and checks are recorded at the top of this page.
-
-**0.22.1 / 0.22.0:** New Link framing and station/private/shared/empty groups,
-compact settings, automatic Linux hardware fallback for device identity,
-Windows tool-caption/repaint corrections and bounded portal recovery. The
-[October 20 handoff](DEVELOPMENT-2026-10-20.md) preserves publication and
-verification evidence for 0.22.1 / 113 / 61367b6.
-
-**0.21.1 (earlier published release):** final implementation 2d1a128, build 106. Audits the
-five support-tool features below. Fixes pending requests surviving window
-close/link loss, late tunnel replies, compact-host status cleanup and missing
-Dismiss / Stop controls, stale Windows service command epochs and unrelated
-DNS answers. Video repaints no longer create blank native windows for docked
-sessions. Compact controls have enough room above the footer.
-
-138 workspace tests pass (five ignored); Linux/Windows all-target and arm64
-Android Clippy pass. Native Linux checks verify report exports, cancelled
-diagnostics/reopening, live floating video and docking with no placeholder
-windows. The Windows release under Wine verifies compact status, Dismiss
-retaining the link and Stop ending it without recovery. The final packaged
-compact layout has both controls above the footer ([preview](screenshots/compact-support-0.21.1.png)).
-Linux/Windows/Android artifacts are in `dist/slipstream-station/clients/`;
-hashes/signatures, update trust continuity, Windows resources/Mesa, Linux
-startup/glibc and Android version/certificate checks passed. The mount was
-reconnected October 20: clients were backed up and published with the manifest
-last. Authenticated live offers and full Linux/Windows/Android HTTPS downloads
-passed. Today's workspace run again passed 138 tests; Linux Clippy and six
-isolated publication regressions passed. See the latest handoff for rollback.
-Physical Windows service, LAN wake and real
-Android/macOS checks remain open. The handoff maps each first-pass feature
-to its implemented scope and the larger ideas still on the roadmap.
-
-**0.21.0 (superseded unpublished candidate):** 1dc6836, build 101. Adds reviewed support
-reports, host status with Stop support, discovered-service tunnels, peer-assisted
-LAN wake and bounded gateway/DNS/station diagnostics. Desktop hardware bindings
-give imaged profiles a fresh identity on different firmware while retaining
-station/unattended settings; run the updated master app/service before imaging.
-Missing or duplicate firmware evidence limits detection. The feature test run
-passed 131 tests (five ignored); Linux/Windows all-target and arm64 Android
-Clippy passed in its initial preparation. Its artifacts were checked before
-the subsequent workflow audit found the bugs corrected in 0.21.1. This
-intermediate candidate was never published; 0.21.1 superseded it before the
-later 0.22.0 and 0.22.1 publications.
-
-**0.20.0:** a session strip switches workstations and returns to Bridge.
-Drag tabs to reorder, release outside the strip to create a floating window,
-or drag a floating session's tab back to the main strip to dock the same link.
-Tabbed and floating links can coexist. Config → Viewing → New links saves
-Tabs / Separate windows as the default for future connections; existing
-profiles default to tabs and existing links retain their layout. Pop out /
-Dock and tab context menus remain available. Closing a tab/window ends only
-its link. Windows/X11 drags sample native pointer release outside the source;
-physical-pixel targets account for per-window scaling.
-
-122 workspace tests pass (five ignored); Linux/Windows all-target and arm64
-Android Clippy pass. New headless UI checks cover reordering, tear-out, Escape,
-cross-scale docking and release delivered to the destination. Isolated native
-X11 checks confirm two tabs, reordering, tear-out beyond the source window,
-docking into an empty strip, retaining another link on close, and saving /
-using the separate-window default. [Preview](screenshots/session-tabs-0.20.0.png).
-Physical Windows drag and real mixed-DPI monitors remain runtime checks;
-macOS and pure Wayland cross-window dragging were not exercised. Explicit
-Pop out / Dock actions provide an alternative. Release and live download
-verification are recorded in the handoff.
-
-**0.19.0–0.19.1:** the full and compact Windows apps show the running
-service's actual one-time code alongside its unattended password. Copy and
-New code use the authenticated local pipe; passwords are omitted from service
-stdout. Update the installed service to expose these controls with an older
-installation. Both passwords authenticate the same ID, and regenerating the
-code leaves unattended access and existing sessions intact.
-
-Desktop sessions can **Pop out** into independent native windows, opened or
-focused from **Links**, then **Dock** without reconnecting. Each window owns
-its input focus and shortcuts. Closing it ends only its link; Bridge opens
-the console while the session continues. Reconnection retains the same
-window and display/quality choices. Native title bars show the workstation
-name prominently, and FPS/latency sit beside picture quality. Toolbar labels
-adapt to measured space, with a Console menu at small widths and a screen
-selection menu. Android and full-screen sessions retain the workstation name
-in the toolbar/menu when the native title bar is absent.
-
-119 workspace tests pass (five opt-in tests ignored), including simultaneous
-one-time/permanent authentication, service code updates and two-session input
-routing. Linux/Windows all-target Clippy and arm64 Android Clippy pass.
-Isolated native X11 checks cover two live workstation windows, docking,
-closing only one link, reconnecting in place, three-screen menus, narrow
-layouts and tools with the console hidden. The final phone/full-screen label
-patch compiled for all three targets. Physical Windows service/UI and actual
-window-manager minimization remain confirmation tasks; hidden-console checks
-used X11 unmapping. Release and live HTTPS checks are recorded in the handoff.
-
-**0.18.0:** detached Files, transfer receipts and Network Scan hide immediately
-on close and force their parent to repaint even while occluded. System
-Information discards its closing frame and redraws without the panel. These
-changes target Windows black rectangles left until the main app is clicked;
-the actual Windows VM still needs visual confirmation.
-
-Wayland GUI/headless hosts prepare screen/control access at startup, before
-any viewer connects. Config adds **Approve now** and **Reset / approve again**.
-The approved backend stays ready in the tray; desktop restore tokens are
-saved when supplied. Reset refuses active viewers, and incoming session
-registration is serialized with reset. Reboot persistence remains desktop
-dependent. Windows Settings explains its automatic screen access and background
-service instead of showing the inapplicable portal Reset button. Android keeps
-explicit Start sharing consent. Station download links now include the app
-filename, including `.apk`, with simple ASCII attachment headers and UTF-8
-fallbacks; APK bytes remain unchanged by the station.
-
-116 workspace tests pass (five opt-in tests ignored), including local
-preapproval reuse, concurrent preparation and reset protection during a live
-encrypted session. Linux/Windows all-target Clippy and arm64 Android Clippy
-pass. Isolated PHP checks verify Android naming/MIME/exact bytes and account
-behavior. Release signatures, desktop trust keys, portable Linux startup,
-Android signing/version/ABI and live HTTPS update/download checks passed.
-No physical Windows UI or fresh Wayland consent/reboot runtime check was made.
-
-The previous [October 18 handoff](DEVELOPMENT-2026-10-18.md) covers releases
-0.8.0–0.17.1 and their broader runtime evidence.
-
-**0.17.1:** a [deep code audit](AUDIT-2026-10-18.md) fixes concurrent transfer
-collisions/overwrites, abandoned staging on ordinary failures, held input after
-connection loss, video queue shutdown and unbounded decode buffering, tunnel
-lifetime/IPv6 issues, concurrent identity/settings writes, UNC paths and symlink
-cycles. Folder browsing runs off the UI thread and ignores stale replies.
-Updates hash incrementally with bounded trailing data and idle deadlines.
-Android retains its final pending capture image and uses individual UDP packets
-for compatibility: a cold direct-link stall reproduced with offload enabled,
-while the relayed connection and three cold direct starts with offload disabled
-passed. Other hosts can set SLIPSTREAM_DISABLE_GSO=1 for the same workaround.
-Audio driver waits and foreign-frame bounds are now bounded/checked. Rust server
-rate limiting ignores spoofed forwarding prefixes behind a single local proxy.
-
-115 workspace tests pass (five opt-in tests ignored); Linux and
-Windows Clippy include all targets/test code, and arm64 Android checks pass.
-Isolated native X11 checks confirm exact drop bytes, detached Files opening from
-its receipt with the parent hidden, and asynchronous navigation on both panes.
-Android 16 emulator checks cover cold direct/relay startup, revoking/restarting
-sharing with no viewer, PC navigation/typing/dragging, rotation and notification
-revocation. Physical Windows/macOS/Android runtime confirmation
-remains useful. The audit records shared input ownership, blocked-driver worker
-retention and abrupt-process-kill staging as remaining limits.
-
-**0.17.0:** Android now registers a stable host ID and shows its ID/password
-on the main console, with a manufacturer/model name for default identities.
-Start sharing obtains Android consent and runs MediaProjection in a foreground
-service with a Stop notification. The optional accessibility service enables
-PC taps, held-touch drags, wheel swipes, typing/editing and Back/Home/Recents;
-without it, sessions are view-only. Input is gated by an active full-display
-projection, an enabled accessibility service and a live authenticated capture.
-Rotation resizes the existing display/surface; revocation closes capture slots
-and disconnects viewers. Initial capture uses the existing software encoder,
-a 1280-pixel long-edge bound and a 30 fps cap. Android host audio, clipboard,
-files, hardware encoding and capture without fresh approval are not included.
-
-Desktop drops and other transfers open a small native LCARS receipt window.
-It shows the target, bytes and active progress; Complete follows the remote
-save acknowledgement, while cancelled/failed results stay visible. Closing
-hides the panel without cancelling; new work reopens it. Clear finished and
-Files actions expose history/browser controls.
-
-Android 16 emulator checks exercise the visible ID, view-only input denial,
-PC-decoded capture, Home/Back/Recents, mouse taps, keyboard input/backspace,
-held-touch dragging, background capture, rotation and Stop notification
-revocation, including stopping while no viewer is connected and starting a
-fresh approved capture under the same ID. A real phone still needs confirmation. Isolated Linux native-drop
-checks verify saved bytes, live progress, cancellation, source permission
-errors and receipt retention. Physical Windows/Android hardware remains
-outside these local runtime checks.
-
-**0.16.0:** File Transfer has independent Name/Modified sorting in each
-pane, reversible with another click and with folders always first. Choices
-survive navigation and reconnects; raw listing indices preserve selection
-and transfer identity. Common raster images show thumbnails and larger hover
-previews; text/source files show passive page previews. Visible rows load in
-the background, with two requests per pane and 128 cached entries. Hosts
-return bounded previews, never the original image, over an optional
-file-browsing-authorized stream. Refresh/navigation clear previews and ignore
-late results. Older hosts retain generic icons. Update both ends for remote
-previews. PDFs, video and office-document rendering are not implemented.
-
-**0.15.0:** desktop viewers detect an unresponsive host using the existing
-performance probe (six-second request deadline, three-second polling gap),
-then automatically retry interrupted links for up to two minutes. Recovery
-uses fresh lookups, bounded attempts and backoff; rejected passwords, explicit
-session ends, Cancel reconnect and End Link stop recovery. The same tab,
-chat, display/quality and tool windows survive; input capture is released.
-Transfers fail visibly and port forwards close rather than being replayed.
-File Transfer now owns a native LCARS viewport, larger than a small remote
-window, with vector folder/file icons, desktop drops into its remote pane
-and independent repainting/live connection state while the parent is minimized.
-Actual Windows service-update recovery still benefits from a real VM check;
-Linux runtime checks use an abruptly killed and restarted host process.
-
-**0.14.1:** System Information uses a contrasting red Close button on its
-yellow title rail. Background scanner repaints preserve remote control;
-focused tools still release held remote input and keep their keyboard
-events local. This fixes control-prompt flicker during browser/scan updates.
-Lower-left outer rail/footer joins also have wider curves in the scanner,
-shared dialogs and the main session frame.
-Native window controls also have a small gap between their outlines.
-
-**0.14.0:** a single cyan scanner title rail with a curved left elbow,
-inset symbolic controls, peach Close and a fixed blue footer. Compact
-scanner contents scroll inside the frame. Also adds a public-IP row and Copy IP action near the top of System
-Information. The host queries ipify over HTTPS, with IPv4/dual-stack fallback,
-a shared one-minute cache and a separate request from hardware inventory.
-Refresh rechecks after five seconds; blocked internet/older hosts show
-Unavailable while the rest of the window remains usable. Copy all includes
-public IP too. The browser links from 0.13.0 are included in this live update.
-
-**0.13.0:** highlighted HTTP/HTTPS port actions in the network table and
-selected-device details. Clicking sends the numeric URL to the remote
-computer's default browser, with request status/errors in the scanner.
-Windows service hosts use the controlled session's signed-in user and their
-browser association. The optional stream preserves existing protocol-6 scans;
-both network-scan and remote-control permissions are required. Windows
-service browser launching still needs confirmation on the real VM.
-
-**0.12.0:** Linux desktop file/folder drops use X11/Xwayland and actual drop
-coordinates; Windows resolves the open Explorer folder or the signed-in
-user's Desktop once per batch, including service hosts. Empty directories
-survive. The Windows service/Explorer path needs confirmation on the real VM.
-Also adds collapsible saved-device groups synced by the station, an
-Add this device shortcut, growing multiline notes, roomier editor fields,
-and contrasting peach Close / green Save actions. Station updates preserve
-groups when older clients edit entries; private/shared permissions and encrypted passwords
-remain enforced. The shared elbow correction also protects the bottom DNS
-rows in System Information.
-
-**0.11.4:** clip floating-dialog elbow cutouts to their own rail geometry,
-so the frame no longer erases the Save button's lower-left corner in the
-Save a device / Edit device modal. The shared frame fix protects other
-dialog controls too.
-
-**0.11.3:** aligned console dropdowns and Tools entries, a blue menu
-selection palette, clearer Blank remote screen wording, and an LCARS
-communications window with framed messages and a bottom composer. Windows
-borderless client areas cover the native shadow strip above chat. Linux
-runtime checks cover both chat directions and the new menus; Windows native
-code is cross-checked, with actual server confirmation still useful.
-
-**0.11.2:** the windowed desktop frame reserves space for its left rail
-at every aspect ratio/display scale. The blue footer spans below the remote
-picture and taskbar, the right rail has a break below End Link, and the dark
-FPS/latency panel has a subtle blue outline. Video fitting and input share
-the inset content area; full screen and Android retain their full picture.
-Linux runtime checks cover wide, near-aspect and compact windows, 150%
-display scaling, chat, menus and full-screen transitions.
-
-**0.11.1:** remote-session LCARS rails in existing side letterboxing,
-a swept LINK elbow, full-height toolbar segments with vector icons, and
-rounded native window bounds. Native corner masks are used on Windows and
-X11; Wayland uses alpha compositing. Full-screen/maximized windows remain
-rectangular. Linux checks cover wide/compact layouts, chat, popup menus,
-full screen and native shapes. Windows native code is cross-checked; real-VM
-confirmation remains useful.
-
-**0.11.0:** device names, routed subnet/VLAN scans, a detached scanner,
-peripheral/printer/network-drive inventory, restored Windows service chat,
-and LCARS desktop title bars. Protocol remains 6: optional name lookup uses
-appended stream variants, preserving 0.10 scan interoperability.
-
-115 workspace tests pass (5 opt-in tests ignored). Isolated Linux
-GUI checks also cover image/text thumbnails, hover previews, independent
-Name/Modified sorting and direction toggles, selected-file Send/Receive
-bytes after reordering, and native file/folder drops. Linux GUI checks
-confirm the scanner is larger than its main window, finds this machine's
-name/ports, switches views, maximizes/restores, and closes without ending the
-session. Linux and Windows Clippy and Android checks pass. Windows service
-chat and the expanded native inventory compile; their behavior on the actual
-Windows VM still needs confirmation. The previous 0.10 sharpness fix also
-needs real-VM confirmation. Latest clients are deployed to the live relay;
-the two account API PHP files are updated for group persistence. The relay
-program needs no update. Isolated PHP and Rust CLI integration checks cover
-group changes, older-client updates, multiline notes, passwords and permissions.
-The verification table below also records earlier releases.
-
+**0.27** adds scam protection (one-time-password links on Slipstream Public
+wait for **Allow**) and stations that update themselves from signed GitHub
+releases.
 
 ## What's verified
 
@@ -419,11 +59,6 @@ The verification table below also records earlier releases.
 | macOS | ⚠️ type-checks for Apple Silicon (cross-checked from Linux); universal packaging script prepared; native building and runtime checks pending |
 | Android viewer and host | ⚠️ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; real phones still need confirmation. Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
-
-The latest recorded workspace run passed **165 tests, with five ignored**
-(0.24.0). Unit tests and in-process sessions cover video and input, files,
-chat, clipboard text and files, sound and port forwarding. Use
-`scripts/check.sh` to rerun the workspace suite.
 
 ## Known gaps and limits
 
@@ -468,68 +103,38 @@ chat, clipboard text and files, sound and port forwarding. Use
 - **Wayland unattended access**: depends on the portal's restore token
   surviving. A reboot may bring the permission prompt back on some desktops.
 - **File transfer**: no resume for interrupted large transfers.
-- **CI** (`.github/workflows/ci.yml`) has never run: there's no GitHub remote
-  yet. The plan is to push after more testing.
+- **CI** (`.github/workflows/ci.yml`) is new on GitHub (October 2026) and
+  still being brought to green on all three systems.
+- **Link approval** needs a window that can ask: headless `slipstream host`
+  machines and the Windows login screen decline one-time-password links on
+  Slipstream Public. Use the unattended password there. Android shows the
+  prompt only while the app is open.
 
-## Next steps (suggested order)
+## Next steps
 
-Each step is written up as an issue with tasks and pointers into the code
-in [issues/](issues/README.md).
+Each step has an issue with tasks and pointers into the code in
+[issues/](issues/README.md).
 
-**In progress: Android** (issue 09). Initial PC-to-phone hosting is now
-implemented and emulator-tested, alongside the touch viewer. Remaining work
-includes real-phone checks, viewer keyboard polish, hardware encoding and
-host audio/clipboard/files/updates. The steps below carry on alongside it.
-
-1. **Continue from published 0.24.0 and the user's next observations**: verify
-   Linux autostart at the next login and use the new Saved devices search.
-   The earlier camera, screen-preview, call controls and grouped-window fixes are complete.
-   Check the updated client on the user's normal setup; retain real-machine
-   meeting/load and mixed-DPI follow-ups in issues 17 and 16. Publication and
-   signed HTTPS checks are complete. Confirm automatic device recognition
-   and clone/service identity on differently identified Windows hardware;
-   exercise reports, status/Stop, discovered-service tunnels, permitted LAN
-   wake and network diagnostics. Check New Link's station/group selection,
-   compact forms, Windows tool captions and close/repaint behavior. Test
-   Wayland approval recovery after a KDE upgrade when that environment is
-   available (issue 11). Carry forward the earlier Windows Server VM checks:
-   tab reorder/tear-out/dock-back
-   and the saved new-link default, service one-time codes beside
-   unattended access, independent workstation windows, closing tools without
-   black remnants, sharp Balanced/Quality motion,
-   the pointer on the mouseless VM, service-update recovery, incoming chat,
-   peripheral/network-drive inventory, Explorer/Desktop drop destinations,
-   scanner browser launching and native frame corners/rails (issues 01, 04,
-   15 and 16). Use the stats
-   tooltip and 30-second log line to measure capture/encode/decode and picture
-   dimensions rather than assuming a high frame rate means full resolution.
-2. **Confirm Android hosting on real phones**: persistent ID, sharing consent,
-   accessibility setup, PC input, cold direct/relay links, rotation and Stop.
-   Include older supported Android versions; current host runtime evidence is
-   from an Android 16 emulator.
-3. **Finish earlier real-machine checks**: Windows laptop pointer, Debian
-   portability, clipboard files and sound between machines. Existing issue
-   checklists retain the original version numbers for traceability.
-4. **Push to GitHub**, get CI green on all three OSes, and attach release builds.
-   Local commits/releases have not been pushed.
-5. **macOS**: run `scripts/build-macos.sh` on the Mac; test install, Open
-   Anyway, permissions, capture, input, setup code and an update (issue 03).
-6. **Try the session tools on real machines** (issue 16): UAC and the
-   login screen through the service, privacy mode, copying files both
-   ways, port forwarding to Remote Desktop.
-7. **Hardware encoding**: NVENC, VA-API, Media Foundation, VideoToolbox, Android
-   MediaCodec; continue Android host audio/clipboard/files and update support.
-8. **Code signing**: apply to SignPath once the repo is public (issue 05);
-   Apple notarisation when the Developer Program is joined.
-9. **Sound from Mac hosts** (ScreenCaptureKit audio).
+1. **Real-machine pass** (issues 01, 04, 16): the Windows service at UAC
+   prompts, elevated windows and the login screen; the new link approval on
+   Windows (full window, compact window and service) and Linux; privacy mode;
+   copying files in Explorer/Dolphin; sound between two machines.
+2. **Android on real phones** (issue 09): persistent ID, sharing consent,
+   accessibility setup, PC input, direct and relayed links, rotation, Stop,
+   link approval. Include an older supported Android version.
+3. **CI green on GitHub** (issue 02) for Linux, Windows and macOS.
+4. **macOS** (issue 03): run `scripts/build-macos.sh` on the Mac; test install,
+   Open Anyway, permissions, capture, input, setup code and an update.
+5. **Code signing** (issue 05): apply to SignPath now that the repository is
+   public; Apple notarisation once the Developer Program is joined.
+6. **Hardware encoding** (issue 06), Android host audio/clipboard/files and
+   self-updates, sound from Mac hosts.
 
 ## Picking the work back up
 
-- Build and test: [BUILDING.md](BUILDING.md). The release checklist is
-  there: commit, `scripts/release-version.sh patch|minor`, commit, run
-  `scripts/build-station.sh`, upload the apps, then the manifest.
+- Build and test: [BUILDING.md](BUILDING.md), including the release checklist
+  (build, publish to GitHub; stations then update themselves).
 - How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
-- User-facing behaviour: [GETTING-STARTED.md](GETTING-STARTED.md).
-- What changed: [CHANGELOG.md](../CHANGELOG.md).
-- Latest handoff and deployed build: [DEVELOPMENT-2026-10-21.md](DEVELOPMENT-2026-10-21.md).
-- Audit findings, regression evidence and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md).
+- User-facing behaviour: [GETTING-STARTED.md](GETTING-STARTED.md) and
+  [STATION-SETUP.md](STATION-SETUP.md).
+- Audit findings and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md).

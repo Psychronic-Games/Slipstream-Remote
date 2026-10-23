@@ -4,6 +4,7 @@
 //! ```sh
 //! slipstream-release pubkey      # release public key; creates the key on first use
 //! slipstream-release manifest DIST/clients --version 0.5.1 --build 15 --commit 1a2b3c4
+//! slipstream-release station-update payload.json station-update.json
 //! ```
 //!
 //! The private key lives in `$SLIPSTREAM_SIGNING_KEY`, or by default in
@@ -60,6 +61,30 @@ enum Cmd {
         #[arg(long, value_delimiter = ',')]
         signed: Vec<String>,
     },
+    /// Sign a station update list (written by scripts/package-release.py)
+    /// for stations that update themselves from GitHub releases.
+    StationUpdate { payload: PathBuf, out: PathBuf },
+}
+
+/// Stations check this prefix plus the payload (server/station/lib/update.php).
+const STATION_UPDATE_CONTEXT: &[u8] = b"slipstream station update v1\n";
+
+fn station_update(key: &SecretKey, payload: &Path, out: &Path) -> Result<()> {
+    let text = fs::read_to_string(payload).with_context(|| format!("reading {}", payload.display()))?;
+    let parsed: serde_json::Value = serde_json::from_str(&text).context("the payload is not JSON")?;
+    if parsed["format"] != 1 || !parsed["build"].is_u64() {
+        bail!("the payload is not a station update list");
+    }
+    let message = [STATION_UPDATE_CONTEXT, text.as_bytes()].concat();
+    let envelope = serde_json::json!({
+        "payload": text,
+        "signer": key.public().to_string(),
+        "sig": hex(&key.sign(&message).to_bytes()),
+    });
+    let tmp = out.with_extension("tmp");
+    fs::write(&tmp, serde_json::to_string_pretty(&envelope)? + "\n")?;
+    fs::rename(&tmp, out)?;
+    Ok(())
 }
 
 fn key_path() -> Result<PathBuf> {
@@ -156,6 +181,7 @@ fn main() -> Result<()> {
         Cmd::Manifest { clients, version, build, commit, signed } => {
             manifest(&load_key(&key_path()?)?, &clients, &version, build, &commit, &signed)?
         }
+        Cmd::StationUpdate { payload, out } => station_update(&load_key(&key_path()?)?, &payload, &out)?,
     }
     Ok(())
 }
@@ -190,6 +216,26 @@ mod tests {
             u.verify(&[key.public()], e["sig"].as_str().unwrap()).unwrap();
             assert!(u.verify(&[SecretKey::generate().public()], e["sig"].as_str().unwrap()).is_err());
         }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Stations verify `context + payload` with libsodium's Ed25519.
+    #[test]
+    fn station_update_signs_the_exact_payload() {
+        let dir = std::env::temp_dir().join(format!("slipstream-station-update-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let payload = r#"{"format":1,"version":"0.27.0","build":160,"files":[],"assets":{}}"#;
+        fs::write(dir.join("payload.json"), payload).unwrap();
+        let key = SecretKey::generate();
+        station_update(&key, &dir.join("payload.json"), &dir.join("station-update.json")).unwrap();
+        let env: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("station-update.json")).unwrap()).unwrap();
+        assert_eq!(env["payload"], payload);
+        let sig: [u8; 64] = unhex(env["sig"].as_str().unwrap()).unwrap().try_into().unwrap();
+        let message = [STATION_UPDATE_CONTEXT, payload.as_bytes()].concat();
+        key.public().verify(&message, &iroh::Signature::from_bytes(&sig)).unwrap();
+        assert!(key.public().verify(payload.as_bytes(), &iroh::Signature::from_bytes(&sig)).is_err());
+        fs::write(dir.join("bad.json"), r#"{"format":2}"#).unwrap();
+        assert!(station_update(&key, &dir.join("bad.json"), &dir.join("x.json")).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 

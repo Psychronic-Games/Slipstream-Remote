@@ -115,6 +115,11 @@ fn station_tab(ui: &mut Ui, selected: &mut bool, value: bool, label: &str, color
 fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
     theme::panel(ui, "This device", pal::LAVENDER, |ui| {
         ui.label(RichText::new("Give your partner this ID and password to let them in.").color(pal::DIM));
+        ui.label(
+            RichText::new("Only share them with someone you know. Never with a caller who contacted you unexpectedly.")
+                .small()
+                .color(pal::PEACH),
+        );
         ui.add_space(8.0);
 
         let custom = app.client.has_custom_station();

@@ -1,18 +1,19 @@
 ---
-title: Publish to GitHub and get CI green on Linux, Windows and macOS
+title: Get CI green on Linux, Windows and macOS
 labels: [infra, priority:high]
 ---
 
 ## Background
 
-The repository is local only, with releases through 0.23.2 and no GitHub
-remote configured.
-`.github/workflows/ci.yml` builds and tests on Ubuntu, Windows and macOS,
-but it has never run. macOS has been cross-type-checked for Apple Silicon
+The repository is public at
+https://github.com/Psychronic-Games/Slipstream-Remote (October 2026), and
+releases are published there by `scripts/publish-github-release.sh`.
+`.github/workflows/ci.yml` builds and tests on Ubuntu, Windows and macOS
+on every push; its first runs need fixes. macOS has been cross-type-checked for Apple Silicon
 from Linux; native Mac builds and runtime checks remain pending.
 
-`.github/workflows/release.yml` already defines tag-triggered Linux/Windows/
-macOS builds and a draft GitHub release. Windows publisher signing is
+`.github/workflows/release.yml` builds Linux/Windows/macOS by hand (from the
+Actions tab) into a draft pre-release. Windows publisher signing is
 conditional on SignPath configuration. The workflow produces platform
 artifacts and `release.json`; local `build-station.sh --from-release DIR`
 assembles the station and signs its update manifest with the private update
@@ -20,8 +21,7 @@ key kept on the build machine. Android is currently built locally.
 
 ## Tasks
 
-- [ ] Create the GitHub repository, configure its remote, and push reviewed
-      `main` and the release tags intended for publication.
+- [x] Create the GitHub repository, configure its remote, and push `main`.
 - [ ] Get all three CI jobs green. Expect fixes:
   - Linux job: the apt package list may need adjusting for the x11rb and
     PipeWire-dlopen changes.
@@ -35,15 +35,16 @@ key kept on the build machine. Android is currently built locally.
 - [ ] Configure the update public key and, after acceptance, SignPath
       variables/secrets; verify a first tagged CI release and local station
       assembly. Keep the private update key out of CI.
-- [ ] Publish the locally assembled station package with the release.
+- [x] Publish the locally assembled station package with the release
+      (`scripts/publish-github-release.sh`).
 - [ ] Authenticate `gh` and run `scripts/file-issues.sh` to turn
       `docs/issues/` into GitHub issues.
 
 ## Done when
 
 A push to `main` shows green native build/test/Clippy checks on all three
-OSes. A release tag produces verified downloadable platform artifacts, and
-the locally assembled, update-signed station package is attached to the release.
+OSes, and a manual CI release build produces verified platform artifacts
+that `build-station.sh --from-release` accepts.
 
 ## Pointers
 

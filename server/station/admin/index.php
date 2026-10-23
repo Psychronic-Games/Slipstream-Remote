@@ -129,6 +129,8 @@ switch ($action) {
             'motd' => slip_clip(trim((string)($_POST['motd'] ?? '')), 300),
             'private' => !empty($_POST['private']),
             'public_relays' => !empty($_POST['public_relays']),
+            'approve_links' => !empty($_POST['approve_links']),
+            'auto_update' => !empty($_POST['auto_update']),
         ];
         $dl = (string)($_POST['download_password'] ?? '');
         if (!empty($_POST['clear_download_password'])) {
@@ -143,6 +145,16 @@ switch ($action) {
         }
         flash('Settings saved.');
         back('settings');
+    case 'update_check':
+        $u = slip_update_check(true);
+        flash($u['error'] ?? null ? 'Couldn\'t check for updates: ' . $u['error'] : (slip_update_available($u)
+            ? 'Version ' . $u['latest']['version'] . ' is available.' : 'The station is up to date.'), (bool)($u['error'] ?? null));
+        back();
+    case 'update_step':
+        // One piece of the install per request (the page calls this until done).
+        header('Content-Type: application/json');
+        echo json_encode(slip_update_step());
+        exit;
     case 'rotate_key':
         slip_station_save(['access_key' => bin2hex(random_bytes(16))]);
         slip_relay_ensure(true);
@@ -284,6 +296,56 @@ slip_page_start('Station admin', '../');
   <form method="post" style="display:inline"><?= $form() ?><input type="hidden" name="action" value="relay_stop"><button class="lav">Stop relay</button></form>
   </div>
 
+  <?php
+    $upd = slip_update_state();
+    if (time() - (int)($upd['checked'] ?? 0) > 3600 && slip_release_keys()) {
+        $upd = slip_update_check(true);
+    }
+    $installed = slip_installed();
+    $avail = slip_update_available($upd);
+    $fpm = function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+  ?>
+  <h2 class="violet">Station software</h2>
+  <div class="panel">
+    <p>Installed: version <b><?= h($installed['version']) ?></b> (build <?= (int)$installed['build'] ?><?= $installed['commit'] !== '' ? ' · ' . h($installed['commit']) : '' ?>).
+    <?php if (!slip_release_keys()): ?>
+      <span class="warn">No release key (lib/release-keys.txt): this station can't check signed updates. Install a release package from GitHub.</span>
+    <?php elseif ($avail): ?>
+      <span class="ok">Version <b><?= h($avail['version']) ?></b> (build <?= (int)$avail['build'] ?>) is available<?= $avail['page'] ? ' — <a href="' . h($avail['page']) . '" target="_blank" rel="noopener">release notes</a>' : '' ?>.</span>
+    <?php elseif (!empty($upd['checked'])): ?>
+      <span class="dim">Up to date (checked <?= h(date('Y-m-d H:i', (int)$upd['checked'])) ?>).</span>
+    <?php endif ?></p>
+    <?php if (!empty($upd['error'])): ?><p class="warn">Last update problem: <?= h($upd['error']) ?></p><?php endif ?>
+    <p class="dim"><?= slip_update_auto()
+        ? ($fpm ? 'New releases install automatically in the background.' : 'Automatic installs need PHP-FPM; this server will only show new releases here.')
+        : 'Automatic installs are off (Settings).' ?>
+      Updates replace the station's files, relay and apps; settings, devices and accounts stay as they are.</p>
+    <form method="post" style="display:inline"><?= $form() ?><input type="hidden" name="action" value="update_check"><button class="lav">Check now</button></form>
+    <?php if ($avail): ?>
+      <button class="gold" id="install-update">Install update</button>
+      <div id="update-progress" class="dim"></div>
+      <script>
+      document.getElementById('install-update').onclick = async function () {
+        this.disabled = true;
+        const out = document.getElementById('update-progress');
+        const body = new URLSearchParams({action: 'update_step', csrf: <?= json_encode($csrf) ?>});
+        for (let i = 0; i < 60; i++) {
+          let r;
+          try {
+            r = await (await fetch('./', {method: 'POST', body})).json();
+          } catch (e) {
+            out.textContent = 'Lost contact with the station — reload the page to continue.';
+            return;
+          }
+          out.textContent = r.message;
+          if (r.done) { if (!r.error) setTimeout(() => location.reload(), 1500); return; }
+          if (r.busy) await new Promise(ok => setTimeout(ok, 3000));
+        }
+      };
+      </script>
+    <?php endif ?>
+  </div>
+
   <h2 class="gold">Client downloads</h2>
   <div class="panel">
     <?php $man = slip_client_manifest(); ?>
@@ -423,6 +485,11 @@ slip_page_start('Station admin', '../');
         Private — only apps from this station's download page can use it (recommended)</label>
       <label><input type="checkbox" name="public_relays" value="1" <?= !empty($station['public_relays']) ? 'checked' : '' ?>>
         Allow apps to use Slipstream Public as a backup relay</label>
+      <label><input type="checkbox" name="approve_links" value="1" <?= !empty($station['approve_links']) ? 'checked' : '' ?>>
+        Ask the person at the computer to allow links made with its one-time password (unattended passwords never ask;
+        Slipstream Public always asks)</label>
+      <label><input type="checkbox" name="auto_update" value="1" <?= slip_update_auto() ? 'checked' : '' ?>>
+        Install new Slipstream releases automatically (checked on GitHub every 6 hours, signature-verified)</label>
       <label class="k">Download page password (optional)</label>
       <input type="password" name="download_password" placeholder="<?= !empty($station['download_password_hash']) ? 'set — type to change' : 'none — anyone can download' ?>">
       <?php if (!empty($station['download_password_hash'])): ?>

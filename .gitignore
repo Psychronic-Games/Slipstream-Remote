@@ -5,3 +5,5 @@
 /dist
 # Left by C compiler probes in build scripts
 a.o
+# Local development notes and handoffs (not published)
+/notes

@@ -210,6 +210,10 @@ fi
 # Code-signed apps are marked, so the station serves them untouched.
 "$RELEASE" manifest "$OUT/clients" --version "$VERSION" --build "$BUILD" --commit "$COMMIT" ${SIGNED:+--signed "$SIGNED"}
 echo "==> Signed manifest: version $VERSION build $BUILD ($COMMIT)"
+# The station's own version, and the keys it trusts for updates from GitHub
+# releases (server/station/lib/update.php).
+printf '{"version": "%s", "build": %s, "commit": "%s"}\n' "$VERSION" "$BUILD" "$COMMIT" > "$OUT/lib/version.json"
+printf '%s\n' "$SLIPSTREAM_UPDATE_KEYS" | tr ',' '\n' > "$OUT/lib/release-keys.txt"
 
 chmod 755 "$OUT"/bin/* "$OUT"/clients/slipstream-linux-x86_64 2>/dev/null || true
 echo "==> Station assembled in $OUT:"

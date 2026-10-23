@@ -29,6 +29,9 @@ struct Snapshot {
     password: Option<String>,
     #[serde(default)]
     call: Option<slipstream_session::meetings::calls::IncomingCall>,
+    /// A one-time-password link waiting for Allow.
+    #[serde(default)]
+    approval: Option<slipstream_session::approval::LinkRequest>,
     #[serde(default)]
     directory: Option<slipstream_session::DirStatus>,
     #[serde(default)]
@@ -68,6 +71,7 @@ impl Snapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Action {
     AnswerCall { id: u64, accepted: bool },
+    AnswerLink { id: u64, accepted: bool },
     MeetingCalls { enabled: bool },
     Chat { session: u64, text: String },
     Disconnect { session: u64 },
@@ -85,6 +89,9 @@ struct Challenge {
     nonce: [u8; 32],
     #[serde(default)]
     meeting_calls: bool,
+    /// This window can answer link approvals.
+    #[serde(default)]
+    link_approvals: bool,
 }
 #[cfg(windows)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -96,6 +103,7 @@ struct Proof {
 pub enum Event {
     Directories { primary: Option<slipstream_session::DirStatus>, public: Option<slipstream_session::DirStatus>, station: Option<String> },
     MeetingCall(Option<slipstream_session::meetings::calls::IncomingCall>),
+    LinkApproval(Option<slipstream_session::approval::LinkRequest>),
     Started {
         session: u64,
         peer: String,
@@ -115,6 +123,7 @@ pub enum Event {
 #[derive(Default)]
 struct Cursor {
     call: Option<slipstream_session::meetings::calls::IncomingCall>,
+    approval: Option<slipstream_session::approval::LinkRequest>,
     epoch: Option<u64>,
     sessions: BTreeMap<u64, u64>,
     password: Option<String>,
@@ -137,6 +146,10 @@ impl Cursor {
                 events.push(Event::MeetingCall(snapshot.call.clone()));
             }
             self.call = snapshot.call.clone();
+        }
+        if self.approval != snapshot.approval {
+            self.approval = snapshot.approval.clone();
+            events.push(Event::LinkApproval(self.approval.clone()));
         }
         if self.password != snapshot.password {
             self.password = snapshot.password.clone();
@@ -208,6 +221,16 @@ impl Sender {
                 .send(Command {
                     epoch: self.epoch.load(std::sync::atomic::Ordering::Acquire),
                     action: Action::AnswerCall { id, accepted },
+                })
+                .is_ok()
+    }
+    pub fn answer_link(&self, id: u64, accepted: bool) -> bool {
+        self.connected()
+            && self
+                .tx
+                .send(Command {
+                    epoch: self.epoch.load(std::sync::atomic::Ordering::Acquire),
+                    action: Action::AnswerLink { id, accepted },
                 })
                 .is_ok()
     }
@@ -358,6 +381,7 @@ mod native {
     pub struct Server {
         custom_station: bool,
         broker: std::sync::Arc<slipstream_session::meetings::calls::Broker>,
+        approvals: std::sync::Arc<slipstream_session::approval::Approvals>,
         state: Arc<Mutex<Snapshot>>,
         changes: watch::Sender<Snapshot>,
         clients: Arc<AtomicUsize>,
@@ -373,6 +397,7 @@ mod native {
     impl Server {
         pub fn start(client: Client) -> Result<Self> {
             let broker = client.call_broker();
+            let approvals = client.approvals();
             let session = session_id();
             let custom_station = client.has_custom_station();
             let pipe = create_pipe(session, true)?;
@@ -388,6 +413,7 @@ mod native {
                 sessions: Vec::new(),
                 password: Some(client.one_time_password()),
                 call: None,
+                approval: None,
                 directory: Some(client.dir_status()),
                 public_directory: Some(client.public_dir_status()),
                 station: client.station_settings().url,
@@ -428,6 +454,7 @@ mod native {
             });
             Ok(Self {
                 broker,
+                approvals,
                 custom_station,
                 state,
                 changes,
@@ -441,6 +468,7 @@ mod native {
             let mut state = self.state.lock().expect("service chat state");
             match event {
                 ClientEvent::CallChanged => state.call = self.broker.incoming(),
+                ClientEvent::LinkApproval => state.approval = self.approvals.pending(),
                 ClientEvent::Directory(status) if self.custom_station => state.directory = Some(status.clone()),
                 ClientEvent::PublicDirectory(status) => {
                     state.public_directory = Some(status.clone());
@@ -468,7 +496,10 @@ mod native {
             }
             self.changes.send_replace(state.clone());
             drop(state);
-            if (matches!(event, ClientEvent::HostChat { .. }) || matches!(event, ClientEvent::HostStatus { text, .. } if !text.is_empty()))
+            // Open the signed-in user's window for chat, support status and
+            // links waiting for Allow (the approval waits for it to connect).
+            if (matches!(event, ClientEvent::HostChat { .. }) || matches!(event, ClientEvent::HostStatus { text, .. } if !text.is_empty())
+                || matches!(event, ClientEvent::LinkApproval) && self.approvals.pending().is_some())
                 && self.clients.load(Ordering::Acquire) == 0
                 && self.last_launch.is_none_or(|t| t.elapsed() > Duration::from_secs(10))
             {
@@ -493,6 +524,7 @@ mod native {
         let signature = key.sign(&challenge_message(&hello.nonce, session)).to_bytes().to_vec();
         write(&mut pipe, &Proof { signature }).await?;
         let _meeting_receiver = hello.meeting_calls.then(|| client.call_broker().receiver());
+        let _link_receiver = hello.link_approvals.then(|| client.approvals().receiver());
         clients.fetch_add(1, Ordering::AcqRel);
         struct Active(Arc<AtomicUsize>);
         impl Drop for Active {
@@ -514,6 +546,7 @@ mod native {
                     Action::AnswerCall { id, accepted } => {
                         client.call_broker().answer(id, accepted)
                     }
+                    Action::AnswerLink { id, accepted } => client.approvals().answer(id, accepted),
                     Action::MeetingCalls { enabled } => {
                         client.update_settings(|s| s.app.block_meeting_calls = !enabled)
                     }
@@ -584,6 +617,7 @@ mod native {
                             &Challenge {
                                 nonce,
                                 meeting_calls: true,
+                                link_approvals: true,
                             },
                         )
                         .await?;
@@ -629,6 +663,9 @@ mod native {
                     let _ = tx.send(Event::Directories { primary: None, public: None, station: None });
                     if cursor.call.take().is_some() {
                         let _ = tx.send(Event::MeetingCall(None));
+                    }
+                    if cursor.approval.take().is_some() {
+                        let _ = tx.send(Event::LinkApproval(None));
                     }
                     if cursor.password.take().is_some() {
                         let _ = tx.send(Event::Password(None));
@@ -750,6 +787,7 @@ mod tests {
             }],
             password: None,
             call: None,
+            approval: None,
             directory: None,
             public_directory: None,
             station: None,

@@ -8,6 +8,7 @@ mod reconnect;
 mod stations;
 pub use stations::StationRef;
 mod accounts;
+pub mod approval;
 pub mod files;
 pub mod fsops;
 pub mod preview;
@@ -77,6 +78,9 @@ pub enum ClientEvent {
     FileReceived { session: u64, path: std::path::PathBuf },
     Notice(String),
     CallChanged,
+    /// A one-time-password link is waiting for Allow, or stopped waiting
+    /// (see [`Client::approvals`]).
+    LinkApproval,
     /// The station offers a newer version of the app.
     UpdateAvailable(update::UpdateInfo),
 }
@@ -110,6 +114,7 @@ pub(crate) enum HostSessionCmd {
 
 pub(crate) struct Inner {
     pub calls: Arc<meetings::calls::Broker>,
+    pub approvals: Arc<approval::Approvals>,
     pub endpoint: Endpoint,
     pub public_station: Option<stations::PublicStation>,
     pub store: Store,
@@ -163,6 +168,11 @@ pub struct Client {
 impl Client {
     pub fn call_broker(&self) -> Arc<meetings::calls::Broker> {
         self.inner.calls.clone()
+    }
+
+    /// One-time-password links waiting for the person at this computer.
+    pub fn approvals(&self) -> Arc<approval::Approvals> {
+        self.inner.approvals.clone()
     }
 
     pub fn camera_for_meeting(
@@ -232,6 +242,7 @@ impl Client {
         let password = generate_password(settings.host.one_time_password_len.clamp(4, 32));
         let inner = Arc::new(Inner {
             calls: Arc::new(meetings::calls::Broker::default()),
+            approvals: Arc::new(approval::Approvals::default()),
             endpoint,
             public_station,
             store,
@@ -608,11 +619,13 @@ async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Resu
         let mut s = inner.settings.lock().unwrap();
         let fresh = s.server.relays != relays
             || s.server.org_name != hello.org
-            || s.server.station_allows_public_relays != hello.public_relays;
+            || s.server.station_allows_public_relays != hello.public_relays
+            || s.server.station_approves_links != hello.approve_links;
         let drop_public = s.server.public_relays_enabled() && !hello.public_relays;
         s.server.relays = relays.clone();
         s.server.org_name = hello.org.clone();
         s.server.station_allows_public_relays = hello.public_relays;
+        s.server.station_approves_links = hello.approve_links;
         (fresh, drop_public)
     };
     if new_relays {
@@ -727,7 +740,7 @@ async fn accept_task(inner: Arc<Inner>, endpoint: Endpoint, public: bool) {
                 return;
             }
             let linger = conn.clone();
-            if let Err(e) = host::run_session(inner, conn, endpoint_id).await {
+            if let Err(e) = host::run_session(inner, conn, endpoint_id, public).await {
                 debug!("host session ended with error: {e:#}");
             }
             // Let a final message (e.g. "wrong password") reach the viewer
@@ -1638,5 +1651,67 @@ mod tests {
         assert_eq!(why, "they ended the session");
         viewer.shutdown().await;
         host.shutdown().await;
+    }
+
+    /// One-time-password links wait for Allow when the host asks for it;
+    /// the unattended password never does. A declined code is replaced.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn one_time_links_wait_for_approval_and_unattended_links_do_not() {
+        let (host, _hev, hdir) = client_with("approve-host", true, Default::default(), |s| s.host.confirm_links = true).await;
+        let (viewer, _vev, vdir) = client("approve-viewer", false).await;
+        let addr = host.endpoint_addr();
+        let approvals = host.approvals();
+
+        // Nobody can answer: declined without waiting for the full minute.
+        let code = host.one_time_password();
+        let err = format!("{:#}", viewer.connect_direct(addr.clone(), &code, |_| {}).await.err().unwrap());
+        assert!(err.contains("Nobody is at the remote computer"), "unexpected error: {err}");
+        assert_ne!(host.one_time_password(), code, "a declined code must be replaced");
+
+        // Declined by the person at the computer.
+        let receiver = approvals.receiver();
+        let answer = |accepted: bool| {
+            let approvals = approvals.clone();
+            tokio::spawn(async move {
+                loop {
+                    if let Some(request) = approvals.pending() {
+                        assert_eq!(request.peer, "approve-viewer");
+                        assert!(!request.public);
+                        approvals.answer(request.id, accepted);
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+        };
+        let code = host.one_time_password();
+        let declined = answer(false);
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let seen = notices.clone();
+        let err = format!("{:#}", viewer.connect_direct(addr.clone(), &code, move |n| seen.lock().unwrap().push(n)).await.err().unwrap());
+        declined.await.unwrap();
+        assert!(err.contains("declined"), "unexpected error: {err}");
+        assert!(notices.lock().unwrap().iter().any(|n| n == approval::WAITING));
+        assert_ne!(host.one_time_password(), code);
+
+        // Allowed.
+        let code = host.one_time_password();
+        let allowed = answer(true);
+        let (session, _events) = viewer.connect_direct(addr.clone(), &code, |_| {}).await.unwrap();
+        allowed.await.unwrap();
+        assert_eq!(session.info().host_name, "approve-host");
+        drop(session);
+        drop(receiver);
+
+        // The unattended password connects with nobody there to ask.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(approvals.pending().is_none());
+        let (session, _events) = viewer.connect_direct(addr, "correct horse battery", |_| {}).await.unwrap();
+        assert_eq!(session.info().host_name, "approve-host");
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 }

@@ -114,6 +114,20 @@ the throttle locked until the attempt is counted, so opening many
 connections at once gains no extra guesses. A viewer that doesn't answer
 the challenge within 10 s is dropped.
 
+**Link approval** (`crates/slipstream-session/src/approval.rs`). Between
+steps 3 and 4 the host knows which password matched. If it was the one-time
+password and the link came through Slipstream Public's listener, or the
+station's `hello` sets `approve_links`, or the user turned on **Ask before
+links**, the host sends `Notice` ("waiting for … to allow") and asks a local
+window. The in-process GUI, the compact Windows window and the Windows
+service's user-session app (over the authenticated pipe) register as
+receivers. With none, the host waits 10 s for one (the service starts its
+user app), then declines. It declines after 60 s unanswered, or as soon as
+the viewer disconnects. A declined link gets `AuthFailed` and the one-time
+password is replaced. The unattended password never asks. Approval happens
+before the screen is opened, so a declined viewer never sees a frame or a
+portal prompt.
+
 ## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 6)
 
 * **Control stream** (bi-directional, length-prefixed `postcard`): auth,
@@ -642,8 +656,7 @@ app owns microphone, camera and speaker output.
 is remembered. Screen thumbnails use a bounded local worker, one capture at a
 time; closing the chooser cancels it. Only explicit screen confirmation starts
 a meeting publisher. Android Show me uses Camera2 independently of remote-screen
-capture and accessibility. See [usage and limits](MEETINGS.md) and the
-[October 21 handoff](DEVELOPMENT-2026-10-21.md) for verification and deployment.
+capture and accessibility. See [usage and limits](MEETINGS.md).
 
 ## UI
 

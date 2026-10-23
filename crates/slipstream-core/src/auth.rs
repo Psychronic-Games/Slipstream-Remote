@@ -66,18 +66,18 @@ impl HostAuth {
     }
 
     /// Verifies the viewer's response. On success returns the host
-    /// confirmation to send back.
-    pub fn finish(self, pakes: &[Vec<u8>], confirms: &[[u8; 32]]) -> Result<[u8; 32]> {
+    /// confirmation to send back and the index of the secret that matched.
+    pub fn finish(self, pakes: &[Vec<u8>], confirms: &[[u8; 32]]) -> Result<([u8; 32], usize)> {
         if pakes.len() != self.states.len() || confirms.len() != self.states.len() {
             bail!("malformed auth response");
         }
         let mut ok = None;
-        for ((state, msg), their_confirm) in self.states.into_iter().zip(pakes).zip(confirms) {
+        for (index, ((state, msg), their_confirm)) in self.states.into_iter().zip(pakes).zip(confirms).enumerate() {
             let Ok(key) = state.finish(msg) else { continue };
             let expected = confirm(&key, VIEWER_CONFIRM);
             // Constant-time compare; keep looping so timing doesn't reveal which matched.
             if constant_time_eq(&expected, their_confirm) && ok.is_none() {
-                ok = Some(confirm(&key, HOST_CONFIRM));
+                ok = Some((confirm(&key, HOST_CONFIRM), index));
             }
         }
         ok.ok_or_else(|| anyhow::anyhow!("wrong password"))
@@ -193,14 +193,16 @@ mod tests {
         (SecretKey::generate().public(), SecretKey::generate().public())
     }
 
-    fn run(host_pws: &[&str], typed: &str, host_seen_by_viewer: EndpointId, host: EndpointId, viewer: EndpointId) -> bool {
+    fn matched(host_pws: &[&str], typed: &str, host_seen_by_viewer: EndpointId, host: EndpointId, viewer: EndpointId) -> Option<usize> {
         let secrets: Vec<[u8; 32]> = host_pws.iter().map(|s| password_secret(s)).collect();
         let (h, challenges) = HostAuth::start(&secrets, &host, &viewer);
         let (v, pakes, confirms) = ViewerAuth::respond(typed, &challenges, &host_seen_by_viewer, &viewer).unwrap();
-        match h.finish(&pakes, &confirms) {
-            Ok(c) => v.verify_host(&c).is_ok(),
-            Err(_) => false,
-        }
+        let (c, index) = h.finish(&pakes, &confirms).ok()?;
+        v.verify_host(&c).is_ok().then_some(index)
+    }
+
+    fn run(host_pws: &[&str], typed: &str, host_seen_by_viewer: EndpointId, host: EndpointId, viewer: EndpointId) -> bool {
+        matched(host_pws, typed, host_seen_by_viewer, host, viewer).is_some()
     }
 
     #[test]
@@ -214,6 +216,14 @@ mod tests {
         let (h, v) = keys();
         assert!(run(&["temp42", "permanent-secret"], "permanent-secret", h, h, v));
         assert!(run(&["temp42", "permanent-secret"], "temp42", h, h, v));
+    }
+
+    #[test]
+    fn reports_which_password_matched() {
+        // Hosts ask before one-time-password links, never unattended ones.
+        let (h, v) = keys();
+        assert_eq!(matched(&["temp42", "permanent-secret"], "temp42", h, h, v), Some(0));
+        assert_eq!(matched(&["temp42", "permanent-secret"], "permanent-secret", h, h, v), Some(1));
     }
 
     #[test]

@@ -73,8 +73,7 @@ ImageReader output and the existing software H.264 encoder.
 UDP segmentation offload after reproducing a cold direct-link stall. Three
 fresh direct connections then passed; a cold relayed connection also passed.
 Idle capture revocation/regrant, PC control and rotation were rechecked.
-See the [day's handoff](../DEVELOPMENT-2026-10-18.md) and
-[audit](../AUDIT-2026-10-18.md). Physical-device and older-Android checks remain
+See the [audit](../AUDIT-2026-10-18.md). Physical-device and older-Android checks remain
 open; emulator checks do not complete the real-phone task above.
 
 

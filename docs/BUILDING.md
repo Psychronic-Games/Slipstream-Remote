@@ -65,7 +65,6 @@ scripts/check.sh python3 scripts/test-meetings-ui.py --client target/debug/slips
 ```
 
 The script prints a temporary evidence directory containing logs/screenshots.
-See the [latest handoff](DEVELOPMENT-2026-10-21.md) for completed release checks.
 
 ### Disk space
 
@@ -198,15 +197,17 @@ rebuilds every platform it lists.
 2. `scripts/release-version.sh patch` (fixes only) or `minor` (new
    features), check the changelog, and commit
    (`git commit -am "Release X.Y.Z"`). This also raises the build number.
-3. `scripts/build-station.sh`
-4. Upload to the station's web root:
-   - `clients/` apps first, `clients/manifest.json` **last**,
-   - `bin/` and the PHP files if they changed.
-
-   On a shared host, copy each file to a temporary name and rename it into
-   place, so nobody downloads a half-written file.
-5. If `bin/` changed, press **Restart relay** on the admin page.
-6. Check the update is offered and carries a `sig`:
+3. `scripts/build-station.sh`. Besides the apps and the signed
+   `clients/manifest.json`, it writes `lib/version.json` and
+   `lib/release-keys.txt` (the keys stations trust for their own updates).
+4. Push `main` (`git push origin main`), then
+   `scripts/publish-github-release.sh`. It tags the build's commit, packages
+   the assets with `scripts/package-release.py` (station zip, web tar, apps,
+   relay and the signed `station-update.json`), shows them and asks before
+   publishing the GitHub release with the changelog section as its notes.
+5. Stations with automatic updates install the release within 6 hours;
+   **Admin → Status → Install update** does it straight away. Check an update
+   is offered and carries a `sig`:
 
    ```sh
    curl -s -X POST https://support.example.com/api/ -H 'Content-Type: application/json' \
@@ -214,7 +215,9 @@ rebuilds every platform it lists.
    ```
 
 Running apps pick the update up within 6 hours, or about 20 seconds after
-they next start.
+they next start. To update a station by hand instead, upload `clients/` apps
+first and `clients/manifest.json` last, `bin/` and the PHP files, then press
+**Restart relay** if `bin/` changed.
 
 ### Publishing clients through a mounted station
 
@@ -278,31 +281,30 @@ otherwise copy it over. Build both from the same commit, or the script
 leaves the Mac app out (a mismatched build number would make Macs update in
 a loop).
 
-### Releases from CI (signed apps)
+### Release candidates from CI (signed apps)
 
-The CI/release workflows are prepared but have not run; the repository has
-no GitHub remote configured. Current published clients are built locally.
+Published releases are built locally (step 3 above), because the Android
+release certificate and the update signing key stay on the build machine.
+`.github/workflows/release.yml` builds Linux, Windows and macOS in CI when
+started by hand from the Actions tab (with a draft tag such as
+`v0.27.0-ci`), and attaches the artifacts plus `release.json` to a draft
+pre-release. Windows signing is conditional on the SignPath configuration;
+without it the executable stays unsigned. Tags don't start it, so it never
+adds a second draft beside a published release.
 
-Once the repository is published, `.github/workflows/release.yml` is configured
-to run on a `v*` version tag. It builds Linux, Windows and macOS and publishes
-the artifacts plus `release.json` as a draft GitHub release. Windows signing
-is conditional on the SignPath configuration; without it the executable stays
-unsigned. The workflow does not assemble a station zip or build Android.
-On the machine with the release key, download all artifacts from the chosen
-tag into a directory, then assemble the station:
+To build a station from such a draft on the machine with the release key:
 
 ```sh
-gh release download vX.Y.Z -D /tmp/rel
+gh release download v0.27.0-ci -D /tmp/rel
 scripts/build-station.sh --from-release /tmp/rel
 ```
 
-Assembly signs a new update manifest locally; CI does not receive the private
-update key or produce that manifest. Apps marked as code-signed in
-`release.json`, and Mac bundles, are served untouched by the station.
-Before the first CI release, set the repository
-variable `SLIPSTREAM_UPDATE_KEYS` to your release public key; the script
-refuses a release built with a different one. The SignPath variables are
-described at the top of the workflow, and the signing policy is in
+Assembly signs a new update manifest locally; CI never receives the private
+update key. Apps marked as code-signed in `release.json`, and Mac bundles,
+are served untouched by the station. Before the first CI build, set the
+repository variable `SLIPSTREAM_UPDATE_KEYS` to your release public key; the
+script refuses a release built with a different one. The SignPath variables
+are described at the top of the workflow, and the signing policy is in
 [CODE-SIGNING.md](CODE-SIGNING.md).
 
 ### Protocol changes
@@ -317,7 +319,9 @@ the station's update, while Android requires installing its new APK.
 
 An appended `StreamOpen`/`StreamReply` variant is an exception: an older peer
 rejects only that optional request stream. Existing variant layouts and
-discriminants must remain unchanged. See [ARCHITECTURE.md](ARCHITECTURE.md#session-protocol-alpn-slipstreamremote1-protocol_version-6).
+discriminants must remain unchanged. Link approval (0.27) needed no bump
+either: the host sends the existing `Notice` while it waits and `AuthFailed`
+if the link is declined, so older viewers show both. See [ARCHITECTURE.md](ARCHITECTURE.md#session-protocol-alpn-slipstreamremote1-protocol_version-6).
 
 ## Testing the Windows build on Linux
 
@@ -410,7 +414,8 @@ path. Back up both files: Android accepts an update only when its signing
 certificate matches the installed app. `--debuggable` uses the debug key;
 a direct Gradle build without release-key configuration also falls back to
 the debug key. Verify a release with `apksigner verify --print-certs` and
-compare its certificate with the [published handoff](DEVELOPMENT-2026-10-21.md).
+compare its certificate with the published one (SHA-256
+`d6ae3771378e9c00a82902e728012992834b9bf7e234fefed80dc85a4b879c6c`).
 Android updates are installed manually from the station and are outside the
 desktop update manifest.
 

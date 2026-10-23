@@ -102,6 +102,8 @@ pub struct ServerSettings {
     pub provisioned: bool,
     /// The station allows falling back to public relays.
     pub station_allows_public_relays: bool,
+    /// The station asks hosts to confirm one-time-password links (from its `hello`).
+    pub station_approves_links: bool,
     /// Relays learned from the directory server (cached for faster startup).
     pub relays: Vec<RelayUrl>,
     /// Also use the Slipstream public relay as a fallback.
@@ -147,6 +149,9 @@ pub struct HostSettings {
     pub allow_network_scan: bool,
     /// Permit authenticated controllers to send LAN wake packets.
     pub allow_wake_on_lan: bool,
+    /// Ask the person at this computer before a one-time-password link
+    /// through a private station starts. Slipstream Public always asks.
+    pub confirm_links: bool,
     /// Last numeric ID the server gave us (display only; the server is authoritative).
     pub last_device_id: Option<DeviceId>,
     /// The separately registered public endpoint's ID; never a private ID.
@@ -221,6 +226,7 @@ impl Default for ServerSettings {
             org_name: None,
             provisioned: false,
             station_allows_public_relays: true,
+            station_approves_links: false,
             relays: Vec::new(),
             use_public_relays: true,
         }
@@ -240,6 +246,7 @@ impl Default for HostSettings {
             allow_tunnels: false,
             allow_network_scan: true,
             allow_wake_on_lan: false,
+            confirm_links: false,
             last_device_id: None,
             public_device_id: None,
             portal_restore_token: None,

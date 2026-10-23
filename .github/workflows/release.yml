@@ -1,9 +1,12 @@
-# Builds a release from a version tag (v0.6.0 …): Linux, Windows (signed
-# through SignPath when it's set up) and macOS, published as a draft GitHub
-# release. Stations are then assembled from it with
-#   scripts/build-station.sh --from-release <tag>
+# Builds a release candidate in CI (run by hand from the Actions tab):
+# Linux, Windows (signed through SignPath when it's set up) and macOS,
+# published as a draft GitHub release. Stations are then assembled from it with
+#   scripts/build-station.sh --from-release <dir>
 # which also signs the update manifest with the release key. That key stays
 # on the maintainer's machine; CI only gets its public half.
+#
+# Published releases come from scripts/publish-github-release.sh, so tags
+# don't start this workflow (it would add a second, unsigned draft).
 #
 # Repository variables (Settings → Secrets and variables → Actions):
 #   SLIPSTREAM_UPDATE_KEYS   release public key (`slipstream-release pubkey`)
@@ -15,8 +18,11 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Draft release tag (e.g. v0.27.0-ci); never a published release's tag
+        required: true
 
 env:
   SLIPSTREAM_UPDATE_KEYS: ${{ vars.SLIPSTREAM_UPDATE_KEYS }}
@@ -36,8 +42,6 @@ jobs:
           sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang libxkbcommon-dev libdbus-1-dev
           pip3 install ziglang
           cargo install --locked cargo-zigbuild
-      - name: Check the tag matches Cargo.toml
-        run: test "v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" = "$GITHUB_REF_NAME"
       - name: Build (portable, glibc 2.31+)
         run: |
           STUB=$RUNNER_TEMP/zig-stubs; mkdir -p $STUB
@@ -142,5 +146,8 @@ jobs:
           cat artifacts/release.json
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
           draft: true
           files: artifacts/*

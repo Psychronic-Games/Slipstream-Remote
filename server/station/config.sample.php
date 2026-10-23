@@ -14,6 +14,14 @@ return [
     // 'relay_bytes_per_second' => 5242880,  // 5 MiB/s per connection
     // 'relay_max_connections' => 256,
 
+    // Station updates come from the project's GitHub releases, verified with
+    // the release keys in lib/release-keys.txt. Point them at a fork or a
+    // mirror of the releases API, or trust an extra key (hex, comma separated).
+    // Automatic installs are switched on or off on the admin page.
+    // 'update_repo' => 'Psychronic-Games/Slipstream-Remote',
+    // 'update_releases_url' => 'https://mirror.example.com/releases/latest.json',
+    // 'release_keys' => '',
+
     // Use a database instead of files (for very large installs).
     // 'db' => [
     //     'dsn'  => 'mysql:host=localhost;dbname=slipstream;charset=utf8mb4',

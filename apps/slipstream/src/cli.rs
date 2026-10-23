@@ -107,6 +107,9 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
                     ClientEvent::Org(None) => {}
                     ClientEvent::Notice(n) => println!("notice: {n}"),
                     ClientEvent::CallChanged => {},
+                    ClientEvent::LinkApproval => if !service && client.approvals().pending().is_some() {
+                        println!("a one-time-password link needs approval at a window; use the unattended password here");
+                    },
                     ClientEvent::UpdateAvailable(u) if service => {
                         #[cfg(windows)]
                         let _guard = match crate::service::UpdateGuard::acquire() {

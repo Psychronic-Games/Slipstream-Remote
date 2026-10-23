@@ -1078,3 +1078,5 @@ function slip_page_end(): void
 {
     echo '</main><footer><div class="elbow"></div><div class="seg"></div><span>Powered by Slipstream Remote · open source</span></footer></div></body></html>';
 }
+
+require_once __DIR__ . '/update.php';

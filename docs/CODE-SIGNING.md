@@ -16,8 +16,7 @@ is not Authenticode-signed and can trigger SmartScreen warnings.
 | Android release APK | Signed with the existing Android release certificate. Users install updates from the station; Android self-update is not implemented. Debuggable builds use a separate debug key. |
 | macOS app | The packaging script produces an ad-hoc-signed bundle. Developer ID signing, notarisation, and native build/runtime verification remain pending. |
 
-See the [latest handoff](DEVELOPMENT-2026-10-21.md) for published artifact
-verification, and [BUILDING.md](BUILDING.md#the-release-signing-key) for key
+See [BUILDING.md](BUILDING.md#the-release-signing-key) for key
 storage and backup instructions. A plain Cargo build without configured update
 public keys cannot install signed updates.
 

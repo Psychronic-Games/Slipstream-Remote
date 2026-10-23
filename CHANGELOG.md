@@ -13,6 +13,24 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Protect against phone scams: on Slipstream Public, a link made with the
+  one-time password waits until the person at the computer presses **Allow**,
+  beside a plain warning; it declines after a minute and replaces the code.
+  Unattended passwords never ask. Station admins can require the same
+  (**Settings → Ask the person at the computer**), and anyone can for their own
+  computer (**Config → Ask before links**). Works in the full and compact
+  windows and through the Windows service. Bridge warns against sharing the
+  ID and password with unexpected callers. No protocol change: older viewers
+  see the waiting message too.
+- Stations update themselves from signed GitHub releases: automatically in
+  the background (PHP-FPM), or with **Install update** on the admin page.
+  Every file is checked against a list signed with the release key before it
+  is installed; settings, data, `config.php` and `.htaccess` stay untouched.
+- Publish releases on GitHub with a ready-to-upload `slipstream-station.zip`,
+  the apps, the relay and the signed station update list
+  (`scripts/publish-github-release.sh`), and add a step-by-step
+  [station setup guide](docs/STATION-SETUP.md).
+
 ## 0.26.2 — 2026-10-22
 
 - Match Partner ID and Password field typography, height and alignment. Use

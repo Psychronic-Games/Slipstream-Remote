@@ -10,7 +10,7 @@ track them.
 | # | Issue | Labels |
 |---|---|---|
 | 01 | [Verify desktop sessions on real machines](01-verify-0.5.0-on-real-machines.md) | testing, **high** |
-| 02 | [Publish to GitHub and get CI green](02-github-and-ci.md) | infra, **high** |
+| 02 | [Get CI green on Linux, Windows and macOS](02-github-and-ci.md) | infra, **high** |
 | 03 | [macOS: build Slipstream.app on a Mac and test it](03-macos-app.md) | macOS, **high** |
 | 04 | [Windows service: verify UAC, elevated apps and the login screen](04-windows-service.md) (implemented; device checks open) | Windows, testing |
 | 05 | [Code signing, and downloads browsers trust](05-code-signing.md) | Windows, macOS, infra, **high** |
@@ -26,11 +26,9 @@ track them.
 | 16 | [Verify session windows and support tools on real machines](16-session-tools-real-machines.md) | testing |
 | 17 | [Group meetings with incoming calls and mobile Show me](17-group-meetings-and-show-me.md) (implemented in 0.23.0; physical room measurements open) | feature, testing |
 
-For meetings through 0.23.2, see the [usage guide](../MEETINGS.md) and
-[2026-10-21 publication handoff](../DEVELOPMENT-2026-10-21.md).
+For meetings, see the [usage guide](../MEETINGS.md).
 
-Start with the current priorities in [status](../STATUS.md#next-steps-suggested-order)
-and the [2026-10-21 handoff](../DEVELOPMENT-2026-10-21.md). Issues 04, 09 and 16
+Start with the current priorities in [status](../STATUS.md#next-steps). Issues 04, 09 and 16
 cover Windows-service, Android-host and session/support-tool runtime checks;
 11 includes Wayland reboot and KDE-upgrade recovery. Issue 01 retains the
 laptop and Debian-server checks; 02 and 03 cover GitHub/CI and macOS.

@@ -136,6 +136,34 @@ static ONLINE: AtomicBool = AtomicBool::new(false);
 static BG_BRUSH: AtomicUsize = AtomicUsize::new(0);
 static BUTTON_FONT: AtomicUsize = AtomicUsize::new(0);
 
+/// Asks "Allow remote control?" in a message box on its own thread, so the
+/// window keeps painting. Decline is the default button.
+fn ask_link(request: slipstream_session::approval::LinkRequest, answer: impl FnOnce(bool) + Send + 'static) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MessageBoxW,
+    };
+    std::thread::spawn(move || {
+        let via = if request.public { " through Slipstream Public" } else { "" };
+        let body = wide(&format!(
+            "\u{201c}{}\u{201d} wants to see and control this computer{via}. The name is chosen by whoever is connecting.\n\n\
+             BEWARE OF SCAMS: {}\n\nAllow this link? It is declined by itself after a minute.",
+            request.peer,
+            super::approval::SCAM_WARNING
+        ));
+        let title = wide("Slipstream Remote: allow remote control?");
+        // SAFETY: both strings outlive the call.
+        let choice = unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                body.as_ptr(),
+                title.as_ptr(),
+                MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND,
+            )
+        };
+        answer(choice == IDYES);
+    });
+}
+
 fn wake(msg: u32) {
     let h = HWND_BITS.load(Ordering::Relaxed);
     if h != 0 {
@@ -195,6 +223,8 @@ pub fn run(
         });
     }
 
+    // This window answers link approvals for the in-process host.
+    let _approvals = (!via_service).then(|| client.approvals().receiver());
     // Client events → view.
     {
         let view = view.clone();
@@ -232,6 +262,13 @@ pub fn run(
                         ClientEvent::HostStatus { session, text } => {let show=!text.is_empty();v.support.update(session,text);if show {wake(WM_APP+3);}},
                         ClientEvent::HostChat { text, .. } => v.note = format!("Message: {text}"),
                         ClientEvent::Notice(n) | ClientEvent::Motd(n) => v.note = n,
+                        ClientEvent::LinkApproval if !via_service => {
+                            if let Some(request) = client.approvals().pending() {
+                                let approvals = client.approvals();
+                                let id = request.id;
+                                ask_link(request, move |allowed| approvals.answer(id, allowed));
+                            }
+                        }
                         ClientEvent::UpdateAvailable(u) => {
                             if v.installing { continue; }
                             v.note = format!("Version {} is available: press Install update.", u.label());
@@ -249,6 +286,7 @@ pub fn run(
     if via_service {
         let mut bridge=crate::service_chat::Gui::start(&rt,eframe::egui::Context::default());
         service_sender = Some(bridge.sender());
+        let sender = bridge.sender();
         let view=view.clone();
         rt.spawn(async move {
             while let Some(event)=bridge.events.recv().await {
@@ -261,6 +299,7 @@ pub fn run(
                         Event::Started{peer,..}=>v.status=format!("{} IS CONNECTED",peer.to_uppercase()),
                         Event::Ended{session}=>{v.support.remove(session);v.status="ONLINE · READY FOR LINK".into();},
                         Event::Message{ours:false,text,..}=>{v.note=format!("Message: {text}");wake(WM_APP+3);},
+                        Event::LinkApproval(Some(request))=>{let (sender,id)=(sender.clone(),request.id);ask_link(request,move|allowed|{sender.answer_link(id,allowed);});},
                         _=>{},
                     }
                 }

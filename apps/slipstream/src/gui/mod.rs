@@ -2,6 +2,7 @@
 
 #[cfg(target_os = "android")]
 mod android;
+mod approval;
 mod autostart;
 mod files;
 mod file_previews;
@@ -364,6 +365,7 @@ pub struct App {
     session_tabs: Arc<Mutex<session_tabs::Tabs>>,
     quick_connect: quick_connect::QuickConnect,
     meetings: meetings::Meetings,
+    link_approval: approval::LinkApproval,
     next_tab: u64,
     next_window: u64,
     connect_destination: Option<egui::ViewportId>,
@@ -467,6 +469,7 @@ impl App {
             session_tabs: Arc::new(Mutex::new(session_tabs::Tabs::default())),
             quick_connect: Default::default(),
             meetings: Default::default(),
+            link_approval: Default::default(),
             next_tab: 1,
             next_window: 1,
             connect_destination: None,
@@ -546,6 +549,7 @@ impl App {
                         self.service_public_status = public;
                     },
                     Event::MeetingCall(call) => self.meetings.incoming = call,
+                    Event::LinkApproval(request) => self.link_approval.pending = request,
                     Event::Started { session, peer } => {
                         if !self.incoming.iter().any(|s| s.id == session) {
                             self.incoming.push(IncomingSession {
@@ -623,7 +627,7 @@ impl App {
                     self.toast(format!("Received {}", path.display()), pal::GREEN);
                 }
                 ClientEvent::Notice(n) => self.toast(n, pal::GOLD),
-                ClientEvent::CallChanged => {}
+                ClientEvent::CallChanged | ClientEvent::LinkApproval => {}
                 ClientEvent::UpdateAvailable(info) => {
                     if self.update.as_ref().is_none_or(|u| !u.installing && u.info != info) {
                         self.update = Some(UpdateState::new(info));
@@ -1818,6 +1822,7 @@ impl eframe::App for App {
         // Runs even while the window is hidden in the tray.
         self.handle_events();
         meetings::poll(self, ctx);
+        approval::poll(self, ctx);
         let title = window_title(self.org.as_deref());
         if self.window_title != title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));

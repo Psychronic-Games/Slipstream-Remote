@@ -6,7 +6,7 @@ members = ["crates/*", "apps/*", "tools/*"]
 version = "0.26.2"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/slipstream-remote/slipstream"
+repository = "https://github.com/Psychronic-Games/Slipstream-Remote"
 authors = ["Slipstream Remote contributors"]
 
 [workspace.dependencies]

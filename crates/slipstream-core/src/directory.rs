@@ -103,6 +103,9 @@ pub struct Hello {
     /// Whether clients may fall back to public relays.
     #[serde(default = "yes")]
     pub public_relays: bool,
+    /// Hosts ask their user before one-time-password links start.
+    #[serde(default)]
+    pub approve_links: bool,
 }
 
 fn yes() -> bool {

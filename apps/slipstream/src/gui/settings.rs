@@ -19,6 +19,7 @@ pub struct SettingsForm {
     allow_tunnels: bool,
     allow_network_scan: bool,
     allow_wake_on_lan: bool,
+    confirm_links: bool,
     password_len: usize,
     new_permanent: String,
     has_permanent: bool,
@@ -47,6 +48,7 @@ impl From<&Settings> for SettingsForm {
             allow_tunnels: s.host.allow_tunnels,
             allow_network_scan: s.host.allow_network_scan,
             allow_wake_on_lan: s.host.allow_wake_on_lan,
+            confirm_links: s.host.confirm_links,
             password_len: s.host.one_time_password_len,
             new_permanent: String::new(),
             has_permanent: s.host.permanent_password_secret.is_some(),
@@ -176,6 +178,12 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                     "Let the person connecting reach services on this computer and its network through the link (e.g. Remote Desktop). Off unless you need it.",
                 );
             }); });
+            row(ui, "Ask before links", |ui| {
+                ui.checkbox(&mut f.confirm_links, "Ask me to allow one-time-password links").on_hover_text(
+                    "Someone at this computer has to press Allow before a link that used the one-time password starts. \
+                     Slipstream Public always asks. The unattended password never asks.",
+                );
+            });
             row(ui, "One-time password length", |ui| {
                 ui.add(egui::Slider::new(&mut f.password_len, 4..=12));
             });
@@ -434,6 +442,7 @@ fn save(app: &mut App) {
         s.host.allow_tunnels = allow_tunnels;
         s.host.allow_network_scan = f.allow_network_scan;
         s.host.allow_wake_on_lan = f.allow_wake_on_lan;
+        s.host.confirm_links = f.confirm_links;
         s.host.one_time_password_len = len;
         if !new_permanent.is_empty() {
             s.host.set_permanent_password(Some(&new_permanent));

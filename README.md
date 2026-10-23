@@ -1,16 +1,40 @@
 # Slipstream Remote
 
-**Fast, free, open-source remote desktop.** Give someone your 9-digit ID and
-password and they can see and control your screen — or do the same to theirs.
-No account required for remote sessions, no subscriptions, no telemetry.
+**Fast, free, open-source remote desktop and remote support.** Give someone
+your 9-digit ID and one-time password and they can see and control your
+screen, or do the same to theirs. No account, no subscription, no telemetry.
 MIT licensed.
 
+Slipstream is built for IT firms and people who are tired of paying for
+TeamViewer: use the free **Slipstream Public** service straight away, or run
+your own **station** (a folder on ordinary PHP web hosting) that hands out
+apps preconfigured for your organisation, keeps its own device directory and
+relays traffic when a direct connection isn't possible.
+
 ![Slipstream bridge screen](docs/screenshots/bridge.png)
+
+## Download
+
+**[Latest release →](https://github.com/Psychronic-Games/Slipstream-Remote/releases/latest)**
+
+| You want to… | Get |
+|---|---|
+| Get or give help right now | The app for your system from the latest release, or from [public.slipstreamremote.com](https://public.slipstreamremote.com/). It connects through Slipstream Public. |
+| Run your own private service | `slipstream-station.zip` from the latest release, then follow the **[station setup guide](docs/STATION-SETUP.md)**. |
+| Install apps for your clients | Your station's own download page: those apps connect to your station by themselves. |
+
+Every release lists its changes in the [changelog](CHANGELOG.md). Desktop apps
+only install updates signed with the project's release key; stations check
+the same signature before installing anything.
 
 ## Features
 
 - **TeamViewer-style access** — short numeric IDs, one-time passwords that
   rotate after every session, optional permanent password for unattended access.
+- **Scam protection** — on Slipstream Public (and on any station that asks
+  for it), a link made with the one-time password waits until the person at
+  the computer presses **Allow**, beside a plain warning about phone scams.
+  Unattended passwords never ask.
 - **End-to-end encrypted** — every link is QUIC/TLS 1.3 between the two devices.
   Remote-session passwords are verified with SPAKE2, so they never cross the
   network and can't be brute-forced offline — not even by the server.
@@ -58,8 +82,9 @@ MIT licensed.
 - **Quality presets** — Balanced, Speed, Quality, Low bandwidth; automatic
   bitrate adaptation.
 - **Runs in the tray**, starts with the system, stays reachable.
-- **Desktop apps update themselves** from your station — upload a new build,
-  and they offer *Install & restart* and keep their settings. Windows app updates
+- **Stations and apps update themselves** — stations install new signed
+  releases from GitHub (automatically, or with one click on the admin page),
+  and the desktop apps then offer *Install & restart*, keeping their settings. Windows app updates
   also update an installed service. Android updates
   are installed from the station's APK.
 - **Works immediately, with self-hosting available** — raw downloads use
@@ -89,46 +114,24 @@ See [status](docs/STATUS.md) for platform verification and limits.
 
 ## Quick start
 
-**New here? Read [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md)**: a
-step-by-step guide from an empty web server to your first session, including
-client installs, unattended access and troubleshooting.
+1. **Download and open the app** on both computers (Windows 10/11, Linux,
+   Android 8+; macOS is still being verified). No installer and no account
+   are needed.
+2. On the computer that needs help, the **BRIDGE** page shows **Your ID** and
+   a **one-time password**.
+3. On the other computer, enter them under **Establish link** and press
+   **Engage**. On Slipstream Public, the person being helped presses
+   **Allow**.
 
-For public access, get the app from
-[Slipstream Public](https://public.slipstreamremote.com/) and connect using
-the Public tab on both computers. No station setup is needed. The steps below
-set up your own station, which gets its own device directory and IDs; its tab
-becomes the default without removing your separate public ID.
+For computers nobody sits at, set an **unattended password** under
+**Config**; it connects without a prompt. On Windows, the optional
+Slipstream service also reaches the login screen and administrator prompts.
+The [getting started guide](docs/GETTING-STARTED.md) covers installing,
+unattended access, the support tools and troubleshooting.
 
-### 1. Set up your station (once)
-
-Run `scripts/build-station.sh`, upload the contents of
-`dist/slipstream-station/` to the root of a (sub)domain with PHP 8 and HTTPS
-(e.g. `support.example.com`), and open `/admin/` to name it and set an admin
-password. See [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md#1-set-up-your-station).
-
-### 2. Get the app
-
-Download it from your station's page (`https://support.example.com/`) on
-every computer — it connects to your station by itself (or with the setup
-code shown on the page). The same session protocol connects the supported
-platforms; Android hosting requires approval on the phone, and macOS still
-needs native verification.
-
-### 3. Connect
-
-The **BRIDGE** page shows the computer's ID and password. On the other
-computer, enter them under **Establish link** and press **Engage**.
-
-The one-time code and an unattended password both work with the same ID,
-including through the Windows service. Share the rotating code when you do
-not want to share the unattended password. Update an older installed service
-to make its code available in the app.
-
-On Wayland, approve screen sharing when Slipstream starts, or choose
-**Config → Screen permission → Approve now** before someone connects.
-Access stays ready while it runs in the tray; the desktop decides whether
-approval can be remembered across restarts. Windows needs no screen-sharing
-approval, including when its background service hosts the computer.
+> **Beware of scams.** Nobody from a bank, Microsoft, Apple or "tech
+> support" will phone you out of the blue and ask you to install a
+> remote-access app. Only share your ID and password with someone you know.
 
 ## Command line
 
@@ -147,35 +150,32 @@ slipstream update                           # install the newest build from your
 `SLIPSTREAM_HOME=/some/dir` keeps settings and identity elsewhere (handy for
 running two instances on one machine).
 
-## Building
-
-```sh
-scripts/check.sh cargo build --release --locked
-scripts/check.sh                # workspace tests, with resource/cache limits
-scripts/build-station.sh        # portable Linux + Windows builds, ready to upload
-```
-
-Build dependencies, cross-compiling and the release checklist are in
-[docs/BUILDING.md](docs/BUILDING.md).
-
 ## Documentation
 
 | | |
 |---|---|
-| [Getting started](docs/GETTING-STARTED.md) | Station setup, installing clients, connecting, unattended access, troubleshooting |
-| [Running a station](docs/SERVER.md) | Station reference: requirements, data, relay, access control, Nginx, standalone server |
-| [Building and releasing](docs/BUILDING.md) | Toolchain, release builds, publishing updates |
+| [Station setup](docs/STATION-SETUP.md) | Step by step: your own station from a release, on ordinary web hosting |
+| [Getting started](docs/GETTING-STARTED.md) | Installing clients, connecting, unattended access, support tools, troubleshooting |
+| [Running a station](docs/SERVER.md) | Station reference: requirements, updates, data, relay, access control, Nginx, standalone server |
+| [Meetings and Show me](docs/MEETINGS.md) | Calls, admission, devices, screen previews and mobile camera sharing |
+| [Building and releasing](docs/BUILDING.md) | Toolchain, release builds, publishing releases |
 | [Architecture](docs/ARCHITECTURE.md) | Networking, authentication, protocol, platform backends |
 | [Status](docs/STATUS.md) | What's verified, known gaps, next steps |
-| [Meetings and Show me](docs/MEETINGS.md) | Calls, admission, devices, screen previews and mobile camera sharing |
-| [Latest development handoff](docs/DEVELOPMENT-2026-10-22.md) | Published 0.26.2, compact forms/actions, verification and rollback |
-| [2026-10-20 handoff](docs/DEVELOPMENT-2026-10-20.md) | Earlier 0.22.1 publication and verification |
-| [2026-10-19 handoff](docs/DEVELOPMENT-2026-10-19.md) | Support features, audit and remaining device checks |
-| [2026-10-18 handoff](docs/DEVELOPMENT-2026-10-18.md) | Earlier features, verification and deployment history |
-| [2026-10-18 audit](docs/AUDIT-2026-10-18.md) | Fixed reliability/performance findings, regression evidence and limits |
-| [Open issues](docs/issues/README.md) | The work queue, ready to file on GitHub |
-| [Changelog](CHANGELOG.md) | What's in each version |
+| [Open issues](docs/issues/README.md) | The work queue |
 | [Code signing policy](docs/CODE-SIGNING.md) | What is signed, by whom, and privacy |
+| [Changelog](CHANGELOG.md) | What's in each version |
+
+## Building from source
+
+```sh
+scripts/check.sh cargo build --release --locked
+scripts/check.sh                # workspace tests, with resource/cache limits
+scripts/build-station.sh        # portable Linux + Windows (+ Android) builds, ready to upload
+```
+
+Build dependencies, cross-compiling and the release checklist are in
+[docs/BUILDING.md](docs/BUILDING.md). Contributions are welcome: open an
+issue first for larger changes.
 
 ## How it works
 
@@ -184,8 +184,10 @@ protocol, the latency control loop and the platform backends.
 
 ## Roadmap
 
+- Real-hardware verification: Windows service (UAC, login screen), Android phones, macOS
 - Hardware video encoding (NVENC, VA-API, VideoToolbox, Media Foundation)
-- Android real-phone verification, hardware encoding, host audio/clipboard/files and updates
+- Android hardware encoding, host audio/clipboard/files and self-updates
+- Windows and macOS code signing
 
 ## License
 

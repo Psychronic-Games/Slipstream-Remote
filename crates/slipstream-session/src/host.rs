@@ -40,7 +40,7 @@ async fn fail(send: &mut SendStream, reason: impl Into<String>, retry_after_secs
     Ok(())
 }
 
-pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::EndpointId) -> Result<()> {
+pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::EndpointId, public: bool) -> Result<()> {
     let peer = conn.remote_id();
     let (mut send, mut recv, hello) = tokio::time::timeout(AUTH_RESPONSE_WAIT, async {
         let (send, mut recv) = conn.accept_bi().await.context("waiting for control stream")?;
@@ -67,7 +67,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     // Password check (see slipstream_core::auth), one at a time: the
     // throttle stays locked until this attempt is counted, so parallel
     // connections can't slip extra guesses in before the lockout starts.
-    let confirm = {
+    let (confirm, matched) = {
         let Ok(mut throttle) = tokio::time::timeout(AUTH_QUEUE_WAIT, inner.throttle.lock()).await else {
             fail(&mut send, "the device is busy with another sign-in — try again", 5).await?;
             return Ok(());
@@ -106,6 +106,24 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
             }
         }
     };
+
+    // A one-time password may have been read out to a stranger on the phone:
+    // on Slipstream Public, and wherever the station or user asks for it,
+    // someone at this computer has to allow the link (see `approval`).
+    let one_time = matched == 0;
+    if one_time && (public || settings.host.confirm_links || settings.server.station_approves_links) {
+        write_msg(&mut send, &HostMsg::Notice(crate::approval::WAITING.into())).await?;
+        let gone = async {
+            conn.closed().await;
+        };
+        if let Err(reason) = crate::approval::ask(&inner, &viewer_name, public, gone).await {
+            info!(%peer, %reason, "link not allowed");
+            // The code may be in the wrong hands: never accept it again.
+            rotate_password(&inner);
+            fail(&mut send, reason, 0).await?;
+            return Ok(());
+        }
+    }
 
     // Open (or reuse) the screen session. On Wayland the first time this
     // shows the desktop's "allow screen sharing" dialog on this machine.
@@ -186,12 +204,16 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     let restarting=reason==slipstream_core::proto::HOST_RESTARTING;
     inner.emit(ClientEvent::HostSessionEnded { session: id, reason });
     // A new one-time password after every session, like TeamViewer.
+    rotate_password(&inner);
+    conn.close((if restarting {slipstream_core::proto::RESTART_CLOSE_CODE}else{0}).into(), b"bye");
+    Ok(())
+}
+
+fn rotate_password(inner: &Inner) {
     let len = inner.settings.lock().unwrap().host.one_time_password_len.clamp(4, 32);
     let pw = slipstream_core::auth::generate_password(len);
     *inner.password.lock().unwrap() = pw.clone();
     inner.emit(ClientEvent::Password(pw));
-    conn.close((if restarting {slipstream_core::proto::RESTART_CLOSE_CODE}else{0}).into(), b"bye");
-    Ok(())
 }
 
 /// Shared by local approval and incoming sessions, so preparing access never

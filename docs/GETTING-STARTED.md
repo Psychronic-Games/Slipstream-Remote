@@ -31,124 +31,11 @@ it.
 
 ## 1. Set up your station
 
-### What you need
-
-- **A domain or subdomain** for the station, e.g. `support.example.com`. The
-  station must sit at the root of it, not in a subfolder.
-- **Ordinary web hosting** on a Linux server with:
-  - PHP 8.0 or newer (with the standard `sodium` extension),
-  - HTTPS (a free Let's Encrypt certificate is fine),
-  - Apache with `.htaccess` allowed, plus `mod_rewrite` and `mod_proxy_http`
-    (Apache 2.4.47+) for the built-in relay.
-
-  That is the default on Virtualmin, cPanel/WHM and most VPS setups. No
-  Docker, no database server and no root access are needed.
-- **The station package**: the `slipstream-station` folder. Either take it
-  from a release, or build it yourself with `scripts/build-station.sh` (see
-  [BUILDING.md](BUILDING.md)).
-
-> If PHP isn't allowed to start programs on your host, the directory and
-> downloads still work. Connections that can't go direct need public fallback
-> enabled on both station and client, or a separately managed relay.
-> You can also skip PHP entirely and run
-> the server binary. See [SERVER.md](SERVER.md#other-web-servers).
-
-### Step 1: Create the site
-
-Point a DNS record (`A`/`AAAA`) for your subdomain at your server and create
-a website for it with HTTPS.
-
-**On Virtualmin:**
-
-1. *Create Virtual Server*, enter the domain (e.g. `support.example.com`),
-   and keep *website* and *SSL website* enabled.
-2. *Server Configuration → SSL Certificate → Let's Encrypt*, then
-   *Request Certificate*.
-3. The web root is `/home/<site-user>/public_html`.
-
-**On cPanel:** add the subdomain under *Domains*, then run *SSL/TLS Status →
-AutoSSL*. The web root is shown next to the domain.
-
-### Step 2: Upload the station
-
-Upload the **contents** of `slipstream-station/` (not the folder itself)
-into the web root, keeping the subfolders:
-
-```
-public_html/
-├── index.php        ← download page
-├── download.php
-├── admin/           ← admin page
-├── api/             ← the directory the apps talk to
-├── assets/
-├── bin/             ← the relay program
-├── clients/         ← available desktop apps and Android APK + manifest.json
-└── lib/
-```
-
-Use SFTP, your panel's file manager or `rsync`. Upload as the **site's own
-user** so the files belong to it (Virtualmin and cPanel do this
-automatically). Make sure `bin/slipstream-server-linux-x86_64` keeps its
-"executable" permission (mode 755).
-
-### Step 3: Run the setup
-
-Open `https://support.example.com/admin/` and fill in:
-
-- **Organisation name** — shown to your clients in the app and on the
-  download page, and used in download file names
-  ("Slipstream Remote - Acme IT.exe").
-- **Admin password** — at least 10 characters.
-
-The station then creates its settings and private **access key**, writes its
-relay routing into `.htaccess`, and starts the relay.
-
-### Step 4: Check the status page
-
-The **Status** tab shows the station at a glance (devices, devices online,
-the relay as **ACTIVE**, **NOT ROUTED** or **DOWN**, and the access mode). It
-also lists checks, each with a hint when it fails. Every check should be
-green:
-
-| Check | If it's not green |
-|---|---|
-| PHP 8.x | Switch the site to PHP 8.0 or newer in your panel. |
-| Signature checking (sodium) | Ask your host to enable the PHP `sodium` extension. |
-| Device storage / outside the web root | The station keeps its data in `slipstream-data/` *next to* `public_html`. If that can't be written, it falls back to `public_html/data`, which is protected only by `.htaccess`. Make the folder next to it writable for the site user. |
-| HTTPS | Install a certificate (Step 1). |
-| Relay program present | Upload `bin/` again. |
-| PHP may start the relay | `proc_open` is disabled on this host. Run the relay as a service instead ([SERVER.md](SERVER.md#other-web-servers)). |
-| Relay running | Make sure `bin/` is executable, press **Restart relay** and read the relay log at the bottom of the page. |
-| Web server forwards /relay | Enable `mod_rewrite` and `mod_proxy_http`, and allow `.htaccess` overrides (`AllowOverride FileInfo`). On Nginx, see [SERVER.md](SERVER.md#other-web-servers). |
-
-The **Client downloads** list underneath shows which apps the station
-offers, and the build number they are.
-
-The relay restarts itself after a server reboot: the first app that checks
-in brings it back up.
-
-### Step 5: Choose your settings
-
-On the **Settings** tab:
-
-- **Private** (on by default, recommended): only apps downloaded from *your*
-  station can use it. Strangers can't register devices or look up your IDs.
-- **Public backup relay**: permits the private endpoint to use Slipstream
-  Public's relay. Both the station and client must allow it. This setting is
-  separate from the app's public ID, which remains available on its Public tab.
-- **Message shown in every app**: e.g. "Call us on 555-0100 before
-  connecting".
-- **Download page password**: stops random visitors downloading your
-  preconfigured app. Updates from inside the app still work without it.
-- **Access key → Make a new access key**: if an app has fallen into the
-  wrong hands. Every client then has to download the app again.
-
-### Step 6: Back up
-
-Back up the `slipstream-data/` folder. It holds your access key, settings,
-the device list and your technicians' accounts. To move the station to another server, copy `public_html`
-and `slipstream-data/`, then repoint DNS. Apps only know the domain name, so
-they follow automatically.
+Follow the **[station setup guide](STATION-SETUP.md)**: download
+`slipstream-station.zip` from the latest GitHub release, upload it to a
+(sub)domain with PHP 8 and HTTPS, open `/admin/`, and check that the status
+page is green. It takes about 15 minutes, and the station keeps itself up to
+date after that.
 
 ---
 
@@ -288,6 +175,17 @@ calls, device selection and screen-sharing previews. Meetings and remote
 support links run independently.
 
 ## 3. Connect to a computer
+
+**Allowing a link.** On Slipstream Public, a link made with the one-time
+code waits until the person at the computer presses **Allow**. The prompt
+names the connecting device (a name its owner chose, so it proves nothing)
+and warns about phone scams. It declines by itself after a minute, and a
+declined code is replaced straight away. Station admins can ask for the same
+on their station (**Settings → Ask the person at the computer**), and anyone
+can switch it on for their own computer (**Config → Ask before links**). The
+unattended password never asks, so computers nobody sits at keep working.
+On the Windows service, the prompt appears in the signed-in user's session;
+at the login screen, use the unattended password.
 
 The device's one-time code and its optional unattended password both work
 with the same ID. A code changes after a session ends; changing it does not
@@ -557,12 +455,11 @@ updates and re-downloads.
 
 ## 4. Keeping up to date
 
-**Updating the station.** Build a new package and upload `clients/` again.
-Upload the apps first and `clients/manifest.json` last, so no app sees the
-new version before its file is there. Also upload `bin/` and the PHP files
-if they changed. Your settings and devices live in `slipstream-data/` and
-are never touched. If `bin/` changed, press **Restart relay** on the admin
-page.
+**Updating the station.** Stations install new releases from GitHub by
+themselves, after checking the release signature (see
+[Updates](STATION-SETUP.md#updates)). **Admin → Status → Station software**
+shows the installed version and has **Install update** and **Check now**.
+Stations from before 0.27 need one manual upload of a current package.
 
 **Updating desktop apps.** Apps check your station about 20 seconds after they
 start and then every 6 hours. When a newer build is there, a banner offers
