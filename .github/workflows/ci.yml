@@ -12,11 +12,18 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # OpenH264 needs nasm for its SIMD code (2-3x faster video).
-      - uses: ilammy/setup-nasm@v1
+      - name: nasm
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update && sudo apt-get install -y nasm ;;
+            macOS) brew install nasm ;;
+            Windows) choco install nasm -y --no-progress && echo 'C:\Program Files\NASM' >> "$GITHUB_PATH" ;;
+          esac
       - name: Linux system libraries
         if: runner.os == 'Linux'
         run: |
@@ -28,7 +35,7 @@ jobs:
       - run: cargo test --workspace
       - name: Release build
         run: cargo build --release -p slipstream -p slipstream-server
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: slipstream-${{ matrix.os }}
           path: |

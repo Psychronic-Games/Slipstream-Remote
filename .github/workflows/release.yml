@@ -31,15 +31,14 @@ jobs:
   linux:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 } # the build number is the commit count
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-unknown-linux-gnu }
-      - uses: ilammy/setup-nasm@v1
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang libxkbcommon-dev libdbus-1-dev
+          sudo apt-get install -y nasm libpipewire-0.3-dev libspa-0.2-dev clang libxkbcommon-dev libdbus-1-dev
           pip3 install ziglang
           cargo install --locked cargo-zigbuild
       - name: Build (portable, glibc 2.31+)
@@ -52,16 +51,18 @@ jobs:
           mkdir out
           cp target/x86_64-unknown-linux-gnu/release/slipstream out/slipstream-linux-x86_64
           cp target/x86_64-unknown-linux-gnu/release/slipstream-server out/slipstream-server-linux-x86_64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: linux, path: out/ }
 
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: dtolnay/rust-toolchain@stable
-      - uses: ilammy/setup-nasm@v1
+      - name: nasm
+        shell: bash
+        run: choco install nasm -y --no-progress && echo 'C:\Program Files\NASM' >> "$GITHUB_PATH"
       - name: Software renderer (Mesa, pinned in packaging/windows/softgl.txt)
         shell: bash
         run: |
@@ -82,11 +83,11 @@ jobs:
           ! grep -qs "not using any assembly" target/release/build/openh264-sys2-*/output
           mkdir out && cp target/release/slipstream.exe out/slipstream-windows-x86_64.exe
       - id: unsigned
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with: { name: windows-unsigned, path: out/ }
       - name: Sign with SignPath
         if: vars.SIGNPATH_ORGANIZATION_ID != ''
-        uses: signpath/github-action-submit-signing-request@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -104,19 +105,19 @@ jobs:
           else
             cp out/slipstream-windows-x86_64.exe final/ && : > final/signed.txt
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: windows, path: final/ }
 
   macos:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: "aarch64-apple-darwin,x86_64-apple-darwin" }
       - run: brew install nasm
       - run: scripts/build-macos.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: macos, path: dist/slipstream-macos.zip }
 
   release:
@@ -124,9 +125,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { path: artifacts, merge-multiple: true }
       - name: Describe the build
         run: |
@@ -144,7 +145,7 @@ jobs:
           PY
           rm -f artifacts/signed.txt
           cat artifacts/release.json
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag }}
           target_commitish: ${{ github.sha }}
