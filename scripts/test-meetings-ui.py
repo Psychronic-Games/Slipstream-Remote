@@ -34,7 +34,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--client', type=Path, default=Path('target/debug/slipstream'))
     parser.add_argument('--tabs', action='store_true', help='Audit native tab groups instead of meetings')
+    parser.add_argument('--showcase', type=Path, help='Friendly names, and copy the README/guide pictures here')
     args = parser.parse_args()
+    # The documentation's pictures come from this audit; it doesn't depend on the names.
+    names = ['Dana (support desk)', 'Sam'] if args.showcase else ['Technician fixture', 'Remote user fixture']
+    org = 'Example IT' if args.showcase else 'Meeting fixture'
+    message = 'Restarting the print server now' if args.showcase else 'Meeting fixture message'
     root = Path(__file__).resolve().parent.parent
     cached = Path.home() / '.cache/slipstream-qa-tools'
     tools = cached / 'root/usr/bin'
@@ -168,7 +173,7 @@ def main():
         shutil.copytree(root / 'server/station', web)
         data = base / 'data'
         (web / 'config.php').write_text('<?php return ["data_dir"=>' + repr(str(data)) + '];\n')
-        subprocess.run([php, '-r', "require $argv[1]; slip_station_save(['private'=>true,'access_key'=>'fixture-meeting-access','org'=>'Meeting fixture','public_relays'=>false,'admin_hash'=>'disabled']);", str(web / 'lib/slipstream.php')], check=True, capture_output=True)
+        subprocess.run([php, '-r', "require $argv[1]; slip_station_save(['private'=>true,'access_key'=>'fixture-meeting-access','org'=>'"+org+"','public_relays'=>false,'admin_hash'=>'disabled']);", str(web / 'lib/slipstream.php')], check=True, capture_output=True)
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -199,7 +204,7 @@ def main():
         wait(lambda: Path(f'/tmp/.X11-unix/X{display}').exists(), 'Xvfb')
         windows = []
         profiles = []
-        for index, name in enumerate(['Alpha', 'Beta'] if args.tabs else ['Technician fixture', 'Remote user fixture']):
+        for index, name in enumerate(['Alpha', 'Beta'] if args.tabs else names):
             profile = base / f'profile-{index}'
             profile.mkdir()
             profiles.append(profile)
@@ -309,10 +314,10 @@ def main():
         click(host,'Chat','host-chat-column')
         # The message box sits at the foot of the chat column (1140x1100 fixture).
         click_point(host,960,1018,'host-chat')
-        xdo('type', '--clearmodifiers', '--delay', '0', 'Meeting fixture message')
+        xdo('type', '--clearmodifiers', '--delay', '0', message)
         xdo('key','Return')
         click(guest,'Chat 1','guest-unread-chat')
-        wait(lambda:locate(guest,'Meeting fixture message','guest-chat'),'group Subspace chat')
+        wait(lambda:locate(guest,message,'guest-chat'),'group Subspace chat')
         # Hovering the message shows + React at its top right (1140x1100
         # fixture); its picker offers the six quick reactions and +.
         g=geometry(guest);xdo('mousemove',g['X']+950,g['Y']+280);time.sleep(.6)
@@ -363,6 +368,10 @@ def main():
         click(host,'End for everyone','host-ended')
         wait(lambda:locate(guest,'Close meeting','guest-ended',controls=True),'organizer ending the room')
         print('Chat column/unread count, persistent media controls, screen choice/Cancel, narrow live view and confirmed teardown passed',flush=True)
+        if args.showcase:
+            args.showcase.mkdir(parents=True,exist_ok=True)
+            for shot,name in [('guest-react-all','meeting'),('guest-ringing','meeting-call'),('host-record-settings','meeting-record')]:
+                shutil.copy(base/f'{shot}.png',args.showcase/f'{name}.png');print('wrote',args.showcase/f'{name}.png',flush=True)
     finally:
         for child in reversed(children):
             if child.poll() is None:

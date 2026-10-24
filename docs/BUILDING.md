@@ -197,15 +197,17 @@ rebuilds every platform it lists.
 2. `scripts/release-version.sh patch` (fixes only) or `minor` (new
    features), check the changelog, and commit
    (`git commit -am "Release X.Y.Z"`). This also raises the build number.
-3. `scripts/build-station.sh`. Besides the apps and the signed
+3. Push `main` (`git push origin main`) and start the macOS app on GitHub's
+   Macs: `scripts/fetch-macos.sh --start` returns at once.
+4. `scripts/build-station.sh`. Besides the apps and the signed
    `clients/manifest.json`, it writes `lib/version.json` and
-   `lib/release-keys.txt` (the keys stations trust for their own updates).
-4. Push `main` (`git push origin main`), then
-   `scripts/publish-github-release.sh`. It tags the build's commit, packages
+   `lib/release-keys.txt` (the keys stations trust for their own updates),
+   and at the end downloads the macOS app, waiting for it if need be.
+5. `scripts/publish-github-release.sh`. It tags the build's commit, packages
    the assets with `scripts/package-release.py` (station zip, web tar, apps,
    relay and the signed `station-update.json`), shows them and asks before
    publishing the GitHub release with the changelog section as its notes.
-5. Stations with automatic updates install the release within 6 hours;
+6. Stations with automatic updates install the release within 6 hours;
    **Admin → Status → Install update** does it straight away. Check an update
    is offered and carries a `sig`:
 

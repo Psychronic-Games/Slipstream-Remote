@@ -11,7 +11,11 @@ your own **station** (a folder on ordinary PHP web hosting) that hands out
 apps preconfigured for your organisation, keeps its own device directory and
 relays traffic when a direct connection isn't possible.
 
-![Slipstream bridge screen](docs/screenshots/bridge.png)
+![Slipstream's Bridge page: this device's ID and one-time code, and Establish link](docs/screenshots/bridge.png)
+
+| Controlling another computer | Meetings, with Subspace chat and reactions |
+|---|---|
+| ![A session: the viewer controls a browser on the other computer](docs/screenshots/session.png) | ![A meeting room with the speaker large, chat on the right and the reaction picker open](docs/screenshots/meeting.png) |
 
 ## Download
 
@@ -39,8 +43,10 @@ the same signature before installing anything.
   Remote-session passwords are verified with SPAKE2, so they never cross the
   network and can't be brute-forced offline — not even by the server.
 - **Peer-to-peer and fast** — direct connections through NAT hole punching,
-  with a relay fallback. H.264 video rendered on the GPU; a frame-ack pacing
-  loop keeps latency low instead of letting frames queue up.
+  with a relay fallback. H.264 video, encoded on the graphics card where
+  there is one (NVIDIA NVENC; AMD and Intel through VA-API on Linux) and on
+  the processor otherwise, and drawn on the GPU; a frame-ack pacing loop
+  keeps latency low instead of letting frames queue up.
 - **Full control** — mouse, wheel, keyboard (physical keys, works across
   layouts), Ctrl+Alt+Del and other special keys, multi-monitor switching.
 - **Support tools** — connect to discovered TCP services through a workstation,
@@ -56,8 +62,11 @@ the same signature before installing anything.
   windows, drag them between groups or tear them out without reconnecting.
   Each group's **+** opens recent or station-saved/shared devices in that window.
 - **Group meetings and Show me** — authorized clients join an organizer-hosted
-  room with voice, camera, chosen-screen sharing and Subspace chat. Android's
-  rear camera can show equipment to a technician. The default room size is 20;
+  room with voice, camera, chosen-screen sharing and Subspace chat. Calls
+  ring as an **Incoming Transmission**; the room gets its own tab, with
+  speaker and gallery layouts (double-click anyone to fill the stage), chat
+  reactions, and recording to MP4 or MKV at the size and quality you choose.
+  Android's rear camera can show equipment to a technician. The default room size is 20;
   usable video capacity depends on the organizer's upload connection.
   See the [meeting guide](docs/MEETINGS.md).
 - **Clipboard sync, chat, and a two-pane file manager** — copy and paste
@@ -90,7 +99,8 @@ the same signature before installing anything.
 - **Works immediately, with self-hosting available** — raw downloads use
   `public.slipstreamremote.com`. A configured self-hosted station stays the
   default; shared tabs above Your ID and Establish link switch both panels
-  between that station and Slipstream Public.
+  between that station and Slipstream Public. **Link to my organisation**
+  on Bridge connects an app to a station by its address or setup code.
 - **Your own station** — an IT firm or company runs
   one self-contained web folder: a download page with apps preconfigured for
   it, a private directory of its clients' devices, its own relay and an admin
@@ -104,7 +114,7 @@ the same signature before installing anything.
 | Linux — Wayland (KDE, GNOME, wlroots) | desktop portal + PipeWire | ✅ | tested (KDE) |
 | Linux — X11 | MIT-SHM + XTest | ✅ | in testing |
 | Windows 10/11 | DXGI + SendInput | ✅ | tested |
-| macOS 12+ | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | implemented | Apple Silicon cross-type-checks; native build and real-Mac testing pending |
+| macOS 12+ (Apple Silicon and Intel) | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | one universal app, built on GitHub's Macs; runs on a real Intel Mac; sharing and control being verified |
 | Android 8+ | MediaProjection + accessibility (on-device approval) | touch viewer | Android 16 emulator tested; real phones next |
 
 The portable Linux app is a single x86_64 file targeting glibc 2.31+
@@ -114,9 +124,10 @@ See [status](docs/STATUS.md) for platform verification and limits.
 
 ## Quick start
 
-1. **Download and open the app** on both computers (Windows 10/11, Linux,
-   Android 8+; macOS is still being verified). No installer and no account
-   are needed.
+1. **Download and open the app** on both computers (Windows 10/11, macOS
+   12+, Linux, Android 8+). No installer and no account are needed. On a
+   Mac, move it to *Applications* and choose **Open Anyway** the first time
+   (it isn't notarised by Apple yet).
 2. On the computer that needs help, the **BRIDGE** page shows **Your ID** and
    a **one-time password**.
 3. On the other computer, enter them under **Establish link** and press
@@ -184,9 +195,11 @@ protocol, the latency control loop and the platform backends.
 
 ## Roadmap
 
-- Real-hardware verification: Windows service (UAC, login screen), Android phones, macOS
-- Hardware video encoding (NVENC, VA-API, VideoToolbox, Media Foundation)
-- Android hardware encoding, host audio/clipboard/files and self-updates
+- Real-hardware verification: Windows service (UAC, login screen), Android
+  phones, sharing and control from a Mac
+- Hardware encoding: Media Foundation proven on real AMD and Intel Windows
+  machines (it's opt-in until then), VideoToolbox on Macs, Android
+- Android host audio/clipboard/files and self-updates
 - Windows and macOS code signing
 
 ## License

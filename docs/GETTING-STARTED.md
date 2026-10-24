@@ -99,9 +99,9 @@ refresh the folder if its icon is cached.
 
 ### macOS (12 or newer, Apple Silicon or Intel)
 
-The packaging script targets both architectures, but native building and
-runtime checks on a Mac are still pending. These are the intended install
-steps once a Mac bundle is available from your station:
+One universal app runs natively on both kinds of Mac. It runs on a real
+Intel Mac; sharing and controlling a Mac are still being verified
+([issue 03](issues/03-macos-app.md)).
 
 1. Download the zip, open it and move **Slipstream** to *Applications*.
 2. Open it. The app isn't notarised by Apple yet, so macOS refuses the
@@ -110,8 +110,10 @@ steps once a Mac bundle is available from your station:
 3. Allow **Screen Recording** and **Accessibility** when asked (also under
    *Privacy & Security*). Both are needed for someone to see and control
    the Mac. Restart the app after granting them.
-4. If it asks for a station, enter the address and setup code from the
-   download page (the *Connect this app* button doesn't work on Macs yet).
+4. To use your organisation's station, press *Connect this app* on its
+   download page once the app has been opened, or choose **Link to my
+   organisation** on Bridge and enter the address and setup code shown on
+   the page.
 
 Until the app is notarised, macOS may ask for these permissions again after
 an update.

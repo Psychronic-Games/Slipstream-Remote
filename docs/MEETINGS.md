@@ -25,6 +25,8 @@ Installed clients must be updated for meetings; update the Windows service too.
 Meetings from 0.29 on use meeting protocol 2 (chat reactions): everyone in a
 room needs 0.29 or newer, and older apps are asked to update.
 
+<img src="screenshots/meeting-call.png" width="560" alt="An Incoming Transmission with Answer and Decline, over the Meetings page">
+
 A meeting you're in gets its own green tab after **Bridge**, beside your
 workstation tabs, and fills the window like a workstation does. Mute, camera,
 screen sharing and Leave/End stay along the top.
@@ -55,6 +57,8 @@ when they don't) and everyone's voices, as H.264 and Opus. MP4 plays in VLC,
 Windows' Media Player, web browsers and mpv; on a Mac use VLC or IINA, because
 QuickTime can't play Opus sound. The header shows Stop with the elapsed time;
 leaving the meeting also finishes the file.
+
+<img src="screenshots/meeting-record.png" width="560" alt="The Record meeting dialog: size, frame rate, quality and file format">
 
 Press **Unmute** to enable your microphone. **Camera** and **Share screen** are
 separate explicit actions. **Share screen** opens a chooser with screen names,

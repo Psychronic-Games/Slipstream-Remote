@@ -17,12 +17,22 @@ Windows build and native UI audits.
 
 What remains is mostly **verification on real hardware** rather than new
 features: the Windows service at UAC prompts and the login screen, real
-Android phones, a native macOS build, and sound/clipboard files between two
-physical machines. See [Next steps](#next-steps).
+Android phones, sharing and control from a Mac, and sound/clipboard files
+between two physical machines. See [Next steps](#next-steps).
 
-**0.27** adds scam protection (one-time-password links on Slipstream Public
-wait for **Allow**) and stations that update themselves from signed GitHub
-releases.
+Recent releases:
+
+- **0.27**: scam protection (one-time-password links on Slipstream Public
+  wait for **Allow**); stations update themselves from signed GitHub releases.
+- **0.28**: NVIDIA hardware encoding (NVENC); Balanced and Quality run at
+  the chosen maximum frame rate (up to 144 fps).
+- **0.29**: VA-API encoding (AMD and Intel on Linux), an opt-in Media
+  Foundation encoder for Windows; meeting tabs, speaker/gallery layouts,
+  chat reactions and the *Incoming transmission* call; password prompts for
+  recent links.
+- **0.30**: meeting recording (MP4/MKV), colour reactions, the macOS app
+  built on GitHub's Macs, `slipstream://` links on Macs and **Link to my
+  organisation** on Bridge.
 
 ## What's verified
 
@@ -56,19 +66,21 @@ releases.
 | Adaptive resolution and idle sharpening | ✅ pipeline test with a simulated slow encoder (shrinks to fit 60 fps, full-size frame once still) and a local session at 30 ms a simulated frame |
 | Host pace in the viewer (stats tooltip, 30 s log line) | ✅ local sessions and the live Server 2016 VM |
 | X11 host | ⚠️ implemented, lightly tested |
-| macOS | ⚠️ type-checks for Apple Silicon (cross-checked from Linux); universal packaging script prepared; native building and runtime checks pending |
+| macOS | ⚠️ universal app (Apple Silicon and Intel) built by `.github/workflows/macos.yml` and served by both stations since 0.30; runs on a real Intel Mac and connects to Slipstream Public. Linking to a private station through `slipstream://` or **Link to my organisation** (0.30), screen sharing, control and permissions still to confirm |
+| Hardware encoding | ✅ NVENC on Linux (RTX 5070: 1.4 ms a 1080p frame) and VA-API on AMD (radeonsi: 4.5 ms), both decoded and checked by `slipstream encode-test`. ⚠️ NVENC on real Windows (RTX 3060 laptop) still to confirm; Media Foundation only tested against Wine's software encoder, so it stays opt-in (`SLIPSTREAM_HWENC=mf`) |
+| Meeting recording | ✅ native UI audit records MP4 and MKV, which ffprobe reads (H.264 and Opus frames); the desktop's real save dialog still to try by hand |
 | Android viewer and host | ⚠️ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; real phones still need confirmation. Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
 ## Known gaps and limits
 
-- **Meetings**: the organizer must stay connected; no host migration, automatic
-  active-speaker selection or adaptive meeting bitrate yet. Invitations/rooms
+- **Meetings**: the organizer must stay connected; no host migration or
+  adaptive meeting bitrate yet. Invitations/rooms
   last four hours. Android incoming calls require a running, reachable app.
   See [meeting scope](issues/17-group-meetings-and-show-me.md) for remaining work.
-- **macOS**: `scripts/build-macos.sh` is prepared to package a universal app;
-  native building and runtime verification remain pending.
-  Not notarised (Apple Developer Program not joined yet), so users choose
+- **macOS**: the universal app is built on GitHub's Macs for each release
+  (`scripts/fetch-macos.sh`); sharing and control on a real Mac remain to
+  verify. Not notarised (Apple Developer Program not joined yet), so users choose
   *Open Anyway*, and permissions may need granting again after updates. Its
   capture may or may not show the pointer (`cursor_in_video` is false, so
   the viewer keeps its own pointer visible). `slipstream://` links reach the app on macOS through its own Apple Event
@@ -84,12 +96,13 @@ releases.
   step. Repository publication, application/acceptance and signing credentials
   remain pending. The published .exe is not Authenticode-signed and may
   trigger SmartScreen warnings; desktop update signatures are already active.
-- **Hardware encoding is NVIDIA only so far** (NVENC, 0.28, issue 06):
-  other computers encode with OpenH264 on the processor (SIMD; builds need
-  `nasm`), where slow processors drop resolution while the picture moves.
-  Intel/AMD (Media Foundation, VA-API) and macOS are still to come. NVENC
-  needs confirming on real Windows hardware and under the Windows service.
-  Decoding is OpenH264 everywhere.
+- **Hardware encoding** (issue 06): NVENC (Windows and Linux) and VA-API
+  (AMD and Intel on Linux) are used automatically; Media Foundation (Intel
+  and AMD on Windows) is opt-in until proven on real hardware, and Macs and
+  Android have none yet. Other computers encode with OpenH264 on the
+  processor (SIMD; builds need `nasm`), where slow processors drop
+  resolution while the picture moves. NVENC needs confirming on real Windows
+  hardware and under the Windows service. Decoding is OpenH264 everywhere.
 - **Windows capture** uses its own DXGI duplication since 0.7.1: one
   copy per frame, BGRA straight to the encoder, released by each session
   (xcap's recorder blocked later sessions). Not yet measured at 1440p and
@@ -99,12 +112,12 @@ releases.
   machines: end-to-end test with a test tone; real devices open on Linux.
 - **Desktop/station ARM builds**: Linux and Windows apps and the station relay
   are currently distributed for x86_64 only. Android releases are arm64;
-  the unverified macOS packaging script targets Apple Silicon and Intel.
+  the macOS app is universal (Apple Silicon and Intel).
 - **Wayland unattended access**: depends on the portal's restore token
   surviving. A reboot may bring the permission prompt back on some desktops.
 - **File transfer**: no resume for interrupted large transfers.
-- **CI** (`.github/workflows/ci.yml`) is new on GitHub (October 2026) and
-  still being brought to green on all three systems.
+- **CI** (`.github/workflows/ci.yml`) builds and tests on Linux, Windows and
+  macOS for every push; green on all three since October 23, 2026.
 - **Link approval** needs a window that can ask: headless `slipstream host`
   machines and the Windows login screen decline one-time-password links on
   Slipstream Public. Use the unattended password there. Android shows the
@@ -122,13 +135,15 @@ Each step has an issue with tasks and pointers into the code in
 2. **Android on real phones** (issue 09): persistent ID, sharing consent,
    accessibility setup, PC input, direct and relayed links, rotation, Stop,
    link approval. Include an older supported Android version.
-3. **CI green on GitHub** (issue 02) for Linux, Windows and macOS.
-4. **macOS** (issue 03): run `scripts/build-macos.sh` on the Mac; test install,
-   Open Anyway, permissions, capture, input, setup code and an update.
+3. **macOS** (issue 03): on a real Mac, *Connect this app* and **Link to my
+   organisation**, permissions, sharing the screen, being controlled, and an
+   update.
+4. **Hardware encoding** (issue 06): `slipstream encode-test` on the RTX 3060
+   laptop (NVENC on Windows) and on AMD/Intel Windows machines (Media
+   Foundation, to turn it on by default); then VideoToolbox on Macs.
 5. **Code signing** (issue 05): apply to SignPath now that the repository is
    public; Apple notarisation once the Developer Program is joined.
-6. **Hardware encoding** (issue 06), Android host audio/clipboard/files and
-   self-updates, sound from Mac hosts.
+6. Android host audio/clipboard/files and self-updates, sound from Mac hosts.
 
 ## Picking the work back up
 
