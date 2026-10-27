@@ -127,7 +127,9 @@ See [status](docs/STATUS.md) for platform verification and limits.
 1. **Download and open the app** on both computers (Windows 10/11, macOS
    12+, Linux, Android 8+). No installer and no account are needed. On a
    Mac, move it to *Applications* and choose **Open Anyway** the first time
-   (it isn't notarised by Apple yet).
+   (it isn't notarised by Apple yet). On Linux, browsers don't keep the
+   executable permission: tick *Properties → Allow executing as program*
+   (or run `chmod +x` on it) before opening it.
 2. On the computer that needs help, the **BRIDGE** page shows **Your ID** and
    a **one-time password**.
 3. On the other computer, enter them under **Establish link** and press

@@ -365,16 +365,25 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         });
     });
     ui.add_space(16.0);
+}
 
-    if let Some(e) = &f.error {
-        ui.label(RichText::new(e).color(pal::RED));
-    }
+/// Height of the Save/Revert bar kept below the scrolling Config page.
+pub const ACTIONS_HEIGHT: f32 = 46.0;
+
+/// Save and Revert stay in view however far the page is scrolled.
+pub fn actions_ui(app: &mut App, ui: &mut Ui) {
+    let top = ui.max_rect().top() + 2.0;
+    ui.painter().hline(ui.max_rect().x_range(), top, egui::Stroke::new(1.0, pal::LAVENDER.gamma_multiply(0.4)));
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         if theme::pill_sized(ui, "Save configuration", pal::ORANGE, vec2(200.0, 34.0)).clicked() {
             save(app);
         }
         if theme::pill_sized(ui, "Revert", pal::LAVENDER, vec2(100.0, 34.0)).clicked() {
             app.settings_form = SettingsForm::from(&app.client.settings());
+        }
+        if let Some(e) = &app.settings_form.error {
+            ui.add(egui::Label::new(RichText::new(e).color(pal::RED)).truncate());
         }
     });
 }

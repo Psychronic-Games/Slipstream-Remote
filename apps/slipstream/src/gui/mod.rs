@@ -2067,7 +2067,12 @@ impl eframe::App for App {
                 let mut room = ui.new_child(UiBuilder::new().max_rect(ui.max_rect().shrink(6.0)));
                 meetings::ui(self, &mut room);
             } else {
-            let content = self.draw_frame(ui);
+            let mut content = self.draw_frame(ui);
+            if self.page == Page::Settings {
+                let bar = content.with_min_y(content.bottom() - settings::ACTIONS_HEIGHT);
+                settings::actions_ui(self, &mut ui.new_child(UiBuilder::new().max_rect(bar)));
+                content.set_bottom(bar.top());
+            }
             let mut child = ui.new_child(UiBuilder::new().max_rect(content));
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])

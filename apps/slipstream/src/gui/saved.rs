@@ -598,7 +598,13 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                 }
                 if account.user.admin {
                     ui.label("");
-                    ui.checkbox(&mut e.shared, "Shared with every technician at this station (no password)");
+                    ui.vertical(|ui| {
+                        ui.checkbox(&mut e.shared, "Share with every technician at this station");
+                        ui.label(
+                            RichText::new("Shown in everyone's list. Passwords aren't saved for shared devices: \
+                                           each technician types it when connecting.").small().color(pal::DIM),
+                        );
+                    });
                     ui.end_row();
                 }
             });
