@@ -58,6 +58,7 @@ pub struct StationAccount {
     /// Explicit empty groups, in addition to the groups used by devices.
     pub groups: Vec<String>,
     pub shared: Vec<crate::account::SavedDevice>,
+    pub shared_groups: Vec<String>,
     /// The station ended this sign-in (password reset, signed out on the
     /// admin page): sign in again.
     pub signed_out: bool,
@@ -578,6 +579,41 @@ mod tests {
             assert_eq!(cloned,store.identity_for_hardware(&evidence("device-new")).unwrap().to_bytes());
         }
         assert_eq!(original,source.identity_for_hardware(&evidence("device-a")).unwrap().to_bytes());
+    }
+
+    #[test]
+    fn imaged_default_name_follows_the_new_computer_and_gets_its_own_identity() {
+        use crate::hardware_id::Evidence;
+        let master = tempfile::tempdir().unwrap();
+        let source = Store::open(master.path()).unwrap();
+        let master_name = format!("{}-master-image", default_device_name());
+        let mut settings = Settings { device_name: master_name.clone(), ..Default::default() };
+        settings.server.url = Some("station.example".into());
+        settings.server.key = Some("fixture-station-key".into());
+        settings.host.last_device_id = Some(DeviceId(123456789));
+        source.save_settings(&settings).unwrap();
+        let original_evidence = Evidence::from([("system-uuid".into(), "master-hardware".into())]);
+        let original = source.identity_for_hardware(&original_evidence).unwrap().to_bytes();
+        // Simulate the name recorded on the master without changing the
+        // process environment shared by other tests.
+        let binding = DeviceBinding { version: 1, evidence: original_evidence.clone(), system_name: master_name };
+        fs::write(master.path().join("device-binding.json"), serde_json::to_vec(&binding).unwrap()).unwrap();
+        let clone = tempfile::tempdir().unwrap();
+        for file in ["settings.toml", "identity.key", "device-binding.json"] {
+            fs::copy(master.path().join(file), clone.path().join(file)).unwrap();
+        }
+        let store = Store::open(clone.path()).unwrap();
+        let evidence = Evidence::from([("system-uuid".into(), "new-laptop-hardware".into())]);
+        let fresh = store.identity_for_hardware(&evidence).unwrap().to_bytes();
+        assert_ne!(fresh, original);
+        assert_eq!(store.identity_for_hardware(&evidence).unwrap().to_bytes(), fresh);
+        let actual = store.load_settings();
+        assert_eq!(actual.device_name, default_device_name());
+        assert_ne!(actual.device_name, settings.device_name);
+        assert!(actual.host.last_device_id.is_none());
+        assert_eq!(actual.server.url, settings.server.url);
+        assert_eq!(actual.server.key, settings.server.key);
+        assert_eq!(source.identity_for_hardware(&original_evidence).unwrap().to_bytes(), original);
     }
 
     #[test]

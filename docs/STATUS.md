@@ -1,6 +1,6 @@
 # Project status
 
-*Updated 2026-10-23. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
+*Updated 2026-10-28. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
 changes: [CHANGELOG.md](../CHANGELOG.md).*
 
 ## Where things stand
@@ -22,6 +22,9 @@ between two physical machines. See [Next steps](#next-steps).
 
 Recent releases:
 
+- **0.31**: private station enrollment, hardware/serial summaries, station-side
+  name/group editing, batch technician assignment and personal credentials for
+  shared devices.
 - **0.27**: scam protection (one-time-password links on Slipstream Public
   wait for **Allow**); stations update themselves from signed GitHub releases.
 - **0.28**: NVIDIA hardware encoding (NVENC); Balanced and Quality run at
@@ -55,6 +58,7 @@ Recent releases:
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
 | Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. Not yet on the live station |
+| Private station automatic enrollment and hardware summaries | ✅ isolated PHP API/admin checks: default names/Ungrouped, preserved edits and removals, legacy shared-list migration, signed metadata, admin access and public exclusion; batch technician assignment before sign-in and while offline, partial failures and retained credentials verified. Rust registration/authentication suites pass. Native Windows/macOS hardware summaries still need verification |
 | Scanner HTTP/HTTPS actions | ✅ Linux GUI to host launcher; exact URLs, failure reporting and host permission/target checks. Windows service launch needs real-VM confirmation |
 | System information window (live) | ✅ end-to-end test; Linux and Windows (under Wine) collectors checked by hand; macOS type-checks only |
 | Port forwarding | ✅ end-to-end test (echo through the tunnel, unreachable target, refused when not allowed) |

@@ -169,6 +169,7 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'group_s
         'devices' => array_values($acct['devices'] ?? []),
         'groups' => array_values($acct['groups'] ?? []),
         'shared' => slip_shared(),
+        'shared_groups' => slip_shared_groups(),
         'vault_salt' => $acct['vault_salt'],
         'station' => slip_client_config(),
     ]);
@@ -211,6 +212,7 @@ try {
                 'org' => ($station['org'] ?? '') !== '' ? $station['org'] : null,
                 'public_relays' => (bool)($station['public_relays'] ?? true),
                 'approve_links' => (bool)($station['approve_links'] ?? false),
+                'inventory' => slip_access_key() !== null,
             ]);
 
         case 'update_check':
@@ -251,6 +253,13 @@ try {
             }
             reply($out);
 
+        case 'inventory':
+            if (slip_access_key() === null) fail('inventory is only available on private stations', 403);
+            if (!slip_rate_ok('inventory', (int)$cfg['registers_per_minute'])) fail('too many inventory requests', 429);
+            $p = slip_verify($req, 'inventory');
+            slip_inventory_save($p->endpoint, slip_clean_inventory($p->inventory ?? null));
+            reply(['ok' => true]);
+
         case 'register':
         case 'unregister':
             if (!slip_rate_ok('register', (int)$cfg['registers_per_minute'])) {
@@ -271,6 +280,13 @@ try {
                 'app_version' => slip_clip($i->app_version ?? '', 32),
             ];
             $id = slip_store()->register($p->endpoint, $info, json_encode($p->addr, JSON_UNESCAPED_SLASHES));
+            // Discovery is retried on later heartbeats if shared storage is
+            // temporarily unavailable; it must not break the device's ID.
+            try {
+                slip_enroll_device($p->endpoint, $id, $info['name']);
+            } catch (Throwable $e) {
+                error_log('slipstream enrollment: ' . $e->getMessage());
+            }
             reply(['ok' => true, 'id' => $id]);
 
         default:

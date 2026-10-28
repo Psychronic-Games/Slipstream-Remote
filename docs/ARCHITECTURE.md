@@ -216,7 +216,14 @@ portal prompt.
 * **System information:** `StreamOpen::SystemInfo` → `StreamReply::SystemInfo`,
   titled sections of (label, value) rows already worded on the host
   (`crates/slipstream-platform/src/machine.rs`), so new facts need no
-  protocol change. Public IP uses a separate optional `PublicIp { refresh }`
+  protocol change. The Computer section includes the manufacturer's system
+  serial via Windows `GetSystemFirmwareTable` with bounded SMBIOS Type 1
+  parsing (`machine_serial.rs`), or `sysinfo::Product::serial_number()` on
+  macOS (IOKit) and Linux (DMI/device tree), cached once per host process.
+  Blank, placeholder or inaccessible serials produce an explicit unavailable
+  row; no board/disk ID
+  is substituted. Existing viewers display and copy the row automatically;
+  hosts must be updated to collect it. Public IP uses a separate optional `PublicIp { refresh }`
   stream/reply so internet lookup cannot hold up inventory. The host's HTTPS
   request goes to [ipify](https://www.ipify.org/), preferring its IPv4 endpoint
   with dual-stack fallback; no station keys, device IDs or account data are
@@ -226,6 +233,43 @@ portal prompt.
   and manual Refresh has a five-second minimum interval. The viewer requests
   while System Information is open, shows status/Copy IP above the inventory,
   and includes the value in Copy all. VPN/proxy/NAT egress may be what is seen.
+
+Private PHP stations enroll successfully signed directory registrations into
+the shared technician list once per endpoint/ID, using the reported device
+name and an empty group. `shared.json` accepts the legacy device array and
+migrates to `{devices, enrolled, groups}` under the existing shared-list lock. The
+enrollment ledger commits with the list, preserves administrator edits, and
+prevents heartbeats from resurrecting removed shared entries. Account API
+replies remain arrays compatible with older apps. Enrollment carries no
+password; remembering a shared device's password creates or updates only the
+technician's personal encrypted vault entry.
+The admin Devices page can also assign a registered (including offline)
+device to selected technicians' personal lists under each account's lock.
+Assignment copies the station's name/group/notes with no secret and leaves an
+existing personal entry intact; it requires the admin session and CSRF token.
+Batch assignment reports additions, existing entries and any per-account
+failures separately so a full list cannot hide successful assignments.
+Station group creation, rename, empty-only removal and batch workstation moves
+use that shared-state lock. `shared_groups` is an optional account JSON field
+cached in `StationAccount` and rendered in both Saved devices and the New link
+picker, so empty shared folders survive. Batch group assignment snapshots the
+current members and declared empty groups, validates each recipient's capacity
+before applying their update under the account lock, and preserves existing
+personal entries and secrets. Personal lists remain independent of later
+shared-group renames or membership changes.
+
+`hello.inventory` advertises hardware-summary support only on private stations
+with an access key. The primary host checks that capability, requires its key,
+and excludes the public station before collecting a cached `StationInventory`
+off the async threads. After registration it sends a separate signed
+`inventory` request, once per directory connection, retrying failures on later
+heartbeats. Public endpoints never publish it. The station accepts only the
+computer name, model, system serial, OS version, architecture, processor and
+RAM bytes, and adds its own report timestamp. Snapshots in `inventory/` are
+keyed by the signing endpoint and work with either file or PDO registries.
+Only the authenticated admin Devices page reads them; lookup and public pages
+do not expose them, and public stations reject inventory submissions. The
+directory JSON additions are optional; session protocol 6 is unchanged.
 
 `postcard` has no optional fields, so any change to a message bumps
 `PROTOCOL_VERSION`. The exception is a new variant appended to

@@ -46,9 +46,14 @@ $code = slip_link_code();
 
 slip_page_start($org . ' · Remote Support');
 ?>
-<p class="lead">Remote support from <strong><?= h($org) ?></strong>. Download the app below, open it,
-and read your <b>ID</b> and <b>password</b> to your technician. They can only connect while the app is open
-and you've shared your password.</p>
+<p class="lead">Remote support from <strong><?= h($org) ?></strong>. Download the app below and open it.
+<?php if (slip_access_key() !== null): ?>
+Your computer appears automatically in our private support list. Share the <b>password</b> shown in the app
+with your technician when you need help.
+<?php else: ?>
+Read your <b>ID</b> and <b>password</b> to your technician.
+<?php endif ?>
+They can only connect while the app is open and you've shared your password.</p>
 
 <?php if (!empty($station['motd'])): ?><p class="dim"><?= h($station['motd']) ?></p><?php endif ?>
 

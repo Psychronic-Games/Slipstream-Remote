@@ -306,7 +306,7 @@ mod tests {
                     } else {
                         match body["op"].as_str().unwrap() {
                             "hello" => {
-                                json!({"ok":true,"version":2,"time":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),"relays":relays,"public_relays":false})
+                                json!({"ok":true,"version":2,"time":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),"relays":relays,"public_relays":false,"inventory":true})
                             }
                             "register" => {
                                 registration = Some(
@@ -409,6 +409,19 @@ mod tests {
         assert_ne!(private_id, public_id);
         assert_eq!(private.registration()["endpoint"], private_id.to_string());
         assert_eq!(public.registration()["endpoint"], public_id.to_string());
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !private.requests.lock().unwrap().iter().any(|r| r["op"] == "inventory") {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.expect("private station did not receive inventory");
+        {
+            let requests = private.requests.lock().unwrap();
+            let request = requests.iter().find(|r| r["op"] == "inventory").unwrap();
+            let signed = slipstream_core::directory::verify_signed(request["payload"].as_str().unwrap(), request["sig"].as_str().unwrap()).unwrap();
+            assert_eq!(signed.endpoint, private_id.to_string());
+            assert!(signed.inventory.unwrap().memory_bytes > 0);
+        }
+        assert!(!public.requests.lock().unwrap().iter().any(|r| r["op"] == "inventory"));
         let public_data = serde_json::to_string(&*public.requests.lock().unwrap()).unwrap();
         assert!(
             !public_data.contains("private-station-key")
@@ -559,6 +572,23 @@ mod tests {
             Some(DeviceId(123456789))
         );
         restarted.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn primary_station_without_an_access_key_never_receives_inventory() {
+        slipstream_core::init_crypto();
+        let station = Station::start(None, vec![]).await;
+        let home = tempfile::tempdir().unwrap();
+        let store = slipstream_core::config::Store::open(home.path()).unwrap();
+        let mut settings = store.load_settings();
+        settings.server = ServerSettings { url: Some(station.url.clone()), use_public_relays: false, ..Default::default() };
+        store.save_settings(&settings).unwrap();
+        let mut opts = options(ServerSettings::public_station(), true);
+        opts.public_station = None;
+        let (host, _) = Client::start(store, opts).await.unwrap();
+        online(&host, false).await;
+        host.shutdown().await;
+        assert!(!station.requests.lock().unwrap().iter().any(|r| r["op"] == "inventory"));
     }
     fn options(public_station: ServerSettings, host: bool) -> crate::ClientOptions {
         crate::ClientOptions {

@@ -74,7 +74,20 @@ pub struct DeviceInfo {
     pub app_version: String,
 }
 
-/// What `register` signs.
+/// A private station's last reported hardware summary. Contains no credentials
+/// or user/network inventory; full live information still requires a session.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StationInventory {
+    pub computer_name: String,
+    pub model: Option<String>,
+    pub serial_number: Option<String>,
+    pub os_version: Option<String>,
+    pub architecture: String,
+    pub processor: Option<String>,
+    pub memory_bytes: u64,
+}
+
+/// Device-signed directory requests (registration, sign-off and inventory).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterPayload {
     pub op: String,
@@ -86,6 +99,8 @@ pub struct RegisterPayload {
     pub addr: Option<EndpointAddr>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info: Option<DeviceInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory: Option<StationInventory>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -106,6 +121,10 @@ pub struct Hello {
     /// Hosts ask their user before one-time-password links start.
     #[serde(default)]
     pub approve_links: bool,
+    /// Private stations may accept a signed hardware summary. Absent on older
+    /// stations and public directories; clients must also have an access key.
+    #[serde(default)]
+    pub inventory: bool,
 }
 
 fn yes() -> bool {
@@ -257,12 +276,17 @@ impl DirectoryClient {
     }
 
     fn signed(&self, secret: &SecretKey, op: &str, addr: Option<EndpointAddr>, info: Option<DeviceInfo>) -> Result<serde_json::Value> {
+        self.signed_with_inventory(secret, op, addr, info, None)
+    }
+
+    fn signed_with_inventory(&self, secret: &SecretKey, op: &str, addr: Option<EndpointAddr>, info: Option<DeviceInfo>, inventory: Option<StationInventory>) -> Result<serde_json::Value> {
         let payload = serde_json::to_string(&RegisterPayload {
             op: op.into(),
             endpoint: secret.public().to_string(),
             time: now() + self.clock_offset,
             addr,
             info,
+            inventory,
         })?;
         let mut msg = SIGNING_CONTEXT.as_bytes().to_vec();
         msg.extend_from_slice(payload.as_bytes());
@@ -298,6 +322,14 @@ impl DirectoryClient {
     /// Marks this device offline right away (on shutdown).
     pub async fn unregister(&self, secret: &SecretKey) -> Result<()> {
         let _: serde_json::Value = self.call(self.signed(secret, "unregister", None, None)?).await?;
+        Ok(())
+    }
+
+    /// Publishes metadata only after a private station advertises support.
+    /// Signing binds the summary to this endpoint, independently of account
+    /// permissions or the password needed to start a support session.
+    pub async fn publish_inventory(&self, secret: &SecretKey, inventory: StationInventory) -> Result<()> {
+        let _: serde_json::Value = self.call(self.signed_with_inventory(secret, "inventory", None, None, Some(inventory))?).await?;
         Ok(())
     }
 
@@ -482,6 +514,7 @@ mod tests {
         let payload = body["payload"].as_str().unwrap();
         let sig = body["sig"].as_str().unwrap();
         assert!(verify_signed(payload, sig).is_ok());
+        assert!(!payload.contains("inventory"), "normal registration must not include hardware inventory");
         // Tampering breaks it.
         let tampered = payload.replace("register", "registeR");
         assert!(verify_signed(&tampered, sig).is_err());
@@ -491,5 +524,21 @@ mod tests {
             .signed(&secret, "register", Some(EndpointAddr::from_parts(other.public(), [])), None)
             .unwrap();
         assert!(verify_signed(body["payload"].as_str().unwrap(), body["sig"].as_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn inventory_is_optional_and_covered_by_the_endpoint_signature() {
+        let legacy: Hello = serde_json::from_str(r#"{"version":2,"time":0}"#).unwrap();
+        assert!(!legacy.inventory);
+        let secret = SecretKey::generate();
+        let dc = DirectoryClient::new("example.com", Some("private-key".into())).unwrap();
+        let summary = StationInventory { computer_name: "Office PC".into(), serial_number: Some("ABC123".into()), ..Default::default() };
+        let body = dc.signed_with_inventory(&secret, "inventory", None, None, Some(summary.clone())).unwrap();
+        let payload = body["payload"].as_str().unwrap();
+        let sig = body["sig"].as_str().unwrap();
+        let verified = verify_signed(payload, sig).unwrap();
+        assert_eq!(verified.endpoint, secret.public().to_string());
+        assert_eq!(verified.inventory, Some(summary));
+        assert!(verify_signed(&payload.replace("ABC123", "FORGED"), sig).is_err());
     }
 }

@@ -13,12 +13,33 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- System information shows the remote computer's manufacturer serial number
+  when available, and includes it in Copy all.
+- Private stations automatically add registered workstations to the shared
+  device list using their computer name in Ungrouped. Later registrations
+  preserve technician edits and do not restore removed shared entries.
+- The station's Devices page shows last reported model, serial number, OS,
+  processor and RAM, and lets admins edit shared names, groups and notes.
+  Public stations do not automatically enroll devices or collect hardware
+  summaries.
+- Assign a workstation to several technicians at once from the Devices page,
+  including offline devices and technicians who have not signed in yet.
+  Existing personal details and encrypted passwords stay intact; connecting
+  still requires the workstation's one-time or unattended password.
+- A station Groups tab creates and renames shared groups, moves selected
+  workstations between groups, and assigns selected groups and their current
+  workstations to several technicians. Empty groups sync to the app too;
+  existing personal organization and saved passwords stay intact.
+- Technicians can remember a shared device's unattended password in their
+  personal encrypted vault without sharing it with other technicians.
 - When the viewer hangs up, the host says "they ended the session" rather
   than sometimes "Video stream stopped".
 - A meeting call that arrives just after another stopped ringing rings,
   instead of being hung up.
 - Releases build the macOS app on GitHub alongside the other builds
   (`scripts/fetch-macos.sh --start`), with its dependencies cached.
+- Config keeps Save and Revert in view, with clearer wording for sharing a
+  device with the station's technicians.
 
 ## 0.30.0 — 2026-10-23
 

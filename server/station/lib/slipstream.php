@@ -655,27 +655,261 @@ function slip_clean_device($d, bool $withSecret = true): ?array
 
 function slip_shared(): array
 {
+    return slip_shared_state()['devices'];
+}
+
+/** Accept the original list format; migrate atomically on the next change.
+ * Enrollment history shares the same transaction so removing an automatic
+ * entry cannot cause its next heartbeat to put it back. */
+function slip_shared_state(): array
+{
     $d = json_decode((string)@file_get_contents(slip_data_dir() . '/shared.json'), true);
-    return is_array($d) ? array_values($d) : [];
+    if (!is_array($d)) {
+        return ['devices' => [], 'enrolled' => [], 'groups' => []];
+    }
+    return isset($d['devices']) && is_array($d['devices'])
+        ? ['devices' => array_values($d['devices']), 'enrolled' => (array)($d['enrolled'] ?? []), 'groups' => array_values($d['groups'] ?? [])]
+        : ['devices' => array_values($d), 'enrolled' => [], 'groups' => []];
 }
 
 /** Changes the shared list under a lock: $fn gets and returns it. */
 function slip_shared_update(callable $fn): array
 {
+    return slip_shared_state_update(function (array $state) use ($fn) {
+        $previousGroups = slip_shared_groups($state);
+        $state['devices'] = array_values($fn($state['devices']));
+        $state['groups'] = array_values(array_unique(array_merge($previousGroups, slip_shared_groups($state))));
+        return $state;
+    })['devices'];
+}
+
+function slip_shared_state_update(callable $fn): array
+{
     $path = slip_data_dir() . '/shared.json';
     $fh = fopen("$path.lock", 'c');
     flock($fh, LOCK_EX);
     try {
-        $new = array_values($fn(slip_shared()));
-        $tmp = $path . '.' . bin2hex(random_bytes(4));
-        file_put_contents($tmp, json_encode($new, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-        @chmod($tmp, 0640);
-        rename($tmp, $path);
+        $old = slip_shared_state();
+        $new = $fn($old);
+        if ($new !== $old) {
+            slip_save_json($path, $new);
+        }
         return $new;
     } finally {
         flock($fh, LOCK_UN);
         fclose($fh);
     }
+}
+
+function slip_save_json(string $path, array $value): void
+{
+    $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
+    try {
+        if (file_put_contents($tmp, json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)) === false) {
+            throw new RuntimeException('could not write station data');
+        }
+        @chmod($tmp, 0640);
+        if (!rename($tmp, $path)) {
+            throw new RuntimeException('could not save station data');
+        }
+    } finally {
+        if (is_file($tmp)) @unlink($tmp);
+    }
+}
+
+/** Enrollment is discovery only. Never accepts or creates a password. */
+function slip_enroll_device(string $endpoint, int $id, string $name): void
+{
+    if (slip_access_key() === null) return;
+    if ((slip_shared_state()['enrolled'][$endpoint] ?? null) === $id) return;
+    slip_shared_state_update(function (array $state) use ($endpoint, $id, $name) {
+        if (($state['enrolled'][$endpoint] ?? null) === $id) return $state;
+        $exists = array_filter($state['devices'], fn($d) => ($d['id'] ?? 0) === $id);
+        if (!$exists) {
+            $state['devices'][] = [
+                'id' => $id, 'name' => $name, 'notes' => '', 'group' => '',
+                'added_by' => 'Automatic enrollment', 'added' => time(),
+            ];
+        }
+        $state['enrolled'][$endpoint] = $id;
+        return $state;
+    });
+}
+
+function slip_shared_groups(?array $state = null): array
+{
+    $state ??= slip_shared_state();
+    $groups = array_merge($state['groups'], array_column($state['devices'], 'group'));
+    $groups = array_values(array_unique(array_filter($groups, fn($g) => is_string($g) && $g !== '')));
+    natcasesort($groups);
+    return array_values($groups);
+}
+
+function slip_group_name($name): string
+{
+    if (!is_string($name) || trim($name) === '') throw new InvalidArgumentException('Enter a group name.');
+    return slip_clip(trim($name), 64);
+}
+
+function slip_station_group(string $action, $name, $newName = null): void
+{
+    $name = slip_group_name($name);
+    $newName = $action === 'rename' ? slip_group_name($newName) : $name;
+    slip_shared_state_update(function (array $state) use ($action, $name, $newName) {
+        $known = slip_shared_groups($state);
+        if ($action !== 'create' && !in_array($name, $known, true)) throw new InvalidArgumentException('That station group no longer exists.');
+        if ($action === 'delete') {
+            foreach ($state['devices'] as $device) {
+                if (($device['group'] ?? '') === $name) throw new InvalidArgumentException('Move workstations out of the group before removing it.');
+            }
+            $state['groups'] = array_values(array_filter($state['groups'], fn($g) => $g !== $name));
+            return $state;
+        }
+        if ($action === 'rename' && $newName !== $name && in_array($newName, $known, true)) throw new InvalidArgumentException('A station group already has that name.');
+        $groups = array_values(array_filter($state['groups'], fn($g) => $g !== $name));
+        if (!in_array($newName, $groups, true)) $groups[] = $newName;
+        if (count($groups) > 100) throw new InvalidArgumentException('The station already has 100 groups.');
+        foreach ($state['devices'] as &$device) {
+            if ($action === 'rename' && ($device['group'] ?? '') === $name) $device['group'] = $newName;
+        }
+        $state['groups'] = $groups;
+        return $state;
+    });
+}
+
+function slip_move_shared_devices(array $ids, $group): int
+{
+    if (!is_string($group)) throw new InvalidArgumentException('Choose a station group.');
+    $group = trim($group) === '' ? '' : slip_group_name($group);
+    $selected = [];
+    foreach ($ids as $id) {
+        if ((!is_int($id) && !is_string($id)) || !preg_match('/^[0-9]+$/D', (string)$id)) throw new InvalidArgumentException('Choose valid workstations.');
+        $selected[(int)$id] = true;
+    }
+    if (!$selected) throw new InvalidArgumentException('Choose at least one workstation.');
+    $moved = 0;
+    slip_shared_state_update(function (array $state) use ($selected, $group, &$moved) {
+        if ($group !== '' && !in_array($group, slip_shared_groups($state), true)) throw new InvalidArgumentException('Choose an existing station group.');
+        $state['groups'] = slip_shared_groups($state);
+        $seen = [];
+        foreach ($state['devices'] as &$device) {
+            if (isset($selected[$device['id']])) {
+                $seen[$device['id']] = true;
+                if (($device['group'] ?? '') !== $group) { $device['group'] = $group; $moved++; }
+            }
+        }
+        if (array_diff_key($selected, $seen)) throw new InvalidArgumentException('A selected workstation is no longer shared.');
+        return $state;
+    });
+    return $moved;
+}
+
+function slip_assignment_users(array $usernames): array
+{
+    $users = [];
+    foreach ($usernames as $username) {
+        $username = slip_user_norm($username);
+        if (!slip_user_valid($username)) throw new InvalidArgumentException('Choose at least one technician.');
+        if (!slip_user_load($username)) throw new InvalidArgumentException("That technician no longer exists: $username.");
+        $users[$username] = true;
+    }
+    if (!$users) throw new InvalidArgumentException('Choose at least one technician.');
+    return array_keys($users);
+}
+
+/** Add missing personal entries and groups under each account's lock. Existing
+ * personal names, notes, membership and sealed passwords remain untouched. */
+function slip_assign_personal(array $users, array $devices, array $groups = []): array
+{
+    $result = ['added' => [], 'existing' => [], 'failed' => []];
+    foreach ($users as $username) {
+        try {
+            $added = false;
+            $account = slip_user_update($username, function (array $account) use ($devices, $groups, &$added) {
+                $present = array_column($account['devices'] ?? [], null, 'id');
+                $new = array_values(array_filter($devices, fn($d) => !isset($present[$d['id']])));
+                $folders = array_values(array_unique(array_merge($account['groups'] ?? [], $groups)));
+                if (count($present) + count($new) > SLIP_MAX_DEVICES) throw new InvalidArgumentException('This technician’s device list is full.');
+                if (count($folders) > 100) throw new InvalidArgumentException('This technician’s group list is full.');
+                $added = !empty($new) || count($folders) !== count($account['groups'] ?? []);
+                if ($added) {
+                    $account['devices'] = array_merge($account['devices'] ?? [], $new);
+                    $account['groups'] = $folders;
+                }
+                return $account;
+            });
+            if ($account === null) throw new InvalidArgumentException('That technician no longer exists.');
+            $result[$added ? 'added' : 'existing'][] = $username;
+        } catch (InvalidArgumentException $e) {
+            $result['failed'][$username] = $e->getMessage();
+        } catch (Throwable $e) {
+            error_log('slipstream assignment: ' . $e->getMessage());
+            $result['failed'][$username] = 'Could not update their device list.';
+        }
+    }
+    return $result;
+}
+
+function slip_assign_devices(array $usernames, int $id): array
+{
+    $users = slip_assignment_users($usernames);
+    $found = slip_store()->lookup($id);
+    if (($found['status'] ?? 'not_found') === 'not_found') throw new InvalidArgumentException('Choose a registered device.');
+    $shared = array_values(array_filter(slip_shared(), fn($d) => ($d['id'] ?? 0) === $id))[0] ?? [];
+    $device = [
+        'id' => $id, 'name' => $shared['name'] ?? $found['info']['name'] ?? '',
+        'notes' => $shared['notes'] ?? '', 'group' => $shared['group'] ?? '',
+        'secret' => null, 'added' => time(),
+    ];
+    return slip_assign_personal($users, [$device]);
+}
+
+/** Snapshot assignment: groups (including empty ones) and their current shared
+ * workstations are copied; passwords still belong to each recipient's vault. */
+function slip_assign_groups(array $usernames, array $groups): array
+{
+    $users = slip_assignment_users($usernames);
+    $groups = array_values(array_unique(array_map('slip_group_name', $groups)));
+    if (!$groups) throw new InvalidArgumentException('Choose at least one station group.');
+    $state = slip_shared_state();
+    if (array_diff($groups, slip_shared_groups($state))) throw new InvalidArgumentException('A selected station group no longer exists.');
+    $devices = [];
+    foreach ($state['devices'] as $device) {
+        if (in_array($device['group'] ?? '', $groups, true)) {
+            $copy = slip_clean_device($device, false);
+            if ($copy) $devices[] = $copy + ['secret' => null, 'added' => time()];
+        }
+    }
+    return slip_assign_personal($users, $devices, $groups);
+}
+
+/** Only these static facts may be retained without a support session. */
+function slip_clean_inventory($inventory): array
+{
+    if (!is_object($inventory)) throw new InvalidArgumentException('missing inventory');
+    $out = [];
+    foreach (['computer_name' => 64, 'model' => 128, 'serial_number' => 128, 'os_version' => 128, 'architecture' => 32, 'processor' => 128] as $key => $limit) {
+        $value = $inventory->$key ?? null;
+        if ($value !== null && !is_string($value)) throw new InvalidArgumentException('inventory fields must be text');
+        $out[$key] = $value === null ? null : slip_clip(trim(preg_replace('/[\x00-\x1F\x7F]/u', ' ', $value)), $limit);
+    }
+    $memory = $inventory->memory_bytes ?? 0;
+    if (!is_int($memory) || $memory < 0) throw new InvalidArgumentException('invalid memory size');
+    $out['memory_bytes'] = $memory;
+    $out['reported_at'] = time();
+    return $out;
+}
+
+function slip_inventory_save(string $endpoint, array $inventory): void
+{
+    slip_save_json(slip_acct_dir('inventory') . "/$endpoint.json", $inventory);
+}
+
+function slip_device_inventory(string $endpoint): array
+{
+    if (slip_access_key() === null || !preg_match('/^[0-9a-f]{64}$/', $endpoint)) return [];
+    $d = json_decode((string)@file_get_contents(slip_acct_dir('inventory') . "/$endpoint.json"), true);
+    return is_array($d) ? $d : [];
 }
 
 // ── Relay supervisor ───────────────────────────────────────────────────────

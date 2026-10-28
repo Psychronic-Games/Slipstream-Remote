@@ -70,7 +70,7 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
                         }
                         for (devices, empty, shared) in [
                             (&account.devices, account.groups.as_slice(), false),
-                            (&account.shared, &[][..], true),
+                            (&account.shared, account.shared_groups.as_slice(), true),
                         ] {
                             let groups = grouped(devices, empty, &filter, &account.label());
                             if groups.is_empty() {
@@ -111,10 +111,10 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
                                                 Some(Presence::Offline) => (pal::DIM, "Offline"),
                                                 _ => (pal::GOLD, "Checking availability"),
                                             };
-                                        let detail = if shared {
-                                            "Shared system"
-                                        } else if device.secret.is_some() {
+                                        let detail = if account.devices.iter().any(|own| own.id == device.id && own.secret.is_some()) {
                                             "Saved password"
+                                        } else if shared {
+                                            "Shared system · password required"
                                         } else {
                                             "Password required"
                                         };
@@ -152,6 +152,7 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
                         if account.devices.is_empty()
                             && account.shared.is_empty()
                             && account.groups.is_empty()
+                            && account.shared_groups.is_empty()
                         {
                             ui.label(
                                 RichText::new(

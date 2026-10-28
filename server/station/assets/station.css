@@ -54,6 +54,8 @@ input[type=text], input[type=password], input[type=number], textarea, select {
   background: #04060c; color: var(--tan); border: 1.5px solid rgba(255,153,0,.7); border-radius: 16px;
   padding: 8px 14px; font: 17px "Barlow Semi Condensed", system-ui, sans-serif; width: 100%; max-width: 480px; }
 label { display: block; margin: 12px 0 4px; }
+.technician-choices { min-width: 0; max-height: 220px; overflow-y: auto; border: 1px solid var(--dim); margin: 8px 0; padding: 6px 10px; }
+.technician-choices label { margin: 4px 0; overflow-wrap: anywhere; }
 table { border-collapse: collapse; width: 100%; }
 th { text-align: left; font: 14px var(--display); text-transform: uppercase; letter-spacing: .08em; color: var(--lav); padding: 6px 10px; border-bottom: 1px solid #1a2238; }
 td { padding: 7px 10px; border-bottom: 1px solid #10162a; vertical-align: middle; }

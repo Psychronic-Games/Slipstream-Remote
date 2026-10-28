@@ -6,6 +6,10 @@
 use slipstream_core::proto::InfoSection;
 use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, RefreshKind, System};
 
+#[cfg(any(windows, test))]
+#[path = "machine_serial.rs"]
+mod serial;
+
 pub fn collect() -> Vec<InfoSection> {
     let mut sys = System::new_with_specifics(
         RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()).with_memory(MemoryRefreshKind::everything()),
@@ -15,8 +19,8 @@ pub fn collect() -> Vec<InfoSection> {
     sys.refresh_cpu_all();
     // The hardware doesn't change while we run; the viewer asks every few
     // seconds for the live figures.
-    static HARDWARE: std::sync::OnceLock<Hardware> = std::sync::OnceLock::new();
-    let hw = HARDWARE.get_or_init(hardware);
+    let hw = cached_hardware();
+    let serial = serial_number();
     let mut out = Vec::new();
 
     let mut computer = Section::new("Computer");
@@ -40,6 +44,7 @@ pub fn collect() -> Vec<InfoSection> {
             computer.row("Motherboard", hw.board.clone());
         }
     }
+    computer.row("Serial number", Some(serial.clone().unwrap_or_else(|| "Unavailable (not reported or access denied)".into())));
     computer.row("BIOS / firmware", hw.bios.clone());
     computer.row("Up for", Some(duration(System::uptime())));
     computer.row("User", std::env::var("USERNAME").or_else(|_| std::env::var("USER")).ok());
@@ -212,6 +217,84 @@ pub fn collect() -> Vec<InfoSection> {
 
     out.retain(|s| !s.rows.is_empty());
     out
+}
+
+fn cached_hardware() -> &'static Hardware {
+    static HARDWARE: std::sync::OnceLock<Hardware> = std::sync::OnceLock::new();
+    HARDWARE.get_or_init(hardware)
+}
+
+fn serial_number() -> &'static Option<String> {
+    static SERIAL_NUMBER: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    SERIAL_NUMBER.get_or_init(|| {
+        #[cfg(windows)]
+        let value = serial::read();
+        #[cfg(not(windows))]
+        let value = sysinfo::Product::serial_number();
+        clean_serial_number(value)
+    })
+}
+
+/// A small, static snapshot for a private station. Call off the async threads.
+/// Deliberately excludes usernames, IP/MAC addresses, shares and passwords.
+pub fn station_inventory() -> slipstream_core::directory::StationInventory {
+    static INVENTORY: std::sync::OnceLock<slipstream_core::directory::StationInventory> = std::sync::OnceLock::new();
+    INVENTORY.get_or_init(|| {
+        let sys = System::new_with_specifics(
+            RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing()).with_memory(MemoryRefreshKind::nothing().with_ram()),
+        );
+        slipstream_core::directory::StationInventory {
+            computer_name: System::host_name().unwrap_or_default(),
+            // Avoid the full hardware collector's GPU/drive utility probes:
+            // this snapshot runs alongside directory heartbeats at startup.
+            model: station_model(),
+            serial_number: serial_number().clone(),
+            os_version: System::long_os_version().or_else(System::name),
+            architecture: System::cpu_arch(),
+            processor: sys.cpus().first().map(|c| c.brand().trim().to_string()).filter(|s| !s.is_empty()),
+            memory_bytes: sys.total_memory(),
+        }
+    }).clone()
+}
+
+#[cfg(windows)]
+fn station_model() -> Option<String> {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let key = r"HARDWARE\DESCRIPTION\System\BIOS";
+    join_names(&[reg_string(HKEY_LOCAL_MACHINE, key, "SystemManufacturer"), reg_string(HKEY_LOCAL_MACHINE, key, "SystemProductName")])
+}
+
+#[cfg(target_os = "linux")]
+fn station_model() -> Option<String> {
+    let dmi = |name: &str| std::fs::read_to_string(format!("/sys/class/dmi/id/{name}")).ok();
+    join_names(&[dmi("sys_vendor"), dmi("product_name")]).or_else(sysinfo::Product::name)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn station_model() -> Option<String> {
+    sysinfo::Product::name()
+}
+
+/// Keep the manufacturer's spelling, but don't present firmware placeholders
+/// as usable serial numbers. This is the system serial, not a board/disk ID.
+fn clean_serial_number(value: Option<String>) -> Option<String> {
+    let value = value?;
+    let value = value.trim().trim_matches('\0').trim();
+    const JUNK: [&str; 13] = [
+        "unknown", "none", "default string", "system serial number", "system serial#",
+        "to be filled by o.e.m.", "to be filled by oem", "not specified",
+        "not applicable", "not available", "n/a", "o.e.m.", "invalid",
+    ];
+    if value.is_empty()
+        || value.len() > 128
+        || value.chars().any(char::is_control)
+        || JUNK.contains(&value.to_ascii_lowercase().as_str())
+        || value.chars().all(|c| matches!(c, '0' | '-' | ' '))
+        || value.chars().all(|c| matches!(c, 'f' | 'F' | '-' | ' '))
+    {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 /// The hypervisor's name, if this computer is a virtual machine (going by
@@ -789,18 +872,45 @@ fn hardware() -> Hardware {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn station_summary_reports_hardware() {
+        let summary = super::station_inventory();
+        assert!(!summary.architecture.is_empty());
+        assert!(summary.memory_bytes > 0);
+        assert!(summary.processor.as_deref().is_some_and(|s| !s.is_empty()));
+    }
+
+    #[test]
     fn collects_the_basics() {
         let info = super::collect();
         let titles: Vec<&str> = info.iter().map(|s| s.title.as_str()).collect();
         for t in ["Computer", "Operating system", "Processor", "Memory"] {
             assert!(titles.contains(&t), "{t} missing from {titles:?}");
         }
+        let computer = info.iter().find(|s| s.title == "Computer").unwrap();
+        assert!(computer.rows.iter().any(|(k, v)| k == "Serial number" && !v.is_empty()));
         for s in &info {
             println!("{}", s.title);
             for (k, v) in &s.rows {
                 println!("  {k}: {v}");
             }
         }
+    }
+
+    #[test]
+    fn serial_numbers_preserve_manufacturer_spelling_and_reject_unusable_firmware_values() {
+        use super::clean_serial_number;
+        for serial in ["AbC-1234567", "VMware-56 4d ab cd", "1234"] {
+            assert_eq!(clean_serial_number(Some(format!(" \0{serial}\0\n"))).as_deref(), Some(serial));
+        }
+        assert_eq!(clean_serial_number(None), None);
+        for serial in [
+            "", " \0\n", "Unknown", "Default string", "System Serial Number",
+            "To Be Filled By O.E.M.", "Not Specified", "N/A", "00000000", "FFFF-FFFF",
+            "abc\n123", "abc\0def",
+        ] {
+            assert_eq!(clean_serial_number(Some(serial.into())), None, "{serial:?}");
+        }
+        assert_eq!(clean_serial_number(Some("A".repeat(129))), None);
     }
 
     #[test]

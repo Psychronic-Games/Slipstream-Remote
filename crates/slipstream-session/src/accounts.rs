@@ -65,6 +65,7 @@ impl Client {
             a.devices = state.devices;
             a.groups = state.groups;
             a.shared = state.shared;
+            a.shared_groups = state.shared_groups;
             a.signed_out = false;
         });
     }

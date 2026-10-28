@@ -74,10 +74,12 @@ the same signature before installing anything.
   folders, or drag files from your desktop straight onto the remote screen.
 - **Technician sign-in** — keep your list of devices (with their passwords
   encrypted in the app before station storage) on your station, and sign in
-  to several stations at once, other organisations' too.
-- **System information** — the remote computer's hardware, drives,
-  temperatures and network, live, plus peripherals, printers/scanners and
-  network drives.
+  to several stations at once, other organisations' too. Private stations
+  automatically add workstations to the shared list; passwords are still
+  required to connect, and the station shows their last reported hardware.
+- **System information** — the remote computer's hardware, manufacturer serial
+  number (when available), drives, temperatures and network, live, plus
+  peripherals, printers/scanners and network drives.
 - **Sound** from the remote computer, when you want it.
 - **Unattended Windows servers** — the Slipstream service hosts from boot,
   with support for UAC prompts, administrator windows and the login screen.

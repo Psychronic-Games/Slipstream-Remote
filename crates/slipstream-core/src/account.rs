@@ -61,6 +61,8 @@ pub struct AccountState {
     pub groups: Vec<String>,
     #[serde(default)]
     pub shared: Vec<SavedDevice>,
+    #[serde(default)]
+    pub shared_groups: Vec<String>,
     pub vault_salt: String,
     /// The station's current address and access key (they can change).
     pub station: StationConfig,
@@ -144,6 +146,19 @@ mod tests {
         assert!(device.group.is_empty());
         // Empty is sent explicitly so a new client can clear a group.
         assert_eq!(serde_json::to_value(device).unwrap()["group"], "");
+    }
+
+    #[test]
+    fn station_groups_default_for_older_servers_and_survive_the_settings_cache() {
+        let state: AccountState = serde_json::from_value(serde_json::json!({
+            "user":{"username":"tech","name":"Tech"}, "vault_salt":"fixture",
+            "station":{"server":"station.example"}
+        })).unwrap();
+        assert!(state.shared_groups.is_empty());
+        let mut settings = crate::config::Settings::default();
+        settings.accounts.push(crate::config::StationAccount { shared_groups: vec!["Empty station group".into()], ..Default::default() });
+        let loaded: crate::config::Settings = toml::from_str(&toml::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(loaded.accounts[0].shared_groups, ["Empty station group"]);
     }
 
     #[test]

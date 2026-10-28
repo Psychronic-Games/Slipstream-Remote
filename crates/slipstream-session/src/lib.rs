@@ -608,8 +608,11 @@ fn short_error(e: &anyhow::Error) -> String {
 }
 
 async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Result<()> {
+    let has_private_key = key.as_deref().is_some_and(|k| !k.is_empty());
     let mut dc = DirectoryClient::new(server, key)?;
     let hello = dc.hello().await?;
+    let inventory_enabled = hello.inventory && has_private_key && !slipstream_core::config::is_public_station(server);
+    let mut inventory_sent = !inventory_enabled;
     if let Some(m) = hello.motd.filter(|m| !m.trim().is_empty()) {
         inner.emit(ClientEvent::Motd(m));
     }
@@ -674,6 +677,15 @@ async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Resu
                 inner.save_settings();
             }
             set_status(inner, DirStatus::Online { id });
+        }
+        if !inventory_sent {
+            match tokio::task::spawn_blocking(slipstream_platform::machine::station_inventory).await {
+                Ok(inventory) => match dc.publish_inventory(&secret, inventory).await {
+                    Ok(()) => inventory_sent = true,
+                    Err(e) => debug!("station inventory: {e:#}"),
+                },
+                Err(e) => debug!("collecting station inventory: {e:#}"),
+            }
         }
     }
 }
@@ -1022,6 +1034,8 @@ mod tests {
         let (viewer, _vev, _) = client("siviewer", false).await;
         let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         let info = session.system_info().await.unwrap();
+        let computer = info.iter().find(|s| s.title == "Computer").expect("a Computer section");
+        assert!(computer.rows.iter().any(|(k, v)| k == "Serial number" && !v.is_empty()), "{computer:?}");
         let processor = info.iter().find(|s| s.title == "Processor").expect("a Processor section");
         assert!(processor.rows.iter().any(|(k, v)| k == "Cores" && !v.is_empty()), "{processor:?}");
         assert!(info.iter().any(|s| s.title == "Memory"));

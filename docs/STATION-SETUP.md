@@ -157,6 +157,25 @@ Windows, install the Slipstream service from **Config**). The
 [getting started guide](GETTING-STARTED.md#2-install-the-app-on-your-clients-computers)
 covers each platform.
 
+On private stations, the first registration automatically adds the workstation
+to every signed-in technician's shared device list, with its computer name in
+**Ungrouped**. Technicians still need its one-time or unattended password to
+connect. Lead technicians can rename and group shared devices from the app;
+the station's **Devices** tab also offers **Edit shared device** and a last
+reported hardware summary (model, serial, OS, processor and RAM). Hardware
+summaries require updated host apps. Public stations skip automatic enrollment
+and hardware collection.
+
+From **Devices → Assign to technician**, check one or more accounts and press
+**Add to selected lists** to prepare their personal panels before sign-in. No device password is
+assigned, and existing personal details or saved passwords are kept. Use
+**Edit shared device** on the same page to set the station's name and group.
+
+The **Groups** tab creates/renames station groups and moves multiple shared
+workstations at once. It also assigns selected groups, including empty ones,
+and their current devices to multiple technicians. Personal lists retain their
+own edits and credentials; repeat assignment to add later group members.
+
 ## Updates
 
 The station checks GitHub for a new release every 6 hours. It verifies the

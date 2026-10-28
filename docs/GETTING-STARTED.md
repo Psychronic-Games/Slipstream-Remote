@@ -265,10 +265,17 @@ The toolbar along the top:
 | **Chat** | Text chat with the person at the remote computer. On their side it opens in its own window. |
 | **Files** | The two-pane file manager: your computer on the left, theirs on the right. Select files or folders and send them either way, or make folders. |
 | **Sound** | Play the remote computer's sound here, or stop. The default is under *Config → Remote sound*. |
-| **Tools ▾** | **Privacy mode** blacks out the remote computer's own screen while you work (Windows 10 2004 and later). **Port forwarding…** opens tunnels, see below. **System information…** shows its hardware, OS, drives, temperatures and network, updating live, with *Copy all* for tickets. |
+| **Tools ▾** | **Privacy mode** blacks out the remote computer's own screen while you work (Windows 10 2004 and later). **Port forwarding…** opens tunnels, see below. **System information…** shows its hardware, manufacturer serial number, OS, drives, temperatures and network, updating live, with *Copy all* for tickets. |
 | **Balanced ▾** | Quality preset: *Balanced*, *Speed* (lowest delay), *Quality* (sharpest picture) and *Low bandwidth* (slow connections). |
 | Stats | Frames per second, bandwidth (kbit/s below 1 Mbit/s), round-trip time, and **DIRECT** or **RELAY** (whether traffic goes peer-to-peer or through your station). Hover for decode time and, from 0.6.2 hosts, the remote computer's own figures: capture, encoding, and waiting for a new screen frame or for you. Every 30 s the same figures go to this app's log. The Speed preset can reduce moving-picture resolution on a slow host and sharpen it once motion stops. Balanced and Quality retain full picture resolution. |
 | **End link** | Disconnect. |
+
+The remote computer's **Serial number** appears under **Computer** and is
+included in **Copy all**. The remote host must run a version with serial-number
+collection. Windows and macOS read the manufacturer's system serial; Linux
+reads it when firmware access permissions allow. Missing, placeholder or
+inaccessible values show **Unavailable (not reported or access denied)**.
+In a virtual machine, any reported serial belongs to the VM.
 
 **Control an Android phone from a PC:** update both apps, open Slipstream on
 the phone and configure/link its station. Its ID and one-time password appear
@@ -358,6 +365,41 @@ The Bridge then shows **Saved devices**, per station:
   If an admin resets your sign-in password, saved passwords are cleared.
 - The lamp shows which devices are online right now.
 - **Shared by …** lists devices the station's admins share with everyone.
+  On a **private station**, workstations appear here automatically when they
+  first register, using their computer name in **Ungrouped**. Existing hosts
+  are added on their next registration after the station is updated. A station
+  admin can rename them or change their group using **Edit** in the app or
+  **Devices → Edit shared device** on the station. Later heartbeats preserve
+  these edits; removing a shared entry keeps it removed.
+
+Automatic enrollment adds a way to find the workstation; connecting still
+requires its one-time or unattended password. **Remember unattended password
+in my list** also works for shared devices: it saves a personal copy encrypted
+with your technician vault key. It never gives the password to other technicians.
+
+The station's **Devices** page shows each workstation's last reported model,
+serial number, OS, architecture, processor and RAM, with the report time.
+Updated hosts send this small snapshot at startup; full live system information
+still comes from an authenticated support session. **Public stations** do not
+automatically share devices or collect these hardware summaries.
+
+To prepare a particular technician's personal list, open the station's
+**Devices** tab, choose **Assign to technician**, check one or more accounts and
+press **Add to selected lists**. They can be signed out and the device can be
+offline. It appears when they next sign in or refresh their list, with the
+station's current name, group and notes. Assigning an existing entry preserves
+that technician's custom details and encrypted password; a new assignment
+contains no password. The station's **Edit shared device** action changes the
+station name/group without overwriting personal labels.
+
+The station's **Groups** tab manages shared groups, including empty folders.
+Create or rename groups there, then use **Move workstations** to move several
+shared devices into a group or back to **Ungrouped**. Nonempty groups must be
+emptied before removal. **Assign groups to technicians** copies one or more
+groups and their current workstations into selected personal lists, including
+empty groups. Existing personal names, group choices, notes and passwords are
+kept. Assign again to add devices placed into the station group later; personal
+lists are independent copies, while shared station groups continue to sync.
 
 From the command line: `slipstream sign-in relay.example.com jsmith`,
 `slipstream saved`, `slipstream save 482913077 --station relay.example.com
@@ -643,6 +685,13 @@ its new identity. Station settings, unattended password and service installation
 are preserved. Custom device labels remain; a label matching the old system
 hostname follows the new host name. Ordinary service updates/reinstalls retain
 the service's identity even if its user profile has a separate key.
+
+On a private station, the clone's first registration creates a separate shared
+entry in **Ungrouped**, using its new computer name; the master's entry remains.
+Leave the master's Slipstream name at its default if clones should use their
+Windows computer names, and set each clone's Windows name before Slipstream
+first starts. Install/start the Windows service on the master for automatic
+registration after reboot, without needing someone to launch the app.
 
 Missing/unreadable identifiers retain the current ID instead of guessing.
 Duplicated firmware identifiers, VMs cloned with the same hardware UUID, and

@@ -120,9 +120,46 @@ switch ($action) {
         flash('Relay stopped. It starts again automatically when clients connect.');
         back();
     case 'delete_device':
-        slip_store()->delete((int)($_POST['id'] ?? 0));
+        $id = (int)($_POST['id'] ?? 0);
+        slip_store()->delete($id);
+        slip_shared_update(fn(array $list) => array_filter($list, fn($x) => ($x['id'] ?? 0) !== $id));
         flash('Device removed. It will get a new ID if it connects again.');
         back('devices');
+    case 'station_group_create':
+    case 'station_group_rename':
+    case 'station_group_delete':
+        try {
+            slip_station_group(substr($action, strlen('station_group_')), $_POST['group'] ?? null, $_POST['new_name'] ?? null);
+            flash('Station groups updated. Personal technician groups are kept separately.');
+        } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
+        back('groups');
+    case 'station_group_move':
+        try {
+            if (!is_array($_POST['ids'] ?? null)) throw new InvalidArgumentException('Choose at least one workstation.');
+            $moved = slip_move_shared_devices($_POST['ids'], $_POST['group'] ?? null);
+            flash("Moved $moved workstation(s). Personal technician groups are unchanged.");
+        } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
+        back('groups');
+    case 'device_assign':
+    case 'group_assign':
+        try {
+            $usernames = $_POST['usernames'] ?? [$_POST['username'] ?? ''];
+            if (!is_array($usernames)) throw new InvalidArgumentException('Choose at least one technician.');
+            if ($action === 'group_assign') {
+                if (!is_array($_POST['groups'] ?? null)) throw new InvalidArgumentException('Choose at least one station group.');
+                $result = slip_assign_groups($usernames, $_POST['groups']);
+            } else {
+                $result = slip_assign_devices($usernames, (int)($_POST['id'] ?? 0));
+            }
+            $message = count($result['added']) . ' added; ' . count($result['existing'])
+                . ' already assigned. Existing details and saved passwords were kept.';
+            foreach ($result['failed'] as $username => $reason) $message .= " $username: $reason";
+            $message .= ' Technicians still need the device password to connect.';
+            flash($message, !empty($result['failed']));
+        } catch (InvalidArgumentException $e) {
+            flash($e->getMessage(), true);
+        }
+        back($action === 'group_assign' ? 'groups' : 'devices');
     case 'settings':
         $changes = [
             'org' => slip_clip(trim((string)($_POST['org'] ?? '')), 80),
@@ -194,18 +231,22 @@ switch ($action) {
         flash('Technician removed, with their saved devices.');
         back('techs');
     case 'shared_add':
-        $d = slip_clean_device(['id' => (int)preg_replace('/\D/', '', (string)($_POST['id'] ?? '')), 'name' => $_POST['name'] ?? '', 'notes' => $_POST['notes'] ?? ''], false);
+        $input = ['id' => (int)preg_replace('/\D/', '', (string)($_POST['id'] ?? '')), 'name' => $_POST['name'] ?? '', 'notes' => $_POST['notes'] ?? ''];
+        if (isset($_POST['group'])) $input['group'] = $_POST['group'];
+        $d = slip_clean_device($input, false);
         if (!$d) {
             flash('Enter the device\'s 9-digit ID.', true);
         } else {
             slip_shared_update(function (array $list) use ($d) {
+                $old = array_values(array_filter($list, fn($x) => ($x['id'] ?? 0) === $d['id']))[0] ?? [];
                 $list = array_filter($list, fn($x) => ($x['id'] ?? 0) !== $d['id']);
-                $list[] = $d + ['added_by' => 'admin page', 'added' => time()];
+                $d['group'] = $d['group'] ?? ($old['group'] ?? '');
+                $list[] = $d + ['added_by' => $old['added_by'] ?? 'admin page', 'added' => $old['added'] ?? time()];
                 return $list;
             });
             flash('Shared with every technician.');
         }
-        back('techs');
+        back(($_POST['return_tab'] ?? '') === 'devices' ? 'devices' : 'techs');
     case 'shared_delete':
         $id = (int)($_POST['id'] ?? 0);
         slip_shared_update(fn(array $list) => array_filter($list, fn($x) => ($x['id'] ?? 0) !== $id));
@@ -233,6 +274,7 @@ slip_page_start('Station admin', '../');
 <nav class="tabs">
   <a href="./" class="<?= $tab === 'status' ? 'on' : '' ?>">Status</a>
   <a href="?tab=devices" class="<?= $tab === 'devices' ? 'on' : '' ?>">Devices</a>
+  <a href="?tab=groups" class="<?= $tab === 'groups' ? 'on' : '' ?>">Groups</a>
   <a href="?tab=techs" class="<?= $tab === 'techs' ? 'on' : '' ?>">Technicians</a>
   <a href="?tab=settings" class="<?= $tab === 'settings' ? 'on' : '' ?>">Settings</a>
   <a href="../" target="_blank">Download page ↗</a>
@@ -373,6 +415,10 @@ slip_page_start('Station admin', '../');
 
 <?php elseif ($tab === 'devices'):
     $devices = slip_store()->all();
+    $sharedById = array_column(slip_shared(), null, 'id');
+    $technicians = slip_users();
+    $private = slip_access_key() !== null;
+    $stationGroups = slip_shared_groups();
     usort($devices, fn($a, $b) => ($b['last_seen'] ?? 0) <=> ($a['last_seen'] ?? 0));
     $cut = time() - SLIP_ONLINE_WINDOW;
     $ago = function ($t) {
@@ -383,18 +429,57 @@ slip_page_start('Station admin', '../');
     ?>
   <h2>Devices</h2>
   <div class="panel">
+    <p class="dim"><?= $private ? 'Workstations automatically appear in every technician’s shared list, under Ungrouped. Names and groups you set stay as you left them. Connecting still requires the device password.' : 'Public directory: automatic shared enrollment and hardware inventory are disabled.' ?> <a href="?tab=groups">Organize groups and assign them to technicians</a></p>
+    <datalist id="station-groups"><?php foreach ($stationGroups as $group): ?><option value="<?= h($group) ?>"><?php endforeach ?></datalist>
     <?php if (!$devices): ?><p class="dim">No devices yet. They appear here once someone runs the app from your download page.</p><?php else: ?>
     <table>
-      <tr><th></th><th>ID</th><th>Name</th><th>System</th><th>Version</th><th>Last seen</th><th></th></tr>
-      <?php foreach ($devices as $d): $on = ($d['last_seen'] ?? 0) >= $cut; $id = (string)$d['id']; ?>
+      <tr><th></th><th>ID</th><th>Name / group</th><th>System</th><?php if ($private): ?><th>Hardware</th><?php endif ?><th>Version</th><th>Last seen</th><th></th></tr>
+      <?php foreach ($devices as $d):
+          $on = ($d['last_seen'] ?? 0) >= $cut; $id = (string)$d['id'];
+          $saved = $sharedById[$d['id']] ?? null;
+          $inventory = $private ? slip_device_inventory($d['endpoint']) : [];
+      ?>
         <tr>
           <td class="<?= $on ? 'ok' : 'dim' ?>">●</td>
           <td class="mono"><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?></td>
-          <td><?= h($d['name'] ?? '') ?></td>
-          <td><?= h($d['os'] ?? '') ?></td>
+          <td><?= h($saved['name'] ?? $d['name'] ?? '') ?><div class="dim"><?= h(($saved['group'] ?? '') !== '' ? $saved['group'] : 'Ungrouped') ?></div>
+            <?php if ($saved && ($saved['name'] ?? '') !== ($d['name'] ?? '')): ?><div class="dim">Computer: <?= h($d['name'] ?? '') ?></div><?php endif ?>
+            <?php if ($private): ?>
+            <details><summary>Edit shared device</summary>
+              <form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_add"><input type="hidden" name="return_tab" value="devices"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                <label class="k">Name</label><input type="text" name="name" maxlength="64" value="<?= h($saved['name'] ?? $d['name'] ?? '') ?>">
+                <label class="k">Group</label><input type="text" name="group" maxlength="64" list="station-groups" placeholder="Ungrouped" value="<?= h($saved['group'] ?? '') ?>">
+                <label class="k">Notes</label><textarea name="notes" maxlength="500"><?= h($saved['notes'] ?? '') ?></textarea>
+                <button class="small">Save shared device</button>
+              </form>
+            </details>
+            <?php endif ?>
+          </td>
+          <td><?= h($inventory['os_version'] ?? $d['os'] ?? '') ?><?php if (!empty($inventory['architecture'])): ?><div class="dim"><?= h($inventory['architecture']) ?></div><?php endif ?></td>
+          <?php if ($private): ?><td>
+            <?php if ($inventory): ?>
+              <div><?= h($inventory['model'] ?? 'Model unavailable') ?></div>
+              <?php if (!empty($inventory['processor'])): ?><div class="dim"><?= h($inventory['processor']) ?></div><?php endif ?>
+              <?php if (!empty($inventory['memory_bytes'])): ?><div><?= h(round($inventory['memory_bytes'] / 1073741824, 1)) ?> GiB RAM</div><?php endif ?>
+              <div class="mono">Serial: <?= h($inventory['serial_number'] ?? 'Unavailable') ?></div>
+              <div class="dim">Reported <?= h(gmdate('Y-m-d H:i', $inventory['reported_at'])) ?> UTC</div>
+            <?php else: ?><span class="dim">Awaiting host inventory</span><?php endif ?>
+          </td><?php endif ?>
           <td class="dim"><?= h($d['app_version'] ?? '') ?></td>
           <td class="<?= $on ? 'ok' : 'dim' ?>"><?= $on ? 'online' : h($ago($d['last_seen'] ?? 0)) ?></td>
-          <td><form method="post" onsubmit="return confirm('Remove this device?')"><?= $form() ?>
+          <td>
+            <?php if ($technicians): ?>
+            <details><summary>Assign to technician</summary>
+              <form method="post"><?= $form() ?><input type="hidden" name="action" value="device_assign"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                <fieldset class="technician-choices"><legend class="k">Select technicians</legend>
+                  <?php foreach ($technicians as $username => $technician): ?><label><input type="checkbox" name="usernames[]" value="<?= h($username) ?>"><?= h(($technician['name'] ?? $username) . ' (' . $username . ')') ?></label><?php endforeach ?>
+                </fieldset>
+                <p class="dim">Adds the current name and group to their personal list. Existing entries and saved passwords stay intact.</p>
+                <button class="small blue">Add to selected lists</button>
+              </form>
+            </details>
+            <?php else: ?><a href="?tab=techs">Add a technician first</a><?php endif ?>
+            <form method="post" onsubmit="return confirm('Remove this device?')"><?= $form() ?>
             <input type="hidden" name="action" value="delete_device"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
             <button class="small red">Remove</button></form></td>
         </tr>
@@ -402,6 +487,53 @@ slip_page_start('Station admin', '../');
     </table>
     <?php endif ?>
   </div>
+
+<?php elseif ($tab === 'groups'):
+    $groups = slip_shared_groups(); $shared = slip_shared(); $technicians = slip_users();
+    ?>
+  <h2>Station groups</h2>
+  <div class="panel">
+    <p>Organize the station's shared workstations here. These groups appear in the app after its next list refresh, including empty groups.</p>
+    <form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_create">
+      <label class="k">New group</label><input type="text" name="group" maxlength="64" required placeholder="Workstations, Servers, Front desk…">
+      <button class="blue">Create group</button>
+    </form>
+    <?php if ($groups): ?><table>
+      <tr><th>Group</th><th>Workstations</th><th>Rename</th><th></th></tr>
+      <?php foreach ($groups as $group): $count = count(array_filter($shared, fn($d) => ($d['group'] ?? '') === $group)); ?>
+      <tr><td><?= h($group) ?></td><td><?= $count ?></td><td>
+        <form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_rename"><input type="hidden" name="group" value="<?= h($group) ?>">
+          <input type="text" name="new_name" maxlength="64" required value="<?= h($group) ?>"><button class="small blue">Rename</button>
+        </form>
+      </td><td><form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_delete"><input type="hidden" name="group" value="<?= h($group) ?>">
+        <button class="small red" <?= $count ? 'disabled title="Move workstations out first"' : '' ?>>Remove empty group</button>
+      </form></td></tr>
+      <?php endforeach ?>
+    </table><?php endif ?>
+  </div>
+  <?php if ($shared): ?>
+  <h2>Move workstations</h2>
+  <div class="panel"><form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_move">
+    <fieldset class="technician-choices"><legend class="k">Select workstations</legend>
+      <?php foreach ($shared as $d): ?><label><input type="checkbox" name="ids[]" value="<?= (int)$d['id'] ?>"><?= h((($d['name'] ?? '') ?: $d['id']) . ' · ' . $d['id'] . ' · ' . (($d['group'] ?? '') ?: 'Ungrouped')) ?></label><?php endforeach ?>
+    </fieldset>
+    <label class="k">Move to</label><select name="group"><option value="">Ungrouped</option><?php foreach ($groups as $group): ?><option value="<?= h($group) ?>"><?= h($group) ?></option><?php endforeach ?></select>
+    <button class="blue">Move selected workstations</button>
+  </form></div>
+  <?php endif ?>
+  <?php if ($groups && $technicians): ?>
+  <h2>Assign groups to technicians</h2>
+  <div class="panel"><form method="post"><?= $form() ?><input type="hidden" name="action" value="group_assign">
+    <p>Copies selected groups and their current workstations into personal technician lists. Empty groups are included. Existing personal names, groups, notes and saved passwords stay intact. Later station changes do not overwrite personal choices; assign again to add new workstations.</p>
+    <fieldset class="technician-choices"><legend class="k">Select groups</legend>
+      <?php foreach ($groups as $group): ?><label><input type="checkbox" name="groups[]" value="<?= h($group) ?>"><?= h($group) ?></label><?php endforeach ?>
+    </fieldset>
+    <fieldset class="technician-choices"><legend class="k">Select technicians</legend>
+      <?php foreach ($technicians as $username => $technician): ?><label><input type="checkbox" name="usernames[]" value="<?= h($username) ?>"><?= h(($technician['name'] ?? $username) . ' (' . $username . ')') ?></label><?php endforeach ?>
+    </fieldset>
+    <button class="blue">Add selected groups to technician lists</button>
+  </form></div>
+  <?php endif ?>
 
 <?php elseif ($tab === 'techs'):
     $users = slip_users();
@@ -461,10 +593,10 @@ slip_page_start('Station admin', '../');
     <p>Every technician sees these in their app, next to their own list. Passwords aren't stored for shared devices.</p>
     <?php if ($shared): ?>
     <table>
-      <tr><th>ID</th><th>Name</th><th>Notes</th><th>Added by</th><th></th></tr>
+      <tr><th>ID</th><th>Name</th><th>Group</th><th>Notes</th><th>Added by</th><th></th></tr>
       <?php foreach ($shared as $d): $id = (string)$d['id']; ?>
         <tr><td class="mono"><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?></td>
-          <td><?= h($d['name'] ?? '') ?></td><td class="dim"><?= h($d['notes'] ?? '') ?></td><td class="dim"><?= h($d['added_by'] ?? '') ?></td>
+          <td><?= h($d['name'] ?? '') ?></td><td><?= h(($d['group'] ?? '') ?: 'Ungrouped') ?></td><td class="dim"><?= h($d['notes'] ?? '') ?></td><td class="dim"><?= h($d['added_by'] ?? '') ?></td>
           <td><form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_delete"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
             <button class="small red">Remove</button></form></td></tr>
       <?php endforeach ?>
