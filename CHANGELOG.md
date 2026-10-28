@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.31.0 — 2026-10-28
+
 - System information shows the remote computer's manufacturer serial number
   when available, and includes it in Copy all.
 - Private stations automatically add registered workstations to the shared
