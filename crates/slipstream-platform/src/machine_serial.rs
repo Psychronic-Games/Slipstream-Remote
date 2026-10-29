@@ -1,8 +1,8 @@
-//! The system's manufacturer serial from Windows RawSMBIOSData. Keep this
+//! System and motherboard manufacturer serials from Windows RawSMBIOSData. Keep this
 //! parser independent of Windows so malformed firmware can be tested anywhere.
 
 #[cfg(windows)]
-pub(super) fn read() -> Option<String> {
+pub(super) fn read(kind: u8) -> Option<String> {
     use windows_sys::Win32::System::SystemInformation::GetSystemFirmwareTable;
     const RSMB: u32 = u32::from_be_bytes(*b"RSMB");
     // SAFETY: a sizing query followed by a read into a buffer of that size.
@@ -16,11 +16,11 @@ pub(super) fn read() -> Option<String> {
         if GetSystemFirmwareTable(RSMB, 0, data.as_mut_ptr(), size) != size {
             return None;
         }
-        parse(&data)
+        parse_serial(&data, kind)
     }
 }
 
-fn parse(data: &[u8]) -> Option<String> {
+fn parse_serial(data: &[u8], wanted: u8) -> Option<String> {
     // The eight-byte RawSMBIOSData header is not itself an SMBIOS structure.
     let length = u32::from_le_bytes(data.get(4..8)?.try_into().ok()?) as usize;
     let mut table = data.get(8..)?.get(..length)?;
@@ -32,7 +32,7 @@ fn parse(data: &[u8]) -> Option<String> {
         }
         let strings = table.get(length..)?;
         let end = strings.windows(2).position(|s| s == [0, 0])?;
-        if kind == 1 {
+        if kind == wanted {
             if length < 8 {
                 return None;
             }
@@ -47,13 +47,23 @@ fn parse(data: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    fn parse(data: &[u8]) -> Option<String> { super::parse_serial(data, 1) }
 
     fn raw(table: &[u8]) -> Vec<u8> {
         let mut data = vec![0, 3, 6, 0];
         data.extend_from_slice(&(table.len() as u32).to_le_bytes());
         data.extend_from_slice(table);
         data
+    }
+
+    #[test]
+    fn motherboard_serial_is_read_separately_from_the_system_serial() {
+        let data = raw(b"\x01\x08\x00\x00\x00\x00\x00\x01Default string\0\0\x02\x08\x00\x00\x00\x00\x00\x01BOARD-123\0\0");
+        assert_eq!(parse(&data).as_deref(), Some("Default string"));
+        assert_eq!(super::parse_serial(&data, 2).as_deref(), Some("BOARD-123"));
+        for end in 0..data.len() {
+            assert!(super::parse_serial(&data[..end], 2).is_none());
+        }
     }
 
     #[test]

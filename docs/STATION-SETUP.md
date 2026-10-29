@@ -100,7 +100,7 @@ Open `https://support.example.com/admin/` and enter:
 
 - **Organisation name**: shown to your clients in the app and on the
   download page, and used in download file names ("Slipstream Remote - Acme IT.exe").
-- **Admin password**: at least 10 characters. Store it in your password manager.
+- **Password for admin**: at least 10 characters. Setup creates the first technician account, **admin**, with station administrator permission. Store its credentials in your password manager.
 
 The station creates its settings and private **access key**, writes its relay
 routing into `.htaccess`, and starts the relay.
@@ -163,26 +163,40 @@ to the station's device list, with its computer name in
 unassigned groups are hidden. Technicians still need the device password to
 connect. Lead technicians can rename and group shared devices from the app;
 the station's **Devices** tab also offers **Edit shared device** and a last
-reported hardware summary (model, serial, OS, processor and RAM). Hardware
-summaries require updated host apps. Public stations skip automatic enrollment
+reported hardware summary (model, serial, OS, processor and RAM). Click the device ID or
+**View full system report** for the latest complete System information snapshot,
+including storage, graphics, network, peripherals, printers and shared folders.
+Updated host apps refresh it at startup and every 15 minutes. The report remains
+available offline and shows when it was collected. Custom PCs use the motherboard
+model when no system model is supplied; motherboard and system serials are labeled
+separately. Firmware placeholders are ignored; unavailable or unreadable serials
+cannot be recovered by the station. Public stations skip automatic enrollment
 and hardware collection.
 
-From **Devices → Assign to technician**, check one or more accounts and press
-**Add to selected lists** to prepare their personal panels before sign-in. No device password is
+From **Devices → Assign to technicians**, search and check one or more accounts, then press
+**Assign** to prepare their personal panels before sign-in. No device password is
 assigned, and existing personal details or saved passwords are kept. Use
-**Edit shared device** on the same page to set the station's name and group.
+**Edit workstation** on the same page to set its name, notes and groups. The
+Groups picker searches existing groups and can create a new one. Select several
+groups when the workstation belongs in more than one; no selections means
+Ungrouped. Drag the themed bar below Notes to resize it, or use its arrow keys.
 
 The **Groups** tab shows station and personal technician groups with their
-source, workstation count and saved recipients. **Edit assignments** on a row
-sets which technicians see that group, including empty groups and Ungrouped.
-Multiple technicians can receive the same group. New station groups start with
-no recipients. Membership updates on the next app list refresh; clearing the
-recipients revokes shared visibility. Personal groups stay with their owner,
-and sharing never exposes saved passwords. Separately saved personal entries
-and earlier copies remain intact. The same tab creates/renames station groups
-and moves station workstations between them.
+source. Search a row's **Workstations** dropdown, check the devices that belong
+there and press **Save workstations**. Removing a device from one group keeps
+its other memberships and saved passwords. Newly added personal entries have
+no saved password. Ungrouped is automatic for devices with no named groups.
 
-The Status page's relay log records connections and failures rather than only
+**Visible to these technicians** is also a searchable checkbox dropdown. Press
+**Save visibility** to apply its selections; filtering never clears selections
+hidden by the search. Multiple technicians can receive a group. New station
+groups start with no recipients, including Ungrouped. Personal groups always
+remain visible to their owner. Clearing recipients revokes shared visibility,
+while independently saved personal entries and passwords remain intact. The
+same tab creates and renames station groups and searches the group list.
+
+The Status page's relay activity report has search and severity filters, wrapped
+event rows and expandable technical details. It records connections and failures rather than only
 upstream actor messages. Connection records include a connection ID, endpoint,
 peer address, duration and transport bytes received/sent. Private stations using
 the file registry also resolve the workstation ID and station alias (falling
@@ -259,3 +273,19 @@ domain name, so they follow by themselves.
   by hand as in Step 3.
 - More in [SERVER.md](SERVER.md#troubleshooting) and
   [GETTING-STARTED.md](GETTING-STARTED.md#troubleshooting).
+
+## Administrator sign-in
+
+Station administrators sign in to `/admin/` with their technician username and
+password. Grant **Station admin** on the Technicians page to allow another
+technician to manage the web console, settings, accounts and shared devices.
+Ordinary technicians use their accounts in the app and cannot open the console.
+The console retains at least one administrator.
+
+Existing stations automatically move their former shared password to an **admin**
+account on the first visit after upgrading. If that username is already taken,
+the console shows **station-admin** (or a numbered alternative) for the migrated
+account; existing technician credentials and permissions are preserved. Old
+password-only browser sessions must sign in again. Resetting a password, removing
+an administrator, or using **Sign out everywhere** also revokes browser access.
+Password resets still clear the technician's saved encrypted device passwords.

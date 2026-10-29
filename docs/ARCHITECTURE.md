@@ -268,18 +268,52 @@ so recreating a name does not resurrect access. Changing recipients uses the
 shared-state lock and does not mutate personal device lists or vault data.
 The old per-device copy action remains available separately.
 
-`hello.inventory` advertises hardware-summary support only on private stations
-with an access key. The primary host checks that capability, requires its key,
-and excludes the public station before collecting a cached `StationInventory`
-off the async threads. After registration it sends a separate signed
-`inventory` request, once per directory connection, retrying failures on later
-heartbeats. Public endpoints never publish it. The station accepts only the
-computer name, model, system serial, OS version, architecture, processor and
-RAM bytes, and adds its own report timestamp. Snapshots in `inventory/` are
-keyed by the signing endpoint and work with either file or PDO registries.
-Only the authenticated admin Devices page reads them; lookup and public pages
-do not expose them, and public stations reject inventory submissions. The
-directory JSON additions are optional; session protocol 6 is unchanged.
+`lib/groups.php` manages optional canonical `groups` arrays beside the legacy
+primary `group` field, with at most 32 memberships per device and 100 declared
+station groups. Historical single-group entries are read without a bulk rewrite.
+Station and personal membership edits preserve other memberships and sealed
+passwords. Personal additions from the station begin without credentials.
+Account responses project one legacy-compatible row per personal/authorized
+shared folder and remove the canonical array, preventing disclosure of other
+memberships. A legacy edit from any current folder preserves the other folders;
+an explicit move to a different legacy group retains single-folder semantics.
+
+The admin page renders reusable checkbox pickers from `admin/components.php`;
+`assets/admin.js` adds search, bounded floating menus, inline group creation,
+keyboard/dismiss handling, device dialogs, and accessible themed notes grips.
+Selections remain real form controls, including when filtered out; mutations
+still use authenticated, CSRF-checked POSTs. `group_members` changes one source
+group under the shared-state lock and account lock where needed. Relay activity
+parses the existing bounded plain log tail into escaped event rows, retaining
+raw technical details with wrapping. Filters run locally on those rows.
+
+`hello.inventory` advertises signed inventory support only on private stations;
+`hello.inventory_report` additionally accepts a full System information snapshot.
+Hosts require a private key and a non-public station URL. A separate bounded
+publication task collects off async threads and sends at startup and every
+15 minutes, retrying failures after a minute without blocking registration
+heartbeats. Older stations receive only summary fields. The full report uses
+the same `machine::collect` sections as a support session, including user,
+network, peripheral, printer and share information; no settings or credential
+objects are serialized. Motherboard model and serial are separate from system
+serial, and a missing OEM model falls back to a labeled motherboard model.
+
+The station validates report shape, section/row/string counts and a 1 MiB report
+size, retains only known fields and adds its own timestamps. A legacy summary
+refresh preserves any previous full report and its original timestamp.
+Snapshots in `inventory/` are keyed by the signing endpoint and work with file
+or PDO registries. Only the authenticated admin Devices page reads them; lookup
+and public pages do not expose them, and public stations reject submissions.
+Directory JSON additions are optional; session protocol 6 is unchanged.
+
+The web console uses technician accounts with the admin role. Initial setup
+creates `admin`; existing stations migrate their shared password hash under an
+exclusive admin lock, choosing a different username if necessary and clearing
+the legacy shared hash after the account is saved. PHP sessions retain an opaque
+account token, revalidated with its current role before every request. Password
+resets and sign-out revoke these tokens as well as app sessions. Admin removal
+and demotion share a lock and retain at least one admin. Mutations require CSRF
+validation. Password-only browser sessions no longer authorize access.
 
 `postcard` has no optional fields, so any change to a message bumps
 `PROTOCOL_VERSION`. The exception is a new variant appended to

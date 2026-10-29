@@ -45,10 +45,11 @@ if (!slip_station_ready()) {
             $err = 'The data folder ' . slip_data_dir() . ' is not writable by PHP.';
         } else {
             slip_station_save(slip_new_station(slip_clip($org, 80), $pw));
+            $username = slip_migrate_admin_account();
             slip_write_htaccess();
             slip_relay_ensure();
             session_regenerate_id(true);
-            $_SESSION['admin'] = true;
+            $_SESSION['admin_token'] = slip_token_issue($username, 'Station admin browser');
             flash('Station ready. Next: add the client downloads (see Status), then share ' . slip_base_url() . ' with your clients.');
             back();
         }
@@ -63,7 +64,8 @@ if (!slip_station_ready()) {
       <form method="post"><?= $form() ?><input type="hidden" name="action" value="setup">
         <label class="k">Organisation name (shown to your clients)</label>
         <input type="text" name="org" value="<?= h($_POST['org'] ?? '') ?>" placeholder="Acme IT Support" required>
-        <label class="k">Admin password</label>
+        <p>The first administrator account is <b class="mono">admin</b>. Add other administrators on the Technicians page.</p>
+        <label class="k">Password for admin</label>
         <input type="password" name="password" required minlength="10">
         <label class="k">Admin password again</label>
         <input type="password" name="password2" required minlength="10">
@@ -75,24 +77,36 @@ if (!slip_station_ready()) {
     exit;
 }
 
+$bootstrapUsername = slip_migrate_admin_account();
 $station = slip_station();
 
 // ── Login ──────────────────────────────────────────────────────────────────
 if ($action === 'logout') {
+    slip_token_revoke($_SESSION['admin_token'] ?? null);
+    $_SESSION = [];
     session_destroy();
     back();
 }
-if (empty($_SESSION['admin'])) {
+// Revalidate account existence, role and sign-out on every request, including POSTs.
+$admin = slip_token_user($_SESSION['admin_token'] ?? null);
+unset($_SESSION['admin']); // Password-only sessions cannot authorize the new console.
+if (!$admin || empty($admin['admin'])) {
+    slip_token_revoke($_SESSION['admin_token'] ?? null);
+    unset($_SESSION['admin_token']);
     $err = null;
     if ($action === 'login') {
         if (!slip_rate_ok('adminlogin', 8)) {
             $err = 'Too many attempts — wait a minute.';
-        } elseif (password_verify((string)($_POST['password'] ?? ''), $station['admin_hash'])) {
-            session_regenerate_id(true);
-            $_SESSION['admin'] = true;
-            back();
         } else {
-            $err = 'Wrong password.';
+            $username = slip_user_norm($_POST['username'] ?? '');
+            $account = slip_user_load($username);
+            $hash = $account['hash'] ?? '$2y$12$qbJtzQ04aH6DWxr8jJh0g.VgXGS8MRZznxb3JTdipy/6KCYInoaAu';
+            if (password_verify((string)($_POST['password'] ?? ''), $hash) && !empty($account['admin'])) {
+                session_regenerate_id(true);
+                $_SESSION['admin_token'] = slip_token_issue($username, 'Station admin browser');
+                back();
+            }
+            $err = 'Wrong username or password, or this account is not a station admin.';
         }
     }
     slip_page_start('Station admin', '../');
@@ -101,13 +115,18 @@ if (empty($_SESSION['admin'])) {
     <div class="panel">
       <?php if ($err): ?><div class="flash err"><?= h($err) ?></div><?php endif ?>
       <form method="post"><?= $form() ?><input type="hidden" name="action" value="login">
-        <label class="k">Admin password</label><input type="password" name="password" autofocus>
+        <p>Sign in with a technician account that has Station admin permission.</p>
+        <p class="dim">For the first sign-in after upgrading, use the previous station password with <b class="mono"><?= h($bootstrapUsername) ?></b>.</p>
+        <label class="k">Username</label><input type="text" name="username" value="<?= h($_POST['username'] ?? '') ?>" autocomplete="username" required autofocus>
+        <label class="k">Password</label><input type="password" name="password" autocomplete="current-password" required>
         <br><button>Sign in</button></form>
     </div>
     <?php
     slip_page_end();
     exit;
 }
+
+require_once __DIR__ . '/components.php';
 
 // ── Actions ────────────────────────────────────────────────────────────────
 switch ($action) {
@@ -138,6 +157,12 @@ switch ($action) {
             if (!is_array($_POST['ids'] ?? null)) throw new InvalidArgumentException('Choose at least one workstation.');
             $moved = slip_move_shared_devices($_POST['ids'], $_POST['group'] ?? null);
             flash("Moved $moved workstation(s). Personal technician groups are unchanged.");
+        } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
+        back('groups');
+    case 'group_members':
+        try {
+            slip_set_group_members($_POST['owner'] ?? null, $_POST['group'] ?? null, $_POST['ids'] ?? []);
+            flash('Group workstations saved. Other memberships and saved passwords were kept.');
         } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
         back('groups');
     case 'group_visibility':
@@ -202,7 +227,7 @@ switch ($action) {
     case 'tech_add':
         try {
             slip_user_create((string)($_POST['username'] ?? ''), trim((string)($_POST['name'] ?? '')), (string)($_POST['password'] ?? ''), !empty($_POST['admin']));
-            flash('Technician added. They sign in from the app under Config → Stations with ' . slip_server_address() . ', their username and password.');
+            flash('Technician added. Station admins can also sign in to this web console. App sign-in: ' . slip_server_address() . ', their username and password.');
         } catch (InvalidArgumentException $e) {
             flash($e->getMessage(), true);
         }
@@ -218,51 +243,48 @@ switch ($action) {
     case 'tech_admin':
         $u = slip_user_norm($_POST['username'] ?? '');
         $on = !empty($_POST['admin']);
-        slip_user_update($u, function (array $a) use ($on) {
-            $a['admin'] = $on;
-            return $a;
-        });
-        flash($on ? "$u can now change the shared devices." : "$u is no longer a station admin.");
+        try {
+            slip_user_set_admin($u, $on);
+            flash($on ? "$u can now administer this station and its shared devices." : "$u is no longer a station admin.");
+        } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
         back('techs');
     case 'tech_signout':
         slip_user_signout_all(slip_user_norm($_POST['username'] ?? ''));
         flash('Signed out on every computer.');
         back('techs');
     case 'tech_delete':
-        slip_user_delete(slip_user_norm($_POST['username'] ?? ''));
-        flash('Technician removed, with their saved devices.');
+        try {
+            slip_user_delete(slip_user_norm($_POST['username'] ?? ''));
+            flash('Technician removed, with their saved devices.');
+        } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
         back('techs');
     case 'shared_add':
-        $input = ['id' => (int)preg_replace('/\D/', '', (string)($_POST['id'] ?? '')), 'name' => $_POST['name'] ?? '', 'notes' => $_POST['notes'] ?? ''];
-        if (isset($_POST['group'])) $input['group'] = $_POST['group'];
-        $d = slip_clean_device($input, false);
-        if (!$d) {
-            flash('Enter the device\'s 9-digit ID.', true);
-        } else {
+        try {
+            $input = ['id' => (int)preg_replace('/\D/', '', (string)($_POST['id'] ?? '')), 'name' => $_POST['name'] ?? '', 'notes' => $_POST['notes'] ?? ''];
+            if (isset($_POST['group'])) $input['group'] = $_POST['group'];
+            if (isset($_POST['groups_present'])) {
+                $input['groups'] = $_POST['groups'] ?? [];
+                if (!is_array($input['groups'])) throw new InvalidArgumentException('Choose valid workstation groups.');
+                if (($_POST['new_group'] ?? '') !== '') $input['groups'][] = $_POST['new_group'];
+            }
+            $d = slip_clean_device($input, false);
+            if (!$d) throw new InvalidArgumentException('Enter the device’s 9-digit ID.');
             slip_shared_update(function (array $list) use ($d) {
                 $old = array_values(array_filter($list, fn($x) => ($x['id'] ?? 0) === $d['id']))[0] ?? [];
                 $list = array_filter($list, fn($x) => ($x['id'] ?? 0) !== $d['id']);
-                $d['group'] = $d['group'] ?? ($old['group'] ?? '');
+                $d = slip_merge_device_groups($d, $old);
                 $list[] = $d + ['added_by' => $old['added_by'] ?? 'admin page', 'added' => $old['added'] ?? time()];
                 return $list;
             });
-            flash('Station device saved. Its group assignments control which technicians see it.');
-        }
+            flash('Station device saved. Group assignments control which technicians see it.');
+        } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
         back(($_POST['return_tab'] ?? '') === 'devices' ? 'devices' : 'techs');
     case 'shared_delete':
         $id = (int)($_POST['id'] ?? 0);
         slip_shared_update(fn(array $list) => array_filter($list, fn($x) => ($x['id'] ?? 0) !== $id));
         flash('Removed from the shared list.');
         back('techs');
-    case 'admin_password':
-        $pw = (string)($_POST['password'] ?? '');
-        if (strlen($pw) < 10) {
-            flash('Use at least 10 characters.', true);
-        } else {
-            slip_station_save(['admin_hash' => password_hash($pw, PASSWORD_DEFAULT)]);
-            flash('Admin password changed.');
-        }
-        back('settings');
+
 }
 
 // Make sure the relay is up whenever an admin looks.
@@ -270,8 +292,16 @@ slip_write_htaccess();
 $relayUp = slip_relay_ensure();
 $station = slip_station();
 $tab = (string)($_GET['tab'] ?? 'status');
+$selectedDevice = null;
+if ($tab === 'devices' && isset($_GET['device'])) {
+    $requestedId = filter_var($_GET['device'], FILTER_VALIDATE_INT);
+    if (slip_access_key() !== null) foreach (slip_store()->all() as $device) {
+        if ((int)$device['id'] === $requestedId) { $selectedDevice = $device; break; }
+    }
+    if (!$selectedDevice) http_response_code(404);
+}
 
-slip_page_start('Station admin', '../');
+slip_page_start('Station admin', '../', 'admin-console');
 ?>
 <nav class="tabs">
   <a href="./" class="<?= $tab === 'status' ? 'on' : '' ?>">Status</a>
@@ -280,7 +310,8 @@ slip_page_start('Station admin', '../');
   <a href="?tab=techs" class="<?= $tab === 'techs' ? 'on' : '' ?>">Technicians</a>
   <a href="?tab=settings" class="<?= $tab === 'settings' ? 'on' : '' ?>">Settings</a>
   <a href="../" target="_blank">Download page ↗</a>
-  <form method="post" style="margin-left:auto"><?= $form() ?><input type="hidden" name="action" value="logout"><button class="small lav">Sign out</button></form>
+  <span class="signed-in dim">Signed in as <b><?= h($admin['username']) ?></b></span>
+  <form method="post"><?= $form() ?><input type="hidden" name="action" value="logout"><button class="small lav">Sign out</button></form>
 </nav>
 <?php if ($flash): ?><div class="flash <?= $flash[1] ? 'err' : '' ?>"><?= h($flash[0]) ?></div><?php endif ?>
 
@@ -413,7 +444,7 @@ slip_page_start('Station admin', '../');
   <?php $log = slip_relay_log_tail(); if ($log !== ''): ?>
   <h2 class="violet">Relay log (latest)</h2>
   <p class="dim">Connection records show the device when known, peer address, duration, transport byte counts and observed close reason. Client stream endings are INFO; rejected connections and transport failures are WARN. Process events identify starts, stops and restart requests. Timestamps are UTC.</p>
-  <pre><?= h($log) ?></pre>
+  <?php slip_relay_report($log) ?>
   <?php endif ?>
 
 <?php elseif ($tab === 'devices'):
@@ -422,6 +453,9 @@ slip_page_start('Station admin', '../');
     $technicians = slip_users();
     $private = slip_access_key() !== null;
     $stationGroups = slip_shared_groups();
+    $groupOptions = array_map(fn($g) => ['value' => $g, 'label' => $g], $stationGroups);
+    $technicianOptions = [];
+    foreach ($technicians as $username => $technician) $technicianOptions[] = ['value' => (string)$username, 'label' => $technician['name'] ?? $username, 'detail' => (string)$username];
     usort($devices, fn($a, $b) => ($b['last_seen'] ?? 0) <=> ($a['last_seen'] ?? 0));
     $cut = time() - SLIP_ONLINE_WINDOW;
     $ago = function ($t) {
@@ -431,12 +465,44 @@ slip_page_start('Station admin', '../');
     };
     ?>
   <h2>Devices</h2>
+  <?php if ($selectedDevice):
+      $inventory = slip_device_inventory($selectedDevice['endpoint']);
+      $saved = $sharedById[$selectedDevice['id']] ?? [];
+      $name = $saved['name'] ?? $selectedDevice['name'] ?? 'Workstation';
+  ?>
+  <p><a href="?tab=devices">← All devices</a></p>
+  <div class="panel device-overview">
+    <h3><?= h($name) ?> <span class="mono dim"><?= h($selectedDevice['id']) ?></span></h3>
+    <p class="dim">Last reported information, available even while the workstation is offline.
+      Updated <?= !empty($inventory['report_at']) ? h(gmdate('Y-m-d H:i', $inventory['report_at'])) . ' UTC' : 'when the workstation next reports' ?>.
+      Updated clients refresh this report every 15 minutes while connected to a private station.</p>
+    <dl class="inventory-summary">
+    <?php foreach (['computer_name' => 'Computer', 'model' => 'Model', 'serial_number' => 'System serial', 'motherboard' => 'Motherboard', 'motherboard_serial' => 'Motherboard serial', 'os_version' => 'Operating system', 'processor' => 'Processor'] as $key => $label): ?>
+      <dt><?= h($label) ?></dt><dd><?= h($inventory[$key] ?? 'Unavailable (not reported or access denied)') ?></dd>
+    <?php endforeach ?>
+    </dl>
+  </div>
+  <?php if (empty($inventory['report'])): ?>
+    <div class="panel"><p>The full System information report will appear after this workstation runs an updated Slipstream client and reports to this station.</p></div>
+  <?php else: ?>
+    <div class="report-sections">
+    <?php foreach ($inventory['report'] as $section): ?>
+      <details class="panel system-report" open><summary><?= h($section['title']) ?></summary>
+        <table><tbody><?php foreach ($section['rows'] as [$label, $value]): ?>
+          <tr><th scope="row"><?= h($label) ?></th><td><?= h($value) ?></td></tr>
+        <?php endforeach ?></tbody></table>
+      </details>
+    <?php endforeach ?>
+    </div>
+  <?php endif ?>
+  <?php else: ?>
   <div class="panel">
+    <?php if (isset($_GET['device'])): ?><p class="bad">Device report unavailable.</p><?php endif ?>
     <p class="dim"><?= $private ? 'Workstations automatically enroll in the station under Ungrouped. Assign their group to technicians to show them in those apps. Names and groups you set stay as you left them. Connecting still requires the device password.' : 'Public directory: automatic shared enrollment and hardware inventory are disabled.' ?> <a href="?tab=groups">Organize groups and assign them to technicians</a></p>
-    <datalist id="station-groups"><?php foreach ($stationGroups as $group): ?><option value="<?= h($group) ?>"><?php endforeach ?></datalist>
+
     <?php if (!$devices): ?><p class="dim">No devices yet. They appear here once someone runs the app from your download page.</p><?php else: ?>
-    <table>
-      <tr><th></th><th>ID</th><th>Name / group</th><th>System</th><?php if ($private): ?><th>Hardware</th><?php endif ?><th>Version</th><th>Last seen</th><th></th></tr>
+    <table class="devices-table">
+      <tr><th></th><th>ID</th><th>Name / group</th><th>System</th><?php if ($private): ?><th>Hardware</th><?php endif ?><th>Last seen</th><th>Actions</th></tr>
       <?php foreach ($devices as $d):
           $on = ($d['last_seen'] ?? 0) >= $cut; $id = (string)$d['id'];
           $saved = $sharedById[$d['id']] ?? null;
@@ -444,52 +510,60 @@ slip_page_start('Station admin', '../');
       ?>
         <tr>
           <td class="<?= $on ? 'ok' : 'dim' ?>">●</td>
-          <td class="mono device-id"><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?></td>
-          <td><?= h($saved['name'] ?? $d['name'] ?? '') ?><div class="dim"><?= h(($saved['group'] ?? '') !== '' ? $saved['group'] : 'Ungrouped') ?></div>
+          <td class="mono device-id"><?php if ($private): ?><a href="?tab=devices&amp;device=<?= (int)$d['id'] ?>" title="View full system report"><?php endif ?><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?><?php if ($private): ?></a><?php endif ?></td>
+          <td data-label="Name / group"><b><?= h($saved['name'] ?? $d['name'] ?? '') ?></b><div class="group-chips"><?php foreach (slip_device_groups($saved ?? []) ?: ['Ungrouped'] as $group): ?><span class="group-chip"><?= h($group) ?></span><?php endforeach ?></div>
             <?php if ($saved && ($saved['name'] ?? '') !== ($d['name'] ?? '')): ?><div class="dim">Computer: <?= h($d['name'] ?? '') ?></div><?php endif ?>
-            <?php if ($private): ?>
-            <details><summary>Edit shared device</summary>
-              <form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_add"><input type="hidden" name="return_tab" value="devices"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
-                <label class="k">Name</label><input type="text" name="name" maxlength="64" value="<?= h($saved['name'] ?? $d['name'] ?? '') ?>">
-                <label class="k">Group</label><input type="text" name="group" maxlength="64" list="station-groups" placeholder="Ungrouped" value="<?= h($saved['group'] ?? '') ?>">
-                <label class="k">Notes</label><textarea name="notes" maxlength="500"><?= h($saved['notes'] ?? '') ?></textarea>
-                <button class="small">Save shared device</button>
-              </form>
-            </details>
-            <?php endif ?>
           </td>
-          <td><?= h($inventory['os_version'] ?? $d['os'] ?? '') ?><?php if (!empty($inventory['architecture'])): ?><div class="dim"><?= h($inventory['architecture']) ?></div><?php endif ?></td>
-          <?php if ($private): ?><td>
+          <td data-label="System"><?= h($inventory['os_version'] ?? $d['os'] ?? '') ?><?php if (!empty($inventory['architecture'])): ?><div class="dim"><?= h($inventory['architecture']) ?></div><?php endif ?><div class="dim">Slipstream <?= h($d['app_version'] ?? '') ?></div></td>
+          <?php if ($private): ?><td data-label="Hardware">
             <?php if ($inventory): ?>
               <div><?= h($inventory['model'] ?? 'Model unavailable') ?></div>
               <?php if (!empty($inventory['processor'])): ?><div class="dim"><?= h($inventory['processor']) ?></div><?php endif ?>
               <?php if (!empty($inventory['memory_bytes'])): ?><div><?= h(round($inventory['memory_bytes'] / 1073741824, 1)) ?> GiB RAM</div><?php endif ?>
-              <div class="mono">Serial: <?= h($inventory['serial_number'] ?? 'Unavailable') ?></div>
+              <div class="mono"><?= !empty($inventory['serial_number']) ? 'Serial: ' . h($inventory['serial_number']) : 'Motherboard serial: ' . h($inventory['motherboard_serial'] ?? 'Unavailable') ?></div>
+              <a href="?tab=devices&amp;device=<?= (int)$d['id'] ?>">View full system report →</a>
               <div class="dim">Reported <?= h(gmdate('Y-m-d H:i', $inventory['reported_at'])) ?> UTC</div>
             <?php else: ?><span class="dim">Awaiting host inventory</span><?php endif ?>
           </td><?php endif ?>
-          <td class="dim"><?= h($d['app_version'] ?? '') ?></td>
-          <td class="<?= $on ? 'ok' : 'dim' ?>"><?= $on ? 'online' : h($ago($d['last_seen'] ?? 0)) ?></td>
-          <td>
+          <td data-label="Last seen" class="<?= $on ? 'ok' : 'dim' ?>"><?= $on ? 'online' : h($ago($d['last_seen'] ?? 0)) ?></td>
+          <td class="device-actions">
+            <div class="device-action-stack">
+            <div class="device-management-actions">
+            <?php if ($private): ?>
+              <button type="button" class="small lav" data-dialog-open="edit-device-<?= (int)$d['id'] ?>">Edit workstation</button>
+              <dialog id="edit-device-<?= (int)$d['id'] ?>" class="device-dialog">
+                <div class="dialog-heading"><h3>Edit workstation</h3><button type="button" class="small lav" data-dialog-close aria-label="Close editor">Close</button></div>
+                <p class="dim mono"><?= h($id) ?></p>
+                <form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_add"><input type="hidden" name="return_tab" value="devices"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>"><input type="hidden" name="groups_present" value="1">
+                  <div class="device-form-grid">
+                    <label><span class="k">Name</span><input type="text" name="name" maxlength="64" required value="<?= h($saved['name'] ?? $d['name'] ?? '') ?>"></label>
+                    <?php slip_picker('groups', 'Groups', $groupOptions, slip_device_groups($saved ?? []), ['create' => true, 'placeholder' => 'Ungrouped']) ?>
+                    <div class="form-wide"><label class="k" for="notes-<?= (int)$d['id'] ?>">Notes</label><?php slip_notes($saved['notes'] ?? '', 'notes-' . (int)$d['id']) ?></div>
+                  </div>
+                  <div class="dialog-actions"><button class="small blue">Save workstation</button><button type="button" class="small lav" data-dialog-close>Cancel</button></div>
+                </form>
+              </dialog>
+            <?php endif ?>
+            <form class="device-remove" method="post" onsubmit="return confirm('Remove this device?')"><?= $form() ?>
+              <input type="hidden" name="action" value="delete_device"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+              <button class="small red">Remove</button>
+            </form>
+            </div>
             <?php if ($technicians): ?>
-            <details><summary>Assign to technician</summary>
-              <form method="post"><?= $form() ?><input type="hidden" name="action" value="device_assign"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
-                <fieldset class="technician-choices"><legend class="k">Select technicians</legend>
-                  <?php foreach ($technicians as $username => $technician): ?><label><input type="checkbox" name="usernames[]" value="<?= h($username) ?>"><?= h(($technician['name'] ?? $username) . ' (' . $username . ')') ?></label><?php endforeach ?>
-                </fieldset>
-                <p class="dim">Adds the current name and group to their personal list. Existing entries and saved passwords stay intact.</p>
-                <button class="small blue">Add to selected lists</button>
+              <form method="post" class="device-assign-form"><?= $form() ?><input type="hidden" name="action" value="device_assign"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                <?php slip_picker('usernames', 'Assign to technicians', $technicianOptions, [], ['placeholder' => 'Choose technicians']) ?>
+                <button class="small blue">Assign</button>
               </form>
-            </details>
             <?php else: ?><a href="?tab=techs">Add a technician first</a><?php endif ?>
-            <form method="post" onsubmit="return confirm('Remove this device?')"><?= $form() ?>
-            <input type="hidden" name="action" value="delete_device"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
-            <button class="small red">Remove</button></form></td>
+            </div>
+          </td>
         </tr>
       <?php endforeach ?>
     </table>
     <?php endif ?>
   </div>
+
+  <?php endif ?>
 
 <?php elseif ($tab === 'groups'):
     $state = slip_shared_state(); $groups = slip_shared_groups($state); $shared = $state['devices']; $technicians = slip_users();
@@ -497,43 +571,41 @@ slip_page_start('Station admin', '../');
     $technicianLabel = fn($u) => ($technicians[$u]['name'] ?? $u) . ' (' . $u . ')';
     ?>
   <h2>Groups &amp; technician access</h2>
+  <div class="panel group-toolbar">
+    <p>A workstation can belong to several groups. Choose a group’s workstations and the technicians who should see it, then save. Personal passwords stay private.</p>
+    <form method="post" class="inline-form"><?= $form() ?><input type="hidden" name="action" value="station_group_create"><label><span class="k">Create station group</span><input type="text" name="group" maxlength="64" required placeholder="New group name"></label><button class="small blue">Create group</button></form>
+  </div>
   <div class="panel">
-    <p>All station and personal technician groups are listed here. Each row shows its source and exactly who receives it in their app.</p>
-    <p>Station groups are <b>hidden until assigned</b>, including Ungrouped. Personal groups always remain visible to their owner. Shared lists follow the group as workstations are added or moved. Saved passwords stay private, and connecting still requires the workstation’s password.</p>
-    <p class="dim">Removing an assignment removes that shared group on the next app list refresh. Devices a technician separately saved or received through an earlier copy remain in their personal list.</p>
-    <?php if (!$catalog): ?><p class="dim">No groups yet. Create a station group below, or create a personal group in the app.</p><?php else: ?>
+    <div class="group-list-toolbar"><label class="search-control"><span class="k">Find a group</span><input type="search" data-group-search placeholder="Group or source…"></label><p class="dim">Station groups are hidden until assigned. Personal groups always remain visible to their owner.</p></div>
+    <?php if (!$catalog): ?><p class="dim">No groups yet.</p><?php else: ?>
     <div class="table-scroll"><table class="group-access">
       <tr><th>Group</th><th>Source</th><th>Workstations</th><th>Visible to</th><th>Manage</th></tr>
       <?php foreach ($catalog as $entry):
           $owner = $entry['owner']; $group = $entry['group']; $count = count($entry['devices']);
           $recipients = array_values(array_filter($entry['usernames'], fn($u) => isset($technicians[$u])));
+          $choices = $owner === '' ? array_column($shared, null, 'id') : array_column($technicians[$owner]['devices'] ?? [], null, 'id') + array_column($shared, null, 'id');
+          $workstationOptions = [];
+          foreach ($choices as $device) $workstationOptions[] = ['value' => (string)$device['id'], 'label' => ($device['name'] ?? '') ?: (string)$device['id'], 'detail' => (string)$device['id'], 'disabled' => $group === ''];
+          $userOptions = [];
+          foreach ($technicians as $username => $technician) $userOptions[] = ['value' => (string)$username, 'label' => $technician['name'] ?? $username, 'detail' => (string)$username . ((string)$username === $owner ? ' · owner' : ''), 'disabled' => (string)$username === $owner];
           ?>
-      <tr>
-        <td data-label="Group"><b><?= h($group === '' ? 'Ungrouped' : $group) ?></b></td>
+      <tr data-group-row data-group-search-text="<?= h(($group === '' ? 'Ungrouped' : $group) . ' ' . ($owner === '' ? 'Station' : $technicianLabel($owner))) ?>">
+        <td data-label="Group"><b><?= h($group === '' ? 'Ungrouped' : $group) ?></b><?php if ($group === ''): ?><div class="dim">Automatic: no named groups</div><?php endif ?></td>
         <td data-label="Source"><?= $owner === '' ? 'Station' : h($technicianLabel($owner)) ?><div class="dim"><?= $owner === '' ? 'Managed by station admins' : 'Personal technician group' ?></div></td>
-        <td data-label="Workstations"><details><summary><?= $count ?> workstation<?= $count === 1 ? '' : 's' ?></summary>
-          <?php if (!$count): ?><p class="dim">Empty group</p><?php endif ?>
-          <?php foreach ($entry['devices'] as $d): ?><div class="group-device"><span><?= h(($d['name'] ?? '') ?: 'Unnamed device') ?></span> <span class="mono device-id"><?= h((string)$d['id']) ?></span></div><?php endforeach ?>
-        </details></td>
-        <td data-label="Visible to">
-          <?php if ($owner !== ''): ?><div><?= h($technicianLabel($owner)) ?> <span class="dim">(owner)</span></div><?php endif ?>
-          <?php foreach ($recipients as $recipient): ?><div><?= h($technicianLabel($recipient)) ?></div><?php endforeach ?>
-          <?php if (!$recipients): ?><span class="<?= $owner === '' ? 'warn' : 'dim' ?>"><?= $owner === '' ? 'No technicians assigned' : 'Owner only' ?></span><?php endif ?>
+        <td data-label="Workstations">
+          <?php if ($group !== ''): ?><form method="post"><?= $form() ?><input type="hidden" name="action" value="group_members"><input type="hidden" name="owner" value="<?= h($owner) ?>"><input type="hidden" name="group" value="<?= h($group) ?>"><?php endif ?>
+            <?php slip_picker('ids', 'Workstations', $workstationOptions, array_column($entry['devices'], 'id'), ['placeholder' => 'Choose workstations']) ?>
+            <?php if ($group !== ''): ?><button class="small blue">Save workstations</button></form><?php endif ?>
         </td>
-        <td data-label="Manage"><details><summary>Edit assignments</summary>
+        <td data-label="Visible to">
           <form method="post"><?= $form() ?><input type="hidden" name="action" value="group_visibility"><input type="hidden" name="owner" value="<?= h($owner) ?>"><input type="hidden" name="group" value="<?= h($group) ?>">
-            <p><b><?= h($group === '' ? 'Ungrouped' : $group) ?></b> · <?= $owner === '' ? 'Station' : h($technicianLabel($owner)) ?></p>
-            <fieldset class="technician-choices"><legend class="k">Visible to these technicians</legend>
-              <?php foreach ($technicians as $username => $technician): ?>
-              <label><input type="checkbox" name="usernames[]" value="<?= h((string)$username) ?>" <?= in_array((string)$username, $recipients, true) || (string)$username === $owner ? 'checked' : '' ?> <?= (string)$username === $owner ? 'disabled' : '' ?>><?= h($technicianLabel($username)) ?><?= (string)$username === $owner ? ' · owner' : '' ?></label>
-              <?php endforeach ?>
-            </fieldset>
-            <p class="dim">Clear all selections to <?= $owner === '' ? 'hide this group from every technician' : 'keep this group visible only to its owner' ?>. Multiple technicians may be selected.</p>
-            <button class="small blue">Save group assignments</button>
+            <?php slip_picker('usernames', 'Visible to these technicians', $userOptions, array_merge($recipients, $owner !== '' ? [$owner] : []), ['placeholder' => $owner === '' ? 'No technicians assigned' : 'Owner only']) ?>
+            <button class="small blue">Save visibility</button>
           </form>
-        </details>
+        </td>
+        <td data-label="Manage">
         <?php if ($owner === '' && $group !== ''): ?>
-          <details><summary>Rename group</summary><form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_rename"><input type="hidden" name="group" value="<?= h($group) ?>">
+          <details class="group-rename"><summary>Rename</summary><form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_rename"><input type="hidden" name="group" value="<?= h($group) ?>">
             <label class="k">New name</label><input type="text" name="new_name" maxlength="64" required value="<?= h($group) ?>"><button class="small blue">Rename group</button>
           </form></details>
           <?php if (!$count): ?><form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_delete"><input type="hidden" name="group" value="<?= h($group) ?>"><button class="small red">Remove empty group</button></form><?php endif ?>
@@ -542,24 +614,8 @@ slip_page_start('Station admin', '../');
       </tr>
       <?php endforeach ?>
     </table></div><?php endif ?>
+    <p class="dim" data-group-empty hidden>No matching groups.</p>
   </div>
-  <h2>Create station group</h2>
-  <div class="panel"><form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_create">
-    <label class="k">New group</label><input type="text" name="group" maxlength="64" required placeholder="Workstations, Servers, Front desk…">
-    <p class="dim">New groups are visible in station administration. Assign technicians above to show a group in their apps.</p>
-    <button class="blue">Create group</button>
-  </form></div>
-  <?php if ($shared): ?>
-  <h2>Move station workstations</h2>
-  <div class="panel"><form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_move">
-    <fieldset class="technician-choices"><legend class="k">Select workstations</legend>
-      <?php foreach ($shared as $d): ?><label><input type="checkbox" name="ids[]" value="<?= (int)$d['id'] ?>"><?= h((($d['name'] ?? '') ?: $d['id']) . ' · ' . $d['id'] . ' · ' . (($d['group'] ?? '') ?: 'Ungrouped')) ?></label><?php endforeach ?>
-    </fieldset>
-    <label class="k">Move to</label><select name="group"><option value="">Ungrouped</option><?php foreach ($groups as $group): ?><option value="<?= h($group) ?>"><?= h($group) ?></option><?php endforeach ?></select>
-    <p class="dim">The destination group's assignments determine who receives the workstation. Personal technician lists are preserved.</p>
-    <button class="blue">Move selected workstations</button>
-  </form></div>
-  <?php endif ?>
 
 <?php elseif ($tab === 'techs'):
     $users = slip_users();
@@ -572,22 +628,23 @@ slip_page_start('Station admin', '../');
     <p>Technicians sign in from the app under <b>Config → Stations</b> with this station's address
     (<span class="mono"><?= h(slip_server_address()) ?></span>), their username and password. They can then
     reach your devices and keep their own list of them, here, from any computer, even an app from another
-    organisation's station. Devices they save a password for keep it encrypted with a key only their app can
+    organisation's station. Accounts with <b>Station admin</b> permission also sign in to this web console
+    with the same username and password. Devices they save a password for keep it encrypted with a key only their app can
     make from their password: this station can't read it.</p>
     <?php if (!$users): ?><p class="dim">No technicians yet.</p><?php else: ?>
     <div class="table-scroll"><table class="technician-table">
       <tr><th>Username</th><th>Name</th><th>Role</th><th>Personal / assigned groups</th><th>Devices</th><th>Signed in</th><th></th></tr>
       <?php foreach ($users as $u => $a): $sessions = (array)($a['sessions'] ?? []); $last = $sessions ? max(array_column($sessions, 'used')) : 0; ?>
         <tr>
-          <td class="mono"><?= h($u) ?></td>
-          <td><?= h($a['name'] ?? '') ?></td>
-          <td><?= !empty($a['admin']) ? '<span class="ok">admin</span>' : 'technician' ?></td>
-          <td><?php foreach ($catalog as $entry): if ($entry['owner'] !== (string)$u && !in_array((string)$u, $entry['usernames'], true)) continue; ?>
+          <td data-label="Username" class="mono"><?= h($u) ?></td>
+          <td data-label="Name"><?= h($a['name'] ?? '') ?></td>
+          <td data-label="Role"><?= !empty($a['admin']) ? '<span class="ok">admin</span>' : 'technician' ?></td>
+          <td data-label="Groups"><?php foreach ($catalog as $entry): if ($entry['owner'] !== (string)$u && !in_array((string)$u, $entry['usernames'], true)) continue; ?>
             <div><?= h($entry['group'] === '' ? 'Ungrouped' : $entry['group']) ?> <span class="dim">· <?= $entry['owner'] === (string)$u ? 'personal' : ($entry['owner'] === '' ? 'station' : h($entry['owner'])) ?></span></div>
           <?php endforeach ?><a href="?tab=groups">Manage group assignments</a></td>
-          <td><?= count($a['devices'] ?? []) ?></td>
-          <td class="dim"><?= count($sessions) ?> app<?= count($sessions) === 1 ? '' : 's' ?><?= $last ? ' · ' . h($when($last)) : '' ?></td>
-          <td style="white-space:nowrap">
+          <td data-label="Devices"><?= count($a['devices'] ?? []) ?></td>
+          <td data-label="Signed in" class="dim"><?= count($sessions) ?> app<?= count($sessions) === 1 ? '' : 's' ?><?= $last ? ' · ' . h($when($last)) : '' ?></td>
+          <td class="technician-actions">
             <form method="post" style="display:inline"><?= $form() ?><input type="hidden" name="action" value="tech_admin">
               <input type="hidden" name="username" value="<?= h($u) ?>"><input type="hidden" name="admin" value="<?= empty($a['admin']) ? '1' : '' ?>">
               <button class="small lav"><?= empty($a['admin']) ? 'Make admin' : 'Remove admin' ?></button></form>
@@ -596,10 +653,10 @@ slip_page_start('Station admin', '../');
             <form method="post" style="display:inline" onsubmit="return confirm('Remove <?= h($u) ?> and their saved devices?')"><?= $form() ?>
               <input type="hidden" name="action" value="tech_delete"><input type="hidden" name="username" value="<?= h($u) ?>">
               <button class="small red">Remove</button></form>
-            <form method="post" style="display:inline"><?= $form() ?><input type="hidden" name="action" value="tech_password">
+            <form method="post" class="password-reset"><?= $form() ?><input type="hidden" name="action" value="tech_password">
               <input type="hidden" name="username" value="<?= h($u) ?>">
-              <input type="password" name="password" minlength="10" placeholder="new password" style="width:11em;display:inline">
-              <button class="small">Set</button></form>
+              <input type="password" name="password" minlength="10" required placeholder="New password" aria-label="New password for <?= h($u) ?>" autocomplete="new-password">
+              <button class="small">Set password</button></form>
           </td>
         </tr>
       <?php endforeach ?>
@@ -613,7 +670,7 @@ slip_page_start('Station admin', '../');
       <label class="k">Username</label><input type="text" name="username" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]{1,31}" placeholder="jsmith">
       <label class="k">Name</label><input type="text" name="name" placeholder="Jane Smith">
       <label class="k">Password (at least 10 characters)</label><input type="password" name="password" required minlength="10">
-      <label><input type="checkbox" name="admin" value="1"> Station admin: may change the shared devices from the app</label>
+      <label><input type="checkbox" name="admin" value="1"> Station admin: may sign in to this web console, manage technicians and settings, and change shared devices</label>
       <br><button>Add technician</button>
     </form>
   </div>
@@ -622,11 +679,11 @@ slip_page_start('Station admin', '../');
   <div class="panel">
     <p>These are the station’s workstations. Visibility in technician apps is controlled by each group’s assignments on the <a href="?tab=groups">Groups tab</a>. Passwords aren't stored for shared devices.</p>
     <?php if ($shared): ?>
-    <table>
+    <table class="shared-device-table">
       <tr><th>ID</th><th>Name</th><th>Group</th><th>Notes</th><th>Added by</th><th></th></tr>
       <?php foreach ($shared as $d): $id = (string)$d['id']; ?>
         <tr><td class="mono device-id"><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?></td>
-          <td><?= h($d['name'] ?? '') ?></td><td><?= h(($d['group'] ?? '') ?: 'Ungrouped') ?></td><td class="dim"><?= h($d['notes'] ?? '') ?></td><td class="dim"><?= h($d['added_by'] ?? '') ?></td>
+          <td data-label="Name"><?= h($d['name'] ?? '') ?></td><td data-label="Group"><?= h(implode(' · ', slip_device_groups($d)) ?: 'Ungrouped') ?></td><td data-label="Notes" class="dim"><?= h($d['notes'] ?? '') ?></td><td data-label="Added by" class="dim"><?= h($d['added_by'] ?? '') ?></td>
           <td><form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_delete"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
             <button class="small red">Remove</button></form></td></tr>
       <?php endforeach ?>
@@ -635,7 +692,9 @@ slip_page_start('Station admin', '../');
     <form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_add">
       <label class="k">Device ID</label><input type="text" name="id" required placeholder="482 913 077">
       <label class="k">Name</label><input type="text" name="name" placeholder="Front desk PC">
-      <label class="k">Notes (optional)</label><input type="text" name="notes">
+      <input type="hidden" name="groups_present" value="1">
+      <?php slip_picker('groups', 'Groups', array_map(fn($g) => ['value' => $g, 'label' => $g], slip_shared_groups()), [], ['create' => true, 'placeholder' => 'Ungrouped']) ?>
+      <label class="k">Notes (optional)</label><?php slip_notes('', 'new-device-notes') ?>
       <br><button class="gold">Save station device</button>
     </form>
   </div>
@@ -675,10 +734,10 @@ slip_page_start('Station admin', '../');
       <input type="hidden" name="action" value="rotate_key"><button class="red">Make a new access key</button></form>
   </div>
 
-  <h2 class="violet">Admin password</h2>
-  <div class="panel">
-    <form method="post"><?= $form() ?><input type="hidden" name="action" value="admin_password">
-      <input type="password" name="password" minlength="10" placeholder="new admin password"><br><button class="lav">Change password</button></form>
-  </div>
+  <h2 class="violet">Administrator accounts</h2>
+  <div class="panel"><p>Each administrator signs in with their own technician username and password.
+    Manage permissions and reset passwords on the <a href="?tab=techs">Technicians page</a>.</p></div>
 <?php endif ?>
+<?php $scriptVersion = (string)(filemtime(SLIP_ROOT . '/assets/admin.js') ?: 0); ?>
+<script src="../assets/admin.js?v=<?= h($scriptVersion) ?>" defer></script>
 <?php slip_page_end();

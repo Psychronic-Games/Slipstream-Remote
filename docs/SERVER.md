@@ -91,7 +91,7 @@ In short:
 2. Upload the *contents* of its `slipstream-station` folder to your site's
    web root (`public_html`), keeping the folder structure.
 3. Open `https://support.example.com/admin/`, enter your organisation's name
-   and an admin password. The station creates its settings, its access key,
+   and a password for its first **admin** account. The station creates its settings, its access key,
    its relay routing (in `.htaccess`) and starts the relay.
 4. Check the **Status** tab: every line should be green.
 5. Send your clients to `https://support.example.com/`.
@@ -203,7 +203,13 @@ download page.
 
 The **Technicians** tab of the admin page adds technician accounts
 (username, name, password of 10+ characters) and makes some of them station
-admins. A technician signs in from the app under *Config → Stations* with
+admins. Station admins also sign in to `/admin/` with those same credentials;
+ordinary technicians cannot use the web console. The first account on a new
+station is **admin**. Existing shared passwords migrate to a named admin account
+without changing existing technician credentials (see [migration](STATION-SETUP.md#administrator-sign-in)).
+Removing the role, deleting the account, resetting its password or signing it
+out everywhere revokes its browser sessions. At least one admin must remain.
+A technician signs in from the app under *Config → Stations* with
 the station's address, username and password. That gives their app the
 station's access key, so it works even from an app downloaded from another
 station, and a sign-in token (kept on the station only as a hash).
@@ -221,6 +227,12 @@ group is visible in the apps of explicitly assigned technicians; unassigned
 station groups, including Ungrouped, are hidden by default. Personal groups
 remain with their owner and can be shared with selected recipients. Changes
 to group membership follow the source on refresh, without copying passwords.
+A device may belong to multiple groups; the Workstations and Visible to pickers
+search their checkbox lists without changing hidden selections. Save each picker
+to apply changes. Device editors can create groups inline and select several at
+once. Membership removal preserves other folders and personal credentials.
+Existing apps receive one compatible row per authorized folder; other group
+names and passwords are not exposed.
 Revocation removes shared visibility while preserving independently saved
 personal entries. Station admins can also edit station devices from the app.
 

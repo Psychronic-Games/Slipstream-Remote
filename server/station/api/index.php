@@ -98,7 +98,7 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'group_s
                     throw new InvalidArgumentException('your list is full (' . SLIP_MAX_DEVICES . ' devices)');
                 }
                 $old = array_values(array_filter($a['devices'] ?? [], fn($x) => ($x['id'] ?? 0) === $d['id']))[0] ?? null;
-                $d['group'] = $d['group'] ?? (string)($old['group'] ?? '');
+                $d = slip_merge_device_groups($d, $old);
                 $d['added'] = (int)($old['added'] ?? time());
                 $list[] = $d;
                 $a['devices'] = $list;
@@ -130,7 +130,7 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'group_s
                     }
                 } else {
                     foreach ($a['devices'] ?? [] as $device) {
-                        if (($device['group'] ?? '') === $group) {
+                        if (slip_device_in_group($device, $group)) {
                             throw new InvalidArgumentException('move devices out of this group before removing it');
                         }
                     }
@@ -156,7 +156,7 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'group_s
                 $old = array_values(array_filter($list, fn($x) => ($x['id'] ?? 0) === $id))[0] ?? null;
                 $list = array_filter($list, fn($x) => ($x['id'] ?? 0) !== $id);
                 if ($d) {
-                    $d['group'] = $d['group'] ?? (string)($old['group'] ?? '');
+                    $d = slip_merge_device_groups($d, $old);
                     $list[] = $d + ['added_by' => $u, 'added' => time()];
                 }
                 return $list;
@@ -169,7 +169,7 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'group_s
     reply([
         'ok' => true,
         'user' => slip_user_public($acct),
-        'devices' => array_values($acct['devices'] ?? []),
+        'devices' => slip_client_devices($acct['devices'] ?? []),
         'groups' => slip_personal_groups($acct),
         'shared' => $visible['devices'],
         'shared_groups' => $visible['groups'],
@@ -216,6 +216,7 @@ try {
                 'public_relays' => (bool)($station['public_relays'] ?? true),
                 'approve_links' => (bool)($station['approve_links'] ?? false),
                 'inventory' => slip_access_key() !== null,
+                'inventory_report' => slip_access_key() !== null,
             ]);
 
         case 'update_check':

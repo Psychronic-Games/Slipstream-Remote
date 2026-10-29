@@ -30,9 +30,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang libxkbcommon-dev \
             libwayland-dev libxcb1-dev libxrandr-dev libxdo-dev libxtst-dev libdbus-1-dev \
-            libegl1-mesa-dev libgbm-dev
+            libegl1-mesa-dev libgbm-dev php-cli
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace
+      - name: Station administrator and account regressions
+        if: runner.os == 'Linux'
+        run: |
+          python3 scripts/test-station-admin.py
+          python3 scripts/test-station-accounts.py --client target/debug/slipstream
       - name: Release build
         run: cargo build --release -p slipstream -p slipstream-server
       - uses: actions/upload-artifact@v7

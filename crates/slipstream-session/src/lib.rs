@@ -612,7 +612,9 @@ async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Resu
     let mut dc = DirectoryClient::new(server, key)?;
     let hello = dc.hello().await?;
     let inventory_enabled = hello.inventory && has_private_key && !slipstream_core::config::is_public_station(server);
-    let mut inventory_sent = !inventory_enabled;
+    let include_report = hello.inventory_report;
+    let mut inventory_due = std::time::Instant::now();
+    let mut inventory_tasks = tokio::task::JoinSet::new();
     if let Some(m) = hello.motd.filter(|m| !m.trim().is_empty()) {
         inner.emit(ClientEvent::Motd(m));
     }
@@ -652,6 +654,17 @@ async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Resu
     let mut heartbeat = tokio::time::interval(Duration::from_secs(slipstream_core::directory::HEARTBEAT_SECS));
     loop {
         tokio::select! {
+            result = inventory_tasks.join_next(), if !inventory_tasks.is_empty() => {
+                let delay = match result {
+                    Some(Ok(Ok(()))) => Duration::from_secs(15 * 60),
+                    other => {
+                        debug!(?other, "station inventory publication failed");
+                        Duration::from_secs(60)
+                    }
+                };
+                inventory_due = std::time::Instant::now() + delay;
+                continue;
+            }
             _ = heartbeat.tick() => {}
             changed = addr_watch.updated() => {
                 if changed.is_err() {
@@ -678,14 +691,13 @@ async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Resu
             }
             set_status(inner, DirStatus::Online { id });
         }
-        if !inventory_sent {
-            match tokio::task::spawn_blocking(slipstream_platform::machine::station_inventory).await {
-                Ok(inventory) => match dc.publish_inventory(&secret, inventory).await {
-                    Ok(()) => inventory_sent = true,
-                    Err(e) => debug!("station inventory: {e:#}"),
-                },
-                Err(e) => debug!("collecting station inventory: {e:#}"),
-            }
+        if inventory_enabled && inventory_tasks.is_empty() && std::time::Instant::now() >= inventory_due {
+            let directory = dc.clone();
+            let signing_key = secret.clone();
+            inventory_tasks.spawn(async move {
+                let inventory = tokio::task::spawn_blocking(move || slipstream_platform::machine::station_inventory(include_report)).await?;
+                directory.publish_inventory(&signing_key, inventory).await
+            });
         }
     }
 }

@@ -40,11 +40,12 @@ pub fn collect() -> Vec<InfoSection> {
             );
         }
         None => {
-            computer.row("Model", hw.system.clone());
+            computer.row("Model", display_model(hw.system.clone(), hw.board.clone()));
             computer.row("Motherboard", hw.board.clone());
         }
     }
     computer.row("Serial number", Some(serial.clone().unwrap_or_else(|| "Unavailable (not reported or access denied)".into())));
+    computer.row("Motherboard serial", motherboard_serial().clone());
     computer.row("BIOS / firmware", hw.bios.clone());
     computer.row("Up for", Some(duration(System::uptime())));
     computer.row("User", std::env::var("USERNAME").or_else(|_| std::env::var("USER")).ok());
@@ -228,51 +229,80 @@ fn serial_number() -> &'static Option<String> {
     static SERIAL_NUMBER: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     SERIAL_NUMBER.get_or_init(|| {
         #[cfg(windows)]
-        let value = serial::read();
+        let value = serial::read(1);
         #[cfg(not(windows))]
         let value = sysinfo::Product::serial_number();
         clean_serial_number(value)
     })
 }
 
-/// A small, static snapshot for a private station. Call off the async threads.
-/// Deliberately excludes usernames, IP/MAC addresses, shares and passwords.
-pub fn station_inventory() -> slipstream_core::directory::StationInventory {
-    static INVENTORY: std::sync::OnceLock<slipstream_core::directory::StationInventory> = std::sync::OnceLock::new();
-    INVENTORY.get_or_init(|| {
-        let sys = System::new_with_specifics(
-            RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing()).with_memory(MemoryRefreshKind::nothing().with_ram()),
-        );
-        slipstream_core::directory::StationInventory {
-            computer_name: System::host_name().unwrap_or_default(),
-            // Avoid the full hardware collector's GPU/drive utility probes:
-            // this snapshot runs alongside directory heartbeats at startup.
-            model: station_model(),
-            serial_number: serial_number().clone(),
-            os_version: System::long_os_version().or_else(System::name),
-            architecture: System::cpu_arch(),
-            processor: sys.cpus().first().map(|c| c.brand().trim().to_string()).filter(|s| !s.is_empty()),
-            memory_bytes: sys.total_memory(),
-        }
-    }).clone()
+/// A private station snapshot. Full reports use the same collector as a live
+/// session and are refreshed off the heartbeat task; call off async threads.
+pub fn station_inventory(include_report: bool) -> slipstream_core::directory::StationInventory {
+    let sys = System::new_with_specifics(
+        RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing()).with_memory(MemoryRefreshKind::nothing().with_ram()),
+    );
+    let board = motherboard_model();
+    slipstream_core::directory::StationInventory {
+        computer_name: System::host_name().unwrap_or_default(),
+        model: display_model(station_model(), board.clone()),
+        serial_number: serial_number().clone(),
+        motherboard: board,
+        motherboard_serial: motherboard_serial().clone(),
+        os_version: System::long_os_version().or_else(System::name),
+        architecture: System::cpu_arch(),
+        processor: sys.cpus().first().map(|c| c.brand().trim().to_string()).filter(|s| !s.is_empty()),
+        memory_bytes: sys.total_memory(),
+        report: if include_report { collect() } else { Vec::new() },
+    }
+}
+
+fn display_model(system: Option<String>, board: Option<String>) -> Option<String> {
+    system.or_else(|| board.map(|name| format!("Motherboard: {name}")))
+}
+
+fn motherboard_serial() -> &'static Option<String> {
+    static SERIAL: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    SERIAL.get_or_init(|| {
+        #[cfg(windows)]
+        let value = serial::read(2);
+        #[cfg(not(windows))]
+        let value = sysinfo::Motherboard::new().and_then(|board| board.serial_number());
+        clean_serial_number(value)
+    })
+}
+
+#[cfg(windows)]
+fn motherboard_model() -> Option<String> {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let key = r"HARDWARE\DESCRIPTION\System\BIOS";
+    join_names(&[reg_string(HKEY_LOCAL_MACHINE, key, "BaseBoardManufacturer"), reg_string(HKEY_LOCAL_MACHINE, key, "BaseBoardProduct")])
+}
+
+#[cfg(not(windows))]
+fn motherboard_model() -> Option<String> {
+    let board = sysinfo::Motherboard::new()?;
+    join_names(&[board.vendor_name(), board.name()])
 }
 
 #[cfg(windows)]
 fn station_model() -> Option<String> {
     use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
     let key = r"HARDWARE\DESCRIPTION\System\BIOS";
-    join_names(&[reg_string(HKEY_LOCAL_MACHINE, key, "SystemManufacturer"), reg_string(HKEY_LOCAL_MACHINE, key, "SystemProductName")])
+    let product = join_names(&[reg_string(HKEY_LOCAL_MACHINE, key, "SystemProductName")])?;
+    join_names(&[reg_string(HKEY_LOCAL_MACHINE, key, "SystemManufacturer"), Some(product)])
 }
 
 #[cfg(target_os = "linux")]
 fn station_model() -> Option<String> {
     let dmi = |name: &str| std::fs::read_to_string(format!("/sys/class/dmi/id/{name}")).ok();
-    join_names(&[dmi("sys_vendor"), dmi("product_name")]).or_else(sysinfo::Product::name)
+    let product = join_names(&[dmi("product_name").or_else(sysinfo::Product::name)])?;
+    join_names(&[dmi("sys_vendor"), Some(product)])
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
 fn station_model() -> Option<String> {
-    sysinfo::Product::name()
+    join_names(&[sysinfo::Product::name()])
 }
 
 /// Keep the manufacturer's spelling, but don't present firmware placeholders
@@ -644,9 +674,8 @@ struct Hardware {
 }
 
 /// "Vendor Product", leaving out placeholder strings firmware is full of.
-#[cfg(any(windows, target_os = "linux"))]
 fn join_names(parts: &[Option<String>]) -> Option<String> {
-    const JUNK: [&str; 6] = ["to be filled by o.e.m.", "default string", "system product name", "system manufacturer", "not applicable", "o.e.m."];
+    const JUNK: [&str; 12] = ["to be filled by o.e.m.", "to be filled by oem", "default string", "system product name", "system manufacturer", "not applicable", "o.e.m.", "unknown", "none", "not specified", "n/a", "system version"];
     let words: Vec<String> = parts
         .iter()
         .flatten()
@@ -687,7 +716,7 @@ fn hardware() -> Hardware {
         }
     }
     Hardware {
-        system: join_names(&[get(bios, "SystemManufacturer"), get(bios, "SystemProductName")]),
+        system: station_model(),
         board: join_names(&[get(bios, "BaseBoardManufacturer"), get(bios, "BaseBoardProduct")]),
         bios: join_names(&[get(bios, "BIOSVendor"), get(bios, "BIOSVersion"), get(bios, "BIOSReleaseDate")]),
         os_build: build,
@@ -802,7 +831,7 @@ fn hardware() -> Hardware {
         }
     }
     Hardware {
-        system: join_names(&[dmi("sys_vendor"), dmi("product_name")]),
+        system: station_model(),
         board: join_names(&[dmi("board_vendor"), dmi("board_name")]),
         bios: join_names(&[dmi("bios_vendor"), dmi("bios_version"), dmi("bios_date")]),
         os_build: None,
@@ -873,15 +902,24 @@ fn hardware() -> Hardware {
 mod tests {
     #[test]
     fn station_summary_reports_hardware() {
-        let summary = super::station_inventory();
+        let summary = super::station_inventory(false);
+        assert!(summary.report.is_empty());
         assert!(!summary.architecture.is_empty());
         assert!(summary.memory_bytes > 0);
         assert!(summary.processor.as_deref().is_some_and(|s| !s.is_empty()));
     }
 
     #[test]
+    fn custom_pc_model_uses_the_board_and_preserves_oem_models() {
+        assert_eq!(super::join_names(&[Some("System Product Name".into())]), None);
+        assert_eq!(super::display_model(None, Some("ASUS PRIME X870".into())).as_deref(), Some("Motherboard: ASUS PRIME X870"));
+        assert_eq!(super::display_model(Some("Dell OptiPlex".into()), Some("OEM board".into())).as_deref(), Some("Dell OptiPlex"));
+        assert_eq!(super::display_model(None, None), None);
+    }
+
+    #[test]
     fn collects_the_basics() {
-        let info = super::collect();
+        let info = super::station_inventory(true).report;
         let titles: Vec<&str> = info.iter().map(|s| s.title.as_str()).collect();
         for t in ["Computer", "Operating system", "Processor", "Memory"] {
             assert!(titles.contains(&t), "{t} missing from {titles:?}");

@@ -74,17 +74,23 @@ pub struct DeviceInfo {
     pub app_version: String,
 }
 
-/// A private station's last reported hardware summary. Contains no credentials
-/// or user/network inventory; full live information still requires a session.
+/// A private station's last reported hardware and System information snapshot.
+/// Reports are sent only when the station advertises support, never publicly.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StationInventory {
     pub computer_name: String,
     pub model: Option<String>,
     pub serial_number: Option<String>,
+    #[serde(default)]
+    pub motherboard: Option<String>,
+    #[serde(default)]
+    pub motherboard_serial: Option<String>,
     pub os_version: Option<String>,
     pub architecture: String,
     pub processor: Option<String>,
     pub memory_bytes: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub report: Vec<crate::proto::InfoSection>,
 }
 
 /// Device-signed directory requests (registration, sign-off and inventory).
@@ -121,10 +127,13 @@ pub struct Hello {
     /// Hosts ask their user before one-time-password links start.
     #[serde(default)]
     pub approve_links: bool,
-    /// Private stations may accept a signed hardware summary. Absent on older
+    /// Private stations may accept signed device inventory. Absent on older
     /// stations and public directories; clients must also have an access key.
     #[serde(default)]
     pub inventory: bool,
+    /// Accepts a full, periodically refreshed System information snapshot.
+    #[serde(default)]
+    pub inventory_report: bool,
 }
 
 fn yes() -> bool {
@@ -530,9 +539,12 @@ mod tests {
     fn inventory_is_optional_and_covered_by_the_endpoint_signature() {
         let legacy: Hello = serde_json::from_str(r#"{"version":2,"time":0}"#).unwrap();
         assert!(!legacy.inventory);
+        assert!(!legacy.inventory_report);
+        let legacy_summary: StationInventory = serde_json::from_str(r#"{"computer_name":"Old PC","model":null,"serial_number":null,"os_version":null,"architecture":"x86_64","processor":null,"memory_bytes":0}"#).unwrap();
+        assert!(legacy_summary.report.is_empty() && legacy_summary.motherboard_serial.is_none());
         let secret = SecretKey::generate();
         let dc = DirectoryClient::new("example.com", Some("private-key".into())).unwrap();
-        let summary = StationInventory { computer_name: "Office PC".into(), serial_number: Some("ABC123".into()), ..Default::default() };
+        let summary = StationInventory { computer_name: "Office PC".into(), serial_number: Some("ABC123".into()), report: vec![crate::proto::InfoSection { title: "Network".into(), rows: vec![("Address".into(), "192.0.2.42".into())] }], ..Default::default() };
         let body = dc.signed_with_inventory(&secret, "inventory", None, None, Some(summary.clone())).unwrap();
         let payload = body["payload"].as_str().unwrap();
         let sig = body["sig"].as_str().unwrap();
@@ -540,5 +552,6 @@ mod tests {
         assert_eq!(verified.endpoint, secret.public().to_string());
         assert_eq!(verified.inventory, Some(summary));
         assert!(verify_signed(&payload.replace("ABC123", "FORGED"), sig).is_err());
+        assert!(verify_signed(&payload.replace("192.0.2.42", "192.0.2.99"), sig).is_err());
     }
 }

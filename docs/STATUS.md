@@ -1,6 +1,6 @@
 # Project status
 
-*Updated 2026-10-28. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
+*Updated 2026-10-29. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
 changes: [CHANGELOG.md](../CHANGELOG.md).*
 
 ## Where things stand
@@ -20,8 +20,23 @@ features: the Windows service at UAC prompts and the login screen, real
 Android phones, sharing and control from a Mac, and sound/clipboard files
 between two physical machines. See [Next steps](#next-steps).
 
+Version **0.32** adds named administrator sign-in, a wider responsive console,
+searchable checkbox pickers, multiple group memberships, compact device editing
+with a themed notes bar, and a wrapped/searchable relay activity report. Clients
+send full last-reported System information to private stations every 15 minutes
+and report motherboard model/serial information for custom PCs when firmware
+supplies it. Existing clients remain compatible with station group projections.
+
+The private station web changes were deployed and verified over HTTPS on
+October 29, with private rollback backups and existing technician accounts
+preserved. API/legacy-client checks and interactive browser audits at 1680, 1024
+and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
+
 Recent releases:
 
+- **0.32**: full station System information reports, motherboard identification,
+  named web administrator accounts, searchable group/technician/workstation
+  pickers, multiple group memberships and readable relay activity.
 - **0.31**: private station enrollment, hardware/serial summaries, station-side
   name/group editing, batch technician assignment and personal credentials for
   shared devices.

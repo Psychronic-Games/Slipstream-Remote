@@ -380,7 +380,7 @@ The Bridge then shows **Saved devices**, per station:
   automatically in the station when they first register, using their computer
   name in **Ungrouped**. They appear in your shared list only when the group is
   assigned to you; enrollment alone does not share them with everyone. A station
-  admin can rename them or change their group using **Edit** in the app or
+  admin can rename them or change groups using **Edit** in the app or
   **Devices → Edit shared device** on the station. Later heartbeats preserve
   these edits; removing a shared entry keeps it removed.
 
@@ -391,17 +391,28 @@ with your technician vault key. It never gives the password to other technicians
 
 The station's **Devices** page shows each workstation's last reported model,
 serial number, OS, architecture, processor and RAM, with the report time.
-Updated hosts send this small snapshot at startup; full live system information
-still comes from an authenticated support session. **Public stations** do not
-automatically share devices or collect these hardware summaries.
+Click the device ID or **View full system report** to read its complete last
+reported System information, including storage, graphics, networks and connected
+devices. Updated hosts send it at startup and every 15 minutes; the station shows
+the report time and retains it while the workstation is offline. A live support
+session provides current readings. Custom PCs can show a motherboard model and
+motherboard serial when system firmware has no usable model or serial.
+**Public stations** do not automatically share devices or collect these reports.
+
+In the station web console, **Edit workstation → Groups** searches existing
+groups and can create another. A workstation can belong to several groups.
+The **Groups** page has searchable checkbox pickers for workstations and
+technician visibility; save after selecting. Filtering preserves checked choices.
+The notes editor has a themed bottom resize bar with mouse, touch and keyboard
+control. The Status page presents searchable relay events with wrapped details.
 
 To prepare a particular technician's personal list, open the station's
-**Devices** tab, choose **Assign to technician**, check one or more accounts and
-press **Add to selected lists**. They can be signed out and the device can be
+**Devices** tab, use **Assign to technicians** to search and check accounts, then
+press **Assign**. They can be signed out and the device can be
 offline. It appears when they next sign in or refresh their list, with the
 station's current name, group and notes. Assigning an existing entry preserves
 that technician's custom details and encrypted password; a new assignment
-contains no password. The station's **Edit shared device** action changes the
+contains no password. The station's **Edit workstation** action changes the
 station name/group without overwriting personal labels.
 
 The station's **Groups** tab lists station groups and each technician's personal

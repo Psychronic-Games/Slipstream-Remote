@@ -76,7 +76,9 @@ the same signature before installing anything.
   encrypted in the app before station storage) on your station, and sign in
   to several stations at once, other organisations' too. Private stations
   automatically add workstations to the shared list; passwords are still
-  required to connect, and the station shows their last reported hardware.
+  required to connect. Station admins sign in to the web console with their own
+  technician credentials, manage several groups per workstation and inspect
+  full last-reported System information, including motherboard identification.
 - **System information** — the remote computer's hardware, manufacturer serial
   number (when available), drives, temperatures and network, live, plus
   peripherals, printers/scanners and network drives.

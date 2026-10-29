@@ -307,7 +307,7 @@ pub struct PaceStage {
 
 /// One group of facts about a computer ("Processor", "Storage"…), already
 /// worded for display, so new facts need no protocol change.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InfoSection {
     pub title: String,
     /// (label, value) rows.

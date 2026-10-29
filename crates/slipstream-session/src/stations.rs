@@ -306,7 +306,7 @@ mod tests {
                     } else {
                         match body["op"].as_str().unwrap() {
                             "hello" => {
-                                json!({"ok":true,"version":2,"time":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),"relays":relays,"public_relays":false,"inventory":true})
+                                json!({"ok":true,"version":2,"time":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),"relays":relays,"public_relays":false,"inventory":true,"inventory_report":true})
                             }
                             "register" => {
                                 registration = Some(
@@ -419,7 +419,10 @@ mod tests {
             let request = requests.iter().find(|r| r["op"] == "inventory").unwrap();
             let signed = slipstream_core::directory::verify_signed(request["payload"].as_str().unwrap(), request["sig"].as_str().unwrap()).unwrap();
             assert_eq!(signed.endpoint, private_id.to_string());
-            assert!(signed.inventory.unwrap().memory_bytes > 0);
+            let inventory = signed.inventory.unwrap();
+            assert!(inventory.memory_bytes > 0);
+            assert!(inventory.report.iter().any(|section| section.title == "Computer"));
+            assert!(inventory.report.iter().any(|section| section.title == "Network"));
         }
         assert!(!public.requests.lock().unwrap().iter().any(|r| r["op"] == "inventory"));
         let public_data = serde_json::to_string(&*public.requests.lock().unwrap()).unwrap();

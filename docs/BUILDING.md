@@ -38,8 +38,17 @@ fixture accounts, without touching a running station or real settings:
 
 ```sh
 scripts/check.sh python3 scripts/test-station-accounts.py --client target/debug/slipstream
+scripts/check.sh python3 scripts/test-station-admin.py --browser
 # Set SLIPSTREAM_TEST_PHP=/path/to/php if PHP is not on PATH.
 ```
+
+The admin check covers initial setup, legacy migration (including username
+collisions), role checks, revocation and last-admin protection. `--browser` also
+uses Chromium and Node's built-in DevTools WebSocket client to verify relay
+activity, groups, devices and reports at desktop, tablet and phone widths,
+including search, inline creation, persistence, notes resizing and popup bounds.
+It closes the browser between viewport batches and prints a screenshot evidence directory.
+Omit `--browser` if Chromium is unavailable.
 
 Some tests touch real hardware or the network and are `#[ignore]`d by
 default (for example the real clipboard round-trip). Run them with

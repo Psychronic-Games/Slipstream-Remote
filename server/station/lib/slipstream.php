@@ -97,7 +97,7 @@ function slip_station(): array
 
 function slip_station_ready(): bool
 {
-    return !empty(slip_station()['admin_hash']);
+    return !empty(slip_station()['admin_hash']) || !empty(slip_station()['admin_account']);
 }
 
 function slip_station_save(array $changes): array
@@ -488,12 +488,18 @@ function slip_users(): array
 
 function slip_user_create(string $u, string $name, string $pw, bool $admin): void
 {
+    if (strlen($pw) < 10) {
+        throw new InvalidArgumentException('Use a password of at least 10 characters.');
+    }
+    slip_user_create_hashed($u, $name, password_hash($pw, PASSWORD_DEFAULT), $admin);
+}
+
+/** Also used to migrate the old station password without knowing its plaintext. */
+function slip_user_create_hashed(string $u, string $name, string $hash, bool $admin): void
+{
     $u = slip_user_norm($u);
     if (!slip_user_valid($u)) {
         throw new InvalidArgumentException('Usernames are 2–32 characters: letters, digits, dot, dash or underscore.');
-    }
-    if (strlen($pw) < 10) {
-        throw new InvalidArgumentException('Use a password of at least 10 characters.');
     }
     $path = slip_acct_dir('accounts') . "/$u.json";
     $fh = @fopen($path, 'x'); // fails if the name is taken
@@ -503,7 +509,7 @@ function slip_user_create(string $u, string $name, string $pw, bool $admin): voi
     fwrite($fh, json_encode([
         'username' => $u,
         'name' => slip_clip($name !== '' ? $name : $u, 64),
-        'hash' => password_hash($pw, PASSWORD_DEFAULT),
+        'hash' => $hash,
         'admin' => $admin,
         'created' => time(),
         'vault_salt' => bin2hex(random_bytes(16)),
@@ -512,6 +518,56 @@ function slip_user_create(string $u, string $name, string $pw, bool $admin): voi
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     fclose($fh);
     @chmod($path, 0640);
+}
+
+/** Serialize migration and removal of admin privileges to retain one administrator. */
+function slip_admin_change(callable $fn)
+{
+    $fh = fopen(slip_data_dir() . '/admins.lock', 'c');
+    flock($fh, LOCK_EX);
+    try { return $fn(); }
+    finally { flock($fh, LOCK_UN); fclose($fh); }
+}
+
+/** Convert the shared station login once; existing technician accounts are preserved. */
+function slip_migrate_admin_account(): string
+{
+    return slip_admin_change(function () {
+        unset($GLOBALS['slip_station_cache']);
+        $station = slip_station();
+        if (!empty($station['admin_account'])) return $station['admin_account'];
+        if (empty($station['admin_hash'])) throw new RuntimeException('Station has not been set up.');
+        $username = 'admin';
+        for ($i = 1; slip_user_load($username) !== null; $i++) {
+            // A prior attempt may have created the account before its settings write.
+            $existing = slip_user_load($username);
+            if (!empty($existing['admin']) && hash_equals($station['admin_hash'], $existing['hash'])) break;
+            $username = $i === 1 ? 'station-admin' : "station-admin-$i";
+        }
+        if (slip_user_load($username) === null) {
+            slip_user_create_hashed($username, 'Station administrator', $station['admin_hash'], true);
+        }
+        slip_station_save(['admin_account' => $username, 'admin_hash' => null]);
+        return $username;
+    });
+}
+
+function slip_require_other_admin(string $u): void
+{
+    $account = slip_user_load($u);
+    if (!empty($account['admin']) && !array_filter(slip_users(), fn($a) => $a['username'] !== $u && !empty($a['admin']))) {
+        throw new InvalidArgumentException('Keep at least one station admin. Make another technician an admin first.');
+    }
+}
+
+function slip_user_set_admin(string $u, bool $on): void
+{
+    slip_admin_change(function () use ($u, $on) {
+        if (!$on) slip_require_other_admin($u);
+        if (slip_user_update($u, function ($a) use ($on) { $a['admin'] = $on; return $a; }) === null) {
+            throw new InvalidArgumentException('That technician no longer exists.');
+        }
+    });
 }
 
 /** A new password from the admin: saved device passwords can't be opened
@@ -550,17 +606,20 @@ function slip_user_delete(string $u): void
     if (!slip_user_valid($u)) {
         return;
     }
-    slip_user_signout_all($u);
-    @unlink(slip_acct_dir('accounts') . "/$u.json");
-    @unlink(slip_acct_dir('accounts') . "/$u.json.lock");
-    slip_shared_state_update(function (array $state) use ($u) {
-        $state['group_assignments'] = array_values(array_filter($state['group_assignments'], fn($a) => $a['owner'] !== $u));
-        foreach ($state['group_assignments'] as &$assignment) {
-            $assignment['usernames'] = array_values(array_filter($assignment['usernames'], fn($name) => $name !== $u));
-        }
-        unset($assignment);
-        $state['group_assignments'] = array_values(array_filter($state['group_assignments'], fn($a) => !empty($a['usernames'])));
-        return $state;
+    slip_admin_change(function () use ($u) {
+        slip_require_other_admin($u);
+        slip_user_signout_all($u);
+        @unlink(slip_acct_dir('accounts') . "/$u.json");
+        @unlink(slip_acct_dir('accounts') . "/$u.json.lock");
+        slip_shared_state_update(function (array $state) use ($u) {
+            $state['group_assignments'] = array_values(array_filter($state['group_assignments'], fn($a) => $a['owner'] !== $u));
+            foreach ($state['group_assignments'] as &$assignment) {
+                $assignment['usernames'] = array_values(array_filter($assignment['usernames'], fn($name) => $name !== $u));
+            }
+            unset($assignment);
+            $state['group_assignments'] = array_values(array_filter($state['group_assignments'], fn($a) => !empty($a['usernames'])));
+            return $state;
+        });
     });
 }
 
@@ -653,6 +712,7 @@ function slip_clean_device($d, bool $withSecret = true): ?array
         }
         $out['group'] = slip_clip(trim($d['group']), 64);
     }
+    if (array_key_exists('groups', $d)) $out = slip_set_device_groups($out, slip_clean_device_groups($d['groups']));
     $secret = $d['secret'] ?? null;
     if ($withSecret) {
         $ok = is_array($secret) && is_string($secret['n'] ?? null) && is_string($secret['c'] ?? null)
@@ -688,6 +748,7 @@ function slip_shared_update(callable $fn): array
         $previousGroups = slip_shared_groups($state);
         $state['devices'] = array_values($fn($state['devices']));
         $state['groups'] = array_values(array_unique(array_merge($previousGroups, slip_shared_groups($state))));
+        if (count($state['groups']) > 100) throw new InvalidArgumentException('The station already has 100 groups.');
         return $state;
     })['devices'];
 }
@@ -748,7 +809,8 @@ function slip_enroll_device(string $endpoint, int $id, string $name): void
 function slip_shared_groups(?array $state = null): array
 {
     $state ??= slip_shared_state();
-    $groups = array_merge($state['groups'], array_column($state['devices'], 'group'));
+    $groups = $state['groups'];
+    foreach ($state['devices'] as $device) $groups = array_merge($groups, slip_device_groups($device));
     $groups = array_values(array_unique(array_filter($groups, fn($g) => is_string($g) && $g !== '')));
     natcasesort($groups);
     return array_values($groups);
@@ -769,7 +831,7 @@ function slip_station_group(string $action, $name, $newName = null): void
         if ($action !== 'create' && !in_array($name, $known, true)) throw new InvalidArgumentException('That station group no longer exists.');
         if ($action === 'delete') {
             foreach ($state['devices'] as $device) {
-                if (($device['group'] ?? '') === $name) throw new InvalidArgumentException('Move workstations out of the group before removing it.');
+                if (slip_device_in_group($device, $name)) throw new InvalidArgumentException('Move workstations out of the group before removing it.');
             }
             $state['groups'] = array_values(array_filter($state['groups'], fn($g) => $g !== $name));
             $state['group_assignments'] = array_values(array_filter($state['group_assignments'], fn($a) => $a['owner'] !== '' || $a['group'] !== $name));
@@ -780,7 +842,9 @@ function slip_station_group(string $action, $name, $newName = null): void
         if (!in_array($newName, $groups, true)) $groups[] = $newName;
         if (count($groups) > 100) throw new InvalidArgumentException('The station already has 100 groups.');
         foreach ($state['devices'] as &$device) {
-            if ($action === 'rename' && ($device['group'] ?? '') === $name) $device['group'] = $newName;
+            if ($action === 'rename' && slip_device_in_group($device, $name)) {
+                $device = slip_set_device_groups($device, array_map(fn($g) => $g === $name ? $newName : $g, slip_device_groups($device)));
+            }
         }
         $state['groups'] = $groups;
         if ($action === 'rename') {
@@ -810,7 +874,7 @@ function slip_move_shared_devices(array $ids, $group): int
         foreach ($state['devices'] as &$device) {
             if (isset($selected[$device['id']])) {
                 $seen[$device['id']] = true;
-                if (($device['group'] ?? '') !== $group) { $device['group'] = $group; $moved++; }
+                if (slip_device_groups($device) !== ($group === '' ? [] : [$group])) { $device = slip_set_device_groups($device, $group === '' ? [] : [$group]); $moved++; }
             }
         }
         if (array_diff_key($selected, $seen)) throw new InvalidArgumentException('A selected workstation is no longer shared.');
@@ -876,6 +940,7 @@ function slip_assign_devices(array $usernames, int $id): array
         'notes' => $shared['notes'] ?? '', 'group' => $shared['group'] ?? '',
         'secret' => null, 'added' => time(),
     ];
+    if (array_key_exists('groups', $shared)) $device = slip_set_device_groups($device, slip_device_groups($shared));
     return slip_assign_personal($users, [$device]);
 }
 
@@ -887,11 +952,11 @@ function slip_group_catalog(?array $state = null, ?array $users = null): array
     $users ??= slip_users();
     $catalog = [];
     $append = function (string $owner, array $groups, array $devices) use (&$catalog, $state) {
-        $groups = array_merge($groups, array_column($devices, 'group'));
+        foreach ($devices as $device) $groups = array_merge($groups, slip_device_groups($device));
         foreach ($state['group_assignments'] as $assignment) {
             if ($assignment['owner'] === $owner) $groups[] = $assignment['group'];
         }
-        if (array_filter($devices, fn($d) => ($d['group'] ?? '') === '')) $groups[] = '';
+        if (array_filter($devices, fn($d) => slip_device_in_group($d, ''))) $groups[] = '';
         $groups = array_values(array_unique(array_filter($groups, 'is_string')));
         natcasesort($groups);
         foreach ($groups as $group) {
@@ -903,7 +968,7 @@ function slip_group_catalog(?array $state = null, ?array $users = null): array
                 }
             }
             $catalog[] = ['owner' => $owner, 'group' => $group, 'usernames' => $recipients,
-                'devices' => array_values(array_filter($devices, fn($d) => ($d['group'] ?? '') === $group))];
+                'devices' => array_values(array_filter($devices, fn($d) => slip_device_in_group($d, $group)))];
         }
     };
     // Keep Ungrouped editable even before the first workstation enrolls.
@@ -986,9 +1051,10 @@ function slip_shared_for_user(string $username): array
         }
         if (!in_array($group, $groups, true)) $groups[] = $group;
         foreach ($sources[$owner] as $device) {
-            if (($device['group'] ?? '') !== $group) continue;
+            if (!slip_device_in_group($device, $group)) continue;
             $copy = slip_clean_device($device, false);
             if (!$copy) continue;
+            unset($copy['groups']);
             $copy['group'] = $group;
             // One workstation may be shared through several source accounts.
             $key = $copy['id'] . ':' . $group;
@@ -1002,12 +1068,12 @@ function slip_shared_for_user(string $username): array
     return ['devices' => $devices, 'groups' => array_values($groups)];
 }
 
-/** Only these static facts may be retained without a support session. */
+/** Signed inventory from private workstations; only known report fields are retained. */
 function slip_clean_inventory($inventory): array
 {
     if (!is_object($inventory)) throw new InvalidArgumentException('missing inventory');
     $out = [];
-    foreach (['computer_name' => 64, 'model' => 128, 'serial_number' => 128, 'os_version' => 128, 'architecture' => 32, 'processor' => 128] as $key => $limit) {
+    foreach (['computer_name' => 64, 'model' => 128, 'serial_number' => 128, 'motherboard' => 128, 'motherboard_serial' => 128, 'os_version' => 128, 'architecture' => 32, 'processor' => 128] as $key => $limit) {
         $value = $inventory->$key ?? null;
         if ($value !== null && !is_string($value)) throw new InvalidArgumentException('inventory fields must be text');
         $out[$key] = $value === null ? null : slip_clip(trim(preg_replace('/[\x00-\x1F\x7F]/u', ' ', $value)), $limit);
@@ -1016,11 +1082,40 @@ function slip_clean_inventory($inventory): array
     if (!is_int($memory) || $memory < 0) throw new InvalidArgumentException('invalid memory size');
     $out['memory_bytes'] = $memory;
     $out['reported_at'] = time();
+    if (isset($inventory->report)) {
+        $report = $inventory->report;
+        if (!is_array($report) || count($report) > 64 || strlen(json_encode($report)) > 1048576) {
+            throw new InvalidArgumentException('system report is too large or invalid');
+        }
+        $out['report'] = [];
+        $rows = 0;
+        foreach ($report as $section) {
+            if (!is_object($section) || !is_string($section->title ?? null) || strlen($section->title) > 256 || !is_array($section->rows ?? null)) {
+                throw new InvalidArgumentException('invalid system report section');
+            }
+            $clean = ['title' => $section->title, 'rows' => []];
+            foreach ($section->rows as $row) {
+                if (++$rows > 8192 || !is_array($row) || count($row) !== 2 || !is_string($row[0]) || !is_string($row[1]) || strlen($row[0]) > 1024 || strlen($row[1]) > 8192) {
+                    throw new InvalidArgumentException('invalid system report row');
+                }
+                $clean['rows'][] = [$row[0], $row[1]];
+            }
+            $out['report'][] = $clean;
+        }
+        $out['report_at'] = time();
+    }
     return $out;
 }
 
 function slip_inventory_save(string $endpoint, array $inventory): void
 {
+    // A legacy client can refresh its summary without erasing a fuller report.
+    if (!array_key_exists('report', $inventory)) {
+        $previous = slip_device_inventory($endpoint);
+        foreach (['report', 'report_at'] as $field) {
+            if (isset($previous[$field])) $inventory[$field] = $previous[$field];
+        }
+    }
     slip_save_json(slip_acct_dir('inventory') . "/$endpoint.json", $inventory);
 }
 
@@ -1466,14 +1561,14 @@ function slip_trailer(): string
 }
 
 /** Shared page chrome (LCARS-style frame). */
-function slip_page_start(string $title, string $root = ''): void
+function slip_page_start(string $title, string $root = '', string $bodyClass = ''): void
 {
     $org = slip_station()['org'] ?? '';
     echo '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
     $cssVersion = (string)(@filemtime(SLIP_ROOT . '/assets/station.css') ?: 0);
     echo '<title>' . h($title) . '</title><link rel="stylesheet" href="' . h($root) . 'assets/station.css?v=' . h($cssVersion) . '">';
     echo '<link rel="icon" type="image/svg+xml" href="' . h($root) . 'assets/logo.svg">';
-    echo '<body><div class="frame"><header><div class="elbow"></div><div class="seg s1"></div><div class="seg s2"></div>'
+    echo '<body class="' . h($bodyClass) . '"><div class="frame"><header><div class="elbow"></div><div class="seg s1"></div><div class="seg s2"></div>'
         . '<img class="logo" src="' . h($root) . 'assets/logo.svg" alt=""><h1>' . h($org !== '' ? $org : 'Slipstream Remote') . '</h1></header>';
     echo '<main>';
 }
@@ -1483,4 +1578,5 @@ function slip_page_end(): void
     echo '</main><footer><div class="elbow"></div><div class="seg"></div><span>Powered by Slipstream Remote · open source</span></footer></div></body></html>';
 }
 
+require_once __DIR__ . '/groups.php';
 require_once __DIR__ . '/update.php';

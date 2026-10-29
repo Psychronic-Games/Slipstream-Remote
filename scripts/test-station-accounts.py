@@ -160,7 +160,9 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 registration = signed('register', addr={'id': '', 'addrs': []}, info=info)
                 summary = {'computer_name': 'OFFICE-PC', 'model': 'Fixture <Model>', 'serial_number': 'SERIAL-ABC123',
                            'os_version': 'Fixture Linux', 'architecture': 'x86_64', 'processor': 'Fixture CPU',
-                           'memory_bytes': 16 * 1024**3, 'password': 'must-never-be-stored'}
+                           'memory_bytes': 16 * 1024**3, 'motherboard': 'Fixture X870', 'motherboard_serial': 'BOARD-ABC123',
+                           'report': [{'title': 'Network <adapters>', 'rows': [['IPv4 address', '192.0.2.42'], ['Printer', '<script>alert(1)</script>']], 'password': 'must-never-be-stored'}],
+                           'password': 'must-never-be-stored'}
                 report = signed('inventory', inventory=summary)
                 assert call('hello')['inventory'] is False
                 public_id = call('register', **registration)['id']
@@ -175,6 +177,7 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 settings(private=True, access_key=key)
                 call('hello', status=403)
                 assert call('hello', key=key)['inventory'] is True
+                assert call('hello', key=key)['inventory_report'] is True
                 call('register', status=403, **registration)
                 device_id = call('register', key=key, **registration)['id']
                 assert device_id == public_id, 'Changing station mode changed an existing ID'
@@ -204,6 +207,14 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 call('inventory', key=key, status=403, **{**report, 'payload': report['payload'].replace('SERIAL-ABC123', 'FORGED')})
                 call('inventory', key=key, status=400, **signed('inventory', inventory={**summary, 'memory_bytes': []}))
 
+                for invalid in [None, 'bad', [{'title': 'Bad', 'rows': [['one']]}], [{'title': 3, 'rows': []}], [{'title': 'Bad', 'rows': [['key', []]]}], [{'title': 'Bad', 'rows': [['key', 'x' * 8193]]}]]:
+                    if invalid is not None:
+                        call('inventory', key=key, status=400, **signed('inventory', inventory={**summary, 'report': invalid}))
+                legacy_summary = {k: v for k, v in summary.items() if k != 'report'}
+                call('inventory', key=key, **signed('inventory', inventory=legacy_summary))
+                retained = json.loads(inventory_files[0].read_text())
+                assert retained['report'] == stored['report'] and retained['report_at'] == stored['report_at'], 'Legacy summary erased or redated the full report'
+
                 browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
                 def admin(path='/admin/', status=200, **form):
@@ -219,6 +230,7 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
 
                 page = admin()
                 assert 'SERIAL-ABC123' not in page, 'Inventory was visible before admin sign-in'
+                assert '192.0.2.42' not in admin('/admin/?tab=devices&device=' + str(device_id)), 'Report was visible before sign-in'
                 csrf = re.search(r'name="csrf" value="([a-f0-9]+)"', page).group(1)
                 admin(csrf=csrf, action='device_assign', id=device_id, username='assigned')
                 assert not json.loads((data / 'accounts/assigned.json').read_text())['devices'], 'Assignment worked without admin sign-in'
@@ -226,16 +238,21 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 assert 'Unauthorized group' not in json.loads((data / 'shared.json').read_text())['groups']
                 admin(csrf=csrf, action='group_visibility', owner='', group='', **{'usernames[]': ['other']})
                 assert not json.loads((data / 'shared.json').read_text()).get('group_assignments'), 'Visibility changed without admin sign-in'
-                admin(csrf=csrf, action='login', password='local-admin-password')
+                admin(csrf=csrf, action='login', username='admin', password='local-admin-password')
                 page = admin('/admin/?tab=devices')
                 assert 'SERIAL-ABC123' in page and '16 GiB RAM' in page and 'Fixture CPU' in page
                 assert 'Fixture &lt;Model&gt;' in page and 'Fixture <Model>' not in page, 'Inventory HTML was not escaped'
+                report_page = admin('/admin/?tab=devices&device=' + str(device_id))
+                assert '192.0.2.42' in report_page and 'BOARD-ABC123' in report_page and 'Fixture X870' in report_page
+                assert 'Network &lt;adapters&gt;' in report_page and '<script>alert(1)</script>' not in report_page
+                assert '&lt;script&gt;alert(1)&lt;/script&gt;' in report_page and 'Last reported information' in report_page
+                admin('/admin/?tab=devices&device=42', status=404)
                 assert 'Reception' in page and 'Office' in page and 'HOST-RENAMED' in page
                 admin(csrf=csrf, action='shared_add', id=device_id, name='Edited on station', group='Servers', notes='Web notes', return_tab='devices')
                 call('register', key=key, **heartbeat)
                 edited = next(d for d in station_shared() if d['id'] == device_id)
                 assert edited['name'] == 'Edited on station' and edited['group'] == 'Servers' and edited['notes'] == 'Web notes'
-                assert 'Assign to technician' in page and 'Assigned technician (assigned)' in page
+                assert 'Assign to technician' in page and 'Assigned technician' in page and 'value="assigned"' in page
                 admin(status=400, csrf='invalid-csrf', action='device_assign', id=device_id, username='assigned')
                 assert not json.loads((data / 'accounts/assigned.json').read_text())['devices']
                 batch = {'usernames[]': ['assigned', 'other', 'assigned']}
@@ -276,10 +293,10 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 admin(csrf=csrf, action='station_group_create', group='Laptop pool')
                 assert call('account', other)['shared_groups'] == [], 'New empty groups were visible without assignment'
                 page = admin('/admin/?tab=groups')
-                assert 'Groups &amp; technician access' in page and 'Move station workstations' in page
+                assert 'Groups &amp; technician access' in page and 'Save workstations' in page
                 assert 'Youthnet &lt;main&gt;' in page and 'Youthnet <main>' not in page
                 assert 'Owner (owner)' in page and 'Other (other)' in page and 'Personal technician group' in page
-                assert 'No technicians assigned' in page and 'Owner only' in page
+                assert 'No technicians assigned' in page and 'Visible to these technicians' in page
                 assert device['secret']['c'] not in page and device['secret']['n'] not in page, 'Group catalog exposed sealed credentials'
                 admin(status=400, csrf='invalid-csrf', action='group_visibility', owner='', group='Empty station', **{'usernames[]': ['other']})
                 admin(csrf=csrf, action='group_visibility', owner='', group='Empty station', usernames='other')
@@ -399,12 +416,68 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                     clone_ids.append(clone_id)
                     record = next(d for d in station_shared() if d['id'] == clone_id)
                     assert record['name'] == computer and record['group'] == '' and not record.get('secret')
+                # Multiple station memberships project only the folders granted to each client.
+                multi_id, extra_id = clone_ids
+                call('shared_save', owner, device={'id': multi_id, 'name': 'Multi-group PC', 'groups': ['Support laptops', 'Servers']})
+                admin(csrf=csrf, action='group_visibility', owner='', group='Support laptops', **{'usernames[]': ['assigned']})
+                admin(csrf=csrf, action='group_visibility', owner='', group='Servers', **{'usernames[]': ['batch-new']})
+                batch_token = call('login', username='batch-new', password='local-batch-password')['token']
+                assigned_rows = [d for d in call('account', assigned_token)['shared'] if d['id'] == multi_id]
+                batch_rows = [d for d in call('account', batch_token)['shared'] if d['id'] == multi_id]
+                assert [d['group'] for d in assigned_rows] == ['Support laptops']
+                assert [d['group'] for d in batch_rows] == ['Servers']
+                assert all('groups' not in d and not d.get('secret') for d in assigned_rows + batch_rows), 'Other memberships or passwords leaked'
+                # A legacy edit from either projected folder keeps all memberships.
+                for row in assigned_rows + batch_rows:
+                    call('shared_save', owner, device={**row, 'notes': 'Keep both folders'})
+                    assert set(next(d for d in station_shared() if d['id'] == multi_id)['groups']) == {'Support laptops', 'Servers'}
+                for bad_groups in ['Servers', [None], [''], ['x'] * 33]:
+                    call('shared_save', owner, status=400, device={'id': multi_id, 'groups': bad_groups})
+                admin(csrf=csrf, action='shared_add', return_tab='devices', id=multi_id, name='Multi-group PC', groups_present='1', new_group='Inline group', **{'groups[]': ['Support laptops', 'Servers']})
+                current = next(d for d in station_shared() if d['id'] == multi_id)
+                assert set(current['groups']) == {'Support laptops', 'Servers', 'Inline group'}
+                assert 'Inline group' in json.loads((data / 'shared.json').read_text())['groups']
+                before = (data / 'shared.json').read_bytes()
+                admin(status=400, csrf='invalid', action='group_members', owner='', group='Servers', **{'ids[]': [multi_id]})
+                assert (data / 'shared.json').read_bytes() == before
+                assert 'valid workstations' in admin(csrf=csrf, action='group_members', owner='', group='Servers', **{'ids[]': ['invalid']})
+                assert (data / 'shared.json').read_bytes() == before
+                admin(csrf=csrf, action='group_members', owner='', group='Servers', **{'ids[]': [multi_id, extra_id]})
+                assert set(next(d for d in station_shared() if d['id'] == multi_id)['groups']) == {'Support laptops', 'Servers', 'Inline group'}
+                assert {d['id'] for d in call('account', batch_token)['shared'] if d['group'] == 'Servers'} == {multi_id, extra_id}
+                admin(csrf=csrf, action='group_members', owner='', group='Servers', **{'ids[]': [extra_id]})
+                assert set(next(d for d in station_shared() if d['id'] == multi_id)['groups']) == {'Support laptops', 'Inline group'}
+                assert not any(d['id'] == multi_id for d in call('account', batch_token)['shared'])
+                assert any(d['id'] == multi_id for d in call('account', assigned_token)['shared'])
+                admin(csrf=csrf, action='station_group_rename', group='Inline group', new_name='Renamed group')
+                assert set(next(d for d in station_shared() if d['id'] == multi_id)['groups']) == {'Support laptops', 'Renamed group'}
+                assert 'Move workstations out' in admin(csrf=csrf, action='station_group_delete', group='Renamed group')
+                # Personal memberships preserve saved credentials and other folders too.
+                account_before = json.loads((data / 'accounts/owner.json').read_text())
+                personal_before = next(d for d in account_before['devices'] if d['id'] == device_id)
+                youth_ids = [d['id'] for d in account_before['devices'] if d.get('group') == 'Youthnet <main>']
+                admin(csrf=csrf, action='group_members', owner='owner', group='Youthnet <main>', **{'ids[]': youth_ids + [device_id, multi_id]})
+                account_after = json.loads((data / 'accounts/owner.json').read_text())
+                personal_after = next(d for d in account_after['devices'] if d['id'] == device_id)
+                assert personal_after['secret'] == personal_before['secret']
+                assert 'Youthnet <main>' in personal_after['groups']
+                if personal_before.get('group'):
+                    assert personal_before['group'] in personal_after['groups']
+                admin(csrf=csrf, action='group_members', owner='owner', group='Youthnet <main>', **{'ids[]': youth_ids})
+                account_after = json.loads((data / 'accounts/owner.json').read_text())
+                personal_after = next(d for d in account_after['devices'] if d['id'] == device_id)
+                assert personal_after['secret'] == personal_before['secret'] and personal_after['group'] == personal_before.get('group', '')
+                admin(csrf=csrf, action='shared_add', return_tab='devices', id=multi_id, name='Multi-group PC', groups_present='1')
+                assert next(d for d in station_shared() if d['id'] == multi_id)['groups'] == []
+                assert not any(d['id'] == multi_id for d in call('account', assigned_token)['shared'] if d['group'] != '')
+                print('PHP station: multiple groups, inline creation, per-group visibility, legacy edits, membership changes, rename, clear and personal vault preservation passed', flush=True)
                 settings(private=False)
                 assert call('hello')['inventory'] is False
                 call('inventory', status=403, **report)
                 another = call('register', **signed('register', seed='02', addr={'id': '', 'addrs': []}, info=info))['id']
                 assert not any(d['id'] == another for d in station_shared())
                 assert 'SERIAL-ABC123' not in admin('/admin/?tab=devices'), 'Public admin page exposed retained private inventory'
+                assert '192.0.2.42' not in admin('/admin/?tab=devices&device=' + str(device_id), status=404), 'Public station exposed a retained full report'
                 assert len(list((data / 'inventory').glob('*.json'))) == 1
                 print('PHP station: signed private enrollment, legacy migration, Ungrouped, durable edits/removal, hardware summary, admin editing/escaping and public exclusion passed', flush=True)
                 print('PHP station: batch technician assignment before first sign-in, admin/CSRF checks, offline devices, duplicate suppression, partial failures and preserved personal credentials/details passed', flush=True)

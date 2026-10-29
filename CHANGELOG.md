@@ -13,6 +13,28 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Station administrators sign in to the web console with their technician
+  username and password. New stations create an `admin` account; existing
+  station passwords migrate to a named account without replacing technician
+  credentials. Role removal, password resets and sign-out revoke browser access,
+  and the last administrator cannot be removed or demoted.
+- Give the station console more screen space and wrap technician actions and
+  password controls on smaller screens without a horizontal table scrollbar.
+  Device editing uses a roomier dialog and a themed notes resize bar. Searchable
+  checkbox dropdowns keep technician assignment, group membership and visibility compact.
+- Workstations can belong to several groups. Choose existing groups or create
+  one in the device editor; add/remove workstations directly from each group.
+  Other memberships and personal credentials are preserved, and existing apps
+  receive compatible rows for only their assigned groups.
+- Relay activity displays wrapped event summaries with severity, device, peer,
+  duration and traffic, plus search and severity filters. Full technical details
+  remain expandable without horizontal scrolling.
+- Devices open their full last-reported System information, including graphics,
+  storage, network and connected devices. Updated private-station hosts refresh
+  reports every 15 minutes; public stations never receive them. Custom PCs fall
+  back to a labeled motherboard model, with motherboard serials shown separately
+  when available on Windows and Linux.
+
 - Relay logs identify authenticated connections by connection/tunnel IDs,
   endpoint, peer IP and private-station workstation ID/name. Closing records
   include duration, transport byte counts and the observed close reason.
