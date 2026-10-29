@@ -441,7 +441,7 @@ slip_page_start('Station admin', '../');
       ?>
         <tr>
           <td class="<?= $on ? 'ok' : 'dim' ?>">●</td>
-          <td class="mono"><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?></td>
+          <td class="mono device-id"><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?></td>
           <td><?= h($saved['name'] ?? $d['name'] ?? '') ?><div class="dim"><?= h(($saved['group'] ?? '') !== '' ? $saved['group'] : 'Ungrouped') ?></div>
             <?php if ($saved && ($saved['name'] ?? '') !== ($d['name'] ?? '')): ?><div class="dim">Computer: <?= h($d['name'] ?? '') ?></div><?php endif ?>
             <?php if ($private): ?>
@@ -595,7 +595,7 @@ slip_page_start('Station admin', '../');
     <table>
       <tr><th>ID</th><th>Name</th><th>Group</th><th>Notes</th><th>Added by</th><th></th></tr>
       <?php foreach ($shared as $d): $id = (string)$d['id']; ?>
-        <tr><td class="mono"><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?></td>
+        <tr><td class="mono device-id"><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?></td>
           <td><?= h($d['name'] ?? '') ?></td><td><?= h(($d['group'] ?? '') ?: 'Ungrouped') ?></td><td class="dim"><?= h($d['notes'] ?? '') ?></td><td class="dim"><?= h($d['added_by'] ?? '') ?></td>
           <td><form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_delete"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
             <button class="small red">Remove</button></form></td></tr>

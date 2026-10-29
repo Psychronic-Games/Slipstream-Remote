@@ -59,6 +59,7 @@ label { display: block; margin: 12px 0 4px; }
 table { border-collapse: collapse; width: 100%; }
 th { text-align: left; font: 14px var(--display); text-transform: uppercase; letter-spacing: .08em; color: var(--lav); padding: 6px 10px; border-bottom: 1px solid #1a2238; }
 td { padding: 7px 10px; border-bottom: 1px solid #10162a; vertical-align: middle; }
+td.device-id { white-space: nowrap; }
 code, pre { font-family: var(--mono); color: var(--blue); }
 pre { background: #04060c; padding: 12px; border-left: 4px solid var(--violet); overflow: auto; }
 .steps { counter-reset: s; list-style: none; padding: 0; }

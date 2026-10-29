@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Station device IDs stay on one line in the Devices and shared-device tables.
+
 ## 0.31.0 — 2026-10-28
 
 - System information shows the remote computer's manufacturer serial number
