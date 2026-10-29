@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.32.0 — 2026-10-29
+
 - Station administrators sign in to the web console with their technician
   username and password. New stations create an `admin` account; existing
   station passwords migrate to a named account without replacing technician
