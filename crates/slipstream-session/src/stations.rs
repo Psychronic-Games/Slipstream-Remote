@@ -248,6 +248,7 @@ mod tests {
     struct Station {
         url: String,
         requests: Arc<Mutex<Vec<Value>>>,
+        presence_reply: Arc<Mutex<Option<Value>>>,
         task: tokio::task::JoinHandle<()>,
     }
     impl Drop for Station {
@@ -260,6 +261,8 @@ mod tests {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("http://{}", listener.local_addr().unwrap());
             let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+            let presence_reply = Arc::new(Mutex::new(None::<Value>));
+            let reply = presence_reply.clone();
             let (saved, key) = (requests.clone(), key.map(str::to_string));
             let task = tokio::spawn(async move {
                 let mut registration = None::<Value>;
@@ -316,6 +319,7 @@ mod tests {
                                 // Deliberately collide: numeric IDs are station scoped.
                                 json!({"ok":true,"id":123456789})
                             }
+                            "presence" => reply.lock().unwrap().clone().unwrap_or_else(|| json!({"ok":false,"error":"unknown op"})),
                             "lookup" => match &registration {
                                 Some(reg) => {
                                     json!({"ok":true,"status":"online","addr":reg["addr"],"info":reg["info"]})
@@ -340,6 +344,7 @@ mod tests {
             Self {
                 url,
                 requests,
+                presence_reply,
                 task,
             }
         }
@@ -353,6 +358,43 @@ mod tests {
             serde_json::from_str(body["payload"].as_str().unwrap()).unwrap()
         }
     }
+    #[tokio::test]
+    async fn background_presence_only_falls_back_for_older_stations() {
+        use crate::{AccountRef, Presence};
+        use slipstream_core::{account::AccountUser, config::StationAccount};
+        let station = Station::start(None, vec![]).await;
+        let home = tempfile::tempdir().unwrap();
+        let store = slipstream_core::config::Store::open(home.path()).unwrap();
+        let mut settings = store.load_settings();
+        settings.accounts.push(StationAccount {
+            server: station.url.clone(),
+            user: AccountUser {username: "tech".into(), ..Default::default()},
+            ..Default::default()
+        });
+        let account = AccountRef::of(&settings.accounts[0]);
+        store.save_settings(&settings).unwrap();
+        let public = ServerSettings {url: Some(station.url.clone()), ..ServerSettings::public_station()};
+        let (client, _) = Client::start(store, options(public, false)).await.unwrap();
+        let ids = [DeviceId(123456789), DeviceId(123456789)];
+        // A legacy station gets one fallback lookup for duplicate group rows.
+        assert_eq!(client.presence(&account, &ids).await, vec![(ids[0], Presence::Offline)]);
+        assert_eq!(station.requests.lock().unwrap().iter().filter(|r| r["op"] == "lookup").count(), 1);
+        for response in [
+            json!({"ok":false,"error":"online-status refresh limit reached"}),
+            json!({"ok":false,"error":"database error"}),
+            json!({"ok":true,"devices":[]}),
+            json!({"ok":true,"devices":[{"id":999999999,"status":"online"}]}),
+            json!({"ok":true,"devices":[{"id":123456789,"status":"online"},{"id":123456789,"status":"online"}]}),
+        ] {
+            *station.presence_reply.lock().unwrap() = Some(response);
+            assert_eq!(client.presence(&account, &ids).await, vec![(ids[0], Presence::Unknown)]);
+        }
+        assert_eq!(station.requests.lock().unwrap().iter().filter(|r| r["op"] == "lookup").count(), 1, "A failed status refresh consumed the connection budget");
+        *station.presence_reply.lock().unwrap() = Some(json!({"ok":true,"devices":[{"id":123456789,"status":"online"}]}));
+        assert_eq!(client.presence(&account, &ids).await, vec![(ids[0], Presence::Online)]);
+        client.shutdown().await;
+    }
+
     async fn online(client: &Client, public: bool) {
         tokio::time::timeout(Duration::from_secs(12), async {
             loop {

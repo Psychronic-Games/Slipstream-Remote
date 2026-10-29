@@ -10,6 +10,16 @@ return [
     // isn't writable.
     // 'data_dir' => '/home/example/slipstream-data',
 
+    // Independent per-network-IP budgets, per minute. Presence checks are
+    // batched (up to 500 unique devices); they never consume connection lookups.
+    // 'lookups_per_minute' => 600,
+    // 'presence_per_minute' => 120,
+    // Signed heartbeats/inventory are counted per verified device key, so
+    // the number of computers behind an office router does not share a cap.
+    // Sign-in and wrong-password protections are separate.
+    // 'registers_per_minute' => 30,
+    // 'inventory_per_minute' => 6,
+
     // Optional relay capacity controls; 0 keeps the self-hosted default unlimited.
     // 'relay_bytes_per_second' => 5242880,  // 5 MiB/s per connection
     // 'relay_max_connections' => 256,

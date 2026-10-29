@@ -34,6 +34,9 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.32.1**: independent batched online-status polling and connection lookups;
+  signed heartbeat/inventory budgets per device so fleets behind one router
+  do not consume one another's allowance. Older stations retain compatibility.
 - **0.32**: full station System information reports, motherboard identification,
   named web administrator accounts, searchable group/technician/workstation
   pickers, multiple group memberships and readable relay activity.

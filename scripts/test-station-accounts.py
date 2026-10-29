@@ -6,6 +6,7 @@ for the Rust CLI/vault/cache round trip. No real station or account is used.
 """
 import argparse
 import http.cookiejar
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -45,6 +46,19 @@ slip_user_create('full-tech','Full recipient','local-full-password',false);
 slip_user_update('full-tech',function($account) { $account['devices']=array_map(fn($i)=>['id'=>100000000+$i],range(0,SLIP_MAX_DEVICES-1)); return $account; });
 '''
         subprocess.run([php, '-r', init, str(web / 'lib/slipstream.php')], check=True, capture_output=True)
+        # Exercise the bounded SQL batch as well as the file registry used by
+        # the HTTP fixture below. It must return only IDs and online lamps.
+        sql_test = '''require $argv[1];
+$store=new SlipPdoStore(['dsn'=>'sqlite::memory:']);
+$id=$store->register(str_repeat('ab',32),['name'=>'SQL host','os'=>'Linux','app_version'=>'fixture'],'{}');
+$unknown=$id===100000000 ? 100000001 : 100000000;
+$expected=[['id'=>$id,'status'=>'online'],['id'=>$unknown,'status'=>'not_found']];
+if ($store->presence([$id,$unknown])!==$expected || $store->presence([])!==[]) exit(1);
+$store->unregister(str_repeat('ab',32));
+if ($store->presence([$id])!==[['id'=>$id,'status'=>'offline']]) exit(1);
+'''
+        subprocess.run([php, '-r', sql_test, str(web / 'lib/slipstream.php')], check=True, capture_output=True)
+        print('PHP station: SQL batch online/offline/unknown statuses and minimal response passed', flush=True)
         apk = b'PK\x03\x04isolated-signed-apk-fixture'
         (web / 'clients/slipstream-android.apk').write_bytes(apk)
         with socket.socket() as sock:
@@ -166,6 +180,56 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 report = signed('inventory', inventory=summary)
                 assert call('hello')['inventory'] is False
                 public_id = call('register', **registration)['id']
+
+                # Refreshing hundreds of online lamps uses one independent
+                # request, not hundreds of connection lookups.
+                endpoint = json.loads(registration['payload'])['endpoint']
+
+                def seed_rate(kind, count, age=0, subject='127.0.0.1'):
+                    subprocess.run([php, '-r', """require $argv[1];
+$cfg=slip_config();
+if ($cfg['lookups_per_minute']!==600 || $cfg['registers_per_minute']!==30) exit(1);
+$file=slip_data_dir().'/rate/'.sha1($argv[2].'|'.$argv[5]);
+file_put_contents($file,(time()-(int)$argv[4]).' '.$argv[3]);""",
+                                    str(web / 'lib/slipstream.php'), kind, str(count), str(age), subject], check=True, capture_output=True)
+
+                ids = [public_id] + [id for id in range(100000000, 100000500) if id != public_id][:499]
+                lamps = call('presence', ids=ids)['devices']
+                assert len(lamps) == 500 and lamps[0] == {'id': public_id, 'status': 'online'}
+                assert all(set(lamp) == {'id', 'status'} for lamp in lamps), 'Presence leaked addresses or inventory'
+                assert call('presence', ids=[public_id, public_id])['devices'] == [lamps[0]], 'Duplicate devices were polled twice'
+                assert call('presence', ids=[])['devices'] == []
+                for invalid in (None, '123456789', [True], [42], [123456789.5], [public_id] * 501):
+                    call('presence', ids=invalid, status=400)
+
+                seed_rate('presence', 119)
+                call('presence', ids=ids)
+                call('presence', ids=ids, status=429)
+                call('lookup', id=public_id)
+                call('register', **registration)
+                seed_rate('presence', 121, age=61)
+                call('presence', ids=ids)
+                seed_rate('lookup', 599)
+                call('lookup', id=public_id)
+                call('lookup', id=public_id, status=429)
+                call('presence', ids=ids)
+                seed_rate('lookup', 601, age=61)
+                call('lookup', id=public_id)
+
+                seed_rate('register', 29, subject='device:' + endpoint)
+                call('register', **registration)
+                call('register', status=429, **registration)
+                # Neither another device on this IP nor status/Connect is blocked.
+                call('register', **signed('register', seed='aa', addr={'id': '', 'addrs': []}, info=info))
+                call('presence', ids=ids)
+                call('lookup', id=public_id)
+                forged = {**registration, 'sig': '00' * 64}
+                call('register', status=403, **forged)
+                assert (data / 'rate' / hashlib.sha1(('register|device:' + endpoint).encode()).hexdigest()).read_text().endswith('31'), 'Forged signature consumed the device allowance'
+                seed_rate('register', 31, age=61, subject='device:' + endpoint)
+                call('register', **registration)
+                print('PHP station: bounded batch presence, independent connection budgets, per-device signed heartbeats, signature isolation and expiry passed', flush=True)
+
                 assert not any(d['id'] == public_id for d in station_shared()), 'Public device was enrolled'
                 call('inventory', status=403, **report)
                 assert not (data / 'inventory').exists(), 'Public inventory was retained'

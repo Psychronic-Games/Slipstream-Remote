@@ -13,6 +13,16 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Background online-status checks use independent batch requests for up to
+  500 unique devices, so saved lists and repeated group memberships do not
+  consume the connection-lookup budget (600/minute by default). Failed or
+  throttled refreshes cannot fall back to connection lookups; older stations
+  keep the compatible legacy path.
+- Count signed heartbeats and inventory per verified device key, with separate
+  budgets, so a fleet behind one router does not throttle its own computers.
+  Invalid signatures, sign-ins and wrong-password protections remain separate;
+  existing station configuration overrides are preserved.
+
 ## 0.32.0 — 2026-10-29
 
 - Station administrators sign in to the web console with their technician

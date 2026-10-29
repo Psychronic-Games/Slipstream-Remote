@@ -249,7 +249,7 @@ mod tests {
     use std::time::Duration;
 
     use iroh::{Endpoint, RelayMap, RelayMode, endpoint::presets};
-    use slipstream_core::directory::{DeviceInfo, DirectoryClient, Lookup};
+    use slipstream_core::directory::{DeviceId, DeviceInfo, DirectoryClient, Lookup, PresenceStatus};
 
     use super::*;
 
@@ -280,6 +280,9 @@ mod tests {
         let info = DeviceInfo { name: "test-host".into(), os: "Linux".into(), app_version: "0".into() };
         let id = dc.register(&secret, addr.clone(), info.clone()).await.unwrap();
         assert_eq!(dc.register(&secret, addr, info).await.unwrap(), id, "IDs are stable");
+        let lamps = dc.presence(&[id, id]).await.unwrap().unwrap();
+        assert_eq!(lamps.len(), 1);
+        assert_eq!(lamps[0].status, PresenceStatus::Online);
         match dc.lookup(id).await.unwrap() {
             Lookup::Online { addr, info } => {
                 assert_eq!(addr.id, secret.public());
@@ -288,8 +291,36 @@ mod tests {
             other => panic!("expected online, got {other:?}"),
         }
         dc.unregister(&secret).await.unwrap();
+        assert_eq!(dc.presence(&[id]).await.unwrap().unwrap()[0].status, PresenceStatus::Offline);
         assert!(matches!(dc.lookup(id).await.unwrap(), Lookup::Offline { .. }));
         assert!(matches!(dc.lookup(slipstream_core::directory::DeviceId(123456789)).await.unwrap(), Lookup::NotFound));
+    }
+
+    #[tokio::test]
+    async fn fleet_status_and_device_heartbeats_do_not_block_connections() {
+        let (url, _app) = start().await;
+        let dc = DirectoryClient::new(&url, None).unwrap();
+        // Crossing 500 requires multiple bounded batch requests. Duplicate
+        // group memberships must not add duplicate checks or rows.
+        let mut ids: Vec<_> = (100_000_000..100_001_101).map(DeviceId).collect();
+        ids.extend_from_within(..100);
+        let lamps = dc.presence(&ids).await.unwrap().unwrap();
+        assert_eq!(lamps.len(), 1101);
+        assert!(lamps.iter().all(|lamp| lamp.status == PresenceStatus::NotFound));
+        // Consume the remainder of the background budget (three used above).
+        for _ in 3..120 {
+            dc.presence(&[DeviceId(123456789)]).await.unwrap().unwrap();
+        }
+        assert!(dc.presence(&[DeviceId(123456789)]).await.unwrap_err().to_string().contains("refresh limit"));
+        assert!(matches!(dc.lookup(DeviceId(123456789)).await.unwrap(), Lookup::NotFound));
+        let first = iroh::SecretKey::generate();
+        for _ in 0..30 {
+            dc.register(&first, first.public().into(), DeviceInfo::default()).await.unwrap();
+        }
+        assert!(dc.register(&first, first.public().into(), DeviceInfo::default()).await.unwrap_err().to_string().contains("heartbeats for this device"));
+        let second = iroh::SecretKey::generate();
+        let id = dc.register(&second, second.public().into(), DeviceInfo::default()).await.unwrap();
+        assert!(matches!(dc.lookup(id).await.unwrap(), Lookup::Online { .. }));
     }
 
     /// Two endpoints that can only talk through our proxied relay.

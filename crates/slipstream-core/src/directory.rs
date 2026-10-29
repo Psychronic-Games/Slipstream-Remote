@@ -18,7 +18,7 @@
 //! key (its EndpointId), so only the key's owner can claim or update its ID.
 //! The server is otherwise untrusted: password auth happens end to end.
 
-use std::{fmt, str::FromStr, time::Duration};
+use std::{collections::BTreeSet, fmt, str::FromStr, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail};
 use iroh::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
@@ -33,6 +33,7 @@ pub const SIGNING_CONTEXT: &str = "slipstream-directory-v2\n";
 /// [`ONLINE_WINDOW_SECS`] without hearing from it.
 pub const HEARTBEAT_SECS: u64 = 30;
 pub const ONLINE_WINDOW_SECS: u64 = 75;
+pub const PRESENCE_BATCH_SIZE: usize = 500;
 
 /// Short device ID shown to users, e.g. `482 913 077`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -145,6 +146,21 @@ pub enum Lookup {
     Online { addr: EndpointAddr, info: DeviceInfo },
     Offline { info: DeviceInfo },
     NotFound,
+}
+
+/// Background online lamps do not need endpoint addresses or hardware data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceStatus {
+    Online,
+    Offline,
+    NotFound,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevicePresence {
+    pub id: DeviceId,
+    pub status: PresenceStatus,
 }
 
 /// Turns what a user typed ("relay.example.com", "http://10.0.0.5:8080/sub")
@@ -380,6 +396,31 @@ impl DirectoryClient {
             ("offline", _, info) | ("online", None, info) => Lookup::Offline { info: info.unwrap_or_default() },
             _ => Lookup::NotFound,
         })
+    }
+
+    /// Batched background status, with a budget separate from connection
+    /// lookups. `None` means an older station does not support this operation.
+    /// Other failures must not fall back to draining the connection budget.
+    pub async fn presence(&self, ids: &[DeviceId]) -> Result<Option<Vec<DevicePresence>>> {
+        #[derive(Deserialize)]
+        struct Reply {
+            devices: Vec<DevicePresence>,
+        }
+        let ids: Vec<_> = ids.iter().copied().collect::<BTreeSet<_>>().into_iter().collect();
+        let mut out = Vec::with_capacity(ids.len());
+        for batch in ids.chunks(PRESENCE_BATCH_SIZE) {
+            let reply = match self.call::<Reply>(serde_json::json!({"op": "presence", "ids": batch})).await {
+                Ok(reply) => reply,
+                Err(e) if out.is_empty() && e.to_string() == "server: unknown op" => return Ok(None),
+                Err(e) => return Err(e),
+            };
+            let returned: BTreeSet<_> = reply.devices.iter().map(|device| device.id).collect();
+            if reply.devices.len() != batch.len() || returned != batch.iter().copied().collect() {
+                bail!("invalid online-status response from station");
+            }
+            out.extend(reply.devices);
+        }
+        Ok(Some(out))
     }
 }
 

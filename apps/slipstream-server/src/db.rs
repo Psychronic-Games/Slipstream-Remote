@@ -1,11 +1,11 @@
 //! Device registry (SQLite).
 
-use std::{path::Path, sync::Mutex};
+use std::{collections::HashMap, path::Path, sync::Mutex};
 
 use anyhow::Result;
 use rand::Rng;
 use rusqlite::{Connection, OptionalExtension, params};
-use slipstream_core::directory::{DeviceId, DeviceInfo, ONLINE_WINDOW_SECS};
+use slipstream_core::directory::{DeviceId, DeviceInfo, DevicePresence, PresenceStatus, ONLINE_WINDOW_SECS};
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -92,6 +92,32 @@ impl Db {
             Some(addr_json) if now() - last_seen <= ONLINE_WINDOW_SECS as i64 => Found::Online { addr_json, info },
             _ => Found::Offline { info },
         })
+    }
+
+    /// Read only the minimal online lamps, in one bounded SQL query.
+    pub fn presence(&self, ids: &[DeviceId]) -> Result<Vec<DevicePresence>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().unwrap();
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let mut query = conn.prepare(&format!(
+            "SELECT device_id,last_seen,(addr IS NOT NULL AND addr <> '') FROM devices WHERE device_id IN ({placeholders})"
+        ))?;
+        let rows = query.query_map(rusqlite::params_from_iter(ids.iter().map(|id| id.0)), |row| {
+            let id: u32 = row.get(0)?;
+            let last_seen: i64 = row.get(1)?;
+            let has_addr: bool = row.get(2)?;
+            let status = if has_addr && now() - last_seen <= ONLINE_WINDOW_SECS as i64 {
+                PresenceStatus::Online
+            } else {
+                PresenceStatus::Offline
+            };
+            Ok((DeviceId(id), status))
+        })?.collect::<rusqlite::Result<HashMap<_, _>>>()?;
+        Ok(ids.iter().map(|id| DevicePresence {
+            id: *id, status: rows.get(id).copied().unwrap_or(PresenceStatus::NotFound),
+        }).collect())
     }
 
     /// (known devices, online now)

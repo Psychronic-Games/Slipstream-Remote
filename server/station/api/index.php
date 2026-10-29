@@ -20,6 +20,17 @@ function fail(string $msg, int $status = 400): void
     reply(['ok' => false, 'error' => $msg], $status);
 }
 
+/** Invalid signatures use their own IP bucket; valid devices never share it. */
+function verified_device_request(array $req, string $op): object
+{
+    try {
+        return slip_verify($req, $op);
+    } catch (InvalidArgumentException | DomainException $e) {
+        if (!slip_rate_ok('bad_signature', 30)) fail('too many invalid signed requests', 429);
+        throw $e;
+    }
+}
+
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     fail('Slipstream directory API — POST JSON here', 405);
 }
@@ -235,6 +246,19 @@ try {
                 'sig' => (string)($f['sig'] ?? ''),
             ]]);
 
+        case 'presence':
+            $ids = $req['ids'] ?? null;
+            if (!is_array($ids) || !array_is_list($ids) || count($ids) > 500) {
+                fail('presence needs a list of at most 500 device IDs');
+            }
+            foreach ($ids as $id) {
+                if (!is_int($id) || $id < SLIP_ID_MIN || $id > SLIP_ID_MAX) fail('invalid presence device ID');
+            }
+            if (!slip_rate_ok('presence', (int)$cfg['presence_per_minute'])) {
+                fail('online-status refresh limit reached — wait a minute', 429);
+            }
+            reply(['ok' => true, 'devices' => slip_store()->presence(array_values(array_unique($ids)))]);
+
         case 'lookup':
             if (!slip_rate_ok('lookup', (int)$cfg['lookups_per_minute'])) {
                 fail('too many lookups, slow down', 429);
@@ -259,17 +283,18 @@ try {
 
         case 'inventory':
             if (slip_access_key() === null) fail('inventory is only available on private stations', 403);
-            if (!slip_rate_ok('inventory', (int)$cfg['registers_per_minute'])) fail('too many inventory requests', 429);
-            $p = slip_verify($req, 'inventory');
-            slip_inventory_save($p->endpoint, slip_clean_inventory($p->inventory ?? null));
+            $p = verified_device_request($req, 'inventory');
+            $inventory = slip_clean_inventory($p->inventory ?? null);
+            if (!slip_rate_ok('inventory', (int)$cfg['inventory_per_minute'], 'device:' . $p->endpoint)) fail('too many inventory requests for this device', 429);
+            slip_inventory_save($p->endpoint, $inventory);
             reply(['ok' => true]);
 
         case 'register':
         case 'unregister':
-            if (!slip_rate_ok('register', (int)$cfg['registers_per_minute'])) {
-                fail('too many requests, slow down', 429);
+            $p = verified_device_request($req, $req['op']);
+            if (!slip_rate_ok('register', (int)$cfg['registers_per_minute'], 'device:' . $p->endpoint)) {
+                fail('too many heartbeats for this device — wait a minute', 429);
             }
-            $p = slip_verify($req, $req['op']);
             if ($req['op'] === 'unregister') {
                 slip_store()->unregister($p->endpoint);
                 reply(['ok' => true]);

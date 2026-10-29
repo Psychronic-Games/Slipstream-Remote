@@ -36,8 +36,12 @@ function slip_config(): array
     $defaults = [
         'data_dir' => slip_default_data_dir(),
         'db' => null,
-        'lookups_per_minute' => 60,
+        // Connection lookups and batched online-status polls have separate
+        // per-IP budgets. Signed host traffic is counted per device key.
+        'lookups_per_minute' => 600,
+        'presence_per_minute' => 120,
         'registers_per_minute' => 30,
+        'inventory_per_minute' => 6,
         'relay_bytes_per_second' => 0,
         'relay_max_connections' => 0,
     ];
@@ -166,6 +170,8 @@ interface SlipStore
     public function unregister(string $endpoint): void;
     /** ['status' => 'online'|'offline'|'not_found', 'addr' => json?, 'info' => array?] */
     public function lookup(int $id): array;
+    /** [['id' => int, 'status' => 'online'|'offline'|'not_found'], ...] */
+    public function presence(array $ids): array;
     /** [total, online] */
     public function counts(): array;
     /** All devices: [['id','endpoint','name','os','app_version','last_seen','created'], …] */
@@ -268,6 +274,11 @@ class SlipFileStore implements SlipStore
             return ['status' => 'online', 'addr' => $d['addr'], 'info' => $info];
         }
         return ['status' => 'offline', 'info' => $info];
+    }
+
+    public function presence(array $ids): array
+    {
+        return array_map(fn($id) => ['id' => $id, 'status' => $this->lookup($id)['status']], $ids);
     }
 
     public function all(): array
@@ -375,6 +386,19 @@ class SlipPdoStore implements SlipStore
             return ['status' => 'online', 'addr' => $d['addr'], 'info' => $info];
         }
         return ['status' => 'offline', 'info' => $info];
+    }
+
+    public function presence(array $ids): array
+    {
+        if (!$ids) return [];
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $q = $this->db->prepare("SELECT device_id,last_seen,(addr IS NOT NULL AND addr <> '') AS has_addr FROM slipstream_devices WHERE device_id IN ($placeholders)");
+        $q->execute($ids);
+        $statuses = [];
+        foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $statuses[(int)$row['device_id']] = !empty($row['has_addr']) && time() - (int)$row['last_seen'] <= SLIP_ONLINE_WINDOW ? 'online' : 'offline';
+        }
+        return array_map(fn($id) => ['id' => $id, 'status' => $statuses[$id] ?? 'not_found'], $ids);
     }
 
     public function all(): array
@@ -1329,14 +1353,14 @@ function slip_client_ip(): string
     return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 }
 
-/** Simple per-IP rate limit using files in the data folder. */
-function slip_rate_ok(string $kind, int $perMinute): bool
+/** Per-IP by default; a verified device can use its own signed identity. */
+function slip_rate_ok(string $kind, int $perMinute, ?string $identity = null): bool
 {
     $dir = slip_data_dir() . '/rate';
     if (!is_dir($dir)) {
         @mkdir($dir, 0750, true);
     }
-    $file = $dir . '/' . sha1($kind . '|' . slip_client_ip());
+    $file = $dir . '/' . sha1($kind . '|' . ($identity ?? slip_client_ip()));
     $fh = @fopen($file, 'c+');
     if (!$fh) {
         return true;

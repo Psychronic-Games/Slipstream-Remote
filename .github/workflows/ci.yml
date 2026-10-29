@@ -30,7 +30,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang libxkbcommon-dev \
             libwayland-dev libxcb1-dev libxrandr-dev libxdo-dev libxtst-dev libdbus-1-dev \
-            libegl1-mesa-dev libgbm-dev php-cli
+            libegl1-mesa-dev libgbm-dev php-cli php-sqlite3
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace
       - name: Station administrator and account regressions

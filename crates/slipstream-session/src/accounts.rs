@@ -2,11 +2,13 @@
 //! own: their lists of devices, saved passwords, and connecting through
 //! them. See `slipstream_core::account` for the station side.
 
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result, anyhow, bail};
 use slipstream_core::{
     account::{AccountState, SavedDevice, is_signed_out},
     config::StationAccount,
-    directory::{DeviceId, DirectoryClient, Lookup},
+    directory::{DeviceId, DirectoryClient, Lookup, PresenceStatus},
     vault::VaultKey,
 };
 use tokio::sync::mpsc;
@@ -198,12 +200,21 @@ impl Client {
         key.open(id, &sealed).map(Some)
     }
 
-    /// Which of the account's devices are online now (one lookup each, on
-    /// that account's station).
+    /// Background status is batched separately from connection lookups.
+    /// Older stations retain the legacy lookup path until they are updated.
     pub async fn presence(&self, r: &AccountRef, ids: &[DeviceId]) -> Vec<(DeviceId, Presence)> {
         let Ok(dc) = self.account(r).and_then(|a| Self::station_client(&a)) else { return Vec::new() };
+        let ids: Vec<_> = ids.iter().copied().collect::<BTreeSet<_>>().into_iter().collect();
+        match dc.presence(&ids).await {
+            Ok(Some(devices)) => return devices.into_iter().map(|device| (device.id, match device.status {
+                PresenceStatus::Online => Presence::Online,
+                PresenceStatus::Offline | PresenceStatus::NotFound => Presence::Offline,
+            })).collect(),
+            Err(_) => return ids.into_iter().map(|id| (id, Presence::Unknown)).collect(),
+            Ok(None) => {}
+        }
         let mut out = Vec::new();
-        for &id in ids {
+        for id in ids {
             let p = match dc.lookup(id).await {
                 Ok(Lookup::Online { .. }) => Presence::Online,
                 Ok(_) => Presence::Offline,

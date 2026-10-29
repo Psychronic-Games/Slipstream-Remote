@@ -2,7 +2,7 @@
 //! in `server/web/` — see `slipstream_core::directory`.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -15,7 +15,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
-use slipstream_core::directory::{DIRECTORY_VERSION, DeviceId, DeviceInfo, verify_signed};
+use slipstream_core::directory::{DIRECTORY_VERSION, DeviceId, DeviceInfo, PRESENCE_BATCH_SIZE, verify_signed};
 use tracing::{info, warn};
 
 use crate::{
@@ -23,14 +23,16 @@ use crate::{
     db::{Found, now},
 };
 
-/// Max requests per client IP per minute, per kind.
-const LOOKUPS_PER_MIN: u32 = 60;
+/// Connection lookups and background batch polls have independent budgets.
+const LOOKUPS_PER_MIN: u32 = 600;
+const PRESENCE_PER_MIN: u32 = 120;
+/// Signed heartbeats are counted per verified endpoint, independent of NAT.
 const REGISTERS_PER_MIN: u32 = 30;
 /// Signed requests must be this fresh (seconds).
 const MAX_SKEW: i64 = 600;
 
 /// (client, kind) → (window start, requests in window)
-type Buckets = HashMap<(IpAddr, &'static str), (Instant, u32)>;
+type Buckets = HashMap<(String, &'static str), (Instant, u32)>;
 
 #[derive(Default)]
 pub struct RateLimiter {
@@ -39,11 +41,19 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     fn allow(&self, ip: IpAddr, kind: &'static str, per_min: u32) -> bool {
+        self.allow_subject(format!("ip:{ip}"), kind, per_min)
+    }
+
+    fn allow_device(&self, endpoint: &str, kind: &'static str, per_min: u32) -> bool {
+        self.allow_subject(format!("device:{}", endpoint.to_ascii_lowercase()), kind, per_min)
+    }
+
+    fn allow_subject(&self, subject: String, kind: &'static str, per_min: u32) -> bool {
         let mut b = self.buckets.lock().unwrap();
         if b.len() > 50_000 {
             b.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(60));
         }
-        let e = b.entry((ip, kind)).or_insert((Instant::now(), 0));
+        let e = b.entry((subject, kind)).or_insert((Instant::now(), 0));
         if e.0.elapsed() > Duration::from_secs(60) {
             *e = (Instant::now(), 0);
         }
@@ -142,6 +152,22 @@ pub async fn handle(
             }))
             .into_response()
         }
+        "presence" => {
+            let ids = match presence_ids(&req) {
+                Ok(ids) => ids,
+                Err(message) => return err(StatusCode::BAD_REQUEST, message),
+            };
+            if !app.limits.allow(ip, "presence", PRESENCE_PER_MIN) {
+                return err(StatusCode::TOO_MANY_REQUESTS, "online-status refresh limit reached — wait a minute");
+            }
+            match app.db.presence(&ids) {
+                Ok(devices) => Json(json!({"ok": true, "devices": devices})).into_response(),
+                Err(e) => {
+                    warn!("presence failed: {e:#}");
+                    err(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+                }
+            }
+        }
         "lookup" => {
             if !app.limits.allow(ip, "lookup", LOOKUPS_PER_MIN) {
                 return err(StatusCode::TOO_MANY_REQUESTS, "too many lookups, slow down");
@@ -163,9 +189,6 @@ pub async fn handle(
             }
         }
         op @ ("register" | "unregister") => {
-            if !app.limits.allow(ip, "register", REGISTERS_PER_MIN) {
-                return err(StatusCode::TOO_MANY_REQUESTS, "too many requests, slow down");
-            }
             let (Some(payload), Some(sig)) =
                 (req.get("payload").and_then(Value::as_str), req.get("sig").and_then(Value::as_str))
             else {
@@ -173,13 +196,21 @@ pub async fn handle(
             };
             let p = match verify_signed(payload, sig) {
                 Ok(p) => p,
-                Err(e) => return err(StatusCode::FORBIDDEN, &format!("{e}")),
+                Err(e) => {
+                    if !app.limits.allow(ip, "bad_signature", 30) {
+                        return err(StatusCode::TOO_MANY_REQUESTS, "too many invalid signed requests");
+                    }
+                    return err(StatusCode::FORBIDDEN, &format!("{e}"));
+                }
             };
             if p.op != op {
                 return err(StatusCode::BAD_REQUEST, "op mismatch");
             }
             if !fresh_timestamp(p.time, now()) {
                 return err(StatusCode::FORBIDDEN, "request expired — check this computer's clock");
+            }
+            if !app.limits.allow_device(&p.endpoint, "register", REGISTERS_PER_MIN) {
+                return err(StatusCode::TOO_MANY_REQUESTS, "too many heartbeats for this device — wait a minute");
             }
             if op == "unregister" {
                 let _ = app.db.unregister(&p.endpoint);
@@ -213,9 +244,61 @@ pub async fn handle(
 
 fn fresh_timestamp(timestamp:i64,current:i64)->bool {timestamp.abs_diff(current)<=MAX_SKEW as u64}
 
+fn presence_ids(request: &Value) -> Result<Vec<DeviceId>, &'static str> {
+    let ids = request.get("ids").and_then(Value::as_array)
+        .filter(|ids| ids.len() <= PRESENCE_BATCH_SIZE)
+        .ok_or("presence needs a list of at most 500 device IDs")?;
+    ids.iter().map(|id| {
+        id.as_u64().and_then(|id| u32::try_from(id).ok())
+            .filter(|id| (DeviceId::MIN..=DeviceId::MAX).contains(id))
+            .map(DeviceId).ok_or("invalid presence device ID")
+    }).collect::<Result<BTreeSet<_>, _>>().map(|ids| ids.into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn presence_and_heartbeats_have_independent_budgets() {
+        let limits = RateLimiter::default();
+        let ip = "198.51.100.10".parse().unwrap();
+        for _ in 0..PRESENCE_PER_MIN {
+            assert!(limits.allow(ip, "presence", PRESENCE_PER_MIN));
+        }
+        assert!(!limits.allow(ip, "presence", PRESENCE_PER_MIN));
+        // A thousand devices behind one router do not share a heartbeat cap.
+        for device in 0..1000 {
+            for _ in 0..2 {
+                assert!(limits.allow_device(&format!("endpoint-{device}"), "register", REGISTERS_PER_MIN));
+            }
+        }
+        for _ in 0..REGISTERS_PER_MIN {
+            assert!(limits.allow_device("noisy-device", "register", REGISTERS_PER_MIN));
+        }
+        assert!(!limits.allow_device("noisy-device", "register", REGISTERS_PER_MIN));
+        for _ in 0..LOOKUPS_PER_MIN {
+            assert!(limits.allow(ip, "lookup", LOOKUPS_PER_MIN));
+        }
+        assert!(!limits.allow(ip, "lookup", LOOKUPS_PER_MIN));
+        // Presence traffic does not consume the password/key protection.
+        for _ in 0..20 {
+            assert!(limits.allow(ip, "badkey", 20));
+        }
+        assert!(!limits.allow(ip, "badkey", 20));
+        assert!(limits.allow_device("another-device", "register", REGISTERS_PER_MIN));
+        assert!(limits.allow("198.51.100.11".parse().unwrap(), "lookup", LOOKUPS_PER_MIN));
+    }
+
+    #[test]
+    fn presence_batches_are_bounded_and_deduplicated() {
+        assert_eq!(presence_ids(&json!({"ids": [123456789, 123456789]})).unwrap(), vec![DeviceId(123456789)]);
+        assert!(presence_ids(&json!({"ids": []})).unwrap().is_empty());
+        assert!(presence_ids(&json!({"ids": vec![123456789; 501]})).is_err());
+        for invalid in [json!(null), json!("123456789"), json!(true), json!(42), json!(-123456789), json!(123456789.5)] {
+            assert!(presence_ids(&json!({"ids": [invalid]})).is_err());
+        }
+    }
+
     #[test]
     fn client_addresses_ignore_spoofed_forwarding_prefixes() {
         let proxy:SocketAddr="127.0.0.1:8000".parse().unwrap();

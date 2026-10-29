@@ -165,6 +165,23 @@ isn't writable, `./data` inside the site is used, protected by `.htaccess`.
 Copy `config.sample.php` to `config.php` to choose another folder or to use
 MariaDB/MySQL instead of files.
 
+Connection lookups and background online-status polling have independent
+budgets: `lookups_per_minute` defaults to 600 and `presence_per_minute` to
+120 per network IP. Updated apps check online lamps in batches of up to 500
+unique devices every 30 seconds, rather than looking up each group row. A
+failed or throttled background refresh never falls back to spending the
+connection budget. Only an older station reporting `unknown op` uses legacy
+per-device lookups; older apps also keep using the legacy path until updated.
+
+Hosts report their own heartbeat about twice per minute. Heartbeat/sign-off
+requests are limited per **verified device key**, not per office IP, so adding
+computers does not consume another host's allowance. `registers_per_minute`
+defaults to 30 per device; `inventory_per_minute` defaults to 6 per device in a
+separate bucket. Signatures are checked before using a device's budget, and
+invalid signatures have a separate IP bucket. Existing configuration overrides
+are preserved. These settings do not change technician sign-in limits or the
+host's wrong-password lockout.
+
 Back up `slipstream-data/`: it holds the access key, the device IDs, and the
 technicians (`accounts/`, `tokens/`, `shared.json`).
 
