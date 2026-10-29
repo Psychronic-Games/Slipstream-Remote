@@ -542,6 +542,7 @@ file_put_contents($file,(time()-(int)$argv[4]).' '.$argv[3]);""",
                 assert not any(d['id'] == another for d in station_shared())
                 public_page = admin('/admin/?tab=devices')
                 assert 'data-device-controls' in public_page and 'data-device-rows' in public_page, 'Public directory lacks device search/sort controls'
+                assert 'data-device-hardware=' not in public_page and 'data-device-sort-option="hardware"' not in public_page, 'Public directory exposed private hardware controls'
                 assert 'SERIAL-ABC123' not in public_page and 'BOARD-ABC123' not in public_page, 'Public search metadata exposed retained private inventory'
                 assert '192.0.2.42' not in admin('/admin/?tab=devices&device=' + str(device_id), status=404), 'Public station exposed a retained full report'
                 assert len(list((data / 'inventory').glob('*.json'))) == 1

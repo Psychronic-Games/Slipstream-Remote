@@ -191,7 +191,10 @@ for (const width of widths) {
       await evaluate(`(() => {const input=document.querySelector('[data-device-search]');input.value=${JSON.stringify(text)};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     };
     const sortDevices = async key => {
-      await evaluate(`(() => {const select=document.querySelector('[data-device-sort]');select.value=${JSON.stringify(key)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+      await evaluate(`(() => {const trigger=document.querySelector('[data-device-sort] > summary');trigger.scrollIntoView({block:'center'});trigger.click();})()`);
+      await waitFor(`document.querySelector('[data-device-sort]').open && document.querySelector('[data-device-sort] > summary').getAttribute('aria-expanded')==='true'`);
+      await evaluate(`document.querySelector('[data-device-sort-option="${key}"]').click()`);
+      await waitFor(`!document.querySelector('[data-device-sort]').open && document.querySelector('[data-device-sort]').dataset.value===${JSON.stringify(key)}`);
     };
     const flipDevices = () => evaluate(`document.querySelector('[data-device-direction]').click()`);
     const allDevices = await visibleDevices();
@@ -199,6 +202,36 @@ for (const width of widths) {
     assert(await evaluate(`[...document.querySelectorAll('[data-device-row]')].every(row=>row.checkVisibility())`), 'A device row disappeared at a narrow width');
     assert(!await evaluate(`!!document.querySelector('img[data-device-xss]')`), 'Device search metadata was not escaped');
     assert(allDevices.every((row,index)=>!index || row.seen<=allDevices[index-1].seen), 'Default order is not newest first');
+    const keypress = async (key, code = key, virtualKey = 0) => {
+      await call('Input.dispatchKeyEvent', {type:'keyDown', key, code, windowsVirtualKeyCode:virtualKey, ...(key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})});
+      await call('Input.dispatchKeyEvent', {type:'keyUp', key, code, windowsVirtualKeyCode:virtualKey});
+    };
+    await evaluate(`document.querySelector('[data-device-sort] > summary').click()`);
+    await waitFor(`document.querySelector('[data-device-sort]').open && document.querySelector('[data-device-sort] > summary').getAttribute('aria-expanded')==='true'`);
+    assert(await evaluate(`(() => {const menu=document.querySelector('.device-sort-options');const r=menu.getBoundingClientRect();const trigger=document.querySelector('[data-device-sort] > summary');const t=trigger.getBoundingClientRect(),text=trigger.querySelector('[data-device-sort-label]').getBoundingClientRect(),style=getComputedStyle(trigger);return r.width>0 && r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && style.paddingTop===style.paddingBottom && Math.abs((text.top+text.bottom-t.top-t.bottom)/2)<1 && Math.abs(t.height-document.querySelector('[data-device-search]').getBoundingClientRect().height)<1 && !document.querySelector('select[data-device-sort]');})()`), 'Sort menu is unthemed, unevenly padded or outside the viewport');
+    await screenshot('device-sort-menu');
+    await evaluate(`document.querySelector('[data-device-sort] > summary').focus()`);
+    await keypress('Escape','Escape',27);
+    assert(await evaluate(`!document.querySelector('[data-device-sort]').open && document.activeElement===document.querySelector('[data-device-sort] > summary')`), 'Escape did not close and refocus the sort menu');
+    await keypress('ArrowDown','ArrowDown',40);
+    await keypress('Home','Home',36);
+    await keypress('ArrowDown','ArrowDown',40);
+    await keypress('Enter','Enter',13);
+    await delay(60);
+    assert(await evaluate(`document.querySelector('[data-device-sort]').dataset.value==='group' && !document.querySelector('[data-device-sort]').open`), `Keyboard menu selection failed: ${JSON.stringify(await evaluate(`({key:document.querySelector('[data-device-sort]').dataset.value,open:document.querySelector('[data-device-sort]').open,focus:document.activeElement.outerHTML.slice(0,450)})`))}`);
+    assert(await evaluate(`document.querySelector('[data-device-sort-option=group]').getAttribute('aria-checked')==='true' && document.querySelector('[data-device-column-sort=group]').getAttribute('aria-pressed')==='true'`), 'Keyboard choice did not synchronize the menu and header');
+    await sortDevices('recent');
+    // A short window must scroll the menu to its focused item, not hide it.
+    await call('Emulation.setDeviceMetricsOverride', {width, height:430, deviceScaleFactor:1, mobile:false});
+    await evaluate(`(() => {const trigger=document.querySelector('[data-device-sort] > summary');trigger.scrollIntoView({block:'center'});trigger.focus();})()`);
+    await delay(60);
+    await keypress('ArrowUp','ArrowUp',38);
+    await waitFor(`document.querySelector('[data-device-sort]').open`);
+    assert(await evaluate(`(() => {const menu=document.querySelector('.device-sort-options'),m=menu.getBoundingClientRect(),r=document.activeElement.getBoundingClientRect();return document.activeElement.matches('[data-device-sort-option=hardware]') && menu.scrollHeight>menu.clientHeight && r.top>=m.top && r.bottom<=m.bottom+1 && m.top>=0 && m.bottom<=innerHeight;})()`), `Focused sort choice is clipped in a short viewport: ${JSON.stringify(await evaluate(`(() => {const menu=document.querySelector('.device-sort-options');return {height:innerHeight,menu:menu.getBoundingClientRect().toJSON(),focus:document.activeElement.getBoundingClientRect().toJSON(),key:document.activeElement.dataset.deviceSortOption,scroll:menu.scrollTop,scrollHeight:menu.scrollHeight,clientHeight:menu.clientHeight};})()`))}`);
+    await keypress('Escape','Escape',27);
+    await call('Emulation.setDeviceMetricsOverride', {width, height:1100, deviceScaleFactor:1, mobile:false});
+    await evaluate(`scrollTo(0,0)`);
+    assert(await evaluate(`(() => {const row=document.querySelector('[data-device-row]'),surface=${width}>1300?row.querySelector('td'):row,color=getComputedStyle(surface).backgroundColor;return color!=='rgba(0, 0, 0, 0)' && color!==getComputedStyle(document.querySelector('.device-register')).backgroundColor;})()`), 'Device rows still blend into the panel');
     await evaluate(`window.deviceListAudit='same-document'`);
     await sortDevices('name');
     let ordered = await visibleDevices();
@@ -244,6 +277,30 @@ for (const width of widths) {
     assert.equal(ordered.length, 5, 'Clear search did not restore all devices');
     assert(ordered.every((row,index)=>!index || row.id<ordered[index-1].id), 'Clear search reset the chosen sort order');
     assert(await evaluate(`window.deviceListAudit==='same-document' && document.querySelector('[data-device-empty]').hidden`), 'Search/sort reloaded the page');
+    if (width === 1680) {
+      // Column controls share the menu's state and reverse on a second click.
+      await evaluate(`document.querySelector('[data-device-column-sort=id]').click()`);
+      ordered = await visibleDevices();
+      assert(ordered.every((row,index)=>!index || row.id>ordered[index-1].id), 'ID header did not reverse the current sort');
+      await evaluate(`document.querySelector('[data-device-column-sort=id]').click()`);
+      ordered = await visibleDevices();
+      assert(ordered.every((row,index)=>!index || row.id<ordered[index-1].id), 'Repeated ID header click did not reverse again');
+      for (const key of ['name','group','system','hardware','recent']) {
+        await evaluate(`document.querySelector('[data-device-column-sort=${key}]').click()`);
+        assert(await evaluate(`document.querySelector('[data-device-sort]').dataset.value==='${key}' && document.querySelector('[data-device-column-sort=${key}]').getAttribute('aria-pressed')==='true' && document.querySelectorAll('th[aria-sort]').length===1`), `Header ${key} did not synchronize the sort controls`);
+        await evaluate(`document.querySelector('[data-device-column-sort=${key}]').click()`);
+        assert(await evaluate(`document.querySelector('[data-device-column-sort=${key}] [data-sort-arrow]').textContent==='${key==='recent'?'↑':'↓'}'`), `Header ${key} has the wrong direction arrow`);
+        if (key === 'system') assert.equal((await visibleDevices())[0].name, 'Bench 2', 'System header did not sort by OS');
+        if (key === 'hardware') assert.equal((await visibleDevices())[0].id, Number(device), 'Hardware header did not sort by model');
+      }
+      await evaluate(`document.querySelector('[data-device-column-sort=name]').focus()`);
+      await keypress('Enter','Enter',13);
+      assert(await evaluate(`document.querySelector('[data-device-sort]').dataset.value==='name'`), 'Header sorting is not keyboard operable');
+      await searchDevices(device);
+      await evaluate(`document.querySelector('[data-device-column-sort=group]').click()`);
+      assert.equal((await visibleDevices()).length, 1, 'Header sorting discarded the search');
+      await evaluate(`document.querySelector('[data-device-clear]').click()`);
+    }
     const dialog = `document.getElementById('edit-device-${device}')`;
     await evaluate(`document.querySelector('[data-dialog-open="edit-device-${device}"]').click()`);
     assert(await evaluate(`${dialog}.open`), 'Device editor did not open');
@@ -300,7 +357,7 @@ for (const width of widths) {
     await checkLayout('devices');
     await navigate(`devices&device=${device}`, '.system-report');
     await checkLayout('report');
-    console.log(`Station ${width}px: device search/natural sorting, wrapped logs/search, group membership and Done-to-save visibility/retry, inline group creation, themed notes/checkboxes, searchable assignment and responsive layouts passed`);
+    console.log(`Station ${width}px: LCARS device table, keyboard sort menu/header synchronization, search/natural sorting, wrapped logs, Done-to-save visibility/retry, notes/checkboxes, searchable assignment and responsive layouts passed`);
 
   } finally {
     if (socket?.readyState === WebSocket.OPEN) {

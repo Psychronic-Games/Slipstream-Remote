@@ -175,8 +175,12 @@ and hardware collection.
 
 On **Devices**, use **Find a device** to search its name, original computer name,
 groups, ID or reported hardware details. IDs work with spaces or dashes too.
-**Sort by** offers group name, device name, device ID and last seen; the adjacent
-button reverses the order. Names sort naturally (PC 2 before PC 10). Devices in
+**Sort by** offers group name, device name, device ID, system, hardware (on private
+stations) and last seen; the adjacent button reverses the order. You can also
+click a column heading: click again to reverse, with an arrow showing the active
+order. **Name** and **Group** are separate buttons in their shared header. The
+themed menu supports arrow keys, Home/End, Enter and Escape, and remains available
+when the table becomes cards on smaller screens. Names sort naturally (PC 2 before PC 10). Devices in
 several groups sort by their alphabetically first group. Search and sorting
 work together without reloading the page, with a result count and **Clear search**.
 

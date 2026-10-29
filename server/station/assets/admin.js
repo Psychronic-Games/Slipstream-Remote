@@ -253,6 +253,11 @@
   if (deviceControls) {
     const search = deviceControls.querySelector('[data-device-search]');
     const sort = deviceControls.querySelector('[data-device-sort]');
+    const sortSummary = sort.querySelector('summary');
+    const sortMenu = sort.querySelector('[role=menu]');
+    const sortChoices = [...sort.querySelectorAll('[data-device-sort-option]')];
+    const sortLabels = new Map(sortChoices.map(choice => [choice.dataset.deviceSortOption, choice.querySelector('[data-sort-option-label]').textContent]));
+    const headers = [...document.querySelectorAll('[data-device-column-sort]')];
     const direction = deviceControls.querySelector('[data-device-direction]');
     const clear = deviceControls.querySelector('[data-device-clear]');
     const body = document.querySelector('[data-device-rows]');
@@ -264,11 +269,36 @@
       seen: Number(row.dataset.deviceSeen),
       name: row.querySelector('[data-device-name]').textContent.trim(),
       group: [...row.querySelectorAll('[data-device-groups] .group-chip')].map(chip => chip.textContent.trim()).sort(collator.compare).join('\n'),
+      system: row.querySelector('[data-device-system]').dataset.deviceSystem,
+      hardware: row.querySelector('[data-device-hardware]')?.dataset.deviceHardware || '',
       // Read only the device's metadata, never hidden dialogs/picker options:
       // otherwise every row would match every group and technician name.
       search: fold(row.dataset.deviceSearchText),
     }));
+    let sortKey = sort.dataset.value;
     let descending = true;
+    const closeSortMenu = (focus = false) => {
+      sort.open = false;
+      sortSummary.setAttribute('aria-expanded', 'false');
+      if (focus) sortSummary.focus({preventScroll: true});
+    };
+    const placeSortMenu = () => {
+      if (!sort.open) return;
+      const anchor = sortSummary.getBoundingClientRect();
+      if (anchor.bottom < 0 || anchor.top > innerHeight) { closeSortMenu(); return; }
+      const width = Math.min(250, innerWidth - 24);
+      const below = innerHeight - anchor.bottom - 12, above = anchor.top - 12;
+      const down = below >= Math.min(340, above);
+      sortMenu.style.width = `${width}px`;
+      sortMenu.style.maxHeight = `${Math.max(80, Math.min(380, down ? below : above, innerHeight - 24))}px`;
+      sortMenu.style.left = `${Math.max(12, Math.min(anchor.left, innerWidth - width - 12))}px`;
+      const height = sortMenu.getBoundingClientRect().height;
+      sortMenu.style.top = `${Math.max(12, Math.min(down ? anchor.bottom + 7 : anchor.top - height - 7, innerHeight - height - 12))}px`;
+    };
+    const focusSortChoice = choice => {
+      choice.focus({preventScroll: true});
+      choice.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    };
     const filter = () => {
       const query = fold(search.value).trim();
       const idQuery = /^[\d\s-]+$/.test(query) ? query.replace(/[\s-]/g, '') : null;
@@ -283,11 +313,29 @@
       closePicker();
     };
     const order = () => {
-      const labels = sort.value === 'recent' ? ['Oldest first', 'Newest first'] : sort.value === 'id' ? ['Lowest first', 'Highest first'] : ['A → Z', 'Z → A'];
+      const labels = sortKey === 'recent' ? ['Oldest first', 'Newest first'] : sortKey === 'id' ? ['Lowest first', 'Highest first'] : ['A → Z', 'Z → A'];
       direction.textContent = labels[Number(descending)];
       direction.setAttribute('aria-label', `Sort direction: ${direction.textContent}`);
+      sort.dataset.value = sortKey;
+      sort.querySelector('[data-device-sort-label]').textContent = sortLabels.get(sortKey);
+      for (const choice of sortChoices) {
+        const active = choice.dataset.deviceSortOption === sortKey;
+        choice.setAttribute('aria-checked', String(active));
+        choice.tabIndex = active ? 0 : -1;
+      }
+      for (const header of headers) {
+        const active = header.dataset.deviceColumnSort === sortKey;
+        header.disabled = false;
+        header.setAttribute('aria-pressed', String(active));
+        header.setAttribute('aria-label', `${sortLabels.get(header.dataset.deviceColumnSort)}: ${active ? `sorted ${descending ? 'descending' : 'ascending'}; reverse order` : 'sort column'}`);
+        header.querySelector('[data-sort-arrow]').textContent = active ? descending ? '↓' : '↑' : '↕';
+      }
+      for (const column of document.querySelectorAll('[data-device-sort-column]')) {
+        if (column.dataset.deviceSortColumn.split(' ').includes(sortKey)) column.setAttribute('aria-sort', descending ? 'descending' : 'ascending');
+        else column.removeAttribute('aria-sort');
+      }
       rows.sort((a, b) => {
-        const primary = sort.value === 'id' ? a.id - b.id : sort.value === 'recent' ? a.seen - b.seen : collator.compare(a[sort.value], b[sort.value]);
+        const primary = sortKey === 'id' ? a.id - b.id : sortKey === 'recent' ? a.seen - b.seen : collator.compare(a[sortKey], b[sortKey]);
         return primary * (descending ? -1 : 1) || collator.compare(a.name, b.name) || a.id - b.id;
       });
       const fragment = document.createDocumentFragment();
@@ -295,8 +343,55 @@
       body.append(fragment);
       filter();
     };
+    const chooseSort = (key, toggle = false) => {
+      if (!sortLabels.has(key)) return;
+      descending = key === sortKey ? toggle ? !descending : descending : key === 'recent';
+      sortKey = key;
+      order();
+    };
+    for (const choice of sortChoices) choice.addEventListener('click', () => {
+      chooseSort(choice.dataset.deviceSortOption);
+      closeSortMenu(true);
+    });
+    for (const header of headers) header.addEventListener('click', () => {
+      chooseSort(header.dataset.deviceColumnSort, true);
+      closeSortMenu();
+    });
+    sort.addEventListener('toggle', () => {
+      sortSummary.setAttribute('aria-expanded', String(sort.open));
+      if (sort.open) {
+        closePicker(); placeSortMenu();
+        const visibleChoice = sortChoices.includes(document.activeElement) ? document.activeElement : sortChoices.find(choice => choice.getAttribute('aria-checked') === 'true');
+        visibleChoice.scrollIntoView({block: 'nearest', inline: 'nearest'});
+      }
+    });
+    sortSummary.addEventListener('keydown', event => {
+      if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      if (sort.open && ['Enter', ' '].includes(event.key)) { closeSortMenu(true); return; }
+      sort.open = true;
+      placeSortMenu();
+      const choice = event.key === 'ArrowUp' ? sortChoices.at(-1) : sortChoices.find(option => option.getAttribute('aria-checked') === 'true');
+      focusSortChoice(choice);
+    });
+    sort.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSortMenu(true); return; }
+      if (!event.target.matches('[data-device-sort-option]') || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const index = sortChoices.indexOf(event.target);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? sortChoices.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + sortChoices.length) % sortChoices.length;
+      for (const [i, option] of sortChoices.entries()) option.tabIndex = i === next ? 0 : -1;
+      focusSortChoice(sortChoices[next]);
+    });
+    for (const event of ['pointerdown', 'focusin']) document.addEventListener(event, e => {
+      if (sort.open && !sort.contains(e.target)) closeSortMenu();
+    });
+    for (const picker of document.querySelectorAll('[data-picker]')) picker.addEventListener('toggle', () => {
+      if (picker.open) closeSortMenu();
+    });
+    addEventListener('resize', placeSortMenu);
+    addEventListener('scroll', placeSortMenu, true);
     search.addEventListener('input', filter);
-    sort.addEventListener('change', () => { descending = sort.value === 'recent'; order(); });
     direction.addEventListener('click', () => { descending = !descending; order(); });
     clear.addEventListener('click', () => { search.value = ''; filter(); search.focus(); });
     deviceControls.hidden = false;

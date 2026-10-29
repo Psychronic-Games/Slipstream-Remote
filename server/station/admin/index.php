@@ -519,20 +519,37 @@ slip_page_start('Station admin', '../', 'admin-console');
     </div>
   <?php endif ?>
   <?php else: ?>
-  <div class="panel">
+  <div class="panel device-register">
     <?php if (isset($_GET['device'])): ?><p class="bad">Device report unavailable.</p><?php endif ?>
     <p class="dim"><?= $private ? 'Workstations automatically enroll in the station under Ungrouped. Assign their group to technicians to show them in those apps. Names and groups you set stay as you left them. Connecting still requires the device password.' : 'Public directory: automatic shared enrollment and hardware inventory are disabled.' ?> <a href="?tab=groups">Organize groups and assign them to technicians</a></p>
 
     <?php if (!$devices): ?><p class="dim">No devices yet. They appear here once someone runs the app from your download page.</p><?php else: ?>
     <div class="device-list-toolbar" data-device-controls hidden>
       <label class="search-control"><span class="k">Find a device</span><input type="search" data-device-search placeholder="Name, group, ID or serial…" autocomplete="off"></label>
-      <label class="device-sort-control"><span class="k">Sort by</span><select data-device-sort><option value="recent">Last seen</option><option value="group">Group name</option><option value="name">Device name</option><option value="id">Device ID</option></select></label>
+      <div class="device-sort-control"><span class="k" id="device-sort-label">Sort by</span>
+        <details class="device-sort-menu" data-device-sort data-value="recent">
+          <summary aria-labelledby="device-sort-label device-sort-current" aria-haspopup="menu" aria-controls="device-sort-options" aria-expanded="false"><span id="device-sort-current" data-device-sort-label>Last seen</span><span class="picker-chevron" aria-hidden="true"></span></summary>
+          <div class="device-sort-options" id="device-sort-options" role="menu" aria-labelledby="device-sort-label">
+            <?php foreach (['recent' => 'Last seen', 'group' => 'Group name', 'name' => 'Device name', 'id' => 'Device ID', 'system' => 'System'] + ($private ? ['hardware' => 'Hardware'] : []) as $key => $label): ?>
+              <button type="button" role="menuitemradio" aria-checked="<?= $key === 'recent' ? 'true' : 'false' ?>" tabindex="<?= $key === 'recent' ? '0' : '-1' ?>" data-device-sort-option="<?= h($key) ?>"><span data-sort-option-label><?= h($label) ?></span><span class="sort-choice-mark" aria-hidden="true">✓</span></button>
+            <?php endforeach ?>
+          </div>
+        </details>
+      </div>
       <button type="button" class="small blue" data-device-direction>Newest first</button>
       <button type="button" class="small lav" data-device-clear disabled>Clear search</button>
       <p class="dim" data-device-count role="status" aria-live="polite"><?= count($devices) ?> devices</p>
     </div>
     <table class="devices-table">
-      <thead><tr><th scope="col" aria-label="Status"></th><th scope="col">ID</th><th scope="col">Name / group</th><th scope="col">System</th><?php if ($private): ?><th scope="col">Hardware</th><?php endif ?><th scope="col">Last seen</th><th scope="col">Actions</th></tr></thead>
+      <thead><tr>
+        <th scope="col" aria-label="Status" class="device-status-heading"></th>
+        <th scope="col" data-device-sort-column="id"><button type="button" data-device-column-sort="id" disabled>ID <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" data-device-sort-column="name group"><div class="device-identity-headings"><button type="button" data-device-column-sort="name" disabled>Name <span data-sort-arrow aria-hidden="true">↕</span></button><button type="button" data-device-column-sort="group" disabled>Group <span data-sort-arrow aria-hidden="true">↕</span></button></div></th>
+        <th scope="col" data-device-sort-column="system"><button type="button" data-device-column-sort="system" disabled>System <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <?php if ($private): ?><th scope="col" data-device-sort-column="hardware"><button type="button" data-device-column-sort="hardware" disabled>Hardware <span data-sort-arrow aria-hidden="true">↕</span></button></th><?php endif ?>
+        <th scope="col" data-device-sort-column="recent" aria-sort="descending"><button type="button" data-device-column-sort="recent" disabled>Last seen <span data-sort-arrow aria-hidden="true">↓</span></button></th>
+        <th scope="col" class="device-actions-heading">Actions</th>
+      </tr></thead>
       <tbody data-device-rows>
       <?php foreach ($devices as $d):
           $on = ($d['last_seen'] ?? 0) >= $cut; $id = (string)$d['id'];
@@ -550,8 +567,8 @@ slip_page_start('Station admin', '../', 'admin-console');
           <td data-label="Name / group"><b data-device-name><?= h($deviceName) ?></b><div class="group-chips" data-device-groups><?php foreach ($deviceGroups as $group): ?><span class="group-chip"><?= h($group) ?></span><?php endforeach ?></div>
             <?php if ($saved && ($saved['name'] ?? '') !== ($d['name'] ?? '')): ?><div class="dim">Computer: <?= h($d['name'] ?? '') ?></div><?php endif ?>
           </td>
-          <td data-label="System"><?= h($inventory['os_version'] ?? $d['os'] ?? '') ?><?php if (!empty($inventory['architecture'])): ?><div class="dim"><?= h($inventory['architecture']) ?></div><?php endif ?><div class="dim">Slipstream <?= h($d['app_version'] ?? '') ?></div></td>
-          <?php if ($private): ?><td data-label="Hardware">
+          <td data-label="System" data-device-system="<?= h($inventory['os_version'] ?? $d['os'] ?? '') ?>"><?= h($inventory['os_version'] ?? $d['os'] ?? '') ?><?php if (!empty($inventory['architecture'])): ?><div class="dim"><?= h($inventory['architecture']) ?></div><?php endif ?><div class="dim">Slipstream <?= h($d['app_version'] ?? '') ?></div></td>
+          <?php if ($private): ?><td data-label="Hardware" data-device-hardware="<?= h($inventory['model'] ?? '') ?>">
             <?php if ($inventory): ?>
               <div><?= h($inventory['model'] ?? 'Model unavailable') ?></div>
               <?php if (!empty($inventory['processor'])): ?><div class="dim"><?= h($inventory['processor']) ?></div><?php endif ?>

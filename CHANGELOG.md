@@ -13,6 +13,11 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Give the Devices table LCARS color bands, alternating row panels and rounded
+  side rails. The evenly spaced sort menu uses themed choices and keyboard
+  navigation. Click column headings to sort or reverse their order; active
+  arrows and the menu stay synchronized, including system and hardware sorting.
+
 - Search the station Devices table by name, group, ID, operating system or
   hardware details. Sort by group, device name, ID or last seen in either
   direction, with natural numeric ordering, result counts and no-match feedback.
