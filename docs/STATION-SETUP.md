@@ -178,7 +178,8 @@ groups, ID or reported hardware details. IDs work with spaces or dashes too.
 **Sort by** offers group name, device name, device ID, system, hardware (on private
 stations) and last seen; the adjacent button reverses the order. You can also
 click a column heading: click again to reverse, with an arrow showing the active
-order. **Name** and **Group** are separate buttons in their shared header. The
+order. **Name** and **Group** have separate columns and distinct header colors,
+with group tags in the Group column. The
 themed menu supports arrow keys, Home/End, Enter and Escape, and remains available
 when the table becomes cards on smaller screens. Names sort naturally (PC 2 before PC 10). Devices in
 several groups sort by their alphabetically first group. Search and sorting

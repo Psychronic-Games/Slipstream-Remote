@@ -544,7 +544,8 @@ slip_page_start('Station admin', '../', 'admin-console');
       <thead><tr>
         <th scope="col" aria-label="Status" class="device-status-heading"></th>
         <th scope="col" data-device-sort-column="id"><button type="button" data-device-column-sort="id" disabled>ID <span data-sort-arrow aria-hidden="true">↕</span></button></th>
-        <th scope="col" data-device-sort-column="name group"><div class="device-identity-headings"><button type="button" data-device-column-sort="name" disabled>Name <span data-sort-arrow aria-hidden="true">↕</span></button><button type="button" data-device-column-sort="group" disabled>Group <span data-sort-arrow aria-hidden="true">↕</span></button></div></th>
+        <th scope="col" data-device-sort-column="name"><button type="button" data-device-column-sort="name" disabled>Name <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" data-device-sort-column="group"><button type="button" data-device-column-sort="group" disabled>Group <span data-sort-arrow aria-hidden="true">↕</span></button></th>
         <th scope="col" data-device-sort-column="system"><button type="button" data-device-column-sort="system" disabled>System <span data-sort-arrow aria-hidden="true">↕</span></button></th>
         <?php if ($private): ?><th scope="col" data-device-sort-column="hardware"><button type="button" data-device-column-sort="hardware" disabled>Hardware <span data-sort-arrow aria-hidden="true">↕</span></button></th><?php endif ?>
         <th scope="col" data-device-sort-column="recent" aria-sort="descending"><button type="button" data-device-column-sort="recent" disabled>Last seen <span data-sort-arrow aria-hidden="true">↓</span></button></th>
@@ -564,9 +565,10 @@ slip_page_start('Station admin', '../', 'admin-console');
         <tr data-device-row data-device-id="<?= h($id) ?>" data-device-seen="<?= (int)($d['last_seen'] ?? 0) ?>" data-device-search-text="<?= h($searchText) ?>">
           <td class="<?= $on ? 'ok' : 'dim' ?>">●</td>
           <td class="mono device-id"><?php if ($private): ?><a href="?tab=devices&amp;device=<?= (int)$d['id'] ?>" title="View full system report"><?php endif ?><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?><?php if ($private): ?></a><?php endif ?></td>
-          <td data-label="Name / group"><b data-device-name><?= h($deviceName) ?></b><div class="group-chips" data-device-groups><?php foreach ($deviceGroups as $group): ?><span class="group-chip"><?= h($group) ?></span><?php endforeach ?></div>
+          <td data-label="Name"><b data-device-name><?= h($deviceName) ?></b>
             <?php if ($saved && ($saved['name'] ?? '') !== ($d['name'] ?? '')): ?><div class="dim">Computer: <?= h($d['name'] ?? '') ?></div><?php endif ?>
           </td>
+          <td data-label="Group"><div class="group-chips" data-device-groups><?php foreach ($deviceGroups as $group): ?><span class="group-chip"><?= h($group) ?></span><?php endforeach ?></div></td>
           <td data-label="System" data-device-system="<?= h($inventory['os_version'] ?? $d['os'] ?? '') ?>"><?= h($inventory['os_version'] ?? $d['os'] ?? '') ?><?php if (!empty($inventory['architecture'])): ?><div class="dim"><?= h($inventory['architecture']) ?></div><?php endif ?><div class="dim">Slipstream <?= h($d['app_version'] ?? '') ?></div></td>
           <?php if ($private): ?><td data-label="Hardware" data-device-hardware="<?= h($inventory['model'] ?? '') ?>">
             <?php if ($inventory): ?>

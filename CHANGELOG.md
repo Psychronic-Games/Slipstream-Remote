@@ -13,6 +13,10 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Split Name and Group into separate Devices table columns, with group tags
+  confined to the Group column and distinct LCARS header colors. Both columns
+  keep their independent sort controls and mobile labels.
+
 - Give the Devices table LCARS color bands, alternating row panels and rounded
   side rails. The evenly spaced sort menu uses themed choices and keyboard
   navigation. Click column headings to sort or reverse their order; active

@@ -199,6 +199,7 @@ for (const width of widths) {
     const flipDevices = () => evaluate(`document.querySelector('[data-device-direction]').click()`);
     const allDevices = await visibleDevices();
     assert.equal(allDevices.length, 5, 'Device sorting fixture is incomplete');
+    assert(await evaluate(`(() => {const name=document.querySelector('th[data-device-sort-column=name]'),group=document.querySelector('th[data-device-sort-column=group]');const headers=[...document.querySelectorAll('.devices-table thead th')];return name && group && name!==group && headers.every((header,index)=>!index || getComputedStyle(header).backgroundColor!==getComputedStyle(headers[index-1]).backgroundColor) && [...document.querySelectorAll('[data-device-row]')].every(row=>row.cells.length===headers.length && row.querySelector('[data-device-name]').closest('td').dataset.label==='Name' && row.querySelector('[data-device-groups]').closest('td').dataset.label==='Group' && !row.querySelector('[data-device-name]').closest('td').querySelector('.group-chip'));})()`), 'Name and group must have separate, aligned columns with distinct adjacent header colors');
     assert(await evaluate(`[...document.querySelectorAll('[data-device-row]')].every(row=>row.checkVisibility())`), 'A device row disappeared at a narrow width');
     assert(!await evaluate(`!!document.querySelector('img[data-device-xss]')`), 'Device search metadata was not escaped');
     assert(allDevices.every((row,index)=>!index || row.seen<=allDevices[index-1].seen), 'Default order is not newest first');
