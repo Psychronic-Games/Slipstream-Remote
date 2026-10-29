@@ -410,9 +410,10 @@ slip_page_start('Station admin', '../');
     <?php endforeach ?>
   </table></div>
 
-  <?php $log = @file_get_contents(slip_data_dir() . '/relay.log'); if ($log): ?>
+  <?php $log = slip_relay_log_tail(); if ($log !== ''): ?>
   <h2 class="violet">Relay log (latest)</h2>
-  <pre><?= h(substr($log, -3000)) ?></pre>
+  <p class="dim">“Stream terminated, exiting” reports the end of an individual client relay stream. The relay status above shows whether the server is running. Timestamps are UTC.</p>
+  <pre><?= h($log) ?></pre>
   <?php endif ?>
 
 <?php elseif ($tab === 'devices'):

@@ -13,6 +13,10 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Station relay logs display complete lines without terminal color codes, read
+  only a bounded tail, and explain client-stream closure messages. Newly
+  started station relays disable color formatting in their log files.
+
 - Station Groups shows personal technician groups alongside station groups,
   identifies each source and displays saved recipients. Per-group assignment
   editors replace the bulk copy form. Only assigned groups enter a technician's

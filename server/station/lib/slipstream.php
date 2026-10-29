@@ -1096,7 +1096,7 @@ function slip_relay_ensure(bool $force = false): bool
         if (is_executable('/usr/bin/setsid')) {
             array_unshift($args, '/usr/bin/setsid');   // own session: survives PHP worker recycling
         }
-        $env = ['PATH' => '/usr/bin:/bin', 'RUST_LOG' => 'warn'];
+        $env = ['PATH' => '/usr/bin:/bin', 'RUST_LOG' => 'warn', 'NO_COLOR' => '1'];
         if ($key = slip_access_key()) {
             $env['SLIPSTREAM_ACCESS_KEY'] = $key;    // env, not argv: invisible to `ps`
         }
@@ -1120,6 +1120,27 @@ function slip_relay_ensure(bool $force = false): bool
     } finally {
         flock($lock, LOCK_UN);
         fclose($lock);
+    }
+}
+
+/** Bounded, complete-line log tail, without terminal color/control codes. */
+function slip_relay_log_tail(): string
+{
+    $stream = @fopen(slip_data_dir() . '/relay.log', 'rb');
+    if (!$stream) return '';
+    try {
+        $size = (int)(fstat($stream)['size'] ?? 0);
+        $offset = max(0, $size - 8192);
+        if (fseek($stream, $offset) !== 0) return '';
+        $text = (string)fread($stream, 8192);
+        // Do not begin with a fragment such as the last word "exiting".
+        if ($offset > 0) {
+            $newline = strpos($text, "\n");
+            $text = $newline === false ? '' : substr($text, $newline + 1);
+        }
+        return preg_replace('/\x1b\[[0-?]*[ -\/]*[@-~]/', '', $text) ?? '';
+    } finally {
+        fclose($stream);
     }
 }
 
