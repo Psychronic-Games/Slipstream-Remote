@@ -113,11 +113,11 @@ if (empty($_SESSION['admin'])) {
 switch ($action) {
     case 'relay_restart':
         slip_write_htaccess();
-        flash(slip_relay_ensure(true) ? 'Relay restarted.' : 'The relay could not be started — see the checks below.', !slip_relay_running());
+        flash(slip_relay_ensure(true, 'admin_restart') ? 'Relay restarted.' : 'The relay could not be started — see the checks below.', !slip_relay_running());
         back();
     case 'relay_stop':
         slip_relay_stop();
-        flash('Relay stopped. It starts again automatically when clients connect.');
+        flash(slip_relay_running() ? 'Relay is still running — see the relay log.' : 'Relay stopped. It starts again automatically when clients connect.', slip_relay_running());
         back();
     case 'delete_device':
         $id = (int)($_POST['id'] ?? 0);
@@ -180,7 +180,7 @@ switch ($action) {
         $privacyChanged = $changes['private'] !== !empty($station['private']);
         slip_station_save($changes);
         if ($privacyChanged) {
-            slip_relay_ensure(true); // the relay enforces the key, so restart it
+            slip_relay_ensure(true, 'station_settings_changed'); // the relay enforces the key, so restart it
         }
         flash('Settings saved.');
         back('settings');
@@ -196,7 +196,7 @@ switch ($action) {
         exit;
     case 'rotate_key':
         slip_station_save(['access_key' => bin2hex(random_bytes(16))]);
-        slip_relay_ensure(true);
+        slip_relay_ensure(true, 'access_key_rotated');
         flash('New access key created. Existing apps stop working until they are downloaded again.', true);
         back('settings');
     case 'tech_add':
@@ -412,7 +412,7 @@ slip_page_start('Station admin', '../');
 
   <?php $log = slip_relay_log_tail(); if ($log !== ''): ?>
   <h2 class="violet">Relay log (latest)</h2>
-  <p class="dim">“Stream terminated, exiting” reports the end of an individual client relay stream. The relay status above shows whether the server is running. Timestamps are UTC.</p>
+  <p class="dim">Connection records show the device when known, peer address, duration, transport byte counts and observed close reason. Client stream endings are INFO; rejected connections and transport failures are WARN. Process events identify starts, stops and restart requests. Timestamps are UTC.</p>
   <pre><?= h($log) ?></pre>
   <?php endif ?>
 

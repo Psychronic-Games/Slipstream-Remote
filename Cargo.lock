@@ -7327,6 +7327,7 @@ dependencies = [
  "serde",
  "serde_json",
  "slipstream-core",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

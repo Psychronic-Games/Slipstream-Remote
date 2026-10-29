@@ -95,6 +95,14 @@ impl Db {
     }
 
     /// (known devices, online now)
+    /// Private relay diagnostics: identify an authenticated endpoint without reading vaults.
+    pub fn describe_endpoint(&self, endpoint: &str) -> Result<Option<(u32, String)>> {
+        Ok(self.conn.lock().unwrap().query_row(
+            "SELECT device_id, name FROM devices WHERE endpoint = ?1", [endpoint],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?)
+    }
+
     pub fn counts(&self) -> Result<(i64, i64)> {
         let conn = self.conn.lock().unwrap();
         let total = conn.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0))?;

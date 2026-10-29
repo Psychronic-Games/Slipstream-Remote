@@ -316,7 +316,7 @@ function slip_update_step(): array
         slip_update_save($state);
         slip_update_cleanup();
         if (in_array('bin', $changed, true)) {
-            slip_relay_ensure(true);
+            slip_relay_ensure(true, 'station_update');
         }
         return ['done' => true, 'message' => 'Installed version ' . $p['version'] . ' (build ' . (int)$p['build'] . ').'];
     } catch (Throwable $e) {

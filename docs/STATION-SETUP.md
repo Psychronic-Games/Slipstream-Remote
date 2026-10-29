@@ -182,6 +182,29 @@ and sharing never exposes saved passwords. Separately saved personal entries
 and earlier copies remain intact. The same tab creates/renames station groups
 and moves station workstations between them.
 
+The Status page's relay log records connections and failures rather than only
+upstream actor messages. Connection records include a connection ID, endpoint,
+peer address, duration and transport bytes received/sent. Private stations using
+the file registry also resolve the workstation ID and station alias (falling
+back to its computer name). Public relays keep endpoint/connection diagnostics
+without collecting workstation inventory or loading a private device catalog.
+
+`client_stream_ended` is an INFO event: the relay observed an end of stream. It
+does not establish whether the user closed the app, the computer slept or a
+network path changed. `close_reason_not_supplied` means upstream supplied no
+more precise cause. Transport errors and access-key/capacity denials are WARN
+and include the actual error or policy reason. Byte counts cover the relayed
+transport, including protocol traffic; they are not file-transfer totals. Failed
+copies omit unavailable final byte counts rather than reporting zero.
+
+Process events report listener configuration, PID, shutdown signal and supervisor
+restart reason, including admin requests, settings/key changes and station
+updates. Launch failures identify a missing binary, unavailable process execution,
+missing port or startup timeout. Logs omit access keys, passwords and request
+query strings. Behind the station's loopback proxy, the relay uses the last
+proxy-added forwarded address; direct remote connections use their socket IP.
+A relay binary update needs a relay restart before these events are available.
+
 ## Updates
 
 The station checks GitHub for a new release every 6 hours. It verifies the

@@ -1066,8 +1066,16 @@ function slip_relay_running(): bool
     return false;
 }
 
+/** Supervisor events contain fixed operational fields, never command lines or keys. */
+function slip_relay_note(string $level, string $event, string $message, array $fields = []): void
+{
+    $line = gmdate('Y-m-d\TH:i:s\Z') . " $level slipstream_station: $message event=$event "
+        . json_encode($fields, JSON_UNESCAPED_SLASHES) . "\n";
+    @file_put_contents(slip_data_dir() . '/relay.log', $line, FILE_APPEND | LOCK_EX);
+}
+
 /** Starts the relay if it isn't running. Returns true if it's up. */
-function slip_relay_ensure(bool $force = false): bool
+function slip_relay_ensure(bool $force = false, string $reason = 'automatic_recovery'): bool
 {
     if (!$force && slip_relay_running()) {
         return true;
@@ -1075,6 +1083,10 @@ function slip_relay_ensure(bool $force = false): bool
     $bin = slip_relay_binary();
     $port = (int)(slip_station()['relay_port'] ?? 0);
     if (!$bin || !$port || !slip_can_exec()) {
+        slip_relay_note('ERROR', 'relay_start_failed', 'Relay cannot start', [
+            'reason' => !$bin ? 'binary_missing' : (!$port ? 'listen_port_unset' : 'process_execution_unavailable'),
+            'requested_by' => $reason, 'listen_port' => $port,
+        ]);
         return false;
     }
     $data = slip_data_dir();
@@ -1084,10 +1096,13 @@ function slip_relay_ensure(bool $force = false): bool
     }
     try {
         if ($force) {
-            slip_relay_stop();
+            slip_relay_note('INFO', 'relay_restart_requested', 'Relay restart requested', ['reason' => $reason, 'listen_port' => $port]);
+            slip_relay_stop($reason);
+            if (slip_relay_running()) return false;
         } elseif (slip_relay_running()) {
             return true;
         }
+        slip_relay_note('INFO', 'relay_start_requested', 'Starting relay process', ['reason' => $reason, 'listen' => "127.0.0.1:$port"]);
         if (!is_executable($bin)) {
             @chmod($bin, 0755);
         }
@@ -1096,9 +1111,10 @@ function slip_relay_ensure(bool $force = false): bool
         if (is_executable('/usr/bin/setsid')) {
             array_unshift($args, '/usr/bin/setsid');   // own session: survives PHP worker recycling
         }
-        $env = ['PATH' => '/usr/bin:/bin', 'RUST_LOG' => 'warn', 'NO_COLOR' => '1'];
+        $env = ['PATH' => '/usr/bin:/bin', 'RUST_LOG' => 'warn,slipstream_server=info,slipstream_relay=info,iroh_relay::server::client=info', 'NO_COLOR' => '1'];
         if ($key = slip_access_key()) {
             $env['SLIPSTREAM_ACCESS_KEY'] = $key;    // env, not argv: invisible to `ps`
+            $env['SLIPSTREAM_STATION_DATA_DIR'] = $data; // device names only on private stations
         }
         $cfg = slip_config();
         $env['SLIPSTREAM_RELAY_BYTES_PER_SECOND'] = (string)max(0, (int)$cfg['relay_bytes_per_second']);
@@ -1106,6 +1122,7 @@ function slip_relay_ensure(bool $force = false): bool
         $spec = [0 => ['file', '/dev/null', 'r'], 1 => ['file', "$data/relay.log", 'a'], 2 => ['file', "$data/relay.log", 'a']];
         $proc = @proc_open($args, $spec, $pipes, $data, $env);
         if (!is_resource($proc)) {
+            slip_relay_note('ERROR', 'relay_start_failed', 'Operating system did not launch the relay', ['reason' => 'process_launch_failed', 'listen_port' => $port]);
             return false;
         }
         $status = proc_get_status($proc);
@@ -1113,9 +1130,11 @@ function slip_relay_ensure(bool $force = false): bool
         for ($i = 0; $i < 30; $i++) {
             usleep(100000);
             if (slip_relay_running()) {
+                slip_relay_note('INFO', 'relay_started', 'Relay listener is ready', ['launch_pid' => $status['pid'], 'listen' => "127.0.0.1:$port", 'reason' => $reason]);
                 return true;
             }
         }
+        slip_relay_note('ERROR', 'relay_start_failed', 'Relay did not begin listening within 3 seconds', ['reason' => 'startup_timeout', 'launch_pid' => $status['pid'], 'listen_port' => $port]);
         return false;
     } finally {
         flock($lock, LOCK_UN);
@@ -1144,8 +1163,13 @@ function slip_relay_log_tail(): string
     }
 }
 
-function slip_relay_stop(): void
+function slip_relay_stop(string $reason = 'admin_stop'): void
 {
+    if (!slip_relay_running()) {
+        @unlink(slip_data_dir() . '/relay.pid');
+        slip_relay_note('INFO', 'relay_already_stopped', 'Relay listener is already stopped', ['reason' => $reason]);
+        return;
+    }
     $pidFile = slip_data_dir() . '/relay.pid';
     $pid = (int)@file_get_contents($pidFile);
     if ($pid > 1 && function_exists('posix_kill')) {
@@ -1153,11 +1177,16 @@ function slip_relay_stop(): void
     } elseif ($pid > 1 && slip_can_exec()) {
         @proc_close(@proc_open(['kill', (string)$pid], [], $p));
     }
-    // setsid may have forked: also stop whatever holds our port.
+    // Give the listener time to close after signaling the launched process.
     for ($i = 0; $i < 20 && slip_relay_running(); $i++) {
         usleep(100000);
     }
+    if (slip_relay_running()) {
+        slip_relay_note('ERROR', 'relay_stop_failed', 'Relay is still listening after the stop request', ['reason' => $reason, 'launch_pid' => $pid]);
+        return; // Keep its PID so a later stop attempt can still address it.
+    }
     @unlink($pidFile);
+    slip_relay_note('INFO', 'relay_stopped', 'Relay listener stopped', ['reason' => $reason, 'launch_pid' => $pid]);
 }
 
 /**

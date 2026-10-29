@@ -11,9 +11,11 @@
 mod api;
 mod db;
 mod relay;
+mod relay_log;
 
 use std::{
     collections::HashSet,
+    io::IsTerminal,
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -74,6 +76,10 @@ struct Cli {
     #[arg(long)]
     no_public_relays: bool,
 
+    /// Protected PHP station data, for private relay device names in diagnostics.
+    #[arg(long, env = "SLIPSTREAM_STATION_DATA_DIR")]
+    station_data_dir: Option<PathBuf>,
+
     /// Maximum received bytes/second per relay connection (0: unlimited).
     #[arg(long, env = "SLIPSTREAM_RELAY_BYTES_PER_SECOND", default_value_t = 0)]
     relay_bytes_per_second: u32,
@@ -84,7 +90,8 @@ struct Cli {
 }
 
 pub struct App {
-    db: db::Db,
+    db: Arc<db::Db>,
+    relay_log: Arc<relay_log::RelayLog>,
     relay_enabled: bool,
     relay_addr: Option<SocketAddr>,
     public_url: Option<String>,
@@ -127,21 +134,19 @@ fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,iroh=warn,iroh_relay=warn,noq=warn".into()),
-        )
-        .init();
+    let relay_log = Arc::new(relay_log::RelayLog::default());
+    relay_log::init(relay_log.clone());
     slipstream_core::init_crypto();
     let cli = Cli::parse();
-    let app = build(&cli).await?;
+    let app = build(&cli, relay_log.clone()).await?;
     let router = router(app.clone(), cli.relay_only);
 
     let listener = tokio::net::TcpListener::bind(cli.listen).await.with_context(|| format!("binding {}", cli.listen))?;
     let (total, online) = app.db.counts()?;
-    info!("{total} devices known, {online} online");
+    info!(event="server_started", version=slipstream_core::VERSION_STRING, process_id=std::process::id(), listen=%cli.listen, directory_enabled=!cli.relay_only, relay_enabled=app.relay_enabled, private=app.access_key.is_some(), relay_bytes_per_second=cli.relay_bytes_per_second, max_relay_connections=cli.relay_max_connections, "Slipstream server listening");
+    if !cli.relay_only { info!(event="directory_state", known_devices=total, online_devices=online, "Directory registry loaded"); }
     let shown = cli.public_url.clone().unwrap_or_else(|| format!("http://{}/", cli.listen));
+    if std::io::stdout().is_terminal() {
     println!();
     println!("  ╭─ SLIPSTREAM SERVER ONLINE ──────────────────────────────");
     println!("  │ Listening on {}", cli.listen);
@@ -152,27 +157,47 @@ async fn run() -> Result<()> {
     println!("  │ In each app: CONFIG → Server address → {shown}");
     println!("  ╰─────────────────────────────────────────────────────────");
     println!();
+    }
     axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            match shutdown_signal().await {
+                Ok(signal) => info!(event="server_shutdown_requested", signal, active_relay_connections=relay_log.active_count(), "Server shutdown requested"),
+                Err(error) => tracing::error!(event="server_signal_listener_failed", %error, "Shutdown signal listener failed"),
+            }
         })
         .await?;
+    info!(event="server_stopped", process_id=std::process::id(), "Server listener stopped");
     Ok(())
 }
 
-async fn build(cli: &Cli) -> Result<Arc<App>> {
+async fn shutdown_signal() -> Result<&'static str> {
+    #[cfg(unix)]
+    {
+        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => { result?; Ok("SIGINT") },
+            _ = terminate.recv() => Ok("SIGTERM"),
+        }
+    }
+    #[cfg(not(unix))]
+    { tokio::signal::ctrl_c().await?; Ok("interrupt") }
+}
+
+async fn build(cli: &Cli, relay_log: Arc<relay_log::RelayLog>) -> Result<Arc<App>> {
     std::fs::create_dir_all(&cli.data_dir).context("creating data dir")?;
-    let db = db::Db::open(&cli.data_dir.join("directory.sqlite3"))?;
+    let db = Arc::new(db::Db::open(&cli.data_dir.join("directory.sqlite3"))?);
+    relay_log.configure(db.clone(), cli.station_data_dir.clone(), cli.access_key.as_ref().is_some_and(|k| !k.is_empty()));
     let relay_addr = if cli.no_relay {
         None
     } else {
-        let (server, addr) = relay::spawn(cli.access_key.clone().filter(|k| !k.is_empty()), cli.relay_bytes_per_second, cli.relay_max_connections).await?;
+        let (server, addr) = relay::spawn(cli.access_key.clone().filter(|k| !k.is_empty()), cli.relay_bytes_per_second, cli.relay_max_connections, relay_log.clone()).await?;
         // Keep the relay alive for the life of the process.
         Box::leak(Box::new(server));
         Some(addr)
     };
     Ok(Arc::new(App {
         db,
+        relay_log,
         relay_enabled: relay_addr.is_some(),
         relay_addr,
         public_url: cli.public_url.clone().map(|u| if u.ends_with('/') { u } else { format!("{u}/") }),
@@ -233,7 +258,7 @@ mod tests {
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("slipstream-server-test-{}-{n}", std::process::id()));
         let cli = Cli::parse_from(["slipstream-server", "--data-dir", dir.to_str().unwrap()]);
-        let app = build(&cli).await.unwrap();
+        let app = build(&cli, Arc::new(relay_log::RelayLog::default())).await.unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/", listener.local_addr().unwrap());
         let r = router(app.clone(), false);
@@ -270,7 +295,9 @@ mod tests {
     /// Two endpoints that can only talk through our proxied relay.
     #[tokio::test]
     async fn relay_through_proxy() {
-        let (url, _app) = start().await;
+        let (url, app) = start().await;
+        let capture = relay_log::tests::Capture::default();
+        let _guard = tracing::subscriber::set_default(relay_log::tests::subscriber(app.relay_log.clone(), capture.clone()));
         let relay_url: iroh::RelayUrl = url.parse().unwrap();
         let ep = |alpn: bool| {
             let map = RelayMap::from_iter([relay_url.clone()]);
@@ -291,6 +318,7 @@ mod tests {
             s.write_all(&msg).await.unwrap();
             s.finish().unwrap();
             conn.closed().await;
+            a.close().await;
         });
         let conn = tokio::time::timeout(Duration::from_secs(10), b.connect(addr, b"test")).await.unwrap().unwrap();
         let (mut s, mut r) = conn.open_bi().await.unwrap();
@@ -300,5 +328,13 @@ mod tests {
         assert_eq!(echo, b"hello via relay");
         conn.close(0u32.into(), b"done");
         let _ = tokio::time::timeout(Duration::from_secs(2), accept).await;
+        b.close().await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while app.relay_log.active_count() > 0 { tokio::time::sleep(Duration::from_millis(10)).await; }
+            while capture.text().matches("relay_client_disconnected").count() < 2 { tokio::time::sleep(Duration::from_millis(10)).await; }
+        }).await.expect("both relay connections were logged and released");
+        let text = capture.text();
+        assert!(text.contains("relay_client_connected") && text.contains("client_stream_ended") && text.contains("bytes_from_client="));
+        assert!(!text.contains("actor errored Stream terminated, exiting"));
     }
 }

@@ -13,6 +13,14 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Relay logs identify authenticated connections by connection/tunnel IDs,
+  endpoint, peer IP and private-station workstation ID/name. Closing records
+  include duration, transport byte counts and the observed close reason.
+  Routine stream endings are INFO; transport failures and admission denials
+  retain specific WARN diagnostics. Access tokens and request queries are omitted.
+- Relay startup/shutdown and station supervisor events identify process IDs,
+  listener settings, restart requests and concrete launch/stop failures.
+
 - Station relay logs display complete lines without terminal color codes, read
   only a bounded tail, and explain client-stream closure messages. Newly
   started station relays disable color formatting in their log files.
