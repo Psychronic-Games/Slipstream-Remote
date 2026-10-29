@@ -30,20 +30,7 @@ static EXECUTABLE_NOTE: ExecutableNote = ExecutableNote {
     description: *b"slipstream-remote-executable-v1\0",
 };
 
-const FILE_MIME: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
-  <mime-type type="application/x-slipstream-remote">
-    <comment>Slipstream Remote application</comment>
-    <sub-class-of type="application/x-executable"/>
-    <icon name="application-x-slipstream-remote"/>
-    <magic priority="80">
-      <match type="string" value="\x7fELF" offset="0">
-        <match type="string" value="slipstream-remote-executable-v1" offset="0:65536"/>
-      </match>
-    </magic>
-  </mime-type>
-</mime-info>
-"#;
+const FILE_MIME: &str = include_str!("../../../../packaging/linux/slipstream-remote.xml");
 
 fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
     if fs::read(path).is_ok_and(|cur| cur == bytes) {
@@ -73,10 +60,8 @@ pub(super) fn exec_argument(path: &Path) -> Result<String> {
 
 pub fn integrate() -> Result<()> {
     std::hint::black_box(&EXECUTABLE_NOTE);
-    // A system-wide install (package, install script) already provides it.
-    if Path::new(&format!("/usr/share/applications/{APP_ID}.desktop")).exists() {
-        return Ok(());
-    }
+    // Keep a packaged launcher, but still repair per-user executable icons.
+    let system_launcher = Path::new(&format!("/usr/share/applications/{APP_ID}.desktop")).exists();
     // Side profiles (testing, portable use) leave the user's launcher alone.
     if std::env::var_os("SLIPSTREAM_HOME").is_some() {
         return Ok(());
@@ -96,9 +81,21 @@ pub fn integrate() -> Result<()> {
         changed |= write_if_changed(&data.join(format!("icons/hicolor/{size}x{size}/mimetypes/application-x-slipstream-remote.png")), &png)?;
     }
     let mime_changed = write_if_changed(&data.join("mime/packages/slipstream-remote.xml"), FILE_MIME.as_bytes())?;
-    if mime_changed || !data.join("mime/mime.cache").exists() {
+    // A pre-existing MIME cache may belong to other applications. Record only a
+    // successful refresh so installing a missing helper repairs things next run.
+    let mime_stamp = data.join("slipstream/desktop-mime-installed.xml");
+    if mime_changed || !data.join("mime/mime.cache").exists()
+        || !data.join("mime/application/x-slipstream-remote.xml").exists()
+        || !fs::read(&mime_stamp).is_ok_and(|bytes| bytes == FILE_MIME.as_bytes())
+    {
+        let _ = fs::remove_file(&mime_stamp);
         let result = std::process::Command::new("update-mime-database").arg(data.join("mime")).status();
-        if !result.is_ok_and(|s| s.success()) { tracing::warn!("could not refresh the downloaded application's file icon"); }
+        if result.is_ok_and(|s| s.success()) {
+            write_if_changed(&mime_stamp, FILE_MIME.as_bytes())?;
+            changed = true;
+        } else {
+            tracing::warn!("could not refresh the executable's file icon; install shared-mime-info (Debian: sudo apt install shared-mime-info) and relaunch Slipstream");
+        }
     }
     changed |= mime_changed;
     let entry = format!(
@@ -108,15 +105,19 @@ pub fn integrate() -> Result<()> {
          MimeType=x-scheme-handler/slipstream;\n",
         exec_argument(&exe)?
     );
-    changed |= write_if_changed(&data.join(format!("applications/{APP_ID}.desktop")), entry.as_bytes())?;
+    if !system_launcher {
+        changed |= write_if_changed(&data.join(format!("applications/{APP_ID}.desktop")), entry.as_bytes())?;
+    }
     if changed {
-        tracing::info!("installed desktop entry and icon for {}", exe.display());
+        tracing::info!("refreshed desktop integration for {}", exe.display());
         // Nudge menu caches; harmless if these tools are missing.
         let _ = std::process::Command::new("update-desktop-database").arg(data.join("applications")).status();
         // Open slipstream:// links (the station page's Connect button) with us.
-        let _ = std::process::Command::new("xdg-mime")
-            .args(["default", &format!("{APP_ID}.desktop"), "x-scheme-handler/slipstream"])
-            .status();
+        if !system_launcher {
+            let _ = std::process::Command::new("xdg-mime")
+                .args(["default", &format!("{APP_ID}.desktop"), "x-scheme-handler/slipstream"])
+                .status();
+        }
         let _ = std::process::Command::new("gtk-update-icon-cache").args(["-q", "-t"]).arg(data.join("icons/hicolor")).status();
     }
     Ok(())

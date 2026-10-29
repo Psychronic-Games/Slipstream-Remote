@@ -5,13 +5,20 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "==> Building (release)…"
-cargo build --release -p slipstream -p slipstream-server
+scripts/check.sh cargo build --release -p slipstream -p slipstream-server
 
 BIN="${XDG_BIN_HOME:-$HOME/.local/bin}"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 install -Dm755 target/release/slipstream "$BIN/slipstream"
 install -Dm755 target/release/slipstream-server "$BIN/slipstream-server"
 install -Dm644 packaging/linux/slipstream.png "$DATA/icons/hicolor/256x256/apps/slipstream-remote.png"
+install -Dm644 packaging/linux/slipstream.png "$DATA/icons/hicolor/256x256/mimetypes/application-x-slipstream-remote.png"
+install -Dm644 packaging/linux/slipstream-remote.xml "$DATA/mime/packages/slipstream-remote.xml"
+if command -v update-mime-database >/dev/null; then
+    update-mime-database "$DATA/mime" || echo "    note: MIME refresh failed; relaunch Slipstream to retry."
+else
+    echo "    note: install shared-mime-info for executable file icons (Debian: sudo apt install shared-mime-info)."
+fi
 install -Dm644 packaging/linux/slipstream-remote.desktop "$DATA/applications/slipstream-remote.desktop"
 sed -i "s|^Exec=slipstream|Exec=$BIN/slipstream|" "$DATA/applications/slipstream-remote.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database "$DATA/applications" || true

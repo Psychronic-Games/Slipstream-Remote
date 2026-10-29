@@ -97,6 +97,17 @@ the executable even when the station renames it. A fresh download on a new
 Linux account may show a generic executable icon until it has run once;
 refresh the folder if its icon is cached.
 
+Debian uses the same `.desktop` launcher and MIME icon standards as other Linux
+desktops. On a minimal Debian installation, install the desktop helpers with
+`sudo apt install shared-mime-info desktop-file-utils xdg-utils`, then close and
+reopen Slipstream as your normal desktop user (without `sudo`). This registers
+icons for that user; running only the headless host does not install a launcher.
+The application menu is the reliable place to launch it with its icon. A raw
+executable's file icon depends on the file manager's MIME support and may stay
+generic until registration and a folder refresh. With an older Slipstream build
+that already ran before the helpers were installed, refresh its registration
+manually: `update-mime-database "${XDG_DATA_HOME:-$HOME/.local/share}/mime"`.
+
 ### macOS (12 or newer, Apple Silicon or Intel)
 
 One universal app runs natively on both kinds of Mac. It runs on a real

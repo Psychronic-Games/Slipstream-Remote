@@ -13,6 +13,9 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Linux retries executable icon registration after missing desktop helpers are
+  installed, including when a system-wide launcher already exists. The Linux
+  source installer also registers the executable's file icon.
 - Station device IDs stay on one line in the Devices and shared-device tables.
 
 ## 0.31.0 — 2026-10-28

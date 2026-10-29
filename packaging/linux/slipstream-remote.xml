@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-slipstream-remote">
+    <comment>Slipstream Remote application</comment>
+    <sub-class-of type="application/x-executable"/>
+    <icon name="application-x-slipstream-remote"/>
+    <magic priority="80">
+      <match type="string" value="\x7fELF" offset="0">
+        <match type="string" value="slipstream-remote-executable-v1" offset="0:65536"/>
+      </match>
+    </magic>
+  </mime-type>
+</mime-info>
