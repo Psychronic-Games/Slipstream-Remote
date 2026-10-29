@@ -148,7 +148,7 @@ header h1 { font-size: 24px; } footer span { display: none; } }
 }
 @media (max-width: 1300px) {
   .devices-table tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 24px; padding: 20px 0; border-bottom: 1px solid #1a2238; }
-  .devices-table tr:first-child { display: none; }
+  .devices-table thead { display: none; }
   .devices-table td { display: block; min-width: 0; border: 0; padding: 0; }
   .devices-table .device-actions { grid-column: 1 / -1; }
 }
@@ -252,6 +252,11 @@ header h1 { font-size: 24px; } footer span { display: none; } }
 .inline-form input { display: block; margin-top: 5px; }
 .group-list-toolbar { margin-bottom: 20px; }
 .search-control { display: grid; gap: 5px; margin: 0; min-width: 0; flex: 1 1 260px; }
+.device-list-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 18px; margin: 20px 0 14px; }
+.device-list-toolbar[hidden], .devices-table [data-device-row][hidden] { display: none; }
+.device-sort-control { display: grid; gap: 5px; margin: 0; min-width: 0; flex: 0 1 180px; }
+.device-sort-control select { width: 100%; min-width: 0; }
+.device-list-toolbar > p { margin: 0; align-self: center; }
 .group-list-toolbar > p { flex: 1 1 320px; margin: 0; }
 .group-access { table-layout: fixed; }
 .group-access th:nth-child(1) { width: 16%; }

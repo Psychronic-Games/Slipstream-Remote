@@ -173,6 +173,13 @@ separately. Firmware placeholders are ignored; unavailable or unreadable serials
 cannot be recovered by the station. Public stations skip automatic enrollment
 and hardware collection.
 
+On **Devices**, use **Find a device** to search its name, original computer name,
+groups, ID or reported hardware details. IDs work with spaces or dashes too.
+**Sort by** offers group name, device name, device ID and last seen; the adjacent
+button reverses the order. Names sort naturally (PC 2 before PC 10). Devices in
+several groups sort by their alphabetically first group. Search and sorting
+work together without reloading the page, with a result count and **Clear search**.
+
 From **Devices → Assign to technicians**, search and check one or more accounts, then press
 **Assign** to prepare their personal panels before sign-in. No device password is
 assigned, and existing personal details or saved passwords are kept. Use

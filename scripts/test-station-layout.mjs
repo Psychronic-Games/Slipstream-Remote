@@ -185,6 +185,65 @@ for (const width of widths) {
     await checkLayout('groups');
 
     await navigate('devices', '.devices-table');
+    await waitFor(`!document.querySelector('[data-device-controls]').hidden`);
+    const visibleDevices = () => evaluate(`[...document.querySelectorAll('[data-device-row]')].filter(row=>!row.hidden).map(row=>({id:Number(row.dataset.deviceId),name:row.querySelector('[data-device-name]').textContent,seen:Number(row.dataset.deviceSeen)}))`);
+    const searchDevices = async text => {
+      await evaluate(`(() => {const input=document.querySelector('[data-device-search]');input.value=${JSON.stringify(text)};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    };
+    const sortDevices = async key => {
+      await evaluate(`(() => {const select=document.querySelector('[data-device-sort]');select.value=${JSON.stringify(key)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    };
+    const flipDevices = () => evaluate(`document.querySelector('[data-device-direction]').click()`);
+    const allDevices = await visibleDevices();
+    assert.equal(allDevices.length, 5, 'Device sorting fixture is incomplete');
+    assert(await evaluate(`[...document.querySelectorAll('[data-device-row]')].every(row=>row.checkVisibility())`), 'A device row disappeared at a narrow width');
+    assert(!await evaluate(`!!document.querySelector('img[data-device-xss]')`), 'Device search metadata was not escaped');
+    assert(allDevices.every((row,index)=>!index || row.seen<=allDevices[index-1].seen), 'Default order is not newest first');
+    await evaluate(`window.deviceListAudit='same-document'`);
+    await sortDevices('name');
+    let ordered = await visibleDevices();
+    assert(ordered.findIndex(row=>row.name==='Bench 2')<ordered.findIndex(row=>row.name==='Bench 10'), 'Device names do not use natural numeric ordering');
+    await flipDevices();
+    ordered = await visibleDevices();
+    assert(ordered.findIndex(row=>row.name==='Bench 10')<ordered.findIndex(row=>row.name==='Bench 2'), 'Reverse name sort failed');
+    await sortDevices('group');
+    ordered = await visibleDevices();
+    assert(ordered.findIndex(row=>row.name==='Bench 10')<ordered.findIndex(row=>row.name==='Bench 2'), 'Group sort did not use the first natural group name for a multi-group device');
+    await flipDevices();
+    ordered = await visibleDevices();
+    assert(ordered.findIndex(row=>row.name==='Bench 2')<ordered.findIndex(row=>row.name==='Bench 10'), 'Reverse group sort failed');
+    await sortDevices('id');
+    ordered = await visibleDevices();
+    assert(ordered.every((row,index)=>!index || row.id>ordered[index-1].id), 'Ascending ID sort failed');
+    await flipDevices();
+    ordered = await visibleDevices();
+    assert(ordered.every((row,index)=>!index || row.id<ordered[index-1].id), 'Descending ID sort failed');
+    await sortDevices('recent');
+    await flipDevices();
+    ordered = await visibleDevices();
+    assert(ordered.every((row,index)=>!index || row.seen>=ordered[index-1].seen), 'Oldest-first sort failed');
+    for (const query of ['custom-pc', 'Lab', 'BOARD-123456789', '12345670012', device, device.match(/.{3}/g).join(' '), device.match(/.{3}/g).join('-')]) {
+      await searchDevices(query);
+      const found = await visibleDevices();
+      assert(found.length===1 && found[0].id===Number(device), `Device search failed for ${query}`);
+    }
+    await searchDevices('hardware-bench-10');
+    assert((await visibleDevices())[0]?.name==='Bench 10', 'Original computer name was not searchable after an alias');
+    await searchDevices('Zone 2');
+    assert.deepEqual((await visibleDevices()).map(row=>row.name), ['Bench 10'], 'Hidden group options polluted the search');
+    await sortDevices('id');
+    await flipDevices();
+    assert.equal((await visibleDevices()).length, 1, 'Sorting reset the active search');
+    await searchDevices('Ungrouped');
+    assert.deepEqual((await visibleDevices()).map(row=>row.name), ['UNASSIGNED-PC'], 'Ungrouped search matched grouped devices');
+    await searchDevices('layout-tech');
+    assert.equal((await visibleDevices()).length, 0, 'Hidden assignment options polluted the search');
+    assert(await evaluate(`!document.querySelector('[data-device-empty]').hidden && document.querySelector('[data-device-count]').textContent==='0 of 5 devices'`), 'No-match feedback is missing');
+    await evaluate(`document.querySelector('[data-device-clear]').click()`);
+    ordered = await visibleDevices();
+    assert.equal(ordered.length, 5, 'Clear search did not restore all devices');
+    assert(ordered.every((row,index)=>!index || row.id<ordered[index-1].id), 'Clear search reset the chosen sort order');
+    assert(await evaluate(`window.deviceListAudit==='same-document' && document.querySelector('[data-device-empty]').hidden`), 'Search/sort reloaded the page');
     const dialog = `document.getElementById('edit-device-${device}')`;
     await evaluate(`document.querySelector('[data-dialog-open="edit-device-${device}"]').click()`);
     assert(await evaluate(`${dialog}.open`), 'Device editor did not open');
@@ -234,12 +293,14 @@ for (const width of widths) {
     await openPicker(assignPicker);
     await choose(assignPicker, 'layout-tech');
     await evaluate(`(${assignPicker}).querySelector('[data-picker-done]').click()`);
+    await sortDevices('name');
     assert(await evaluate(`new FormData(${assignForm}).getAll('usernames[]').includes('layout-tech')`), 'Assignment did not include the searched technician');
+    assert(await evaluate(`(${assignForm}).querySelector('input[name=id]').value==='${device}'`), 'Sorting changed the assignment target');
     await submit(assignForm);
     await checkLayout('devices');
     await navigate(`devices&device=${device}`, '.system-report');
     await checkLayout('report');
-    console.log(`Station ${width}px: wrapped logs/search, group membership and Done-to-save visibility/retry, inline group creation, themed notes/checkboxes, searchable assignment and responsive layouts passed`);
+    console.log(`Station ${width}px: device search/natural sorting, wrapped logs/search, group membership and Done-to-save visibility/retry, inline group creation, themed notes/checkboxes, searchable assignment and responsive layouts passed`);
 
   } finally {
     if (socket?.readyState === WebSocket.OPEN) {

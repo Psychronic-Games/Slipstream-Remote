@@ -13,6 +13,11 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Search the station Devices table by name, group, ID, operating system or
+  hardware details. Sort by group, device name, ID or last seen in either
+  direction, with natural numeric ordering, result counts and no-match feedback.
+  Filtering and sorting run locally and preserve each row's actions and selections.
+
 - On the station Groups page, **Done** saves the visibility picker directly,
   without a page reload or a separate Save visibility button. Saving another
   group keeps pending edits intact; inline saving/saved/error feedback and a

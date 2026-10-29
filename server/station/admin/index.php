@@ -524,17 +524,30 @@ slip_page_start('Station admin', '../', 'admin-console');
     <p class="dim"><?= $private ? 'Workstations automatically enroll in the station under Ungrouped. Assign their group to technicians to show them in those apps. Names and groups you set stay as you left them. Connecting still requires the device password.' : 'Public directory: automatic shared enrollment and hardware inventory are disabled.' ?> <a href="?tab=groups">Organize groups and assign them to technicians</a></p>
 
     <?php if (!$devices): ?><p class="dim">No devices yet. They appear here once someone runs the app from your download page.</p><?php else: ?>
+    <div class="device-list-toolbar" data-device-controls hidden>
+      <label class="search-control"><span class="k">Find a device</span><input type="search" data-device-search placeholder="Name, group, ID or serial…" autocomplete="off"></label>
+      <label class="device-sort-control"><span class="k">Sort by</span><select data-device-sort><option value="recent">Last seen</option><option value="group">Group name</option><option value="name">Device name</option><option value="id">Device ID</option></select></label>
+      <button type="button" class="small blue" data-device-direction>Newest first</button>
+      <button type="button" class="small lav" data-device-clear disabled>Clear search</button>
+      <p class="dim" data-device-count role="status" aria-live="polite"><?= count($devices) ?> devices</p>
+    </div>
     <table class="devices-table">
-      <tr><th></th><th>ID</th><th>Name / group</th><th>System</th><?php if ($private): ?><th>Hardware</th><?php endif ?><th>Last seen</th><th>Actions</th></tr>
+      <thead><tr><th scope="col" aria-label="Status"></th><th scope="col">ID</th><th scope="col">Name / group</th><th scope="col">System</th><?php if ($private): ?><th scope="col">Hardware</th><?php endif ?><th scope="col">Last seen</th><th scope="col">Actions</th></tr></thead>
+      <tbody data-device-rows>
       <?php foreach ($devices as $d):
           $on = ($d['last_seen'] ?? 0) >= $cut; $id = (string)$d['id'];
           $saved = $sharedById[$d['id']] ?? null;
           $inventory = $private ? slip_device_inventory($d['endpoint']) : [];
+          $deviceName = $saved['name'] ?? $d['name'] ?? '';
+          $deviceGroups = slip_device_groups($saved ?? []) ?: ['Ungrouped'];
+          $searchText = implode(' ', array_merge([$id, $deviceName, $d['name'] ?? ''], $deviceGroups,
+              array_values(array_intersect_key($d, array_flip(['os', 'app_version']))),
+              array_values(array_filter(array_intersect_key($inventory, array_flip(['os_version', 'architecture', 'model', 'processor', 'serial_number', 'motherboard', 'motherboard_serial'])), 'is_scalar'))));
       ?>
-        <tr>
+        <tr data-device-row data-device-id="<?= h($id) ?>" data-device-seen="<?= (int)($d['last_seen'] ?? 0) ?>" data-device-search-text="<?= h($searchText) ?>">
           <td class="<?= $on ? 'ok' : 'dim' ?>">●</td>
           <td class="mono device-id"><?php if ($private): ?><a href="?tab=devices&amp;device=<?= (int)$d['id'] ?>" title="View full system report"><?php endif ?><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?><?php if ($private): ?></a><?php endif ?></td>
-          <td data-label="Name / group"><b><?= h($saved['name'] ?? $d['name'] ?? '') ?></b><div class="group-chips"><?php foreach (slip_device_groups($saved ?? []) ?: ['Ungrouped'] as $group): ?><span class="group-chip"><?= h($group) ?></span><?php endforeach ?></div>
+          <td data-label="Name / group"><b data-device-name><?= h($deviceName) ?></b><div class="group-chips" data-device-groups><?php foreach ($deviceGroups as $group): ?><span class="group-chip"><?= h($group) ?></span><?php endforeach ?></div>
             <?php if ($saved && ($saved['name'] ?? '') !== ($d['name'] ?? '')): ?><div class="dim">Computer: <?= h($d['name'] ?? '') ?></div><?php endif ?>
           </td>
           <td data-label="System"><?= h($inventory['os_version'] ?? $d['os'] ?? '') ?><?php if (!empty($inventory['architecture'])): ?><div class="dim"><?= h($inventory['architecture']) ?></div><?php endif ?><div class="dim">Slipstream <?= h($d['app_version'] ?? '') ?></div></td>
@@ -582,7 +595,9 @@ slip_page_start('Station admin', '../', 'admin-console');
           </td>
         </tr>
       <?php endforeach ?>
+      </tbody>
     </table>
+    <p class="dim" data-device-empty hidden>No devices match this search.</p>
     <?php endif ?>
   </div>
 

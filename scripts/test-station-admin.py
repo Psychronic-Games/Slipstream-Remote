@@ -174,7 +174,7 @@ def main():
                     cli(f"slip_station_save(['relay_port'=>{port}]);")
                     cli("foreach(glob(slip_data_dir().'/rate/*') as $file) unlink($file);")
                     inventory = {
-                        'computer_name': 'CUSTOM-PC', 'model': 'Motherboard: ASUS PRIME X870',
+                        'computer_name': 'CUSTOM-PC', 'model': 'Motherboard: ASUS PRIME X870', 'serial_number': '12345670012',
                         'motherboard': 'ASUS PRIME X870', 'motherboard_serial': 'BOARD-123456789',
                         'report': [
                             {'title': 'Computer', 'rows': [['Motherboard', 'ASUS PRIME X870'], ['Motherboard serial', 'BOARD-123456789']]},
@@ -193,6 +193,13 @@ slip_set_group_assignment('','Engineering',['admin']);
 $second=bin2hex(sodium_crypto_sign_publickey(sodium_crypto_sign_keypair()));
 $secondId=slip_store()->register($second,['name'=>'SECOND-PC','os'=>'Linux','app_version'=>'fixture'],json_encode(['id'=>$second,'addrs'=>[]]));
 slip_enroll_device($second,$secondId,'SECOND-PC');
+foreach ([['Bench 10','HARDWARE-BENCH-10',['Zone 10','Zone 2']],['Bench 2','HARDWARE-2\"><img data-device-xss>',['Zone 10']],['UNASSIGNED-PC','UNASSIGNED-PC',[]]] as [$alias,$computer,$groups]) {
+    $key=bin2hex(sodium_crypto_sign_publickey(sodium_crypto_sign_keypair()));
+    $extraId=slip_store()->register($key,['name'=>$computer,'os'=>'Linux','app_version'=>'fixture'],json_encode(['id'=>$key,'addrs'=>[]]));
+    slip_enroll_device($key,$extraId,$computer);
+    slip_shared_update(function($devices)use($extraId,$alias,$groups){foreach($devices as &$d)if($d['id']===$extraId){$d['name']=$alias;$d=slip_set_device_groups($d,$groups);}return $devices;});
+    if ($alias==='Bench 10') slip_store()->unregister($key);
+}
 slip_inventory_save($endpoint,slip_clean_inventory(json_decode(stream_get_contents(STDIN))));
 echo $id;
 """, json.dumps(inventory))

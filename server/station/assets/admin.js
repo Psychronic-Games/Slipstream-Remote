@@ -249,6 +249,59 @@
       setHeight(event.key === 'Home' ? 88 : event.key === 'End' ? 640 : height + (event.key === 'ArrowDown' ? 24 : -24));
     });
   }
+  const deviceControls = document.querySelector('[data-device-controls]');
+  if (deviceControls) {
+    const search = deviceControls.querySelector('[data-device-search]');
+    const sort = deviceControls.querySelector('[data-device-sort]');
+    const direction = deviceControls.querySelector('[data-device-direction]');
+    const clear = deviceControls.querySelector('[data-device-clear]');
+    const body = document.querySelector('[data-device-rows]');
+    const collator = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+    const fold = text => text.normalize('NFKC').toLocaleLowerCase().replace(/\s+/g, ' ');
+    const rows = [...body.querySelectorAll('[data-device-row]')].map(row => ({
+      element: row,
+      id: Number(row.dataset.deviceId),
+      seen: Number(row.dataset.deviceSeen),
+      name: row.querySelector('[data-device-name]').textContent.trim(),
+      group: [...row.querySelectorAll('[data-device-groups] .group-chip')].map(chip => chip.textContent.trim()).sort(collator.compare).join('\n'),
+      // Read only the device's metadata, never hidden dialogs/picker options:
+      // otherwise every row would match every group and technician name.
+      search: fold(row.dataset.deviceSearchText),
+    }));
+    let descending = true;
+    const filter = () => {
+      const query = fold(search.value).trim();
+      const idQuery = /^[\d\s-]+$/.test(query) ? query.replace(/[\s-]/g, '') : null;
+      let visible = 0;
+      for (const row of rows) {
+        row.element.hidden = !(row.search.includes(query) || (idQuery && String(row.id).includes(idQuery)));
+        if (!row.element.hidden) visible++;
+      }
+      deviceControls.querySelector('[data-device-count]').textContent = `${visible} of ${rows.length} devices`;
+      document.querySelector('[data-device-empty]').hidden = visible !== 0;
+      clear.disabled = search.value.length === 0;
+      closePicker();
+    };
+    const order = () => {
+      const labels = sort.value === 'recent' ? ['Oldest first', 'Newest first'] : sort.value === 'id' ? ['Lowest first', 'Highest first'] : ['A → Z', 'Z → A'];
+      direction.textContent = labels[Number(descending)];
+      direction.setAttribute('aria-label', `Sort direction: ${direction.textContent}`);
+      rows.sort((a, b) => {
+        const primary = sort.value === 'id' ? a.id - b.id : sort.value === 'recent' ? a.seen - b.seen : collator.compare(a[sort.value], b[sort.value]);
+        return primary * (descending ? -1 : 1) || collator.compare(a.name, b.name) || a.id - b.id;
+      });
+      const fragment = document.createDocumentFragment();
+      for (const row of rows) fragment.append(row.element);
+      body.append(fragment);
+      filter();
+    };
+    search.addEventListener('input', filter);
+    sort.addEventListener('change', () => { descending = sort.value === 'recent'; order(); });
+    direction.addEventListener('click', () => { descending = !descending; order(); });
+    clear.addEventListener('click', () => { search.value = ''; filter(); search.focus(); });
+    deviceControls.hidden = false;
+    order();
+  }
   const report = document.querySelector('[data-relay-report]');
   if (report) {
     const search = report.querySelector('[data-log-search]'), level = report.querySelector('[data-log-level]');
