@@ -389,7 +389,7 @@ file_put_contents($file,(time()-(int)$argv[4]).' '.$argv[3]);""",
                 assert all(personal[field] == personalized[field] for field in ['name', 'group', 'notes', 'secret'])
                 # Saved form selections must reflect the existing assignment.
                 page = admin('/admin/?tab=groups')
-                forms = re.findall(r'<form method="post">(.*?)</form>', page, re.S)
+                forms = re.findall(r'<form method="post"[^>]*>(.*?)</form>', page, re.S)
                 selected_form = next(f for f in forms if 'value="group_visibility"' in f and 'name="owner" value=""' in f and 'name="group" value="Laptop pool"' in f)
                 assert re.search(r'value="assigned"\s+checked', selected_form) and re.search(r'value="other"\s+checked', selected_form)
                 assert not re.search(r'value="owner"\s+checked', selected_form)

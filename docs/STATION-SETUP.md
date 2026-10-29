@@ -187,9 +187,13 @@ there and press **Save workstations**. Removing a device from one group keeps
 its other memberships and saved passwords. Newly added personal entries have
 no saved password. Ungrouped is automatic for devices with no named groups.
 
-**Visible to these technicians** is also a searchable checkbox dropdown. Press
-**Save visibility** to apply its selections; filtering never clears selections
-hidden by the search. Multiple technicians can receive a group. New station
+**Visible to these technicians** is also a searchable checkbox dropdown. Check
+the technicians and press **Done** in that picker to save immediately. It shows
+**Saving…**, then **Saved**, without reloading the page or discarding edits in
+another group. A failed save keeps your selections and shows an error; press
+Done to retry. Closing a picker without Done leaves a clearly marked pending
+edit, and the browser warns before leaving with unsaved changes. Filtering
+never clears selections hidden by the search. Multiple technicians can receive a group. New station
 groups start with no recipients, including Ungrouped. Personal groups always
 remain visible to their owner. Clearing recipients revokes shared visibility,
 while independently saved personal entries and passwords remain intact. The

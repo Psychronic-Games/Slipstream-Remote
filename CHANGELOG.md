@@ -13,6 +13,11 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- On the station Groups page, **Done** saves the visibility picker directly,
+  without a page reload or a separate Save visibility button. Saving another
+  group keeps pending edits intact; inline saving/saved/error feedback and a
+  retry preserve selections when a request fails.
+
 ## 0.32.1 — 2026-10-29
 
 - Background online-status checks use independent batch requests for up to

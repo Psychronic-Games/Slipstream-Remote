@@ -104,14 +104,14 @@ for (const width of widths) {
       const fits = await evaluate(`(() => { const p = ${selector}; const r = p.querySelector('.picker-menu').getBoundingClientRect(); return p.open && r.width > 0 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight + 1; })()`);
       assert(fits, `${width}: dropdown escapes the viewport`);
     };
-    const choose = async (picker, value) => {
-      await evaluate(`(() => { const p = ${picker}; const search=p.querySelector('[data-picker-search]'); search.value=${JSON.stringify(value)}; search.dispatchEvent(new Event('input',{bubbles:true})); const row=[...p.querySelectorAll('[data-picker-option]')].find(e=>!e.hidden && e.textContent.includes(${JSON.stringify(value)})); if(!row) throw new Error('Missing picker choice'); const input=row.querySelector('input'); if(!input.checked) input.click(); })()`);
+    const choose = async (picker, value, toggle = false) => {
+      await evaluate(`(() => { const p = ${picker}; const search=p.querySelector('[data-picker-search]'); search.value=${JSON.stringify(value)}; search.dispatchEvent(new Event('input',{bubbles:true})); const row=[...p.querySelectorAll('[data-picker-option]')].find(e=>!e.hidden && e.textContent.includes(${JSON.stringify(value)})); if(!row) throw new Error('Missing picker choice'); const input=row.querySelector('input'); if(${toggle} || !input.checked) input.click(); })()`);
     };
     const submit = async form => {
       const ok = await evaluate(`(async () => { const response = await fetch('/admin/', {method:'POST', body:new FormData(${form})}); return response.ok; })()`);
       assert(ok, `${width}: form submission failed`);
     };
-    const groupForm = action => `[...document.querySelectorAll('form')].find(f=>f.querySelector('input[name=action]')?.value===${JSON.stringify(action)} && f.querySelector('input[name=owner]')?.value==='' && f.querySelector('input[name=group]')?.value==='Engineering')`;
+    const groupForm = (action, group = 'Engineering', owner = '') => `[...document.querySelectorAll('form')].find(f=>f.querySelector('input[name=action]')?.value===${JSON.stringify(action)} && f.querySelector('input[name=owner]')?.value===${JSON.stringify(owner)} && f.querySelector('input[name=group]')?.value===${JSON.stringify(group)})`;
 
     // Four page cases per viewport; each batch owns and closes its browser.
     await navigate('status', '[data-relay-report]');
@@ -136,14 +136,52 @@ for (const width of widths) {
     await submit(groupForm('group_members'));
     await navigate('groups', '.group-access');
     assert(await evaluate(`[...(${membersPicker}).querySelectorAll('[data-picker-option]')].find(e=>e.textContent.includes('SECOND-PC')).querySelector('input').checked`), 'Workstation membership did not persist');
-    const visibilityPicker = `(${groupForm('group_visibility')}).querySelector('[data-picker]')`;
+    const visibilityForm = groupForm('group_visibility');
+    const visibilityPicker = `(${visibilityForm}).querySelector('[data-picker]')`;
+    const labForm = groupForm('group_visibility', 'Lab');
+    const labPicker = `(${labForm}).querySelector('[data-picker]')`;
+    const initialTech = await evaluate(`[...(${visibilityPicker}).querySelectorAll('input[type=checkbox]')].find(e=>e.value==='layout-tech').checked`);
+    await evaluate(`window.groupSaveAudit='same-document'`);
     await openPicker(visibilityPicker);
-    await choose(visibilityPicker, 'layout-tech');
-    assert(await evaluate(`new FormData(${groupForm('group_visibility')}).getAll('usernames[]').includes('admin')`), 'Filtering lost existing visibility');
+    await choose(visibilityPicker, 'layout-tech', true);
+    assert(await evaluate(`new FormData(${visibilityForm}).getAll('usernames[]').includes('admin')`), 'Filtering lost existing visibility');
+    assert(await evaluate(`(() => {const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented;})()`), 'Pending changes have no navigation protection');
+    // Keep one group pending while saving another, exactly as on the real page.
+    await openPicker(labPicker);
+    await choose(labPicker, 'layout-tech', true);
+    await evaluate(`(${labPicker}).querySelector('[data-picker-done]').click()`);
+    await waitFor(`(${labForm}).dataset.saveState==='saved' && !(${labPicker}).open`);
+    assert(await evaluate(`(${visibilityForm}).dataset.saveState==='dirty' && window.groupSaveAudit==='same-document'`), 'Saving a different group lost the pending edit or reloaded the page');
+    await openPicker(visibilityPicker);
     await evaluate(`(${visibilityPicker}).querySelector('[data-picker-done]').click()`);
-    await submit(groupForm('group_visibility'));
+    await waitFor(`(${visibilityForm}).dataset.saveState==='saved' && !(${visibilityPicker}).open`);
+    assert(await evaluate(`window.groupSaveAudit==='same-document'`), 'Done reloaded the page');
+    // A failed request keeps the picker, selections and retry available.
+    await openPicker(labPicker);
+    await choose(labPicker, 'admin', true);
+    const pendingAdmin = await evaluate(`[...(${labPicker}).querySelectorAll('input[type=checkbox]')].find(e=>e.value==='admin').checked`);
+    await evaluate(`window.originalSaveFetch=window.fetch;window.fetch=()=>Promise.reject(new TypeError('Simulated connection failure'))`);
+    await evaluate(`(${labPicker}).querySelector('[data-picker-done]').click()`);
+    await waitFor(`(${labForm}).dataset.saveState==='error'`);
+    assert(await evaluate(`(${labPicker}).open && [...(${labPicker}).querySelectorAll('input[type=checkbox]')].find(e=>e.value==='admin').checked===${pendingAdmin} && (${labForm}).querySelector('[data-picker-save-status]').textContent.includes('still here')`), 'A failed save discarded the selection or closed the picker');
+    await evaluate(`window.fetch=window.originalSaveFetch;delete window.originalSaveFetch;(${labPicker}).querySelector('[data-picker-done]').click()`);
+    await waitFor(`(${labForm}).dataset.saveState==='saved' && !(${labPicker}).open`);
+    // Unchecking every recipient must be saved too.
+    await openPicker(labPicker);
+    await evaluate(`for(const input of (${labPicker}).querySelectorAll('input[type=checkbox]')) if(input.checked && !input.disabled) input.click()`);
+    await evaluate(`(${labPicker}).querySelector('[data-picker-done]').click()`);
+    await waitFor(`(${labForm}).dataset.saveState==='saved' && !(${labPicker}).open`);
+    assert(await evaluate(`(() => {const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return !e.defaultPrevented;})()`), 'Saved changes still block navigation');
     await navigate('groups', '.group-access');
-    assert(await evaluate(`[...(${visibilityPicker}).querySelectorAll('input[type=checkbox]')].find(e=>e.value==='layout-tech').checked`), 'Technician visibility did not persist');
+    assert(await evaluate(`[...(${visibilityPicker}).querySelectorAll('input[type=checkbox]')].find(e=>e.value==='layout-tech').checked===${!initialTech}`), 'Technician visibility did not persist after Done');
+    assert(await evaluate(`[...(${labPicker}).querySelectorAll('input[type=checkbox]')].every(e=>!e.checked)`), 'Clearing all visibility did not persist');
+    const personalForm = groupForm('group_visibility', 'Admin personal', 'admin');
+    const personalPicker = `(${personalForm}).querySelector('[data-picker]')`;
+    await openPicker(personalPicker);
+    await choose(personalPicker, 'layout-tech', true);
+    await evaluate(`(${personalPicker}).querySelector('[data-picker-done]').click()`);
+    await waitFor(`(${personalForm}).dataset.saveState==='saved' && !(${personalPicker}).open`);
+    assert(await evaluate(`(() => {const e=[...(${personalPicker}).querySelectorAll('input[type=checkbox]')].find(e=>e.value==='admin');return e.checked && e.disabled;})()`), 'Saving re-enabled or removed the personal group owner');
     await checkLayout('groups');
 
     await navigate('devices', '.devices-table');
@@ -201,7 +239,7 @@ for (const width of widths) {
     await checkLayout('devices');
     await navigate(`devices&device=${device}`, '.system-report');
     await checkLayout('report');
-    console.log(`Station ${width}px: wrapped logs/search, group membership and visibility, inline group creation, themed notes/checkboxes, searchable assignment and responsive layouts passed`);
+    console.log(`Station ${width}px: wrapped logs/search, group membership and Done-to-save visibility/retry, inline group creation, themed notes/checkboxes, searchable assignment and responsive layouts passed`);
 
   } finally {
     if (socket?.readyState === WebSocket.OPEN) {

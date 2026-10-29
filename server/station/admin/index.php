@@ -14,7 +14,18 @@ if (empty($_SESSION['csrf'])) {
 $csrf = $_SESSION['csrf'];
 $post = ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST';
 $action = $post ? (string)($_POST['action'] ?? '') : '';
+$inlineSave = $post && $action === 'group_visibility'
+    && str_contains(strtolower($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json');
+if ($inlineSave) ini_set('display_errors', '0'); // Keep save failures valid JSON; PHP still logs them.
+function slip_admin_json(array $data, int $status = 200): void
+{
+    http_response_code($status);
+    header('Content-Type: application/json');
+    echo json_encode($data, JSON_UNESCAPED_SLASHES);
+    exit;
+}
 if ($post && !hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) {
+    if ($inlineSave) slip_admin_json(['ok' => false, 'error' => 'Form expired. Refresh the page and sign in again before retrying.'], 400);
     http_response_code(400);
     exit('Form expired — go back and try again.');
 }
@@ -33,6 +44,7 @@ $form = fn() => '<input type="hidden" name="csrf" value="' . h($GLOBALS['csrf'])
 
 // ── First-run setup ────────────────────────────────────────────────────────
 if (!slip_station_ready()) {
+    if ($inlineSave) slip_admin_json(['ok' => false, 'error' => 'This station has not been set up.'], 503);
     $err = null;
     if ($action === 'setup') {
         $org = trim((string)($_POST['org'] ?? ''));
@@ -93,6 +105,7 @@ unset($_SESSION['admin']); // Password-only sessions cannot authorize the new co
 if (!$admin || empty($admin['admin'])) {
     slip_token_revoke($_SESSION['admin_token'] ?? null);
     unset($_SESSION['admin_token']);
+    if ($inlineSave) slip_admin_json(['ok' => false, 'error' => 'Your station admin sign-in has ended. Sign in again before retrying.'], 401);
     $err = null;
     if ($action === 'login') {
         if (!slip_rate_ok('adminlogin', 8)) {
@@ -160,18 +173,28 @@ switch ($action) {
         } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
         back('groups');
     case 'group_members':
-        try {
-            slip_set_group_members($_POST['owner'] ?? null, $_POST['group'] ?? null, $_POST['ids'] ?? []);
-            flash('Group workstations saved. Other memberships and saved passwords were kept.');
-        } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
-        back('groups');
     case 'group_visibility':
         try {
-            $usernames = $_POST['usernames'] ?? [];
-            if (!is_array($usernames)) throw new InvalidArgumentException('Choose valid technicians.');
-            slip_set_group_assignment($_POST['owner'] ?? null, $_POST['group'] ?? null, $usernames);
-            flash('Group assignments saved. Selected technicians see the current group on their next list refresh. Device passwords are still required.');
-        } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
+            if ($inlineSave && ($_POST['complete'] ?? '') !== '1') throw new InvalidArgumentException('The selections were incomplete. Nothing was saved; reduce the selection or contact the station administrator.');
+            if ($action === 'group_members') {
+                slip_set_group_members($_POST['owner'] ?? null, $_POST['group'] ?? null, $_POST['ids'] ?? []);
+                $message = 'Group workstations saved. Other memberships and saved passwords were kept.';
+            } else {
+                $usernames = $_POST['usernames'] ?? [];
+                if (!is_array($usernames)) throw new InvalidArgumentException('Choose valid technicians.');
+                slip_set_group_assignment($_POST['owner'] ?? null, $_POST['group'] ?? null, $usernames);
+                $message = 'Group assignments saved. Selected technicians see the current group on their next list refresh. Device passwords are still required.';
+            }
+            if ($inlineSave) slip_admin_json(['ok' => true, 'message' => $message]);
+            flash($message);
+        } catch (InvalidArgumentException $e) {
+            if ($inlineSave) slip_admin_json(['ok' => false, 'error' => $e->getMessage()], 400);
+            flash($e->getMessage(), true);
+        } catch (Throwable $e) {
+            if (!$inlineSave) throw $e;
+            error_log('station group save: ' . $e->getMessage());
+            slip_admin_json(['ok' => false, 'error' => 'Could not save the changes. Please try again.'], 500);
+        }
         back('groups');
     case 'device_assign':
         try {
@@ -572,7 +595,7 @@ slip_page_start('Station admin', '../', 'admin-console');
     ?>
   <h2>Groups &amp; technician access</h2>
   <div class="panel group-toolbar">
-    <p>A workstation can belong to several groups. Choose a group’s workstations and the technicians who should see it, then save. Personal passwords stay private.</p>
+    <p>A workstation can belong to several groups. Choose the technicians who should see a group and press <b>Done</b> in that picker to save without leaving the page. Personal passwords stay private.</p>
     <form method="post" class="inline-form"><?= $form() ?><input type="hidden" name="action" value="station_group_create"><label><span class="k">Create station group</span><input type="text" name="group" maxlength="64" required placeholder="New group name"></label><button class="small blue">Create group</button></form>
   </div>
   <div class="panel">
@@ -598,9 +621,10 @@ slip_page_start('Station admin', '../', 'admin-console');
             <?php if ($group !== ''): ?><button class="small blue">Save workstations</button></form><?php endif ?>
         </td>
         <td data-label="Visible to">
-          <form method="post"><?= $form() ?><input type="hidden" name="action" value="group_visibility"><input type="hidden" name="owner" value="<?= h($owner) ?>"><input type="hidden" name="group" value="<?= h($group) ?>">
+          <form method="post" data-picker-save><?= $form() ?><input type="hidden" name="action" value="group_visibility"><input type="hidden" name="owner" value="<?= h($owner) ?>"><input type="hidden" name="group" value="<?= h($group) ?>">
             <?php slip_picker('usernames', 'Visible to these technicians', $userOptions, array_merge($recipients, $owner !== '' ? [$owner] : []), ['placeholder' => $owner === '' ? 'No technicians assigned' : 'Owner only']) ?>
-            <button class="small blue">Save visibility</button>
+            <p class="picker-save-status dim" data-picker-save-status role="status" aria-live="polite" hidden></p>
+            <noscript><button class="small blue">Save visibility</button></noscript>
           </form>
         </td>
         <td data-label="Manage">

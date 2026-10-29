@@ -51,6 +51,21 @@ class Browser:
     def authorized(self):
         return 'name="action" value="tech_add"' in self.request()
 
+    def save_visibility(self, status=200, **form):
+        fields = {'csrf': self.csrf, 'action': 'group_visibility', 'complete': '1', **form}
+        request = urllib.request.Request(self.address + '/admin/?tab=groups',
+            data=urllib.parse.urlencode(fields, doseq=True).encode(), headers={'Accept': 'application/json'})
+        try:
+            response = self.opener.open(request, timeout=10)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            assert response.status == status, (response.status, status)
+            assert response.headers.get_content_type() == 'application/json'
+            result = json.load(response)
+            assert result['ok'] == (status == 200)
+            return result
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -108,6 +123,30 @@ def main():
                 assert not ordinary.authorized()
                 ordinary.request(action='tech_admin', username='ordinary', admin='1')
                 assert not json.loads((data / 'accounts/ordinary.json').read_text())['admin'], 'Unauthorized POST changed permissions'
+                admin.request(action='station_group_create', group='Done one', status=302)
+                admin.request(action='station_group_create', group='Done two', status=302)
+                admin.save_visibility(owner='', group='Done one', **{'usernames[]': ['ordinary']})
+                admin.save_visibility(owner='', group='Done two', **{'usernames[]': ['admin', 'ordinary']})
+                def assignments():
+                    return {(a['owner'], a['group']): a['usernames'] for a in json.loads((data / 'shared.json').read_text())['group_assignments']}
+                assert assignments()[('', 'Done one')] == ['ordinary']
+                assert assignments()[('', 'Done two')] == ['admin', 'ordinary'], 'Saving the second group lost the first'
+                before = (data / 'shared.json').read_bytes()
+                admin.save_visibility(status=400, csrf='invalid', owner='', group='Done one')
+                admin.save_visibility(status=400, complete='', owner='', group='Done one')
+                admin.save_visibility(status=400, owner='', group='Done one', **{'usernames[]': ['missing-technician']})
+                ordinary.save_visibility(status=401, owner='', group='Done one')
+                assert (data / 'shared.json').read_bytes() == before, 'A rejected inline save changed permissions'
+                mode = data.stat().st_mode & 0o777
+                try:
+                    data.chmod(0o500)
+                    admin.save_visibility(status=500, owner='', group='Done one')
+                finally:
+                    data.chmod(mode)
+                assert (data / 'shared.json').read_bytes() == before, 'A failed write changed permissions'
+                admin.save_visibility(owner='', group='Done one')
+                assert ('', 'Done one') not in assignments() and assignments()[('', 'Done two')] == ['admin', 'ordinary']
+                print('Station groups: inline saves across rows, clearing, CSRF/auth, input truncation, validation and write-failure preservation passed', flush=True)
                 assert 'Wrong username or password' in Browser(address).login('missing', 'ordinary-password', status=200)
                 assert 'Wrong username or password' in Browser(address).login('admin', 'wrong-password', status=200)
                 admin.request(action='tech_admin', username='ordinary', admin='1', status=302)
@@ -148,6 +187,7 @@ $id=slip_store()->register($endpoint,['name'=>'CUSTOM-PC','os'=>'Linux','app_ver
 slip_enroll_device($endpoint,$id,'CUSTOM-PC');
 slip_station_group('create','Engineering');
 slip_station_group('create','Lab');
+slip_user_update('admin',function($a){$a['groups'][]='Admin personal';return $a;});
 slip_shared_update(function($devices) use($id) { foreach($devices as &$d) if($d['id']===$id) $d=slip_set_device_groups($d,['Engineering','Lab']); return $devices; });
 slip_set_group_assignment('','Engineering',['admin']);
 $second=bin2hex(sodium_crypto_sign_publickey(sodium_crypto_sign_keypair()));

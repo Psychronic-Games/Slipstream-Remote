@@ -66,7 +66,11 @@
     });
     picker.querySelector('[data-picker-search]').addEventListener('input', () => refresh(picker));
     picker.addEventListener('change', () => refresh(picker));
-    picker.querySelector('[data-picker-done]').addEventListener('click', () => closePicker(true));
+    picker.querySelector('[data-picker-done]').addEventListener('click', () => {
+      const form = picker.closest('form[data-picker-save]');
+      if (form) form.requestSubmit();
+      else closePicker(true);
+    });
     picker.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePicker(true); }
       if (event.key === 'Enter' && event.target.matches('[data-picker-search]')) {
@@ -97,6 +101,72 @@
     });
     refresh(picker);
   }
+  const saves = [];
+  for (const form of document.querySelectorAll('form[data-picker-save]')) {
+    const picker = form.querySelector('[data-picker]');
+    const done = picker.querySelector('[data-picker-done]');
+    const status = form.querySelector('[data-picker-save-status]');
+    const selection = () => JSON.stringify(selected(picker).map(row => row.querySelector('input').value).sort());
+    const state = {saved: selection(), dirty: false, saving: false};
+    saves.push(state);
+    const message = (kind, text) => {
+      form.dataset.saveState = kind;
+      status.textContent = text;
+      status.hidden = !text;
+    };
+    const closeSaved = () => {
+      if (activePicker === picker) closePicker(true);
+      else picker.open = false;
+    };
+    form.addEventListener('change', () => {
+      state.dirty = selection() !== state.saved;
+      message(state.dirty ? 'dirty' : '', state.dirty ? 'Not saved yet — press Done.' : '');
+    });
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (state.saving) return;
+      if (!state.dirty) { closeSaved(); return; }
+      // Capture before disabling inputs: disabled checkboxes must not turn a
+      // selected list into an accidental revoke-all request.
+      const fields = new FormData(form);
+      fields.set('complete', '1'); // Detect PHP input truncation before any write.
+      const submitted = selection();
+      const controls = [...picker.querySelectorAll('input, button')].map(control => [control, control.disabled]);
+      state.saving = true;
+      form.setAttribute('aria-busy', 'true');
+      for (const [control] of controls) control.disabled = true;
+      done.textContent = 'Saving…';
+      message('saving', 'Saving…');
+      let saved = false;
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST', body: fields, credentials: 'same-origin', redirect: 'error',
+          headers: {Accept: 'application/json'},
+        });
+        const reply = response.headers.get('content-type')?.includes('application/json') ? await response.json() : null;
+        if (!response.ok || !reply?.ok) throw new Error(reply?.error || 'The station did not confirm the save. Press Done to retry.');
+        state.saved = submitted;
+        state.dirty = selection() !== state.saved;
+        saved = !state.dirty;
+        message(saved ? 'saved' : 'dirty', saved ? 'Saved' : 'Not saved yet — press Done.');
+      } catch (error) {
+        message('error', `${error.message || 'Could not reach the station.'} Your selections are still here.`);
+      } finally {
+        for (const [control, disabled] of controls) control.disabled = disabled;
+        done.textContent = 'Done';
+        state.saving = false;
+        form.removeAttribute('aria-busy');
+      }
+      if (saved) closeSaved();
+      else if (!activePicker || activePicker === picker) { picker.open = true; placePicker(); }
+    });
+  }
+  addEventListener('beforeunload', event => {
+    if (saves.some(state => state.dirty || state.saving)) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
   document.addEventListener('pointerdown', event => {
     if (activePicker && !activePicker.contains(event.target)) closePicker();
   });

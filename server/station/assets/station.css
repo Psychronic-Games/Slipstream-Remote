@@ -261,6 +261,11 @@ header h1 { font-size: 24px; } footer span { display: none; } }
 .group-access th:nth-child(5) { width: 14%; }
 .group-access td:last-child { min-width: 0; }
 .group-access form > button { margin-top: 10px; }
+.picker-save-status { margin: 7px 0 0; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+[data-save-state=dirty] > .picker-save-status, [data-save-state=saving] > .picker-save-status { color: var(--gold); }
+[data-save-state=saved] > .picker-save-status { color: var(--green); }
+[data-save-state=error] > .picker-save-status { color: var(--red); }
+[data-save-state=dirty] .multi-picker > summary, [data-save-state=error] .multi-picker > summary { border-color: var(--gold); }
 .group-rename > summary { font-size: 15px; }
 .report-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 14px 24px; margin-bottom: 18px; }
 .report-toolbar label { margin: 0; }
