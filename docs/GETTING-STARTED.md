@@ -375,10 +375,11 @@ The Bridge then shows **Saved devices**, per station:
   with a key made from your sign-in password before being stored on the station.
   If an admin resets your sign-in password, saved passwords are cleared.
 - The lamp shows which devices are online right now.
-- **Shared by …** lists devices the station's admins share with everyone.
-  On a **private station**, workstations appear here automatically when they
-  first register, using their computer name in **Ungrouped**. Existing hosts
-  are added on their next registration after the station is updated. A station
+- **Shared by …** lists groups assigned to your technician account, from the
+  station or another technician. On a **private station**, workstations enroll
+  automatically in the station when they first register, using their computer
+  name in **Ungrouped**. They appear in your shared list only when the group is
+  assigned to you; enrollment alone does not share them with everyone. A station
   admin can rename them or change their group using **Edit** in the app or
   **Devices → Edit shared device** on the station. Later heartbeats preserve
   these edits; removing a shared entry keeps it removed.
@@ -403,14 +404,22 @@ that technician's custom details and encrypted password; a new assignment
 contains no password. The station's **Edit shared device** action changes the
 station name/group without overwriting personal labels.
 
-The station's **Groups** tab manages shared groups, including empty folders.
-Create or rename groups there, then use **Move workstations** to move several
-shared devices into a group or back to **Ungrouped**. Nonempty groups must be
-emptied before removal. **Assign groups to technicians** copies one or more
-groups and their current workstations into selected personal lists, including
-empty groups. Existing personal names, group choices, notes and passwords are
-kept. Assign again to add devices placed into the station group later; personal
-lists are independent copies, while shared station groups continue to sync.
+The station's **Groups** tab lists station groups and each technician's personal
+groups, including empty folders. Each row identifies its source, workstations,
+and the technicians who can see it. Open **Edit assignments**, select one or
+more technicians and press **Save group assignments**. The checkboxes show the
+saved recipients. Clearing them removes shared visibility; a personal group's
+owner always keeps their own group. New and previously unassigned station
+groups are hidden from every technician's shared list, including admins, until
+explicitly assigned. Ungrouped has its own assignment too.
+
+Assignments follow the source group's current membership on the next app list
+refresh, including new workstations, moves and station group renames. A shared
+personal group never includes its owner's saved passwords. Group assignments
+do not create personal copies; personal devices and passwords that a technician
+saved separately or received through an older copy action are preserved when
+an assignment is removed. Use **Move station workstations** to organize station
+devices. Nonempty station groups must be emptied before removal.
 
 From the command line: `slipstream sign-in relay.example.com jsmith`,
 `slipstream saved`, `slipstream save 482913077 --station relay.example.com

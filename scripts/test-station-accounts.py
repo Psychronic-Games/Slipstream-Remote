@@ -89,6 +89,10 @@ slip_user_update('full-tech',function($account) { $account['devices']=array_map(
                         assert result['ok'] == (status == 200), op
                         return result
 
+                def station_shared():
+                    state = json.loads((data / 'shared.json').read_text())
+                    return state['devices'] if isinstance(state, dict) else state
+
                 owner = call('login', username='owner', password='local-owner-password')['token']
                 other = call('login', username='other', password='local-other-password')['token']
                 assert call('group_save', owner, group='  Empty lab  ')['groups'] == ['Empty lab']
@@ -125,12 +129,14 @@ slip_user_update('full-tech',function($account) { $account['devices']=array_map(
                 shared = {**device, 'id': 482913078, 'group': 'Shared servers'}
                 call('shared_save', other, status=403, device=shared)
                 state = call('shared_save', owner, device=shared)
-                assert state['shared'][0]['group'] == 'Shared servers'
-                assert not state['shared'][0].get('secret'), 'Shared entry retained a password'
-                assert call('account', other)['shared'][0]['group'] == 'Shared servers'
+                assert station_shared()[0]['group'] == 'Shared servers'
+                assert not station_shared()[0].get('secret'), 'Shared entry retained a password'
+                assert not state['shared'] and not call('account', other)['shared'], 'Unassigned station group was visible'
                 shared.pop('group')
-                assert call('shared_save', owner, device=shared)['shared'][0]['group'] == 'Shared servers'
-                assert call('shared_save', owner, device={**shared, 'group': ''})['shared'][0]['group'] == ''
+                call('shared_save', owner, device=shared)
+                assert station_shared()[0]['group'] == 'Shared servers'
+                call('shared_save', owner, device={**shared, 'group': ''})
+                assert station_shared()[0]['group'] == ''
                 call('account', 'invalid-local-token', status=401)
                 print('PHP station: groups, moves, Ungrouped, multiline notes, legacy clients, secret preservation and account/shared permissions passed', flush=True)
 
@@ -158,12 +164,12 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 report = signed('inventory', inventory=summary)
                 assert call('hello')['inventory'] is False
                 public_id = call('register', **registration)['id']
-                assert not any(d['id'] == public_id for d in call('account', owner)['shared']), 'Public device was enrolled'
+                assert not any(d['id'] == public_id for d in station_shared()), 'Public device was enrolled'
                 call('inventory', status=403, **report)
                 assert not (data / 'inventory').exists(), 'Public inventory was retained'
 
                 # A legacy shared-list file is upgraded without losing entries.
-                legacy_shared = call('account', owner)['shared']
+                legacy_shared = station_shared()
                 (data / 'shared.json').write_text(json.dumps(legacy_shared))
                 key = 'isolated-private-station-key'
                 settings(private=True, access_key=key)
@@ -172,20 +178,20 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 call('register', status=403, **registration)
                 device_id = call('register', key=key, **registration)['id']
                 assert device_id == public_id, 'Changing station mode changed an existing ID'
-                shared = call('account', owner)['shared']
+                shared = station_shared()
                 enrolled = next(d for d in shared if d['id'] == device_id)
                 assert enrolled['name'] == 'OFFICE-PC' and enrolled['group'] == ''
                 assert not enrolled.get('secret'), 'Enrollment created a credential'
                 assert all(d in shared for d in legacy_shared), 'Legacy shared list was lost'
-                assert any(d['id'] == device_id for d in call('account', other)['shared'])
+                assert not call('account', other)['shared'], 'Automatic enrollment leaked unassigned workstations'
                 call('register', key=key, **registration)
-                assert len([d for d in call('account', owner)['shared'] if d['id'] == device_id]) == 1, 'Duplicate enrollment'
+                assert len([d for d in station_shared() if d['id'] == device_id]) == 1, 'Duplicate enrollment'
                 call('register', key=key, status=403, **{**registration, 'sig': '00' * 64})
                 renamed = {**enrolled, 'name': 'Reception', 'group': 'Office', 'notes': 'Keep my notes'}
                 call('shared_save', owner, device=renamed)
                 heartbeat = signed('register', addr={'id': '', 'addrs': []}, info={**info, 'name': 'HOST-RENAMED'})
                 call('register', key=key, **heartbeat)
-                preserved = next(d for d in call('account', owner)['shared'] if d['id'] == device_id)
+                preserved = next(d for d in station_shared() if d['id'] == device_id)
                 assert preserved['name'] == 'Reception' and preserved['group'] == 'Office' and preserved['notes'] == 'Keep my notes'
 
                 call('inventory', key=key, **report)
@@ -217,7 +223,9 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 admin(csrf=csrf, action='device_assign', id=device_id, username='assigned')
                 assert not json.loads((data / 'accounts/assigned.json').read_text())['devices'], 'Assignment worked without admin sign-in'
                 admin(csrf=csrf, action='station_group_create', group='Unauthorized group')
-                assert 'Unauthorized group' not in call('account', owner)['shared_groups']
+                assert 'Unauthorized group' not in json.loads((data / 'shared.json').read_text())['groups']
+                admin(csrf=csrf, action='group_visibility', owner='', group='', **{'usernames[]': ['other']})
+                assert not json.loads((data / 'shared.json').read_text()).get('group_assignments'), 'Visibility changed without admin sign-in'
                 admin(csrf=csrf, action='login', password='local-admin-password')
                 page = admin('/admin/?tab=devices')
                 assert 'SERIAL-ABC123' in page and '16 GiB RAM' in page and 'Fixture CPU' in page
@@ -225,7 +233,7 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 assert 'Reception' in page and 'Office' in page and 'HOST-RENAMED' in page
                 admin(csrf=csrf, action='shared_add', id=device_id, name='Edited on station', group='Servers', notes='Web notes', return_tab='devices')
                 call('register', key=key, **heartbeat)
-                edited = next(d for d in call('account', owner)['shared'] if d['id'] == device_id)
+                edited = next(d for d in station_shared() if d['id'] == device_id)
                 assert edited['name'] == 'Edited on station' and edited['group'] == 'Servers' and edited['notes'] == 'Web notes'
                 assert 'Assign to technician' in page and 'Assigned technician (assigned)' in page
                 admin(status=400, csrf='invalid-csrf', action='device_assign', id=device_id, username='assigned')
@@ -259,50 +267,129 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                 assert 'Choose at least one' in admin(csrf=csrf, action='device_assign', id=device_id, usernames=[])
                 assert 'no longer exists' in admin(csrf=csrf, action='device_assign', id=device_id, username='missing-tech')
                 assert 'registered device' in admin(csrf=csrf, action='device_assign', id=42, username='assigned')
+                # A source-aware catalog includes technician groups, without exposing their vault.
+                call('group_save', owner, group='Youthnet <main>')
+                youthnet = {**device, 'id': 482913080, 'name': 'Youthnet PC', 'group': 'Youthnet <main>'}
+                call('device_save', owner, device=youthnet)
+                call('group_save', other, group='Youthnet <main>')
                 admin(csrf=csrf, action='station_group_create', group='Empty station')
                 admin(csrf=csrf, action='station_group_create', group='Laptop pool')
-                groups = call('account', other)['shared_groups']
-                assert 'Empty station' in groups and 'Laptop pool' in groups
+                assert call('account', other)['shared_groups'] == [], 'New empty groups were visible without assignment'
                 page = admin('/admin/?tab=groups')
-                assert 'Assign groups to technicians' in page and 'Move workstations' in page
-                admin(status=400, csrf='invalid-csrf', action='station_group_create', group='Bad CSRF')
+                assert 'Groups &amp; technician access' in page and 'Move station workstations' in page
+                assert 'Youthnet &lt;main&gt;' in page and 'Youthnet <main>' not in page
+                assert 'Owner (owner)' in page and 'Other (other)' in page and 'Personal technician group' in page
+                assert 'No technicians assigned' in page and 'Owner only' in page
+                assert device['secret']['c'] not in page and device['secret']['n'] not in page, 'Group catalog exposed sealed credentials'
+                admin(status=400, csrf='invalid-csrf', action='group_visibility', owner='', group='Empty station', **{'usernames[]': ['other']})
+                admin(csrf=csrf, action='group_visibility', owner='', group='Empty station', usernames='other')
+                assert call('account', other)['shared_groups'] == [], 'Malformed recipient list changed visibility'
                 admin(csrf=csrf, action='station_group_move', group='Laptop pool', **{'ids[]': [device_id, 482913078]})
-                moved = call('account', owner)['shared']
+                moved = station_shared()
                 assert all(next(d for d in moved if d['id'] == selected)['group'] == 'Laptop pool' for selected in [device_id, 482913078])
-                call('register', key=key, **heartbeat)
-                assert next(d for d in call('account', owner)['shared'] if d['id'] == device_id)['group'] == 'Laptop pool'
+                grant = {'owner': '', 'group': 'Laptop pool', 'usernames[]': ['assigned', 'other', 'assigned', 'full-tech']}
+                assert 'Group assignments saved' in admin(csrf=csrf, action='group_visibility', **grant)
+                admin(csrf=csrf, action='group_visibility', owner='', group='Empty station', **{'usernames[]': ['other']})
+                assert not call('account', owner)['shared'], 'Admin role bypassed explicit group visibility'
+                for token in [assigned_token, other]:
+                    state = call('account', token)
+                    assert 'Laptop pool' in state['shared_groups']
+                    assert {d['id'] for d in state['shared']} == {device_id, 482913078}
+                    assert all(not d.get('secret') for d in state['shared'])
+                full_token = call('login', username='full-tech', password='local-full-password')['token']
+                full_state = call('account', full_token)
+                assert len(full_state['devices']) == 500 and 'Laptop pool' in full_state['shared_groups'], 'Shared visibility unnecessarily copied into a full personal list'
+                assert len(full_state['shared']) == 2 and not full_state['groups']
+                assert 'Empty station' in call('account', other)['shared_groups']
+                assert 'Empty station' not in call('account', assigned_token)['shared_groups']
+                # Unlike the old copying action, groups consume no personal vault entries.
+                assert 'Laptop pool' not in call('account', assigned_token)['groups']
+                personal = next(d for d in call('account', assigned_token)['devices'] if d['id'] == device_id)
+                assert all(personal[field] == personalized[field] for field in ['name', 'group', 'notes', 'secret'])
+                # Saved form selections must reflect the existing assignment.
+                page = admin('/admin/?tab=groups')
+                forms = re.findall(r'<form method="post">(.*?)</form>', page, re.S)
+                selected_form = next(f for f in forms if 'value="group_visibility"' in f and 'name="owner" value=""' in f and 'name="group" value="Laptop pool"' in f)
+                assert re.search(r'value="assigned"\s+checked', selected_form) and re.search(r'value="other"\s+checked', selected_form)
+                assert not re.search(r'value="owner"\s+checked', selected_form)
+                # Permission edits are atomic: one invalid technician must not replace the old grants.
+                assert 'no longer exists' in admin(csrf=csrf, action='group_visibility', owner='', group='Laptop pool', **{'usernames[]': ['other', 'missing-tech']})
+                assert 'Laptop pool' in call('account', assigned_token)['shared_groups']
                 admin(csrf=csrf, action='station_group_rename', group='Laptop pool', new_name='Support laptops')
                 current = call('account', other)
                 assert 'Support laptops' in current['shared_groups'] and 'Laptop pool' not in current['shared_groups']
                 assert next(d for d in current['shared'] if d['id'] == device_id)['group'] == 'Support laptops'
                 assert 'already has that name' in admin(csrf=csrf, action='station_group_rename', group='Support laptops', new_name='Empty station')
                 assert 'Move workstations out' in admin(csrf=csrf, action='station_group_delete', group='Support laptops')
-                group_batch = {'groups[]': ['Support laptops', 'Empty station'], 'usernames[]': ['assigned', 'other']}
-                assert '2 added' in admin(csrf=csrf, action='group_assign', **group_batch)
-                for token in [assigned_token, other]:
-                    state = call('account', token)
-                    assert {'Support laptops', 'Empty station'} <= set(state['groups'])
-                    grouped_device = next(d for d in state['devices'] if d['id'] == 482913078)
-                    assert grouped_device['group'] == 'Support laptops' and not grouped_device.get('secret')
-                personal = next(d for d in call('account', assigned_token)['devices'] if d['id'] == device_id)
-                assert all(personal[field] == personalized[field] for field in ['name', 'group', 'notes', 'secret']), 'Group assignment overwrote personal preferences or credentials'
-                assert '0 added; 2 already assigned' in admin(csrf=csrf, action='group_assign', **group_batch)
-                partial_group = admin(csrf=csrf, action='group_assign', **{'groups[]': ['Support laptops', 'Empty station'], 'usernames[]': ['batch-new', 'full-tech']})
-                assert '1 added' in partial_group and 'full-tech:' in partial_group
-                assert not json.loads((data / 'accounts/full-tech.json').read_text()).get('groups'), 'Failed assignment left a partial group behind'
-                assert 'no longer exists' in admin(csrf=csrf, action='group_assign', **{'groups[]': ['Missing group'], 'usernames[]': ['assigned']})
-                admin(csrf=csrf, action='station_group_delete', group='Empty station')
-                assert 'Empty station' not in call('account', other)['shared_groups']
-                assert 'Empty station' in call('account', assigned_token)['groups'], 'Station cleanup removed a technician’s personal group'
+                # New members arrive on refresh, and clearing all checkboxes revokes access.
+                call('shared_save', owner, device={'id': 482913081, 'name': 'New laptop', 'group': 'Support laptops'})
+                assert any(d['id'] == 482913081 for d in call('account', other)['shared'])
+                admin(csrf=csrf, action='group_visibility', owner='', group='Support laptops', **{'usernames[]': ['other']})
+                assert not call('account', assigned_token)['shared'] and not call('account', assigned_token)['shared_groups']
+                assert next(d for d in call('account', assigned_token)['devices'] if d['id'] == device_id)['secret'] == personalized['secret']
+                admin(csrf=csrf, action='group_visibility', owner='', group='Support laptops')
+                assert 'Support laptops' not in call('account', other)['shared_groups']
+                # Technician groups share by source, including an independently named group in another account.
+                admin(csrf=csrf, action='group_visibility', owner='owner', group='Youthnet <main>', **{'usernames[]': ['assigned', 'owner']})
+                youth = call('account', assigned_token)
+                assert 'Youthnet <main>' in youth['shared_groups']
+                assert next(d for d in youth['shared'] if d['id'] == youthnet['id'])['name'] == youthnet['name']
+                assert not any(d.get('secret') for d in youth['shared']), 'Personal group sharing leaked a password'
+                assert 'Youthnet <main>' not in call('account', other)['shared_groups']
+                # Changes in the owner's group propagate, and membership is independent of similarly named groups.
+                youthnet2 = {**youthnet, 'id': 482913082, 'name': 'Second Youthnet PC'}
+                call('device_save', owner, device=youthnet2)
+                assert {d['id'] for d in call('account', assigned_token)['shared']} == {youthnet['id'], youthnet2['id']}
+                call('device_save', owner, device={**youthnet2, 'group': ''})
+                assert {d['id'] for d in call('account', assigned_token)['shared']} == {youthnet['id']}
+                admin(csrf=csrf, action='group_visibility', owner='other', group='Youthnet <main>', **{'usernames[]': ['batch-new']})
+                assert {d['id'] for d in call('account', assigned_token)['shared']} == {youthnet['id']}
+                admin(csrf=csrf, action='group_visibility', owner='owner', group='Youthnet <main>')
+                assert not call('account', assigned_token)['shared_groups']
+                assert next(d for d in call('account', owner)['devices'] if d['id'] == youthnet['id'])['secret'] == youthnet['secret']
+                # A personal folder inferred from devices remains manageable when shared and emptied.
+                inferred = {**device, 'id': 482913083, 'group': 'Inferred team'}
+                call('device_save', owner, device=inferred)
+                admin(csrf=csrf, action='group_visibility', owner='owner', group='Inferred team', **{'usernames[]': ['assigned']})
+                call('device_save', owner, device={**inferred, 'group': ''})
+                assert 'Inferred team' in call('account', assigned_token)['shared_groups']
+                assert 'Inferred team' in call('account', owner)['groups']
+                assert 'Inferred team' in admin('/admin/?tab=groups')
+                call('group_delete', owner, group='Inferred team')
+                assert 'Inferred team' not in call('account', assigned_token)['shared_groups']
+                assert 'Inferred team' not in call('account', owner)['groups']
+                assert next(d for d in call('account', owner)['devices'] if d['id'] == inferred['id'])['secret'] == inferred['secret']
+                # Ungrouped uses an explicit grant as well; moves enforce the destination's visibility.
                 admin(csrf=csrf, action='station_group_move', group='', **{'ids[]': [482913078]})
-                assert next(d for d in call('account', owner)['shared'] if d['id'] == 482913078)['group'] == ''
+                assert not call('account', assigned_token)['shared']
+                admin(csrf=csrf, action='group_visibility', owner='', group='', **{'usernames[]': ['assigned']})
+                assert any(d['id'] == 482913078 for d in call('account', assigned_token)['shared'])
+                admin(csrf=csrf, action='group_visibility', owner='', group='Support laptops', **{'usernames[]': ['assigned']})
+                admin(csrf=csrf, action='station_group_move', group='Servers', **{'ids[]': [482913078]})
+                assert not any(d['id'] == 482913078 for d in call('account', assigned_token)['shared'])
+                assert '' in call('account', assigned_token)['shared_groups'], 'Assigned empty Ungrouped folder disappeared'
+                # Deletion and recreation never restore old permissions.
+                admin(csrf=csrf, action='station_group_delete', group='Empty station')
+                admin(csrf=csrf, action='station_group_create', group='Empty station')
+                assert 'Empty station' not in call('account', other)['shared_groups']
+                admin(csrf=csrf, action='group_visibility', owner='other', group='Youthnet <main>', **{'usernames[]': ['assigned']})
+                call('group_delete', other, group='Youthnet <main>')
+                call('group_save', other, group='Youthnet <main>')
+                assert 'Youthnet <main>' not in call('account', assigned_token)['shared_groups']
+                assert 'no longer exists' in admin(csrf=csrf, action='group_visibility', owner='', group='Missing group')
+                page = admin('/admin/?tab=techs')
+                assert 'Personal / assigned groups' in page and 'Manage group assignments' in page
+                # Deleting an account also clears its source shares and received assignments.
+                admin(csrf=csrf, action='group_visibility', owner='other', group='Youthnet <main>', **{'usernames[]': ['assigned']})
+                admin(csrf=csrf, action='tech_delete', username='other')
+                assert not any(a['owner'] == 'other' or 'other' in a['usernames'] for a in json.loads((data / 'shared.json').read_text())['group_assignments'])
                 call('unregister', key=key, **signed('unregister'))
                 assert call('lookup', key=key, id=device_id)['status'] == 'offline'
                 admin(csrf=csrf, action='device_assign', id=device_id, username='owner')
                 assert any(d['id'] == device_id for d in call('account', owner)['devices']), 'Offline device could not be assigned'
                 call('shared_delete', owner, id=device_id)
                 call('register', key=key, **heartbeat)
-                assert not any(d['id'] == device_id for d in call('account', owner)['shared']), 'Heartbeat resurrected a removed device'
+                assert not any(d['id'] == device_id for d in station_shared()), 'Heartbeat resurrected a removed device'
                 clone_ids = []
                 for seed, computer in [('03', 'IMAGED-LAPTOP-01'), ('04', 'IMAGED-LAPTOP-02')]:
                     clone_request = signed('register', seed=seed, addr={'id': '', 'addrs': []}, info={**info, 'name': computer})
@@ -310,19 +397,19 @@ echo json_encode(['payload'=>$payload,'sig'=>bin2hex(sodium_crypto_sign_detached
                     assert clone_id != device_id and clone_id not in clone_ids, 'An imaged laptop reused an existing station ID'
                     assert call('register', key=key, **clone_request)['id'] == clone_id
                     clone_ids.append(clone_id)
-                    record = next(d for d in call('account', owner)['shared'] if d['id'] == clone_id)
+                    record = next(d for d in station_shared() if d['id'] == clone_id)
                     assert record['name'] == computer and record['group'] == '' and not record.get('secret')
                 settings(private=False)
                 assert call('hello')['inventory'] is False
                 call('inventory', status=403, **report)
                 another = call('register', **signed('register', seed='02', addr={'id': '', 'addrs': []}, info=info))['id']
-                assert not any(d['id'] == another for d in call('account', owner)['shared'])
+                assert not any(d['id'] == another for d in station_shared())
                 assert 'SERIAL-ABC123' not in admin('/admin/?tab=devices'), 'Public admin page exposed retained private inventory'
                 assert len(list((data / 'inventory').glob('*.json'))) == 1
                 print('PHP station: signed private enrollment, legacy migration, Ungrouped, durable edits/removal, hardware summary, admin editing/escaping and public exclusion passed', flush=True)
                 print('PHP station: batch technician assignment before first sign-in, admin/CSRF checks, offline devices, duplicate suppression, partial failures and preserved personal credentials/details passed', flush=True)
                 print('PHP station: cloned laptops register separate stable IDs and computer names on the same private station passed', flush=True)
-                print('PHP station: shared/empty group synchronization, batch moves, rename/delete rules, batch group assignment, personal credential preservation and atomic per-technician capacity failures passed', flush=True)
+                print('PHP station: source-aware personal/station catalog, explicit multi-technician visibility, live membership, revocation, Ungrouped, saved selections, rename/delete cleanup and private vault preservation passed', flush=True)
 
                 if args.client:
                     client = str(args.client.resolve())

@@ -59,7 +59,17 @@ label { display: block; margin: 12px 0 4px; }
 table { border-collapse: collapse; width: 100%; }
 th { text-align: left; font: 14px var(--display); text-transform: uppercase; letter-spacing: .08em; color: var(--lav); padding: 6px 10px; border-bottom: 1px solid #1a2238; }
 td { padding: 7px 10px; border-bottom: 1px solid #10162a; vertical-align: middle; }
-td.device-id { white-space: nowrap; }
+td.device-id, span.device-id { white-space: nowrap; }
+.table-scroll { overflow-x: auto; }
+.group-access { min-width: 720px; }
+.technician-table { min-width: 900px; }
+.group-access td { vertical-align: top; }
+.group-access details + details { margin-top: 10px; }
+.group-access summary { cursor: pointer; color: var(--cyan); }
+.group-access td:last-child { min-width: 230px; }
+.group-device { padding: 4px 0; }
+.group-device .device-id { display: inline-block; color: var(--blue); }
+button:disabled { cursor: default; opacity: .5; }
 code, pre { font-family: var(--mono); color: var(--blue); }
 pre { background: #04060c; padding: 12px; border-left: 4px solid var(--violet); overflow: auto; }
 .steps { counter-reset: s; list-style: none; padding: 0; }
@@ -73,3 +83,16 @@ nav.tabs a.on { background: var(--orange); box-shadow: 0 0 16px rgba(255,153,0,.
 .flash.err { background: rgba(255,85,85,.1); border-color: var(--red); }
 @media (max-width: 700px) { header .elbow, footer .elbow { width: 70px; } header .s2 { display: none; } header .logo { height: 44px; width: 44px; margin-top: -3px; filter: drop-shadow(0 0 8px rgba(255,140,0,.45)); }
 header h1 { font-size: 24px; } footer span { display: none; } }
+
+@media (max-width: 850px) {
+  .group-access { min-width: 0; }
+  .group-access tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 20px; padding: 14px 0; border-bottom: 1px solid #1a2238; }
+  .group-access tr:first-child { display: none; }
+  .group-access td { display: block; padding: 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
+  .group-access td:first-child { grid-column: 1 / -1; font-size: 20px; }
+  .group-access td:last-child { min-width: 0; }
+  .group-access td[data-label]::before { content: attr(data-label); display: block; color: var(--lav); font: 14px var(--display); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+}
+@media (max-width: 550px) {
+  .group-access tr { grid-template-columns: minmax(0, 1fr); }
+}

@@ -103,7 +103,7 @@ impl DirectoryClient {
         self.call(serde_json::json!({"op":"group_delete","token":token,"group":group})).await
     }
 
-    /// Station admins: adds or replaces a device everyone sees.
+    /// Station admins: adds or replaces a station device. Group assignments control visibility.
     pub async fn save_shared(&self, token: &str, device: &SavedDevice) -> Result<AccountState> {
         let mut device = device.clone();
         device.secret = None;

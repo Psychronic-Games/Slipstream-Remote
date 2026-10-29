@@ -140,6 +140,7 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'group_s
                 $a['groups'] = array_values($groups);
                 return $a;
             });
+            if ($op === 'group_delete') slip_forget_group_assignments($u, $group);
             break;
         case 'shared_save':
         case 'shared_delete':
@@ -162,14 +163,16 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'group_s
             });
             break;
     }
+    // Shared visibility is enforced here, including for older clients.
+    $visible = slip_shared_for_user($u);
     // Every account call answers with the whole picture.
     reply([
         'ok' => true,
         'user' => slip_user_public($acct),
         'devices' => array_values($acct['devices'] ?? []),
-        'groups' => array_values($acct['groups'] ?? []),
-        'shared' => slip_shared(),
-        'shared_groups' => slip_shared_groups(),
+        'groups' => slip_personal_groups($acct),
+        'shared' => $visible['devices'],
+        'shared_groups' => $visible['groups'],
         'vault_salt' => $acct['vault_salt'],
         'station' => slip_client_config(),
     ]);

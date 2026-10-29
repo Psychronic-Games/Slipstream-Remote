@@ -252,11 +252,21 @@ failures separately so a full list cannot hide successful assignments.
 Station group creation, rename, empty-only removal and batch workstation moves
 use that shared-state lock. `shared_groups` is an optional account JSON field
 cached in `StationAccount` and rendered in both Saved devices and the New link
-picker, so empty shared folders survive. Batch group assignment snapshots the
-current members and declared empty groups, validates each recipient's capacity
-before applying their update under the account lock, and preserves existing
-personal entries and secrets. Personal lists remain independent of later
-shared-group renames or membership changes.
+picker, so empty shared folders survive. `shared.json.group_assignments` stores
+explicit recipient lists keyed by source owner (empty means station) and group
+name. Source identity distinguishes matching names in different accounts. The
+admin catalog includes declared personal folders and groups inferred from each
+account's devices, but never renders vault secrets. Account API responses build
+`shared` and `shared_groups` from only the authenticated technician's grants,
+including for older clients and admin accounts. Missing grants share nothing;
+Ungrouped is also explicit. Membership is resolved from the current source on
+each refresh, and `slip_clean_device(..., false)` strips all sealed passwords.
+Sharing an inferred personal folder keeps it visible as an empty folder to its
+owner and recipients after its last member moves out. Station renames retain
+grants. Group/account deletion clears matching grants,
+so recreating a name does not resurrect access. Changing recipients uses the
+shared-state lock and does not mutate personal device lists or vault data.
+The old per-device copy action remains available separately.
 
 `hello.inventory` advertises hardware-summary support only on private stations
 with an access key. The primary host checks that capability, requires its key,

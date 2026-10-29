@@ -13,6 +13,12 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Station Groups shows personal technician groups alongside station groups,
+  identifies each source and displays saved recipients. Per-group assignment
+  editors replace the bulk copy form. Only assigned groups enter a technician's
+  shared list; Ungrouped is explicit too. Membership follows current source
+  devices, and revocation preserves separately saved personal entries and vaults.
+
 - Linux retries executable icon registration after missing desktop helpers are
   installed, including when a system-wide launcher already exists. The Linux
   source installer also registers the executable's file icon.

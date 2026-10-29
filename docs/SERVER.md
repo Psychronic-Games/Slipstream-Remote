@@ -215,8 +215,14 @@ data folder alone can't reveal them. Setting a new password for a technician
 signs them out everywhere and clears the passwords they had saved, which
 can't be opened any more. *Sign out everywhere* ends every sign-in at once.
 
-The **Shared devices** list on the same tab is seen by every technician,
-without passwords. Station admins can also change it from the app.
+The **Station devices** list is administered on the station. The **Groups** tab
+shows both station and personal technician groups and their recipients. Each
+group is visible in the apps of explicitly assigned technicians; unassigned
+station groups, including Ungrouped, are hidden by default. Personal groups
+remain with their owner and can be shared with selected recipients. Changes
+to group membership follow the source on refresh, without copying passwords.
+Revocation removes shared visibility while preserving independently saved
+personal entries. Station admins can also edit station devices from the app.
 
 Sign-ins are rate-limited per address and per account. The standalone
 `slipstream-server` station doesn't have accounts.

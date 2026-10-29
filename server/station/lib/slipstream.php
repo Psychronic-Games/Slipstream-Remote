@@ -553,6 +553,15 @@ function slip_user_delete(string $u): void
     slip_user_signout_all($u);
     @unlink(slip_acct_dir('accounts') . "/$u.json");
     @unlink(slip_acct_dir('accounts') . "/$u.json.lock");
+    slip_shared_state_update(function (array $state) use ($u) {
+        $state['group_assignments'] = array_values(array_filter($state['group_assignments'], fn($a) => $a['owner'] !== $u));
+        foreach ($state['group_assignments'] as &$assignment) {
+            $assignment['usernames'] = array_values(array_filter($assignment['usernames'], fn($name) => $name !== $u));
+        }
+        unset($assignment);
+        $state['group_assignments'] = array_values(array_filter($state['group_assignments'], fn($a) => !empty($a['usernames'])));
+        return $state;
+    });
 }
 
 /** Signs a technician in from an app: a new token (returned once). */
@@ -665,11 +674,11 @@ function slip_shared_state(): array
 {
     $d = json_decode((string)@file_get_contents(slip_data_dir() . '/shared.json'), true);
     if (!is_array($d)) {
-        return ['devices' => [], 'enrolled' => [], 'groups' => []];
+        return ['devices' => [], 'enrolled' => [], 'groups' => [], 'group_assignments' => []];
     }
     return isset($d['devices']) && is_array($d['devices'])
-        ? ['devices' => array_values($d['devices']), 'enrolled' => (array)($d['enrolled'] ?? []), 'groups' => array_values($d['groups'] ?? [])]
-        : ['devices' => array_values($d), 'enrolled' => [], 'groups' => []];
+        ? ['devices' => array_values($d['devices']), 'enrolled' => (array)($d['enrolled'] ?? []), 'groups' => array_values($d['groups'] ?? []), 'group_assignments' => array_values($d['group_assignments'] ?? [])]
+        : ['devices' => array_values($d), 'enrolled' => [], 'groups' => [], 'group_assignments' => []];
 }
 
 /** Changes the shared list under a lock: $fn gets and returns it. */
@@ -763,6 +772,7 @@ function slip_station_group(string $action, $name, $newName = null): void
                 if (($device['group'] ?? '') === $name) throw new InvalidArgumentException('Move workstations out of the group before removing it.');
             }
             $state['groups'] = array_values(array_filter($state['groups'], fn($g) => $g !== $name));
+            $state['group_assignments'] = array_values(array_filter($state['group_assignments'], fn($a) => $a['owner'] !== '' || $a['group'] !== $name));
             return $state;
         }
         if ($action === 'rename' && $newName !== $name && in_array($newName, $known, true)) throw new InvalidArgumentException('A station group already has that name.');
@@ -773,6 +783,11 @@ function slip_station_group(string $action, $name, $newName = null): void
             if ($action === 'rename' && ($device['group'] ?? '') === $name) $device['group'] = $newName;
         }
         $state['groups'] = $groups;
+        if ($action === 'rename') {
+            foreach ($state['group_assignments'] as &$assignment) {
+                if ($assignment['owner'] === '' && $assignment['group'] === $name) $assignment['group'] = $newName;
+            }
+        }
         return $state;
     });
 }
@@ -814,7 +829,7 @@ function slip_assignment_users(array $usernames): array
         $users[$username] = true;
     }
     if (!$users) throw new InvalidArgumentException('Choose at least one technician.');
-    return array_keys($users);
+    return array_map('strval', array_keys($users));
 }
 
 /** Add missing personal entries and groups under each account's lock. Existing
@@ -864,23 +879,127 @@ function slip_assign_devices(array $usernames, int $id): array
     return slip_assign_personal($users, [$device]);
 }
 
-/** Snapshot assignment: groups (including empty ones) and their current shared
- * workstations are copied; passwords still belong to each recipient's vault. */
-function slip_assign_groups(array $usernames, array $groups): array
+/** Groups keep their source identity: identical names in two accounts are
+ * different groups. The catalog is admin-only; never send it to account clients. */
+function slip_group_catalog(?array $state = null, ?array $users = null): array
 {
-    $users = slip_assignment_users($usernames);
-    $groups = array_values(array_unique(array_map('slip_group_name', $groups)));
-    if (!$groups) throw new InvalidArgumentException('Choose at least one station group.');
+    $state ??= slip_shared_state();
+    $users ??= slip_users();
+    $catalog = [];
+    $append = function (string $owner, array $groups, array $devices) use (&$catalog, $state) {
+        $groups = array_merge($groups, array_column($devices, 'group'));
+        foreach ($state['group_assignments'] as $assignment) {
+            if ($assignment['owner'] === $owner) $groups[] = $assignment['group'];
+        }
+        if (array_filter($devices, fn($d) => ($d['group'] ?? '') === '')) $groups[] = '';
+        $groups = array_values(array_unique(array_filter($groups, 'is_string')));
+        natcasesort($groups);
+        foreach ($groups as $group) {
+            $recipients = [];
+            foreach ($state['group_assignments'] as $assignment) {
+                if (($assignment['owner'] ?? '') === $owner && ($assignment['group'] ?? '') === $group) {
+                    $recipients = $assignment['usernames'];
+                    break;
+                }
+            }
+            $catalog[] = ['owner' => $owner, 'group' => $group, 'usernames' => $recipients,
+                'devices' => array_values(array_filter($devices, fn($d) => ($d['group'] ?? '') === $group))];
+        }
+    };
+    // Keep Ungrouped editable even before the first workstation enrolls.
+    $append('', array_merge([''], slip_shared_groups($state)), $state['devices']);
+    foreach ($users as $username => $account) $append($username, $account['groups'] ?? [], $account['devices'] ?? []);
+    return $catalog;
+}
+
+/** Replace one group's recipients, including clearing every assignment.
+ * No personal entries or vault data are ever copied, modified or deleted. */
+function slip_set_group_assignment($owner, $group, array $usernames): void
+{
+    if (!is_string($owner) || !is_string($group)) throw new InvalidArgumentException('Choose a valid group.');
+    if ($owner !== '' && (!slip_user_valid($owner) || !slip_user_load($owner))) throw new InvalidArgumentException('The group owner no longer exists.');
+    $group = $group === '' ? '' : slip_group_name($group);
+    $users = $usernames ? slip_assignment_users($usernames) : [];
+    // The source account always owns its personal group; it needs no shared copy.
+    $users = array_values(array_filter($users, fn($u) => $u !== $owner));
+    slip_shared_state_update(function (array $state) use ($owner, $group, $users) {
+        $exists = false;
+        $source = $owner === '' ? [] : [$owner => slip_user_load($owner)];
+        foreach (slip_group_catalog($state, $source) as $entry) {
+            if ($entry['owner'] === $owner && $entry['group'] === $group) { $exists = true; break; }
+        }
+        if (!$exists) throw new InvalidArgumentException('That group no longer exists.');
+        $state['group_assignments'] = array_values(array_filter($state['group_assignments'],
+            fn($a) => $a['owner'] !== $owner || $a['group'] !== $group));
+        if ($users) $state['group_assignments'][] = ['owner' => $owner, 'group' => $group, 'usernames' => $users];
+        return $state;
+    });
+}
+
+function slip_forget_group_assignments(string $owner, string $group): void
+{
+    slip_shared_state_update(function (array $state) use ($owner, $group) {
+        $state['group_assignments'] = array_values(array_filter($state['group_assignments'],
+            fn($a) => $a['owner'] !== $owner || $a['group'] !== $group));
+        return $state;
+    });
+}
+
+/** Sharing an inferred personal folder keeps its empty folder visible to
+ * its owner too, without rewriting their devices or vault. */
+function slip_personal_groups(array $account): array
+{
+    $groups = $account['groups'] ?? [];
+    foreach (slip_shared_state()['group_assignments'] as $assignment) {
+        if ($assignment['owner'] === $account['username'] && $assignment['group'] !== '') $groups[] = $assignment['group'];
+    }
+    $groups = array_values(array_unique($groups));
+    natcasesort($groups);
+    return array_values($groups);
+}
+
+/** Only explicitly assigned groups enter a technician's shared section.
+ * Refreshes follow current membership; an empty allowlist shares nothing. */
+function slip_shared_for_user(string $username): array
+{
     $state = slip_shared_state();
-    if (array_diff($groups, slip_shared_groups($state))) throw new InvalidArgumentException('A selected station group no longer exists.');
-    $devices = [];
-    foreach ($state['devices'] as $device) {
-        if (in_array($device['group'] ?? '', $groups, true)) {
+    $sources = ['' => $state['devices']]; $accounts = [];
+    $devices = []; $groups = []; $seen = [];
+    $assignments = $state['group_assignments'];
+    usort($assignments, fn($a, $b) => strcmp($a['owner'], $b['owner']) ?: strcmp($a['group'], $b['group']));
+    foreach ($assignments as $assignment) {
+        if (!in_array($username, $assignment['usernames'] ?? [], true)) continue;
+        $owner = $assignment['owner']; $group = $assignment['group'];
+        if ($owner === $username) continue;
+        if ($owner !== '' && !array_key_exists($owner, $sources)) {
+            $accounts[$owner] = slip_user_load($owner);
+            $sources[$owner] = $accounts[$owner]['devices'] ?? [];
+        }
+        // Explicit deletion clears grants. A grant also keeps an inferred
+        // personal folder manageable when its last device is moved out.
+        if ($owner === '') {
+            if ($group !== '' && !in_array($group, slip_shared_groups($state), true)) continue;
+        } else {
+            $account = $accounts[$owner];
+            if (!$account) continue;
+
+        }
+        if (!in_array($group, $groups, true)) $groups[] = $group;
+        foreach ($sources[$owner] as $device) {
+            if (($device['group'] ?? '') !== $group) continue;
             $copy = slip_clean_device($device, false);
-            if ($copy) $devices[] = $copy + ['secret' => null, 'added' => time()];
+            if (!$copy) continue;
+            $copy['group'] = $group;
+            // One workstation may be shared through several source accounts.
+            $key = $copy['id'] . ':' . $group;
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $copy['added_by'] = $owner === '' ? 'Station' : $owner;
+            $devices[] = $copy;
         }
     }
-    return slip_assign_personal($users, $devices, $groups);
+    natcasesort($groups);
+    return ['devices' => $devices, 'groups' => array_values($groups)];
 }
 
 /** Only these static facts may be retained without a support session. */
@@ -1301,7 +1420,8 @@ function slip_page_start(string $title, string $root = ''): void
 {
     $org = slip_station()['org'] ?? '';
     echo '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
-    echo '<title>' . h($title) . '</title><link rel="stylesheet" href="' . h($root) . 'assets/station.css">';
+    $cssVersion = (string)(@filemtime(SLIP_ROOT . '/assets/station.css') ?: 0);
+    echo '<title>' . h($title) . '</title><link rel="stylesheet" href="' . h($root) . 'assets/station.css?v=' . h($cssVersion) . '">';
     echo '<link rel="icon" type="image/svg+xml" href="' . h($root) . 'assets/logo.svg">';
     echo '<body><div class="frame"><header><div class="elbow"></div><div class="seg s1"></div><div class="seg s2"></div>'
         . '<img class="logo" src="' . h($root) . 'assets/logo.svg" alt=""><h1>' . h($org !== '' ? $org : 'Slipstream Remote') . '</h1></header>';

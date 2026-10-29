@@ -594,7 +594,7 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                 if account.user.admin {
                     ui.label("");
                     ui.vertical(|ui| {
-                        ui.checkbox(&mut e.shared, "Share with every technician at this station");
+                        ui.checkbox(&mut e.shared, "Save in station list (visibility assigned in station admin)");
                         ui.label(
                             RichText::new("Shown in everyone's list. Passwords aren't saved for shared devices: \
                                            each technician types it when connecting.").small().color(pal::DIM),

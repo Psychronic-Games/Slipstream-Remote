@@ -158,8 +158,9 @@ Windows, install the Slipstream service from **Config**). The
 covers each platform.
 
 On private stations, the first registration automatically adds the workstation
-to every signed-in technician's shared device list, with its computer name in
-**Ungrouped**. Technicians still need its one-time or unattended password to
+to the station's device list, with its computer name in
+**Ungrouped**. Assign the group to selected technicians to show it in their apps;
+unassigned groups are hidden. Technicians still need the device password to
 connect. Lead technicians can rename and group shared devices from the app;
 the station's **Devices** tab also offers **Edit shared device** and a last
 reported hardware summary (model, serial, OS, processor and RAM). Hardware
@@ -171,10 +172,15 @@ From **Devices → Assign to technician**, check one or more accounts and press
 assigned, and existing personal details or saved passwords are kept. Use
 **Edit shared device** on the same page to set the station's name and group.
 
-The **Groups** tab creates/renames station groups and moves multiple shared
-workstations at once. It also assigns selected groups, including empty ones,
-and their current devices to multiple technicians. Personal lists retain their
-own edits and credentials; repeat assignment to add later group members.
+The **Groups** tab shows station and personal technician groups with their
+source, workstation count and saved recipients. **Edit assignments** on a row
+sets which technicians see that group, including empty groups and Ungrouped.
+Multiple technicians can receive the same group. New station groups start with
+no recipients. Membership updates on the next app list refresh; clearing the
+recipients revokes shared visibility. Personal groups stay with their owner,
+and sharing never exposes saved passwords. Separately saved personal entries
+and earlier copies remain intact. The same tab creates/renames station groups
+and moves station workstations between them.
 
 ## Updates
 
