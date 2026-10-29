@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.32.1 — 2026-10-29
+
 - Background online-status checks use independent batch requests for up to
   500 unique devices, so saved lists and repeated group memberships do not
   consume the connection-lookup budget (600/minute by default). Failed or
