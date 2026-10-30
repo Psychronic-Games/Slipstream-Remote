@@ -13,6 +13,11 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- Browse the entire retained relay log with Oldest/Newest jumps and Older/Newer
+  pages, and download the full history as plain text. Paging and streaming
+  exports stay bounded in memory and require current station admin access.
+  The Show filter uses a themed, keyboard-accessible menu shared with Devices.
+
 - Split Name and Group into separate Devices table columns, with group tags
   confined to the Group column and distinct LCARS header colors. Both columns
   keep their independent sort controls and mobile labels.

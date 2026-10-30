@@ -249,14 +249,92 @@
       setHeight(event.key === 'Home' ? 88 : event.key === 'End' ? 640 : height + (event.key === 'ArrowDown' ? 24 : -24));
     });
   }
+  // The same themed, keyboard-operable single-choice menu serves every page.
+  const choiceMenus = new Map();
+  for (const menu of document.querySelectorAll('[data-choice-menu]')) {
+    const summary = menu.querySelector('summary');
+    const popup = menu.querySelector('[role=menu]');
+    const choices = [...menu.querySelectorAll('[data-choice-option]')];
+    const labels = new Map(choices.map(choice => [choice.dataset.choiceOption, choice.querySelector('[data-choice-option-label]').textContent]));
+    const close = (focus = false) => {
+      menu.open = false;
+      summary.setAttribute('aria-expanded', 'false');
+      if (focus) summary.focus({preventScroll: true});
+    };
+    const setValue = value => {
+      if (!labels.has(value)) return;
+      menu.dataset.value = value;
+      menu.querySelector('[data-choice-label]').textContent = labels.get(value);
+      for (const choice of choices) {
+        const active = choice.dataset.choiceOption === value;
+        choice.setAttribute('aria-checked', String(active));
+        choice.tabIndex = active ? 0 : -1;
+      }
+    };
+    const place = () => {
+      if (!menu.open) return;
+      const anchor = summary.getBoundingClientRect();
+      if (anchor.bottom < 0 || anchor.top > innerHeight) { close(); return; }
+      const width = Math.min(250, innerWidth - 24);
+      const below = innerHeight - anchor.bottom - 12, above = anchor.top - 12;
+      const down = below >= Math.min(340, above);
+      popup.style.width = `${width}px`;
+      popup.style.maxHeight = `${Math.max(80, Math.min(380, down ? below : above, innerHeight - 24))}px`;
+      popup.style.left = `${Math.max(12, Math.min(anchor.left, innerWidth - width - 12))}px`;
+      const height = popup.getBoundingClientRect().height;
+      popup.style.top = `${Math.max(12, Math.min(down ? anchor.bottom + 7 : anchor.top - height - 7, innerHeight - height - 12))}px`;
+    };
+    const focusChoice = choice => {
+      choice.focus({preventScroll: true});
+      choice.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    };
+    for (const choice of choices) choice.addEventListener('click', () => {
+      setValue(choice.dataset.choiceOption);
+      menu.dispatchEvent(new CustomEvent('choicechange', {bubbles: true, detail: {value: menu.dataset.value}}));
+      close(true);
+    });
+    menu.addEventListener('toggle', () => {
+      summary.setAttribute('aria-expanded', String(menu.open));
+      if (!menu.open) return;
+      closePicker();
+      for (const [other, control] of choiceMenus) if (other !== menu) control.close();
+      place();
+      const visible = choices.includes(document.activeElement) ? document.activeElement : choices.find(choice => choice.getAttribute('aria-checked') === 'true');
+      visible.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    });
+    summary.addEventListener('keydown', event => {
+      if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      if (menu.open && ['Enter', ' '].includes(event.key)) { close(true); return; }
+      menu.open = true; place();
+      focusChoice(event.key === 'ArrowUp' ? choices.at(-1) : choices.find(choice => choice.getAttribute('aria-checked') === 'true'));
+    });
+    menu.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return; }
+      if (!choices.includes(event.target) || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const index = choices.indexOf(event.target);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
+      for (const [i, choice] of choices.entries()) choice.tabIndex = i === next ? 0 : -1;
+      focusChoice(choices[next]);
+    });
+    for (const event of ['pointerdown', 'focusin']) document.addEventListener(event, e => {
+      if (menu.open && !menu.contains(e.target)) close();
+    });
+    for (const picker of document.querySelectorAll('[data-picker]')) picker.addEventListener('toggle', () => {
+      if (picker.open) close();
+    });
+    addEventListener('resize', place);
+    addEventListener('scroll', place, true);
+    setValue(menu.dataset.value);
+    choiceMenus.set(menu, {close, setValue, labels});
+  }
   const deviceControls = document.querySelector('[data-device-controls]');
   if (deviceControls) {
     const search = deviceControls.querySelector('[data-device-search]');
     const sort = deviceControls.querySelector('[data-device-sort]');
-    const sortSummary = sort.querySelector('summary');
-    const sortMenu = sort.querySelector('[role=menu]');
-    const sortChoices = [...sort.querySelectorAll('[data-device-sort-option]')];
-    const sortLabels = new Map(sortChoices.map(choice => [choice.dataset.deviceSortOption, choice.querySelector('[data-sort-option-label]').textContent]));
+    const sortControl = choiceMenus.get(sort);
+    const sortLabels = sortControl.labels;
     const headers = [...document.querySelectorAll('[data-device-column-sort]')];
     const direction = deviceControls.querySelector('[data-device-direction]');
     const clear = deviceControls.querySelector('[data-device-clear]');
@@ -277,28 +355,6 @@
     }));
     let sortKey = sort.dataset.value;
     let descending = true;
-    const closeSortMenu = (focus = false) => {
-      sort.open = false;
-      sortSummary.setAttribute('aria-expanded', 'false');
-      if (focus) sortSummary.focus({preventScroll: true});
-    };
-    const placeSortMenu = () => {
-      if (!sort.open) return;
-      const anchor = sortSummary.getBoundingClientRect();
-      if (anchor.bottom < 0 || anchor.top > innerHeight) { closeSortMenu(); return; }
-      const width = Math.min(250, innerWidth - 24);
-      const below = innerHeight - anchor.bottom - 12, above = anchor.top - 12;
-      const down = below >= Math.min(340, above);
-      sortMenu.style.width = `${width}px`;
-      sortMenu.style.maxHeight = `${Math.max(80, Math.min(380, down ? below : above, innerHeight - 24))}px`;
-      sortMenu.style.left = `${Math.max(12, Math.min(anchor.left, innerWidth - width - 12))}px`;
-      const height = sortMenu.getBoundingClientRect().height;
-      sortMenu.style.top = `${Math.max(12, Math.min(down ? anchor.bottom + 7 : anchor.top - height - 7, innerHeight - height - 12))}px`;
-    };
-    const focusSortChoice = choice => {
-      choice.focus({preventScroll: true});
-      choice.scrollIntoView({block: 'nearest', inline: 'nearest'});
-    };
     const filter = () => {
       const query = fold(search.value).trim();
       const idQuery = /^[\d\s-]+$/.test(query) ? query.replace(/[\s-]/g, '') : null;
@@ -316,13 +372,7 @@
       const labels = sortKey === 'recent' ? ['Oldest first', 'Newest first'] : sortKey === 'id' ? ['Lowest first', 'Highest first'] : ['A → Z', 'Z → A'];
       direction.textContent = labels[Number(descending)];
       direction.setAttribute('aria-label', `Sort direction: ${direction.textContent}`);
-      sort.dataset.value = sortKey;
-      sort.querySelector('[data-device-sort-label]').textContent = sortLabels.get(sortKey);
-      for (const choice of sortChoices) {
-        const active = choice.dataset.deviceSortOption === sortKey;
-        choice.setAttribute('aria-checked', String(active));
-        choice.tabIndex = active ? 0 : -1;
-      }
+      sortControl.setValue(sortKey);
       for (const header of headers) {
         const active = header.dataset.deviceColumnSort === sortKey;
         header.disabled = false;
@@ -349,48 +399,11 @@
       sortKey = key;
       order();
     };
-    for (const choice of sortChoices) choice.addEventListener('click', () => {
-      chooseSort(choice.dataset.deviceSortOption);
-      closeSortMenu(true);
-    });
+    sort.addEventListener('choicechange', event => chooseSort(event.detail.value));
     for (const header of headers) header.addEventListener('click', () => {
       chooseSort(header.dataset.deviceColumnSort, true);
-      closeSortMenu();
+      sortControl.close();
     });
-    sort.addEventListener('toggle', () => {
-      sortSummary.setAttribute('aria-expanded', String(sort.open));
-      if (sort.open) {
-        closePicker(); placeSortMenu();
-        const visibleChoice = sortChoices.includes(document.activeElement) ? document.activeElement : sortChoices.find(choice => choice.getAttribute('aria-checked') === 'true');
-        visibleChoice.scrollIntoView({block: 'nearest', inline: 'nearest'});
-      }
-    });
-    sortSummary.addEventListener('keydown', event => {
-      if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
-      event.preventDefault();
-      if (sort.open && ['Enter', ' '].includes(event.key)) { closeSortMenu(true); return; }
-      sort.open = true;
-      placeSortMenu();
-      const choice = event.key === 'ArrowUp' ? sortChoices.at(-1) : sortChoices.find(option => option.getAttribute('aria-checked') === 'true');
-      focusSortChoice(choice);
-    });
-    sort.addEventListener('keydown', event => {
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSortMenu(true); return; }
-      if (!event.target.matches('[data-device-sort-option]') || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-      event.preventDefault();
-      const index = sortChoices.indexOf(event.target);
-      const next = event.key === 'Home' ? 0 : event.key === 'End' ? sortChoices.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + sortChoices.length) % sortChoices.length;
-      for (const [i, option] of sortChoices.entries()) option.tabIndex = i === next ? 0 : -1;
-      focusSortChoice(sortChoices[next]);
-    });
-    for (const event of ['pointerdown', 'focusin']) document.addEventListener(event, e => {
-      if (sort.open && !sort.contains(e.target)) closeSortMenu();
-    });
-    for (const picker of document.querySelectorAll('[data-picker]')) picker.addEventListener('toggle', () => {
-      if (picker.open) closeSortMenu();
-    });
-    addEventListener('resize', placeSortMenu);
-    addEventListener('scroll', placeSortMenu, true);
     search.addEventListener('input', filter);
     direction.addEventListener('click', () => { descending = !descending; order(); });
     clear.addEventListener('click', () => { search.value = ''; filter(); search.focus(); });
@@ -400,18 +413,62 @@
   const report = document.querySelector('[data-relay-report]');
   if (report) {
     const search = report.querySelector('[data-log-search]'), level = report.querySelector('[data-log-level]');
-    const rows = [...report.querySelectorAll('[data-log-event]')];
+    const events = report.querySelector('[data-log-events]');
+    const navigation = report.querySelector('[data-log-navigation]');
+    const error = report.querySelector('[data-log-error]');
+    const buttons = [...navigation.querySelectorAll('[data-log-nav]')];
+    let page = JSON.parse(report.dataset.logPage), busy = false;
+    const updateNavigation = () => {
+      for (const button of buttons) button.disabled = busy || (button.dataset.logNav === 'older' && page.start === 0) || (button.dataset.logNav === 'newer' && page.end >= page.size);
+      const position = page.start === 0 ? page.end >= page.size ? 'All retained events' : 'Beginning of retained history' : page.end >= page.size ? 'Latest retained events' : 'Earlier retained events';
+      report.querySelector('[data-log-page-label]').textContent = `${position} · ${page.order} first · UTC`;
+      report.querySelector('[data-log-continued]').hidden = !page.continued;
+      report.setAttribute('aria-busy', String(busy));
+    };
     const filter = () => {
       const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+      const rows = [...events.querySelectorAll('[data-log-event]')];
+      const severity = level.dataset.value;
       let visible = 0;
       for (const row of rows) {
-        const match = (!level.value || (level.value === 'attention' ? ['WARN', 'ERROR'].includes(row.dataset.level) : row.dataset.level === level.value)) && words.every(word => row.textContent.toLocaleLowerCase().includes(word));
+        const match = (!severity || (severity === 'attention' ? ['WARN', 'ERROR'].includes(row.dataset.level) : row.dataset.level === severity)) && words.every(word => row.textContent.toLocaleLowerCase().includes(word));
         row.hidden = !match; if (match) visible++;
       }
-      report.querySelector('[data-log-count]').textContent = `${visible} of ${rows.length} events · newest first · UTC`;
+      report.querySelector('[data-log-count]').textContent = `${visible} of ${rows.length} events on this page`;
       report.querySelector('[data-log-empty]').hidden = visible !== 0;
     };
-    search.addEventListener('input', filter); level.addEventListener('change', filter);
+    const navigate = async mode => {
+      if (busy) return;
+      busy = true; error.hidden = true; updateNavigation();
+      const url = new URL(location.href);
+      url.search = '';
+      url.searchParams.set('relay_log', 'page');
+      url.searchParams.set('mode', mode);
+      url.searchParams.set('order', ['oldest', 'newest'].includes(mode) ? mode : page.order);
+      if (['older', 'newer'].includes(mode)) {
+        url.searchParams.set('at', mode === 'older' ? page.start : page.end);
+        url.searchParams.set('source', page.source);
+      }
+      try {
+        const response = await fetch(url, {credentials: 'same-origin', redirect: 'error', headers: {'Accept': 'application/json'}});
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || 'Could not load relay history. Try again.');
+        events.innerHTML = result.html;
+        page = result.page;
+        report.dataset.logPage = JSON.stringify(page);
+        events.scrollTop = 0;
+        filter();
+      } catch (failure) {
+        error.textContent = failure instanceof TypeError || failure instanceof SyntaxError ? 'Could not load relay history. Your current page and filters are still here; try again.' : failure.message;
+        error.hidden = false;
+      } finally {
+        busy = false; updateNavigation();
+      }
+    };
+    for (const button of buttons) button.addEventListener('click', () => navigate(button.dataset.logNav));
+    search.addEventListener('input', filter); level.addEventListener('choicechange', filter);
+    navigation.hidden = false;
+    updateNavigation(); filter();
   }
   document.querySelector('[data-group-search]')?.addEventListener('input', event => {
     const words = event.target.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);

@@ -16,11 +16,13 @@ $post = ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST';
 $action = $post ? (string)($_POST['action'] ?? '') : '';
 $inlineSave = $post && $action === 'group_visibility'
     && str_contains(strtolower($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json');
-if ($inlineSave) ini_set('display_errors', '0'); // Keep save failures valid JSON; PHP still logs them.
+$logRequest = !$post && isset($_GET['relay_log']);
+if ($inlineSave || $logRequest) ini_set('display_errors', '0'); // Keep API failures valid JSON; PHP still logs them.
 function slip_admin_json(array $data, int $status = 200): void
 {
     http_response_code($status);
     header('Content-Type: application/json');
+    header('X-Content-Type-Options: nosniff');
     echo json_encode($data, JSON_UNESCAPED_SLASHES);
     exit;
 }
@@ -44,7 +46,7 @@ $form = fn() => '<input type="hidden" name="csrf" value="' . h($GLOBALS['csrf'])
 
 // ── First-run setup ────────────────────────────────────────────────────────
 if (!slip_station_ready()) {
-    if ($inlineSave) slip_admin_json(['ok' => false, 'error' => 'This station has not been set up.'], 503);
+    if ($inlineSave || $logRequest) slip_admin_json(['ok' => false, 'error' => 'This station has not been set up.'], 503);
     $err = null;
     if ($action === 'setup') {
         $org = trim((string)($_POST['org'] ?? ''));
@@ -105,7 +107,7 @@ unset($_SESSION['admin']); // Password-only sessions cannot authorize the new co
 if (!$admin || empty($admin['admin'])) {
     slip_token_revoke($_SESSION['admin_token'] ?? null);
     unset($_SESSION['admin_token']);
-    if ($inlineSave) slip_admin_json(['ok' => false, 'error' => 'Your station admin sign-in has ended. Sign in again before retrying.'], 401);
+    if ($inlineSave || $logRequest) slip_admin_json(['ok' => false, 'error' => 'Your station admin sign-in has ended. Sign in again before retrying.'], 401);
     $err = null;
     if ($action === 'login') {
         if (!slip_rate_ok('adminlogin', 8)) {
@@ -140,6 +142,36 @@ if (!$admin || empty($admin['admin'])) {
 }
 
 require_once __DIR__ . '/components.php';
+
+// Log files stay outside the web root; both history and exports require the
+// same freshly revalidated administrator role as every console action.
+if ($logRequest) {
+    session_write_close(); // A large download must not block other admin requests.
+    try {
+        if ($_GET['relay_log'] === 'download') {
+            slip_relay_log_export();
+            exit;
+        }
+        if ($_GET['relay_log'] !== 'page') throw new InvalidArgumentException('Choose a valid log action.');
+        $mode = $_GET['mode'] ?? 'newest';
+        $source = $_GET['source'] ?? null;
+        $order = $_GET['order'] ?? ($mode === 'oldest' ? 'oldest' : 'newest');
+        $at = isset($_GET['at']) ? filter_var($_GET['at'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]) : null;
+        if (!is_string($mode) || ($source !== null && !is_string($source)) || $at === false
+            || !is_string($order) || !in_array($order, ['oldest', 'newest'], true)) throw new InvalidArgumentException('Choose a valid log page.');
+        $page = slip_relay_log_page($mode, $at, $source);
+        $entries = slip_log_entries($page['text']);
+        if ($order === 'oldest') $entries = array_reverse($entries);
+        ob_start(); slip_relay_events($entries); $html = ob_get_clean();
+        unset($page['text']);
+        slip_admin_json(['ok' => true, 'page' => $page + ['order' => $order], 'html' => $html]);
+    } catch (InvalidArgumentException $e) { slip_admin_json(['ok' => false, 'error' => $e->getMessage()], 400); }
+    catch (DomainException $e) { slip_admin_json(['ok' => false, 'error' => $e->getMessage()], 409); }
+    catch (Throwable $e) {
+        error_log('relay history: ' . $e->getMessage());
+        slip_admin_json(['ok' => false, 'error' => 'Could not read the relay log. Please try again.'], 500);
+    }
+}
 
 // ── Actions ────────────────────────────────────────────────────────────────
 switch ($action) {
@@ -464,11 +496,10 @@ slip_page_start('Station admin', '../', 'admin-console');
     <?php endforeach ?>
   </table></div>
 
-  <?php $log = slip_relay_log_tail(); if ($log !== ''): ?>
-  <h2 class="violet">Relay log (latest)</h2>
+  <?php $logPage = slip_relay_log_page(); ?>
+  <h2 class="violet">Relay log</h2>
   <p class="dim">Connection records show the device when known, peer address, duration, transport byte counts and observed close reason. Client stream endings are INFO; rejected connections and transport failures are WARN. Process events identify starts, stops and restart requests. Timestamps are UTC.</p>
-  <?php slip_relay_report($log) ?>
-  <?php endif ?>
+  <?php slip_relay_report($logPage) ?>
 
 <?php elseif ($tab === 'devices'):
     $devices = slip_store()->all();
@@ -527,11 +558,11 @@ slip_page_start('Station admin', '../', 'admin-console');
     <div class="device-list-toolbar" data-device-controls hidden>
       <label class="search-control"><span class="k">Find a device</span><input type="search" data-device-search placeholder="Name, group, ID or serial…" autocomplete="off"></label>
       <div class="device-sort-control"><span class="k" id="device-sort-label">Sort by</span>
-        <details class="device-sort-menu" data-device-sort data-value="recent">
-          <summary aria-labelledby="device-sort-label device-sort-current" aria-haspopup="menu" aria-controls="device-sort-options" aria-expanded="false"><span id="device-sort-current" data-device-sort-label>Last seen</span><span class="picker-chevron" aria-hidden="true"></span></summary>
-          <div class="device-sort-options" id="device-sort-options" role="menu" aria-labelledby="device-sort-label">
+        <details class="device-sort-menu choice-menu" data-choice-menu data-device-sort data-value="recent">
+          <summary aria-labelledby="device-sort-label device-sort-current" aria-haspopup="menu" aria-controls="device-sort-options" aria-expanded="false"><span id="device-sort-current" data-device-sort-label data-choice-label>Last seen</span><span class="picker-chevron" aria-hidden="true"></span></summary>
+          <div class="device-sort-options choice-options" id="device-sort-options" role="menu" aria-labelledby="device-sort-label">
             <?php foreach (['recent' => 'Last seen', 'group' => 'Group name', 'name' => 'Device name', 'id' => 'Device ID', 'system' => 'System'] + ($private ? ['hardware' => 'Hardware'] : []) as $key => $label): ?>
-              <button type="button" role="menuitemradio" aria-checked="<?= $key === 'recent' ? 'true' : 'false' ?>" tabindex="<?= $key === 'recent' ? '0' : '-1' ?>" data-device-sort-option="<?= h($key) ?>"><span data-sort-option-label><?= h($label) ?></span><span class="sort-choice-mark" aria-hidden="true">✓</span></button>
+              <button type="button" role="menuitemradio" aria-checked="<?= $key === 'recent' ? 'true' : 'false' ?>" tabindex="<?= $key === 'recent' ? '0' : '-1' ?>" data-device-sort-option="<?= h($key) ?>" data-choice-option="<?= h($key) ?>"><span data-sort-option-label data-choice-option-label><?= h($label) ?></span><span class="sort-choice-mark" aria-hidden="true">✓</span></button>
             <?php endforeach ?>
           </div>
         </details>

@@ -2,6 +2,7 @@
 """Check named station admins, migration and revocation on an isolated PHP site."""
 import argparse
 import contextlib
+import hashlib
 import http.cookiejar
 import json
 import os
@@ -66,6 +67,114 @@ class Browser:
             assert result['ok'] == (status == 200)
             return result
 
+    def relay_log(self, action='page', status=200, **query):
+        request = urllib.request.Request(self.address + '/admin/?' + urllib.parse.urlencode({'relay_log': action, **query}), headers={'Accept': 'application/json'})
+        try:
+            response = self.opener.open(request, timeout=10)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            assert response.status == status, (response.status, status)
+            if action == 'download' and status == 200:
+                assert response.headers.get_content_type() == 'text/plain'
+                assert re.fullmatch(r'attachment; filename="slipstream-relay-[0-9-]+\.txt"', response.headers['Content-Disposition'])
+                return response.read()
+            assert response.headers.get_content_type() == 'application/json'
+            assert 'Content-Disposition' not in response.headers
+            result = json.load(response)
+            assert result['ok'] == (status == 200)
+            return result
+
+
+def verify_relay_history(admin, ordinary, data, web, php):
+    """Exercise retained history, cursors, authorization and bounded streaming."""
+    path = data / 'relay.log'
+    original = path.read_bytes() if path.exists() else None
+    try:
+        raw = (b'2026-01-01T00:00:00Z INFO relay: EARLIEST-EVENT\n'
+               + (b'2026-06-01T00:00:00Z INFO relay: retained event\n' * 6000)
+               + '2026-10-29T00:00:00Z WARN relay: LATEST-EVENT café <img data-history-xss>\n'.encode())
+        path.write_bytes(raw)
+        for browser in [ordinary, Browser(admin.address)]:
+            for action in ['page', 'download']:
+                browser.relay_log(action, status=401)
+        latest = admin.relay_log()['page']
+        assert latest['size'] == len(raw) and latest['end'] == len(raw) and latest['start'] > 8192
+        result = admin.relay_log(mode='oldest', order='oldest')
+        assert 'EARLIEST-EVENT' in result['html'] and result['page']['start'] == 0
+        assert 'data-history-xss' not in result['html']
+        for direction, page, end in [('older', latest, 0), ('newer', result['page'], len(raw))]:
+            for _ in range(20):
+                at = page['start'] if direction == 'older' else page['end']
+                if at == end:
+                    break
+                following = admin.relay_log(mode=direction, at=at, source=page['source'])['page']
+                assert 0 < following['end'] - following['start'] <= 65536
+                assert following['end' if direction == 'older' else 'start'] == at, 'History page skipped bytes'
+                page = following
+            else:
+                raise AssertionError('History navigation did not reach its boundary')
+        result = admin.relay_log()
+        assert '&lt;img data-history-xss&gt;' in result['html'] and 'café' in result['html']
+        for query in [{'mode': 'invalid'}, {'at': -1}, {'at': '999999999999999999999'}, {'mode[]': 'oldest'}, {'source[]': 'a'}, {'order': 'bad'}, {'at[]': '1'}]:
+            admin.relay_log(status=400, **query)
+        with path.open('ab') as stream:
+            stream.write(b'Appended event\n')
+        admin.relay_log(mode='older', at=latest['start'], source=latest['source'])
+        replacement = path.with_suffix('.replacement')
+        replacement.write_bytes(raw)
+        replacement.replace(path)
+        admin.relay_log(status=409, mode='older', at=latest['start'], source=latest['source'])
+        path.write_bytes(b'Shortened log\n')
+        admin.relay_log(status=409, mode='older', at=latest['start'], source=admin.relay_log()['page']['source'])
+        # An individual line larger than a page, including a split UTF-8 codepoint.
+        giant = b'A' * 65535 + 'é'.encode() + b'B' * 70000 + b'\nLAST\n'
+        path.write_bytes(giant)
+        page = admin.relay_log(mode='oldest')['page']
+        assert page['continued'] and page['end'] == 65536
+        seen = page['end']
+        while seen < len(giant):
+            next_page = admin.relay_log(mode='newer', at=seen, source=page['source'])['page']
+            assert next_page['start'] == seen and next_page['end'] > seen
+            page = next_page
+            seen = page['end']
+        # ANSI escapes straddling streaming chunk boundaries must not leak.
+        colored = b'A' * 65534 + b'\x1b[31mRED\x1b[0m\n' + b'\x00\x07' + 'café\n'.encode()
+        path.write_bytes(colored)
+        exported = admin.relay_log('download')
+        assert hashlib.sha256(exported).digest() == hashlib.sha256(b'A' * 65534 + b'RED\ncaf\xc3\xa9\n').digest()
+        path.write_bytes(raw)
+        assert hashlib.sha256(admin.relay_log('download')).digest() == hashlib.sha256(raw).digest(), 'Export lost retained history'
+        path.unlink()
+        admin.relay_log(status=409, mode='older', at=latest['start'], source=latest['source'])
+        assert not admin.relay_log()['page']['available']
+        path.touch()
+        assert admin.relay_log()['page']['size'] == 0
+        assert admin.relay_log('download') == b''
+        # Stream 24 MiB with an 8 MiB PHP limit, hashing rather than buffering it.
+        block = b'2026-01-01T00:00:00Z INFO relay: bounded export\n' * 20000
+        expected = hashlib.sha256()
+        with path.open('wb') as stream:
+            for _ in range(28):
+                stream.write(block)
+                expected.update(block)
+        process = subprocess.Popen([php, '-d', 'memory_limit=8M', '-r',
+            'require $argv[1]; slip_relay_log_export();', str(web / 'lib/slipstream.php')], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        actual = hashlib.sha256()
+        for chunk in iter(lambda: process.stdout.read(65536), b''):
+            actual.update(chunk)
+        errors = process.stderr.read(4096)
+        assert process.wait(timeout=10) == 0, errors.decode(errors='replace')
+        assert actual.digest() == expected.digest(), 'Streaming export was incomplete'
+        print('Relay history: full forward/backward paging, auth, validation, rotation/truncation, long/UTF-8 lines, escaped HTML and bounded 24 MiB text export passed', flush=True)
+    finally:
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(original)
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -123,6 +232,7 @@ def main():
                 assert not ordinary.authorized()
                 ordinary.request(action='tech_admin', username='ordinary', admin='1')
                 assert not json.loads((data / 'accounts/ordinary.json').read_text())['admin'], 'Unauthorized POST changed permissions'
+                verify_relay_history(admin, ordinary, data, web, php)
                 admin.request(action='station_group_create', group='Done one', status=302)
                 admin.request(action='station_group_create', group='Done two', status=302)
                 admin.save_visibility(owner='', group='Done one', **{'usernames[]': ['ordinary']})
@@ -153,6 +263,8 @@ def main():
                 ordinary.login(' ORDINARY ', 'ordinary-password')
                 assert ordinary.authorized(), 'Promoted technician could not use the console'
                 admin.request(action='tech_admin', username='ordinary', admin='', status=302)
+                ordinary.relay_log(status=401)
+                ordinary.relay_log('download', status=401)
                 assert not ordinary.authorized(), 'Demotion left an authorized browser session'
                 admin.request(action='tech_admin', username='ordinary', admin='1', status=302)
                 ordinary.login('ordinary', 'ordinary-password')
@@ -163,6 +275,8 @@ def main():
                 assert not ordinary.authorized(), 'Password reset left an authorized browser session'
                 ordinary.login('ordinary', 'replacement-password')
                 admin.request(action='tech_delete', username='ordinary', status=302)
+                ordinary.relay_log(status=401)
+                ordinary.relay_log('download', status=401)
                 assert not ordinary.authorized(), 'Deleted technician retained web access'
                 admin.request(action='logout', status=302)
                 assert not admin.authorized()
@@ -204,7 +318,9 @@ slip_inventory_save($endpoint,slip_clean_inventory(json_decode(stream_get_conten
 echo $id;
 """, json.dumps(inventory))
                     (data / 'relay.log').write_text(
-                        '2026-10-29T12:34:56.000Z INFO slipstream_relay: Relay client connected event="relay_client_connected" device_name="CUSTOM-PC" device_id=' + device_id + ' peer="192.0.2.42" endpoint=' + 'a' * 64 + '\n'
+                        '2026-01-01T00:00:00Z INFO slipstream_relay: EARLIEST-EVENT\n'
+                        + '2026-06-01T00:00:00Z INFO slipstream_relay: Retained history event\n' * 4000
+                        + '2026-10-29T12:34:56.000Z INFO slipstream_relay: Relay client connected event="relay_client_connected" device_name="CUSTOM-PC" device_id=' + device_id + ' peer="192.0.2.42" endpoint=' + 'a' * 64 + '\n'
                         + '2026-10-29T12:35:56.000Z WARN slipstream_relay: Transport failed event="relay_transport_failed" reason="' + 'long_reason_' * 100 + '"\n'
                         + '2026-10-29T12:36:56.000Z INFO slipstream_relay: Relay client disconnected event="relay_client_disconnected" duration_ms=60000 bytes_from_client=2048 bytes_to_client=4096 device_name="<img data-xss-fixture>"\n')
                     subprocess.run(['node', str(root / 'scripts/test-station-layout.mjs'), address, device_id], check=True)

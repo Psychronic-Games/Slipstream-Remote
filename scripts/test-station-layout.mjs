@@ -77,8 +77,8 @@ for (const width of widths) {
       await waitFor(`location.href === ${JSON.stringify(url)} && !!document.querySelector(${JSON.stringify(selector)}) && document.readyState === 'complete'`);
       await evaluate('document.fonts.ready');
     };
-    const screenshot = async name => {
-      const result = await call('Page.captureScreenshot', {format: 'png', captureBeyondViewport: true});
+    const screenshot = async (name, captureBeyondViewport = true) => {
+      const result = await call('Page.captureScreenshot', {format: 'png', captureBeyondViewport});
       await writeFile(join(evidence, `${width}-${name}.png`), Buffer.from(result.data, 'base64'));
     };
     const checkLayout = async name => {
@@ -113,16 +113,61 @@ for (const width of widths) {
     };
     const groupForm = (action, group = 'Engineering', owner = '') => `[...document.querySelectorAll('form')].find(f=>f.querySelector('input[name=action]')?.value===${JSON.stringify(action)} && f.querySelector('input[name=owner]')?.value===${JSON.stringify(owner)} && f.querySelector('input[name=group]')?.value===${JSON.stringify(group)})`;
 
+    const keypress = async (key, code = key, virtualKey = 0) => {
+      await call('Input.dispatchKeyEvent', {type:'keyDown', key, code, windowsVirtualKeyCode:virtualKey, ...(key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})});
+      await call('Input.dispatchKeyEvent', {type:'keyUp', key, code, windowsVirtualKeyCode:virtualKey});
+    };
+
     // Four page cases per viewport; each batch owns and closes its browser.
     await navigate('status', '[data-relay-report]');
     assert(await evaluate(`!![...document.querySelectorAll('[data-log-event]')].find(e=>e.textContent.includes('CUSTOM-PC'))`));
     assert(await evaluate(`!document.querySelector('img[data-xss-fixture]')`), 'Log markup was not escaped');
-    await evaluate(`(() => { const level=document.querySelector('[data-log-level]'); level.value='attention'; level.dispatchEvent(new Event('change')); })()`);
+    await evaluate(`(() => { const trigger=document.querySelector('[data-log-level] > summary'); trigger.scrollIntoView({block:'center'}); trigger.click(); })()`);
+    await waitFor(`document.querySelector('[data-log-level]').open && document.querySelector('[data-log-level] > summary').getAttribute('aria-expanded')==='true'`);
+    assert(await evaluate(`(() => {const menu=document.querySelector('[data-log-level] .choice-options'),r=menu.getBoundingClientRect(),trigger=document.querySelector('[data-log-level] > summary'),style=getComputedStyle(trigger);return r.width>0 && r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && style.paddingTop===style.paddingBottom && !document.querySelector('select[data-log-level]');})()`), 'Show menu is unthemed or clipped');
+    await screenshot('relay-show-menu', false);
+    await evaluate(`document.querySelector('[data-log-level] > summary').focus()`);
+    await keypress('ArrowDown','ArrowDown',40);
+    await keypress('ArrowDown','ArrowDown',40);
+    await keypress('Enter','Enter',13);
+    await waitFor(`!document.querySelector('[data-log-level]').open && document.querySelector('[data-log-level]').dataset.value==='attention'`);
     assert(await evaluate(`[...document.querySelectorAll('[data-log-event]:not([hidden])')].every(e=>['WARN','ERROR'].includes(e.dataset.level))`));
-    await evaluate(`(() => { const level=document.querySelector('[data-log-level]'); level.value=''; level.dispatchEvent(new Event('change')); const search=document.querySelector('[data-log-search]'); search.value='CUSTOM-PC'; search.dispatchEvent(new Event('input')); })()`);
+    await evaluate(`(() => { document.querySelector('[data-log-level] [data-choice-option=""]').click(); const search=document.querySelector('[data-log-search]'); search.value='CUSTOM-PC'; search.dispatchEvent(new Event('input')); })()`);
     assert(await evaluate(`document.querySelectorAll('[data-log-event]:not([hidden])').length===1`), 'Log search did not filter events');
     await evaluate(`(() => { const search=document.querySelector('[data-log-search]'); search.value=''; search.dispatchEvent(new Event('input')); for(const d of document.querySelectorAll('.event-details')) d.open=true; })()`);
     await checkLayout('relay-log');
+    const logPage = () => evaluate(`JSON.parse(document.querySelector('[data-relay-report]').dataset.logPage)`);
+    const pageLog = async mode => {
+      await evaluate(`document.querySelector('[data-log-nav="${mode}"]').click()`);
+      await waitFor(`document.querySelector('[data-relay-report]').getAttribute('aria-busy')==='false'`);
+      assert(await evaluate(`document.querySelector('[data-log-error]').hidden`), 'History request failed');
+      return logPage();
+    };
+    const latest = await logPage();
+    assert(latest.start > 0 && latest.end === latest.size, 'Initial report did not load a bounded latest page');
+    assert(await evaluate(`document.querySelector('[data-log-nav=newer]').disabled && !document.querySelector('[data-log-nav=older]').disabled`));
+    const oldest = await pageLog('oldest');
+    assert(oldest.start === 0 && oldest.order === 'oldest');
+    assert(await evaluate(`document.querySelector('[data-log-event]').textContent.includes('EARLIEST-EVENT') && document.querySelector('[data-log-nav=older]').disabled`), 'Oldest did not show the beginning of history first');
+    const second = await pageLog('newer');
+    assert(second.start === oldest.end && second.order === 'oldest', 'Newer skipped history');
+    const previous = await pageLog('older');
+    assert(previous.end === second.start && previous.order === 'oldest', 'Older skipped history');
+    await pageLog('newest');
+    // Failure keeps the displayed events and all filters, then permits retry.
+    await evaluate(`(() => {const search=document.querySelector('[data-log-search]');search.value='CUSTOM-PC';search.dispatchEvent(new Event('input'));window.originalLogFetch=window.fetch;window.fetch=()=>Promise.reject(new TypeError('Simulated history failure'));document.querySelector('[data-log-nav=older]').click();})()`);
+    await waitFor(`!document.querySelector('[data-log-error]').hidden && document.querySelector('[data-relay-report]').getAttribute('aria-busy')==='false'`);
+    assert((await logPage()).start === latest.start);
+    assert(await evaluate(`document.querySelector('[data-log-search]').value==='CUSTOM-PC' && document.querySelectorAll('[data-log-event]:not([hidden])').length===1`), 'Failed paging lost the page or filter');
+    await evaluate(`window.fetch=window.originalLogFetch;delete window.originalLogFetch`);
+    await pageLog('oldest');
+    assert(await evaluate(`document.querySelector('[data-log-search]').value==='CUSTOM-PC' && !document.querySelector('[data-log-empty]').hidden`), 'Paging did not preserve the page-local search');
+    const download = await evaluate(`(async () => {const response=await fetch(document.querySelector('[data-log-download]').href);const text=await response.text();return {ok:response.ok,type:response.headers.get('Content-Type'),attachment:response.headers.get('Content-Disposition'),first:text.startsWith('2026-01-01T00:00:00Z INFO slipstream_relay: EARLIEST-EVENT'),last:text.includes('CUSTOM-PC'),size:text.length};})()`);
+    assert(download.ok && download.type.startsWith('text/plain') && download.attachment.endsWith('.txt"') && download.first && download.last && download.size>65536, 'Full text export did not include the whole retained log');
+    await evaluate(`(() => {const search=document.querySelector('[data-log-search]');search.value='';search.dispatchEvent(new Event('input'));})()`);
+    await pageLog('newest');
+    await checkLayout('relay-log-history');
+
 
     await navigate('groups', '.group-access');
     await evaluate(`(() => { const search=document.querySelector('[data-group-search]'); search.value='not-a-real-group'; search.dispatchEvent(new Event('input')); })()`);
@@ -203,10 +248,7 @@ for (const width of widths) {
     assert(await evaluate(`[...document.querySelectorAll('[data-device-row]')].every(row=>row.checkVisibility())`), 'A device row disappeared at a narrow width');
     assert(!await evaluate(`!!document.querySelector('img[data-device-xss]')`), 'Device search metadata was not escaped');
     assert(allDevices.every((row,index)=>!index || row.seen<=allDevices[index-1].seen), 'Default order is not newest first');
-    const keypress = async (key, code = key, virtualKey = 0) => {
-      await call('Input.dispatchKeyEvent', {type:'keyDown', key, code, windowsVirtualKeyCode:virtualKey, ...(key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})});
-      await call('Input.dispatchKeyEvent', {type:'keyUp', key, code, windowsVirtualKeyCode:virtualKey});
-    };
+
     await evaluate(`document.querySelector('[data-device-sort] > summary').click()`);
     await waitFor(`document.querySelector('[data-device-sort]').open && document.querySelector('[data-device-sort] > summary').getAttribute('aria-expanded')==='true'`);
     assert(await evaluate(`(() => {const menu=document.querySelector('.device-sort-options');const r=menu.getBoundingClientRect();const trigger=document.querySelector('[data-device-sort] > summary');const t=trigger.getBoundingClientRect(),text=trigger.querySelector('[data-device-sort-label]').getBoundingClientRect(),style=getComputedStyle(trigger);return r.width>0 && r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && style.paddingTop===style.paddingBottom && Math.abs((text.top+text.bottom-t.top-t.bottom)/2)<1 && Math.abs(t.height-document.querySelector('[data-device-search]').getBoundingClientRect().height)<1 && !document.querySelector('select[data-device-sort]');})()`), 'Sort menu is unthemed, unevenly padded or outside the viewport');
@@ -358,7 +400,7 @@ for (const width of widths) {
     await checkLayout('devices');
     await navigate(`devices&device=${device}`, '.system-report');
     await checkLayout('report');
-    console.log(`Station ${width}px: LCARS device table, keyboard sort menu/header synchronization, search/natural sorting, wrapped logs, Done-to-save visibility/retry, notes/checkboxes, searchable assignment and responsive layouts passed`);
+    console.log(`Station ${width}px: LCARS device table, keyboard sort menu/header synchronization, search/natural sorting, full relay history/export, themed Show menu/retry, Done-to-save visibility/retry, notes/checkboxes, searchable assignment and responsive layouts passed`);
 
   } finally {
     if (socket?.readyState === WebSocket.OPEN) {

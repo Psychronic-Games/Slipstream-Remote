@@ -1603,4 +1603,5 @@ function slip_page_end(): void
 }
 
 require_once __DIR__ . '/groups.php';
+require_once __DIR__ . '/relay-history.php';
 require_once __DIR__ . '/update.php';

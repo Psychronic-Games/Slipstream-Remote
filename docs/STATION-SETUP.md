@@ -212,7 +212,17 @@ while independently saved personal entries and passwords remain intact. The
 same tab creates and renames station groups and searches the group list.
 
 The Status page's relay activity report has search and severity filters, wrapped
-event rows and expandable technical details. It records connections and failures rather than only
+event rows and expandable technical details. **Oldest** jumps to the beginning
+of the retained log in chronological order; **Newest** refreshes the latest
+activity with newest events first. **Older** and **Newer** browse bounded pages
+without loading the entire history into the browser. Search and the themed
+**Show** menu filter the current page. **Download full log (.txt)** exports all
+retained history, oldest first, regardless of the page or filters; it requires
+an active station administrator sign-in. The download streams from the private
+`relay.log` file and strips terminal color codes. History predating a deleted
+or replaced log cannot be recovered by the report.
+
+It records connections and failures rather than only
 upstream actor messages. Connection records include a connection ID, endpoint,
 peer address, duration and transport bytes received/sent. Private stations using
 the file registry also resolve the workstation ID and station alias (falling

@@ -262,20 +262,20 @@ header h1 { font-size: 24px; } footer span { display: none; } }
 .device-list-toolbar .search-control input { height: 46px; padding: 0 14px; border: 1px solid #526783; border-left: 7px solid var(--blue); border-radius: 0 23px 23px 0; line-height: 1; }
 .device-list-toolbar > button { display: flex; align-items: center; justify-content: center; min-height: 46px; padding: 0 18px; line-height: 1; }
 .device-list-toolbar > p { display: flex; align-items: center; align-self: end; min-height: 46px; margin: 0; padding: 0 16px; background: #251d35; color: var(--lav); border-radius: 0 23px 23px 0; font: 14px/1 var(--mono); }
-.device-sort-menu { margin: 0; }
-.device-sort-menu > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 46px; padding: 0 16px; background: var(--lav); color: #080812; border-left: 8px solid var(--violet); border-radius: 0 23px 23px 0; cursor: pointer; list-style: none; font: 600 17px/1 "Barlow Semi Condensed", system-ui, sans-serif; }
-.device-sort-menu > summary::-webkit-details-marker { display: none; }
-.device-sort-menu > summary::marker { content: ''; }
-.device-sort-menu:not([open]) > .device-sort-options { display: none; }
-.device-sort-menu > summary .picker-chevron { border-color: currentColor; flex: 0 0 auto; }
-.device-sort-menu[open] > summary .picker-chevron { transform: rotate(225deg); }
-.device-sort-options { position: fixed; z-index: 120; box-sizing: border-box; padding: 9px; background: #050812; border: 1px solid #6e527e; border-top: 7px solid var(--violet); border-radius: 14px 0 16px 0; box-shadow: 0 16px 44px #000b; overflow-y: auto; scrollbar-color: var(--lav) #080e19; }
-.device-sort-options > button { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%; min-height: 42px; margin: 3px 0; padding: 9px 13px; border-left: 5px solid var(--violet); border-radius: 0 18px 18px 0; background: #151c30; color: var(--tan); text-align: left; font: 600 17px/1.25 "Barlow Semi Condensed", system-ui, sans-serif; letter-spacing: .02em; }
-.device-sort-options > button[aria-checked=true] { background: var(--lav); color: #080812; }
-.device-sort-options > button:hover, .device-sort-options > button:focus-visible { background: var(--blue); color: #080812; filter: none; box-shadow: none; outline: none; }
-.device-sort-options .sort-choice-mark { visibility: hidden; }
-.device-sort-options [aria-checked=true] .sort-choice-mark { visibility: visible; }
-.device-sort-menu > summary:focus-visible, .devices-table [data-device-column-sort]:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+.choice-menu { margin: 0; }
+.choice-menu > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 46px; padding: 0 16px; background: var(--lav); color: #080812; border-left: 8px solid var(--violet); border-radius: 0 23px 23px 0; cursor: pointer; list-style: none; font: 600 17px/1 "Barlow Semi Condensed", system-ui, sans-serif; }
+.choice-menu > summary::-webkit-details-marker { display: none; }
+.choice-menu > summary::marker { content: ''; }
+.choice-menu:not([open]) > .choice-options { display: none; }
+.choice-menu > summary .picker-chevron { border-color: currentColor; flex: 0 0 auto; }
+.choice-menu[open] > summary .picker-chevron { transform: rotate(225deg); }
+.choice-options { position: fixed; z-index: 120; box-sizing: border-box; padding: 9px; background: #050812; border: 1px solid #6e527e; border-top: 7px solid var(--violet); border-radius: 14px 0 16px 0; box-shadow: 0 16px 44px #000b; overflow-y: auto; scrollbar-color: var(--lav) #080e19; }
+.choice-options > button { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%; min-height: 42px; margin: 3px 0; padding: 9px 13px; border-left: 5px solid var(--violet); border-radius: 0 18px 18px 0; background: #151c30; color: var(--tan); text-align: left; font: 600 17px/1.25 "Barlow Semi Condensed", system-ui, sans-serif; letter-spacing: .02em; }
+.choice-options > button[aria-checked=true] { background: var(--lav); color: #080812; }
+.choice-options > button:hover, .choice-options > button:focus-visible { background: var(--blue); color: #080812; filter: none; box-shadow: none; outline: none; }
+.choice-options .sort-choice-mark { visibility: hidden; }
+.choice-options [aria-checked=true] .sort-choice-mark { visibility: visible; }
+.choice-menu > summary:focus-visible, .devices-table [data-device-column-sort]:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 .devices-table { border-collapse: separate; border-spacing: 4px 7px; }
 .devices-table thead th { --header-fill: var(--lav); background: var(--header-fill); color: #080812; border: 0; padding: 0; vertical-align: middle; border-radius: 3px; }
 .devices-table th.device-status-heading { width: 44px; --header-fill: var(--orange); border-radius: 24px 0 0 3px; }
@@ -323,7 +323,14 @@ header h1 { font-size: 24px; } footer span { display: none; } }
 .report-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 14px 24px; margin-bottom: 18px; }
 .report-toolbar label { margin: 0; }
 .report-toolbar label > span { display: block; margin-bottom: 5px; }
-.report-toolbar select { width: 180px; }
+.report-toolbar .search-control { flex: 1 1 300px; min-width: 0; }
+.report-toolbar .search-control input { width: 100%; min-width: 0; }
+.report-toolbar .log-level-control { flex: 0 1 220px; width: 220px; max-width: 100%; }
+.report-toolbar .log-export { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; margin: 0; }
+.log-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px 0; border-block: 1px solid #263148; }
+.log-navigation button { margin: 0; }
+.log-navigation [data-log-page-label] { flex: 1 1 260px; padding-left: 8px; font-size: 15px; }
+[data-log-error], [data-log-continued] { overflow-wrap: anywhere; }
 .relay-events { max-height: 720px; overflow-y: auto; scrollbar-color: var(--violet) #080e19; }
 .relay-event { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 14px; padding: 16px 4px; border-top: 1px solid #1c263b; }
 .event-meta { display: flex; flex-direction: column; align-items: start; gap: 7px; font: 14px var(--mono); color: var(--dim); }
