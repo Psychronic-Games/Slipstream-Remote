@@ -664,6 +664,8 @@ fn service_main(_args: Vec<OsString>) {
 }
 
 fn run_service() -> Result<()> {
+    // A technician's Safe Mode restart applies once.
+    slipstream_session::power::windows::leave_safe_mode_next_time();
     let (stop_tx, stop_rx) = std::sync::mpsc::channel();
     let handler = move |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {

@@ -377,7 +377,7 @@ pub async fn save(id: &str, station: &str, options: SaveOptions) -> Result<()> {
                 .context("station account no longer available")?;
             let existing = if shared { &account.shared } else { &account.devices };
             let group = group.unwrap_or_else(|| existing.iter().find(|d| d.id == id).map(|d| d.group.clone()).unwrap_or_default());
-            let device = slipstream_core::account::SavedDevice { id, name, notes, group, secret: None, added_by: None };
+            let device = slipstream_core::account::SavedDevice { id, name, notes, group, secret: None, added_by: None, management: None };
             client.save_device(&r, device, password, shared).await?;
             println!("saved {id}");
         }

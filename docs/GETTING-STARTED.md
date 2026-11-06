@@ -476,6 +476,48 @@ session in place: no new password and no reconnection, and the messages carry
 on in the session's chat panel. **Reconnect** reopens a closed chat; **End**
 closes it. Chats aren't saved: closing a tab or the app discards them.
 
+### Remote management: restarts, waking, BIOS-level access
+
+**Manage** beside a saved device restarts and wakes it, and reaches its
+management controller. That's the separate small computer on servers and
+business PCs (Supermicro IPMI/Redfish, Dell iDRAC, HPE iLO, Intel vPro) that
+works while the system is off, in the BIOS, or when the operating system
+won't start. Set it up under **Edit → Remote management**:
+
+- **Gateway:** another of your saved Slipstream computers on the *same
+  network* that stays on, such as a server, an always-on PC or a small box
+  running `slipstream host`. It needs its password saved in your list and
+  **Port forwarding** allowed. For waking it also needs **Control**,
+  **Network scan** and **Wake-on-LAN** allowed (its Config → Permissions).
+- **Wake MAC:** the device's network adapter address, for Wake-on-LAN (its
+  BIOS and adapter must have wake enabled). System information or a network
+  scan from the gateway shows it.
+- **Controller:** its kind, its address as seen from the gateway (e.g.
+  `10.0.0.20`, or `https://10.0.0.20:8443`), username and password. The
+  password is encrypted like saved device passwords.
+
+The Manage menu then offers:
+
+- **Restart**, **Restart in Safe Mode with Networking** and **Restart into
+  BIOS setup** (the device must be online, with its password saved and
+  Control allowed). Safe Mode needs the Slipstream service on Windows; it
+  applies once, and the next restart is normal. BIOS setup needs a UEFI
+  computer, and you only see it through a management controller.
+- **Wake (Wake-on-LAN)**, sent from the gateway's network adapters.
+- **Open management console:** the controller's own web page opens in your
+  browser, through the gateway, with its remote console (KVM) for the BIOS,
+  boot screens and a system that won't start. Its certificate is
+  self-signed, so allow it in the browser. The console stays reachable until
+  **Close management console** (Manage shows ◆ while it's open). **Copy
+  controller password** helps with its sign-in page.
+- **Power on**, **Shut down**, **Restart**, **Power cycle** and **Force power
+  off** for Redfish controllers, sent through the gateway.
+
+Controllers never need to be exposed to the internet: their traffic crosses it
+only inside the gateway's encrypted Slipstream link. In a session, **Tools**
+also offers the three restarts; the tab then waits up to ten minutes for the
+computer to come back and reconnects.
+
 From the command line: `slipstream sign-in relay.example.com jsmith`,
 `slipstream saved`, `slipstream save 482913077 --station relay.example.com
 --name "Front desk" --password …` and `slipstream connect 482913077

@@ -24,6 +24,7 @@ mod support_report;
 mod support_status;
 mod saved;
 mod chats;
+mod manage;
 #[cfg(windows)]
 mod scheme;
 #[cfg(windows)]
@@ -438,6 +439,7 @@ pub struct App {
     /// Station sign-ins and saved devices.
     saved: saved::Saved,
     chats: chats::Chats,
+    manage: manage::Manage,
     pub link_code: String,
     /// Asking for a recent link's password (Bridge → Recent links).
     pub recent_prompt: Option<home::RecentPrompt>,
@@ -540,6 +542,7 @@ impl App {
             link_open: false,
             saved: saved::Saved::default(),
             chats: chats::Chats::default(),
+            manage: manage::Manage::default(),
             link_code: String::new(),
             recent_prompt: None,
             logo: None,
@@ -1949,6 +1952,7 @@ impl eframe::App for App {
         self.update_tray();
         home::incoming_windows(self, ctx);
         saved::windows(self, ctx);
+        manage::windows(self, ctx);
         self.station_switch_window(ctx);
         home::recent_prompt(self, ctx);
         quick_connect::window(self, ctx);

@@ -140,6 +140,20 @@ if ($store->presence([$id])!==[['id'=>$id,'status'=>'offline']]) exit(1);
                 long_group = '\u00e9' * 80
                 assert call('device_save', owner, device={**device, 'group': long_group})['devices'][0]['group'] == long_group[:64]
 
+                # Remote management: saved with the technician's entry, kept
+                # when an older app saves without it, cleared by null, checked.
+                management = {'gateway': 482913099, 'wake_mac': '00:11:22:AA:BB:CC',
+                              'controller': {'kind': 'redfish', 'address': ' https://10.0.0.20:8443 ', 'username': 'ADMIN',
+                                             'secret': {'n': 'ef' * 24, 'c': '01' * 16}}}
+                saved = call('device_save', owner, device={**device, 'management': management})['devices'][0]['management']
+                assert saved['controller']['address'] == 'https://10.0.0.20:8443' and saved['gateway'] == 482913099, saved
+                assert saved['controller']['secret'] == management['controller']['secret'], saved
+                assert call('device_save', owner, device={**device, 'name': 'Older app'})['devices'][0]['management'] == saved, 'Older app erased management'
+                assert 'management' not in call('device_save', owner, device={**device, 'management': None})['devices'][0], 'null kept management'
+                for bad in ({'gateway': 'x'}, {'wake_mac': 'not-a-mac'}, {'controller': {'kind': 'telnet', 'address': '10.0.0.1'}},
+                            {'controller': {'kind': 'web', 'address': 'user@10.0.0.1'}}, {'controller': {'kind': 'web', 'address': ''}}):
+                    call('device_save', owner, status=400, device={**device, 'management': bad})
+
                 shared = {**device, 'id': 482913078, 'group': 'Shared servers'}
                 call('shared_save', other, status=403, device=shared)
                 state = call('shared_save', owner, device=shared)
@@ -152,7 +166,7 @@ if ($store->presence([$id])!==[['id'=>$id,'status'=>'offline']]) exit(1);
                 call('shared_save', owner, device={**shared, 'group': ''})
                 assert station_shared()[0]['group'] == ''
                 call('account', 'invalid-local-token', status=401)
-                print('PHP station: groups, moves, Ungrouped, multiline notes, legacy clients, secret preservation and account/shared permissions passed', flush=True)
+                print('PHP station: groups, moves, Ungrouped, multiline notes, legacy clients, secret preservation, remote management settings and account/shared permissions passed', flush=True)
 
                 def settings(**changes):
                     subprocess.run([php, '-r', 'require $argv[1]; slip_station_save(json_decode($argv[2], true));',

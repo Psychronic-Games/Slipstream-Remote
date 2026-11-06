@@ -305,7 +305,7 @@ fn desktop_hidden() -> bool {
     false
 }
 
-fn service_mode() -> bool {
+pub(crate) fn service_mode() -> bool {
     #[cfg(windows)]
     return slipstream_platform::windesk::following();
     #[allow(unreachable_code)]

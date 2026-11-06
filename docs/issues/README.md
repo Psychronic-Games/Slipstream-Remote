@@ -25,6 +25,7 @@ track them.
 | 15 | [Windows: measure direct DXGI capture on real hardware](15-windows-capture-dxgi.md) (implemented in 0.7.1) | Windows, performance |
 | 16 | [Verify session windows and support tools on real machines](16-session-tools-real-machines.md) | testing |
 | 17 | [Group meetings with incoming calls and mobile Show me](17-group-meetings-and-show-me.md) (implemented in 0.23.0; physical room measurements open) | feature, testing |
+| 18 | [Verify remote management on real hardware](18-remote-management.md) (implemented, unreleased: restarts, Wake-on-LAN through a gateway, BMC/vPro consoles and Redfish power) | feature, testing |
 
 For meetings, see the [usage guide](../MEETINGS.md).
 

@@ -131,6 +131,11 @@ pub struct RemoteTab {
     tunnel_form: (String, String, String),
     tunnel_error: Option<String>,
     pasting: Option<Arc<Mutex<Pasting>>>,
+    /// A restart asked for in Tools, waiting for Restart in its dialog.
+    power_confirm: Option<slipstream_core::proto::PowerAction>,
+    power_reply: Option<tokio::sync::oneshot::Receiver<Result<(), String>>>,
+    /// This viewer restarted the computer: reconnect for longer.
+    restart_expected: Option<Instant>,
     /// The System information window: open, and its latest answer (None
     /// while it's being fetched).
     show_sysinfo: bool,
@@ -244,6 +249,9 @@ impl RemoteTab {
             held_keys: HashSet::new(),
             forward_repeats,
             notice: None,
+            power_confirm: None,
+            power_reply: None,
+            restart_expected: None,
             audio,
             privacy: false,
             show_tunnels: false,
@@ -316,9 +324,11 @@ impl RemoteTab {
             let progress=Arc::new(Mutex::new("Waiting for the remote host…".into()));
             let (tx,rx)=tokio::sync::oneshot::channel();
             let (client,peer,password,via,wake,status)=(client.clone(),self.peer,self.password.clone(),self.via.clone(),ctx.clone(),progress.clone());
+            // After a restart this viewer asked for, wait out a slow boot.
+            let window=if self.restart_expected.is_some_and(|t|t.elapsed()<std::time::Duration::from_secs(15*60)) {std::time::Duration::from_secs(10*60)} else {std::time::Duration::from_secs(120)};
             let task=rt.spawn(async move {
                 let w=wake.clone();
-                let result=client.reconnect(peer,&password,&via,move |text|{*status.lock().unwrap()=text;w.request_repaint_of(egui::ViewportId::ROOT);}).await.map_err(|e|format!("{e:#}"));
+                let result=client.reconnect_within(peer,&password,&via,window,move |text|{*status.lock().unwrap()=text;w.request_repaint_of(egui::ViewportId::ROOT);}).await.map_err(|e|format!("{e:#}"));
                 let _=tx.send(result);wake.request_repaint_of(egui::ViewportId::ROOT);
             });
             self.reconnect=Some(Reconnecting{progress,rx,task});
@@ -331,7 +341,7 @@ impl RemoteTab {
         if let Some(result)=result {
             self.reconnect=None;
             match result {
-                Ok((session,events))=>{self.restore(session,events,ctx,client.settings().viewer.play_audio);restored=true;},
+                Ok((session,events))=>{self.restart_expected=None;self.restore(session,events,ctx,client.settings().viewer.play_audio);restored=true;},
                 Err(error)=>{tracing::warn!(peer=%self.peer,"automatic reconnect stopped: {error}");self.closed=Some(error);},
             }
         }
@@ -508,6 +518,7 @@ impl RemoteTab {
         self.forward_keys(keys, rt, ui.ctx());
         let mut action = TabAction::None;
         let ctx = ui.ctx().clone();
+        self.power_ui(&ctx, rt);
         ui.painter().rect_filled(full, 0.0, Color32::BLACK);
 
         let pointer = ctx.input(|i| i.pointer.hover_pos());
@@ -1084,6 +1095,64 @@ impl RemoteTab {
             self.show_sysinfo = true;
             self.sysinfo_fetch = true;
             ui.close();
+        }
+        ui.separator();
+        use slipstream_core::proto::PowerAction;
+        let control = self.info.capabilities.input;
+        for (action, hover) in [
+            (PowerAction::Restart, "Restart the remote computer and reconnect when it's back"),
+            (PowerAction::RestartSafeMode, "Windows with the Slipstream service: start once in Safe Mode with Networking (the next restart is normal), then reconnect"),
+            (PowerAction::RestartToFirmware, "UEFI computers: restart into the BIOS/firmware setup. You'll only see it through a management controller (Manage on the Bridge)"),
+        ] {
+            if ui.add_enabled(control && self.power_reply.is_none(), egui::Button::new(format!("{}…", action.label())))
+                .on_hover_text(hover)
+                .on_disabled_hover_text("Needs Control permission on that computer")
+                .clicked()
+            {
+                self.power_confirm = Some(action);
+                self.release_keyboard();
+                ui.close();
+            }
+        }
+    }
+
+    /// The restart confirmation, and its answer.
+    fn power_ui(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime) {
+        if let Some(rx) = &mut self.power_reply
+            && let Ok(result) = rx.try_recv()
+        {
+            self.power_reply = None;
+            match result {
+                Ok(()) => {
+                    self.restart_expected = Some(Instant::now());
+                    self.notice = Some(("Restarting · this tab reconnects when the computer is back".into(), Instant::now()));
+                }
+                Err(e) => self.notice = Some((format!("Couldn't restart: {e}"), Instant::now())),
+            }
+        }
+        let Some(action) = self.power_confirm else { return };
+        let (mut go, mut cancel) = (false, false);
+        theme::modal("restart-remote", pal::RED).show(ctx, |ui| {
+            ui.set_width(theme::dialog_width(ctx, 420.0));
+            cancel = theme::window_header_with_close(ui, &format!("{}?", action.label()), pal::RED, pal::BLUE).close;
+            ui.label(format!("{} restarts in a few seconds. Unsaved work there is lost.", self.info.host_name));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                go = theme::pill(ui, action.label(), pal::RED).clicked();
+                cancel |= theme::pill(ui, "Cancel", pal::BLUE).clicked();
+            });
+        });
+        if go {
+            self.power_confirm = None;
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let (fs, wake) = (self.session.fs(), ctx.clone());
+            rt.spawn(async move {
+                let _ = tx.send(fs.power(action).await.map_err(|e| format!("{e:#}")));
+                wake.request_repaint();
+            });
+            self.power_reply = Some(rx);
+        } else if cancel {
+            self.power_confirm = None;
         }
     }
 

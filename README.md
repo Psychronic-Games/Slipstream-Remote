@@ -69,6 +69,11 @@ the same signature before installing anything.
   Android's rear camera can show equipment to a technician. The default room size is 20;
   usable video capacity depends on the organizer's upload connection.
   See the [meeting guide](docs/MEETINGS.md).
+- **Remote management** — restart a saved computer (normally, into Safe Mode
+  with Networking, or into its BIOS setup), wake it through another Slipstream
+  computer on its network, and open its management controller (Supermicro or
+  other BMCs, iDRAC, iLO, Intel vPro) for a BIOS-level console and power
+  control, without exposing the controller to the internet.
 - **Chat without connecting** — message the person at a saved workstation
   from the Bridge without seeing their screen. Each workstation gets its own
   tab in the Subspace chat panel, and **Connect** turns a chat into a full

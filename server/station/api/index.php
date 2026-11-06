@@ -110,6 +110,9 @@ if (in_array($op, ['account', 'logout', 'device_save', 'device_delete', 'group_s
                 }
                 $old = array_values(array_filter($a['devices'] ?? [], fn($x) => ($x['id'] ?? 0) === $d['id']))[0] ?? null;
                 $d = slip_merge_device_groups($d, $old);
+                // Older apps don't send remote management: keep what's there.
+                if (!array_key_exists('management', $d) && isset($old['management'])) $d['management'] = $old['management'];
+                if (array_key_exists('management', $d) && $d['management'] === null) unset($d['management']);
                 $d['added'] = (int)($old['added'] ?? time());
                 $list[] = $d;
                 $a['devices'] = $list;

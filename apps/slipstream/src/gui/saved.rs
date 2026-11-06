@@ -63,6 +63,73 @@ struct Editor {
     /// A shared device seen by a technician who isn't a station admin:
     /// only their own saved password for it can change.
     locked: bool,
+    /// Remote management, as saved in this technician's own list.
+    manage: ManageForm,
+}
+
+/// The editor's Remote management fields.
+#[derive(Default)]
+struct ManageForm {
+    open: bool,
+    gateway: Option<DeviceId>,
+    wake_mac: String,
+    kind: Option<slipstream_core::account::ControllerKind>,
+    address: String,
+    username: String,
+    password: String,
+    /// The saved (sealed) controller password, kept unless replaced.
+    sealed: Option<slipstream_core::vault::SealedSecret>,
+    forget_password: bool,
+}
+
+impl ManageForm {
+    fn from(m: Option<&slipstream_core::account::Management>) -> Self {
+        let Some(m) = m else { return Self::default() };
+        let c = m.controller.as_ref();
+        Self {
+            open: !m.is_empty(),
+            gateway: m.gateway,
+            wake_mac: m.wake_mac.clone(),
+            kind: c.map(|c| c.kind),
+            address: c.map(|c| c.address.clone()).unwrap_or_default(),
+            username: c.map(|c| c.username.clone()).unwrap_or_default(),
+            password: String::new(),
+            sealed: c.and_then(|c| c.secret.clone()),
+            forget_password: false,
+        }
+    }
+
+    /// What to save; an empty one clears it. `old` is the ID the saved
+    /// controller password was sealed for.
+    fn build(&self, client: &slipstream_session::Client, r: &AccountRef, id: DeviceId, old: Option<DeviceId>) -> anyhow::Result<slipstream_core::account::Management> {
+        use slipstream_core::account::{Controller, Management, normalize_mac};
+        let wake_mac = match self.wake_mac.trim() {
+            "" => String::new(),
+            mac => normalize_mac(mac).ok_or_else(|| anyhow::anyhow!("Enter the Wake-on-LAN address like 00:11:22:33:44:55"))?,
+        };
+        let controller = match self.kind {
+            None => None,
+            Some(kind) => {
+                let mut controller = Controller { kind, address: self.address.trim().to_string(), username: self.username.trim().to_string(), secret: None };
+                if controller.target().is_none() {
+                    anyhow::bail!("Enter the management controller's address, like 10.0.0.20 or https://10.0.0.20:8443");
+                }
+                controller.secret = if !self.password.is_empty() {
+                    Some(client.seal_secret(r, id, &self.password)?)
+                } else if self.forget_password {
+                    None
+                } else {
+                    match (&self.sealed, old) {
+                        // Sealed for this device's ID: re-seal if the ID changed.
+                        (Some(sealed), Some(old)) if old != id => Some(client.seal_secret(r, id, &client.open_secret(r, old, sealed)?)?),
+                        (sealed, _) => sealed.clone(),
+                    }
+                };
+                Some(controller)
+            }
+        };
+        Ok(Management { gateway: self.gateway.filter(|g| *g != id), wake_mac, controller })
+    }
 }
 
 /// Asking for a password before connecting or chatting.
@@ -89,7 +156,7 @@ pub(super) const REFUSED: &str = "That password was refused. Enter the current o
 
 /// Widest a device row grows: Connect, Chat, Meeting and Edit stay beside
 /// the name in a wide window instead of drifting to the far edge.
-const ROW_MAX_WIDTH: f32 = 760.0;
+const ROW_MAX_WIDTH: f32 = 860.0;
 
 fn accounts(app: &App) -> Vec<StationAccount> {
     app.client.settings().accounts
@@ -294,7 +361,7 @@ fn own_device_entry(account: &StationAccount, server: &str, id: Option<DeviceId>
     let id = id?;
     let existing = account.devices.iter().find(|d| d.id == id);
     Some(existing.cloned().unwrap_or_else(|| SavedDevice {
-        id, name: name.to_string(), notes: String::new(), group: String::new(), secret: None, added_by: None,
+        id, name: name.to_string(), notes: String::new(), group: String::new(), secret: None, added_by: None, management: None,
     }))
 }
 
@@ -385,13 +452,16 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
         });
     };
     let mut action = None;
-    // The four actions, laid out right to left (wide) or left to right
-    // (narrow); `action` records which was pressed.
+    let mut manage = None;
+    let console = super::manage::console_open(app, r, d.id);
+    // The actions, laid out right to left (wide) or left to right (narrow);
+    // `action` records which was pressed, `manage` anchors its menu.
     let mut actions = |ui: &mut Ui, right_to_left: bool| {
         let mut buttons: Vec<(&str, egui::Color32, bool, RowAction)> = vec![
             ("Connect", pal::ORANGE, (app.attempt.is_none() || chat_live.is_some()) && !a.signed_out, RowAction::Connect),
             (if unread { "Chat ◆" } else { "Chat" }, pal::BLUE, !a.signed_out, RowAction::Chat),
             ("Meeting", pal::GREEN, !a.signed_out, RowAction::Meeting),
+            (if console { "Manage ◆" } else { "Manage" }, pal::PEACH, !a.signed_out, RowAction::Manage),
             // Everyone may edit their own saved password for a shared
             // device; only admins change its details.
             ("Edit", pal::LAVENDER, !a.signed_out, RowAction::Edit),
@@ -401,12 +471,14 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
         }
         for (label, color, enabled, which) in buttons {
             let response = ui.add_enabled_ui(enabled, |ui| theme::pill_sized(ui, label, color, vec2(0.0, 28.0))).inner;
-            let response = if which == RowAction::Chat {
-                response.on_hover_text("Message the person at this computer without showing its screen")
-            } else {
-                response
+            let response = match which {
+                RowAction::Chat => response.on_hover_text("Message the person at this computer without showing its screen"),
+                RowAction::Manage => response.on_hover_text("Restart, wake, and its management controller (BIOS-level console and power)"),
+                _ => response,
             };
-            if response.clicked() {
+            if which == RowAction::Manage {
+                manage = Some(response);
+            } else if response.clicked() {
                 action = Some(which);
             }
         }
@@ -428,6 +500,9 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::top_down(Align::Min), info);
         });
     }
+    if let Some(response) = manage {
+        super::manage::menu_for(app, &response, r, d);
+    }
     match action {
         // An open chat becomes the session, keeping its messages.
         Some(RowAction::Connect) => match chat_live {
@@ -443,7 +518,7 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
             app.page = Page::Meetings;
         }
         Some(RowAction::Edit) => open_editor(app, r, Some(d), shared),
-        None => {}
+        Some(RowAction::Manage) | None => {}
     }
 }
 
@@ -452,6 +527,7 @@ enum RowAction {
     Connect,
     Chat,
     Meeting,
+    Manage,
     Edit,
 }
 
@@ -516,7 +592,7 @@ pub fn save_recent(app: &mut App, recent: &slipstream_core::config::RecentConnec
         app.toast("Sign in to this device’s station first (Config → Stations) to save it", pal::VIOLET);
         return;
     };
-    let draft = SavedDevice { id, name: name.to_string(), notes: String::new(), group: String::new(), secret: None, added_by: None };
+    let draft = SavedDevice { id, name: name.to_string(), notes: String::new(), group: String::new(), secret: None, added_by: None, management: None };
     open_editor(app, &AccountRef::of(&a), Some(&draft), false);
     // It's a new entry, not an edit of an existing one.
     if let Some(e) = &mut app.saved.editor
@@ -532,6 +608,8 @@ fn open_editor(app: &mut App, r: &AccountRef, d: Option<&SavedDevice>, shared: b
     let had_password = d.is_some_and(|d| d.secret.is_some())
         || d.is_some_and(|d| account.as_ref().is_some_and(|a| a.devices.iter().any(|own| own.id == d.id && own.secret.is_some())));
     let locked = shared && d.is_some() && !account.as_ref().is_some_and(|a| a.user.admin);
+    // Remote management is the technician's own, also for shared devices.
+    let manage = ManageForm::from(d.and_then(|d| account.as_ref()?.devices.iter().find(|own| own.id == d.id)?.management.as_ref()));
     app.saved.editor = Some(Editor {
         account: r.clone(),
         id: d.map(|d| d.id.to_string()).unwrap_or_default(),
@@ -544,6 +622,90 @@ fn open_editor(app: &mut App, r: &AccountRef, d: Option<&SavedDevice>, shared: b
         had_password,
         forget_password: false,
         locked,
+        manage,
+    });
+}
+
+/// Opens the editor on a listed device (the Manage menu's set-up item).
+pub(super) fn edit_device(app: &mut App, r: &AccountRef, d: &SavedDevice) {
+    let shared = !accounts(app).iter().find(|a| AccountRef::of(a) == *r).is_some_and(|a| a.devices.iter().any(|own| own.id == d.id));
+    open_editor(app, r, Some(d), shared);
+    if let Some(e) = &mut app.saved.editor {
+        e.manage.open = true;
+    }
+}
+
+/// The editor's Remote management section: a gateway on the device's
+/// network, its Wake-on-LAN address and its management controller.
+fn manage_section(ui: &mut Ui, e: &mut Editor, account: &StationAccount) {
+    use slipstream_core::account::ControllerKind;
+    ui.add_space(8.0);
+    let id = "saved-editor-manage";
+    egui::CollapsingHeader::new(RichText::new("REMOTE MANAGEMENT").font(theme::display(15.0)).color(pal::PEACH))
+        .id_salt(id).open(e.manage.open.then_some(true)).show(ui, |ui| {
+        e.manage.open = false;
+        ui.label(RichText::new("Reach this computer when its own system can't help: wake it, and reach its management \
+            controller (a server's BMC, Intel vPro) for power and a console that works in the BIOS. A gateway is another \
+            of your Slipstream computers on the same network that stays on; it needs its password saved, Port forwarding \
+            allowed and, for waking, Wake-on-LAN allowed.").small().color(pal::DIM));
+        ui.add_space(4.0);
+        let own: Option<DeviceId> = e.id.parse().ok();
+        let mut candidates: Vec<(DeviceId, String)> = account.devices.iter().chain(&account.shared)
+            .filter(|d| Some(d.id) != own)
+            .map(|d| (d.id, if d.name.is_empty() { d.id.to_string() } else { d.name.clone() }))
+            .collect();
+        candidates.sort_by_key(|(_, name)| name.to_lowercase());
+        candidates.dedup_by_key(|(id, _)| *id);
+        let label = |g: Option<DeviceId>| match g {
+            None => "None".to_string(),
+            Some(g) => candidates.iter().find(|(id, _)| *id == g).map(|(id, name)| format!("{name} · {id}")).unwrap_or_else(|| g.to_string()),
+        };
+        egui::Grid::new("saved-editor-manage-grid").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
+            ui.label(RichText::new("GATEWAY").font(theme::display(15.0)).color(pal::LAVENDER));
+            egui::ComboBox::from_id_salt("saved-editor-gateway").width(280.0).selected_text(label(e.manage.gateway)).show_ui(ui, |ui| {
+                theme::console_menu_style(ui.style_mut());
+                ui.selectable_value(&mut e.manage.gateway, None, "None");
+                for (gid, name) in &candidates {
+                    ui.selectable_value(&mut e.manage.gateway, Some(*gid), format!("{name} · {gid}"));
+                }
+            });
+            ui.end_row();
+            ui.label(RichText::new("WAKE MAC").font(theme::display(15.0)).color(pal::LAVENDER));
+            field(ui, &mut e.manage.wake_mac, "00:11:22:33:44:55 (its network adapter)", false, 280.0);
+            ui.end_row();
+            ui.label(RichText::new("CONTROLLER").font(theme::display(15.0)).color(pal::LAVENDER));
+            egui::ComboBox::from_id_salt("saved-editor-controller").width(280.0)
+                .selected_text(e.manage.kind.map(ControllerKind::label).unwrap_or("None")).show_ui(ui, |ui| {
+                    theme::console_menu_style(ui.style_mut());
+                    ui.selectable_value(&mut e.manage.kind, None, "None");
+                    for kind in ControllerKind::ALL {
+                        ui.selectable_value(&mut e.manage.kind, Some(kind), kind.label());
+                    }
+                });
+            ui.end_row();
+            if e.manage.kind.is_some() {
+                ui.label(RichText::new("ADDRESS").font(theme::display(15.0)).color(pal::LAVENDER));
+                field(ui, &mut e.manage.address, "10.0.0.20, or https://10.0.0.20:8443", false, 280.0);
+                ui.end_row();
+                ui.label(RichText::new("USERNAME").font(theme::display(15.0)).color(pal::LAVENDER));
+                field(ui, &mut e.manage.username, "ADMIN", false, 280.0);
+                ui.end_row();
+                ui.label(RichText::new("PASSWORD").font(theme::display(15.0)).color(pal::LAVENDER));
+                ui.vertical(|ui| {
+                    if e.manage.sealed.is_some() && !e.manage.forget_password {
+                        ui.label(RichText::new("🔑 Saved. Type a new one to replace it.").color(pal::GOLD));
+                    }
+                    if !e.manage.forget_password {
+                        field(ui, &mut e.manage.password, "the controller's password", true, 280.0);
+                    }
+                    if e.manage.sealed.is_some() {
+                        ui.checkbox(&mut e.manage.forget_password, "Forget the saved controller password");
+                    }
+                    ui.label(RichText::new("Addresses are as seen from the gateway. Encrypted like device passwords.").small().color(pal::DIM));
+                });
+                ui.end_row();
+            }
+        });
     });
 }
 
@@ -699,6 +861,7 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                     ui.end_row();
                 }
             });
+            manage_section(ui, &mut e, &account);
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -718,7 +881,21 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                 return;
             }
         };
-        let device = SavedDevice { id, name: e.name.trim().to_string(), notes: e.notes.trim().to_string(), group: e.group.trim().to_string(), secret: None, added_by: None };
+        let management = match e.manage.build(&app.client, &e.account, id, e.original.map(|(old, _)| old)) {
+            Ok(m) => m,
+            Err(err) => {
+                app.toast(format!("{err:#}"), pal::RED);
+                app.saved.editor = Some(e);
+                return;
+            }
+        };
+        let saved_management = accounts(app).iter().find(|a| AccountRef::of(a) == e.account)
+            .and_then(|a| a.devices.iter().find(|d| d.id == id)).and_then(|d| d.management.clone()).unwrap_or_default();
+        let management_changed = management != saved_management;
+        let mut device = SavedDevice { id, name: e.name.trim().to_string(), notes: e.notes.trim().to_string(), group: e.group.trim().to_string(), secret: None, added_by: None, management: None };
+        if !e.shared {
+            device.management = Some(management.clone());
+        }
         let password = if e.forget_password {
             Some(String::new())
         } else if !e.password.is_empty() {
@@ -738,12 +915,14 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                 }
                 client.save_device(&r, device, if shared { None } else { password.clone() }, shared).await?;
             }
-            // A shared device's password goes in this technician's own list.
-            if shared && let Some(password) = password {
+            // A shared device's password and remote management go in this
+            // technician's own list.
+            if shared && (password.is_some() || management_changed) {
                 let a = client.settings().accounts.into_iter().find(|a| AccountRef::of(a) == r).ok_or_else(|| anyhow::anyhow!("signed out"))?;
                 let mut entry = password_entry(&a, id).ok_or_else(|| anyhow::anyhow!("device is no longer in the station list"))?;
                 entry.secret = None;
-                client.save_device(&r, entry, Some(password), false).await?;
+                entry.management = Some(management);
+                client.save_device(&r, entry, password, false).await?;
             }
             Ok(format!("Saved {name}"))
         });
@@ -931,7 +1110,7 @@ mod tests {
     #[test]
     fn shared_password_entries_use_the_personal_vault_and_preserve_personal_details() {
         let id = DeviceId(482913077);
-        let shared = SavedDevice { id, name: "OFFICE-PC".into(), group: String::new(), notes: String::new(), secret: None, added_by: Some("Automatic enrollment".into()) };
+        let shared = SavedDevice { id, name: "OFFICE-PC".into(), group: String::new(), notes: String::new(), secret: None, added_by: Some("Automatic enrollment".into()), management: None };
         let mut account = StationAccount { shared: vec![shared.clone()], ..Default::default() };
         let copied = password_entry(&account, id).unwrap();
         assert!(copied.added_by.is_none());
@@ -947,7 +1126,7 @@ mod tests {
     fn search_combines_device_name_id_group_and_station_without_changing_membership() {
         let device = SavedDevice {
             id: DeviceId(482913077), name: "Front Desk".into(), group: "Office".into(),
-            notes: String::new(), secret: None, added_by: None,
+            notes: String::new(), secret: None, added_by: None, management: None,
         };
         let devices = vec![device];
         let empty = vec!["Empty lab".to_owned()];

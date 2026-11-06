@@ -12,7 +12,7 @@ current releases: `public.slipstreamremote.com` (keyless, default for raw
 downloads) and a private station. The main features (sessions, files,
 clipboard, sound, chat, support tools, meetings, technician accounts, the
 Windows service, the Android viewer/host, signed self-updates) are implemented
-and covered by automated end-to-end tests: 210 workspace tests, station
+and covered by automated end-to-end tests: 214 workspace tests, station
 PHP/Node regressions, Wine checks for the Windows build and native UI audits.
 CI builds and tests every push on Linux, Windows and macOS.
 
@@ -38,6 +38,11 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
   without sharing their screen. Chats open as tabs in a Subspace chat panel
   beside the device list, and **Connect** turns a chat into a session in place.
 - **Bridge rows:** device actions stay beside the names on wide windows.
+- **Remote management:** **Manage** on saved devices restarts them
+  (normally, into Safe Mode with Networking, or into the BIOS setup). It also
+  wakes them through a gateway computer on their network, and reaches their
+  management controller (BMC or Intel vPro console, plus Redfish power)
+  through that gateway.
 - **Passwords:** saved passwords, including your own for shared devices, can be
   changed from **Edit**, and a refused one asks for the current one.
 - **Chat labels:** messages carry Slipstream device names.
@@ -93,6 +98,7 @@ Recent releases:
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
 | Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. In production use on the private station since its October 29 deploy; issue 08's two-computer and revocation checklist isn't recorded item by item |
+| Remote management (restarts, wake, controllers) | ✅ end-to-end tests: Redfish power state, graceful restart with authentication and refusals against a local test controller through a real gateway link and port forward; the console forward; restarts refused without Control. Station storage, validation and older-app preservation in the account suite. Not yet against a real Supermicro, iDRAC or vPro controller, and Safe Mode and firmware restarts not yet on real Windows ([issue 18](issues/18-remote-management.md)) |
 | Chat-only links and Subspace chat tabs | ✅ end-to-end test: chat both ways with no picture or clipboard either way, the host's viewing event only after Connect, then video. Bridge layout checked in native screenshots at 1680 and 1000 px. Not yet between two physical machines or through the Windows service (Windows build passes strict Clippy) |
 | Private station automatic enrollment and hardware summaries | ✅ isolated PHP API/admin checks: default names/Ungrouped, preserved edits and removals, legacy shared-list migration, signed metadata, admin access and public exclusion; batch technician assignment before sign-in and while offline, partial failures and retained credentials verified. Rust registration/authentication suites pass. Native Windows/macOS hardware summaries still need verification |
 | Scanner HTTP/HTTPS actions | ✅ Linux GUI to host launcher; exact URLs, failure reporting and host permission/target checks. Windows service launch needs real-VM confirmation |

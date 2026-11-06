@@ -24,7 +24,7 @@ pub(super) struct QuickConnect {
 
 enum Choice {
     Recent(RecentConnection),
-    Saved(AccountRef, SavedDevice, bool),
+    Saved(AccountRef, Box<SavedDevice>, bool),
     Connect,
     Stations,
 }
@@ -140,7 +140,7 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
                                             {
                                                 choice = Some(Choice::Saved(
                                                     r.clone(),
-                                                    device.clone(),
+                                                    Box::new(device.clone()),
                                                     shared,
                                                 ));
                                             }
@@ -428,6 +428,7 @@ mod tests {
             notes: String::new(),
             secret: None,
             added_by: None,
+            management: None,
         };
         let devices = vec![
             device(123456789, "Engineering", "Lab"),

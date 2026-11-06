@@ -251,6 +251,30 @@ pub enum StreamOpen {
     WakeOnLan { interface: std::net::Ipv4Addr, mac: String },
     NetworkDiagnostics { interface: std::net::Ipv4Addr, name: String, comparison_dns: Option<std::net::IpAddr> },
     SupportStatus { text: String },
+    /// Restart the host's computer: [`StreamReply::Done`] just before it
+    /// goes. Needs control permission. Appended: older hosts refuse the stream.
+    Power { action: PowerAction },
+}
+
+/// What [`StreamOpen::Power`] asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PowerAction {
+    Restart,
+    /// Windows, under the Slipstream service: Safe Mode with Networking,
+    /// once (the next restart is normal again).
+    RestartSafeMode,
+    /// Straight into the UEFI firmware (BIOS) setup.
+    RestartToFirmware,
+}
+
+impl PowerAction {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Restart => "Restart",
+            Self::RestartSafeMode => "Restart in Safe Mode with Networking",
+            Self::RestartToFirmware => "Restart into BIOS setup",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

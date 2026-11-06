@@ -245,6 +245,18 @@ async fn handle(
                 .collect();
             reply(&mut send, &StreamReply::Pace(stages)).await?;
         }
+        StreamOpen::Power { action } => {
+            let r = if !policy.remote_input {
+                denied("Restarting this computer (allow Control in its Config → Permissions)")
+            } else {
+                tracing::info!(?action, "restart requested by the viewer");
+                match crate::power::restart(action, crate::host::service_mode()) {
+                    Ok(()) => StreamReply::Done,
+                    Err(e) => StreamReply::Error(format!("{e:#}")),
+                }
+            };
+            reply(&mut send, &r).await?;
+        }
         StreamOpen::Places => {
             // Probing drives can stall on a disconnected network drive.
             let r = if policy.browse { StreamReply::Places(tokio::task::spawn_blocking(fsops::places).await?) } else { denied("Browsing files") };

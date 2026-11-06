@@ -36,6 +36,25 @@ show in small print: `0.6.0 (build N · commit)`.
 - Chat messages show each side's Slipstream name instead of *You* and
   *Remote*, in sessions, Subspace chat and the workstation's chat window.
 
+- **Manage** on saved devices covers restarts, waking and management
+  controllers:
+  - **Restarts:** restart a computer normally, into Safe Mode with
+    Networking (Windows service; once only), or into its BIOS setup.
+    Sessions offer the same under Tools and reconnect when the computer is
+    back.
+  - **Gateway:** under **Edit → Remote management**, choose another Slipstream
+    computer on the same network to reach the device when its own system
+    can't help.
+  - **Waking:** send Wake-on-LAN from the gateway.
+  - **Management controllers:** open the device's controller (Supermicro or
+    other Redfish BMCs, iDRAC, iLO, Intel vPro) in your browser through the
+    gateway, with its BIOS-level console. Redfish controllers also offer
+    power on, shut down, restart, power cycle and force off. Controller
+    passwords are encrypted like device passwords, and controllers are
+    never exposed to the internet.
+  - **Station:** stations keep these settings and need this version to save
+    them.
+
 - The Windows app no longer requires Windows 10. The same download is meant
   to start on Windows 7 SP1 and 8.x too: functions those versions lack are
   answered by YY-Thunks fallbacks, while newer Windows uses the real ones. On

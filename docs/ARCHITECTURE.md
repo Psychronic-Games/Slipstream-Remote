@@ -196,6 +196,28 @@ portal prompt.
   `Session.viewing: Option<bool>`; services before 0.33 omit it, which the
   GUI reads as viewing. The link still opens the screen backend at sign-in
   (see the 2026-11-05 audit's open items).
+* **Restarts** (`StreamOpen::Power { action }`, appended; older hosts refuse
+  the stream): the host checks Control permission, answers `Done`, then
+  restarts after five seconds (`power.rs`). Windows uses `shutdown /r` (`/fw`
+  for the firmware setup). Safe Mode with Networking needs the service: it
+  registers the service under `SafeBoot\Network`, sets `bcdedit safeboot
+  network`, and the service clears that flag when it starts in Safe Mode, so
+  it applies once. Linux uses `systemctl reboot [--firmware-setup]`. The
+  viewer marks the tab and reconnects for up to ten minutes.
+* **Remote management** (`account::Management`, kept on the technician's
+  own entry for a device, also for shared devices; the station validates it
+  in `slip_clean_management` and keeps it when an older app saves without
+  it, while `null` clears it): a gateway device ID, a Wake-on-LAN MAC and a
+  management controller (Redfish, Intel AMT or other web page; address as
+  seen from the gateway; username; password sealed like device passwords).
+  `management.rs` reaches the gateway with a chat-only link and its saved
+  password (`Client::tool_link`). It sends wake packets from each of the
+  gateway's LAN adapters, forwards a loopback port to the controller for
+  the console, and drives Redfish (`/redfish/v1/Systems` → first member →
+  `ComputerSystem.Reset`, preferring graceful reset types the controller
+  lists) with basic authentication. Controller certificates are self-signed,
+  so `clock::unverified_tls` accepts any certificate; the controller is only
+  reached through the authenticated, encrypted gateway link.
 * **Technician accounts** (station API, not the session protocol):
   `login` returns a token, the station's config (access key included) and
   the account's vault salt; `account`/`device_*`/`shared_*` take the token.

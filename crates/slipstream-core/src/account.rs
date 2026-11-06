@@ -49,6 +49,127 @@ pub struct SavedDevice {
     /// Shared list only: who added it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub added_by: Option<String>,
+    /// Reaching it when its own system can't help (personal list only).
+    /// Always sent, so `null` clears it; stations before 0.33 drop it.
+    #[serde(default)]
+    pub management: Option<Management>,
+}
+
+/// Reaching a device beyond its operating system: another Slipstream
+/// computer on its network (the gateway) can wake it, and can open the way
+/// to its management controller (a server's BMC, Intel vPro) for power and
+/// a console that works in the BIOS and while the system is off.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Management {
+    /// A saved device on the same station and network as this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<DeviceId>,
+    /// Its network adapter's address for Wake-on-LAN, `00:11:22:33:44:55`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub wake_mac: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller: Option<Controller>,
+}
+
+impl Management {
+    pub fn is_empty(&self) -> bool {
+        self.gateway.is_none() && self.wake_mac.is_empty() && self.controller.is_none()
+    }
+
+    /// The wake MAC in canonical form, if it is one.
+    pub fn mac(&self) -> Option<String> {
+        normalize_mac(&self.wake_mac)
+    }
+}
+
+/// `00-11-22-aa-bb-cc`, `0011.22aa.bbcc`, … as `00:11:22:AA:BB:CC`.
+pub fn normalize_mac(text: &str) -> Option<String> {
+    let hex: String = text.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    let separators = text.chars().all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '-' | '.' | ' '));
+    (hex.len() == 12 && separators).then(|| {
+        hex.as_bytes().chunks(2).map(|b| String::from_utf8_lossy(b).to_ascii_uppercase()).collect::<Vec<_>>().join(":")
+    })
+}
+
+/// A device's out-of-band management controller.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Controller {
+    pub kind: ControllerKind,
+    /// As seen from the gateway: `10.0.0.20`, `bmc.lan:8443` or a URL.
+    pub address: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub username: String,
+    /// Its password, sealed like saved device passwords.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<SealedSecret>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControllerKind {
+    /// A server BMC with Redfish (Supermicro, Dell iDRAC, HPE iLO, Lenovo
+    /// XClarity…): web console plus power control.
+    Redfish,
+    /// Intel AMT (vPro): its web page on port 16992/16993.
+    IntelAmt,
+    /// Any other management web page (console only).
+    Web,
+}
+
+impl ControllerKind {
+    pub const ALL: [Self; 3] = [Self::Redfish, Self::IntelAmt, Self::Web];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Redfish => "Server BMC (Redfish: Supermicro, iDRAC, iLO…)",
+            Self::IntelAmt => "Intel vPro (AMT)",
+            Self::Web => "Other management web page",
+        }
+    }
+
+    /// Port assumed when the address names none.
+    pub fn default_port(self) -> u16 {
+        match self {
+            Self::IntelAmt => 16993,
+            Self::Redfish | Self::Web => 443,
+        }
+    }
+}
+
+impl Controller {
+    /// Where the gateway connects (host, port) and whether it speaks HTTPS.
+    pub fn target(&self) -> Option<(String, u16, bool)> {
+        let text = self.address.trim();
+        let (scheme, rest) = match text.split_once("://") {
+            Some((scheme, rest)) => (Some(scheme.to_ascii_lowercase()), rest),
+            None => (None, text),
+        };
+        let authority = rest.split('/').next().unwrap_or("").trim();
+        if authority.is_empty() || authority.contains(['@', ' ']) {
+            return None;
+        }
+        let (host, port) = match authority.rsplit_once(':') {
+            // [v6]:port or host:port; a bare IPv6 address has several colons.
+            Some((host, port)) if !host.contains(':') || host.ends_with(']') => (host, Some(port.parse::<u16>().ok()?)),
+            _ => (authority, None),
+        };
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        if host.is_empty() {
+            return None;
+        }
+        let tls = match scheme.as_deref() {
+            Some("http") => false,
+            Some("https") => true,
+            None => port != Some(80) && port != Some(16992),
+            Some(_) => return None,
+        };
+        let port = port.unwrap_or(match (tls, self.kind) {
+            (false, ControllerKind::IntelAmt) => 16992,
+            (false, _) => 80,
+            (true, kind) => kind.default_port(),
+        });
+        Some((host.to_string(), port, tls))
+    }
 }
 
 /// Everything a station keeps for a signed-in technician.
@@ -173,5 +294,22 @@ mod tests {
         let text = toml::to_string(&settings).unwrap();
         let loaded: crate::config::Settings = toml::from_str(&text).unwrap();
         assert_eq!(loaded.accounts[0].devices[0], device);
+    }
+
+    #[test]
+    fn controller_addresses_and_macs() {
+        let c = |address: &str, kind| Controller { kind, address: address.into(), username: String::new(), secret: None };
+        assert_eq!(c("10.0.0.20", ControllerKind::Redfish).target(), Some(("10.0.0.20".into(), 443, true)));
+        assert_eq!(c("https://bmc.lan:8443/", ControllerKind::Redfish).target(), Some(("bmc.lan".into(), 8443, true)));
+        assert_eq!(c("http://10.0.0.21", ControllerKind::Web).target(), Some(("10.0.0.21".into(), 80, false)));
+        assert_eq!(c("10.0.0.22", ControllerKind::IntelAmt).target(), Some(("10.0.0.22".into(), 16993, true)));
+        assert_eq!(c("http://10.0.0.22", ControllerKind::IntelAmt).target(), Some(("10.0.0.22".into(), 16992, false)));
+        assert_eq!(c("[fd00::5]:443", ControllerKind::Redfish).target(), Some(("fd00::5".into(), 443, true)));
+        assert_eq!(c("user@host", ControllerKind::Web).target(), None);
+        assert_eq!(c("ftp://host", ControllerKind::Web).target(), None);
+        assert_eq!(normalize_mac("00-11-22-aa-bb-cc").as_deref(), Some("00:11:22:AA:BB:CC"));
+        assert_eq!(normalize_mac("0011.22aa.bbcc").as_deref(), Some("00:11:22:AA:BB:CC"));
+        assert_eq!(normalize_mac("00:11:22:aa:bb"), None);
+        assert_eq!(normalize_mac("00:11:22:aa:bb:cg"), None);
     }
 }

@@ -32,9 +32,25 @@ impl Client {
         ViewerSession,
         tokio::sync::mpsc::UnboundedReceiver<ViewerEvent>,
     )> {
+        self.reconnect_within(id, password, via, POLICY.window, on_progress).await
+    }
+
+    /// [`reconnect`](Self::reconnect) for up to `window`: longer after this
+    /// viewer restarted the computer (a restart can take several minutes).
+    pub async fn reconnect_within(
+        &self,
+        id: DeviceId,
+        password: &str,
+        via: &StationRef,
+        window: Duration,
+        on_progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Result<(
+        ViewerSession,
+        tokio::sync::mpsc::UnboundedReceiver<ViewerEvent>,
+    )> {
         let progress = std::sync::Arc::new(on_progress);
         retry(
-            POLICY,
+            Policy { window, ..POLICY },
             || {
                 let progress = progress.clone();
                 async move {
@@ -70,7 +86,7 @@ where
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining <= delay {
             if let Some(error) = last {
-                return Err(error).context("Automatic reconnect stopped after two minutes; try Reconnect when the host is ready");
+                return Err(error).context(format!("Automatic reconnect stopped after {} minutes; try Reconnect when the host is ready", policy.window.as_secs().div_ceil(60)));
             }
             bail!("Automatic reconnect timed out");
         }

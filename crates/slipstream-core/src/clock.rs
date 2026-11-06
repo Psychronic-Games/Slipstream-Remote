@@ -173,6 +173,19 @@ impl ServerCertVerifier for DateOnly {
     }
 }
 
+/// TLS that accepts any certificate (still checking the handshake's
+/// signatures). Only for devices that can't have a verifiable certificate
+/// and are reached through a link that is already authenticated and
+/// encrypted: a management controller behind a Slipstream gateway.
+pub fn unverified_tls() -> Result<rustls::ClientConfig> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    Ok(rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(DateOnly(provider)))
+        .with_no_client_auth())
+}
+
 /// Learns the real time from `url`'s HTTP `Date` header (when our clock is
 /// too wrong for certificates to verify).
 pub async fn sync_from(url: &reqwest::Url) -> Result<()> {

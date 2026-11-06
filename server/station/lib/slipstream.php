@@ -759,11 +759,53 @@ function slip_clean_device($d, bool $withSecret = true): ?array
     if (array_key_exists('groups', $d)) $out = slip_set_device_groups($out, slip_clean_device_groups($d['groups']));
     $secret = $d['secret'] ?? null;
     if ($withSecret) {
-        $ok = is_array($secret) && is_string($secret['n'] ?? null) && is_string($secret['c'] ?? null)
-            && preg_match('/^[0-9a-f]{48}$/', $secret['n']) && preg_match('/^[0-9a-f]{32,1024}$/', $secret['c']);
-        $out['secret'] = $ok ? ['n' => $secret['n'], 'c' => $secret['c']] : null;
+        $out['secret'] = slip_clean_sealed($secret);
+        // Personal entries only: absent means an older client (kept as it
+        // was), null clears it.
+        if (array_key_exists('management', $d)) $out['management'] = slip_clean_management($d['management']);
     }
     return $out;
+}
+
+/** A sealed secret as the app makes it (XChaCha20 nonce and ciphertext), or null. */
+function slip_clean_sealed($secret): ?array
+{
+    $ok = is_array($secret) && is_string($secret['n'] ?? null) && is_string($secret['c'] ?? null)
+        && preg_match('/^[0-9a-f]{48}$/', $secret['n']) && preg_match('/^[0-9a-f]{32,1024}$/', $secret['c']);
+    return $ok ? ['n' => $secret['n'], 'c' => $secret['c']] : null;
+}
+
+/** Out-of-band access to a device: a gateway device, a Wake-on-LAN MAC and a
+ * management controller. The station stores it for the technician; the
+ * controller's password stays sealed by the app. */
+function slip_clean_management($m): ?array
+{
+    if ($m === null) return null;
+    if (!is_array($m)) throw new InvalidArgumentException('Remote management settings are invalid.');
+    $out = [];
+    if (isset($m['gateway'])) {
+        if (!is_int($m['gateway']) || $m['gateway'] < SLIP_ID_MIN || $m['gateway'] > SLIP_ID_MAX) throw new InvalidArgumentException('Choose a valid gateway device.');
+        $out['gateway'] = $m['gateway'];
+    }
+    $mac = $m['wake_mac'] ?? '';
+    if (!is_string($mac) || ($mac !== '' && !preg_match('/^[0-9A-Fa-f]{2}([:-]?[0-9A-Fa-f]{2}){5}$|^[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}$/', $mac))) {
+        throw new InvalidArgumentException('Enter the Wake-on-LAN address like 00:11:22:33:44:55.');
+    }
+    if ($mac !== '') $out['wake_mac'] = $mac;
+    $c = $m['controller'] ?? null;
+    if ($c !== null) {
+        if (!is_array($c) || !in_array($c['kind'] ?? null, ['redfish', 'intel_amt', 'web'], true)) throw new InvalidArgumentException('Choose the kind of management controller.');
+        $address = $c['address'] ?? '';
+        if (!is_string($address) || trim($address) === '' || strlen($address) > 255 || preg_match('/[\x00-\x20\x7f@]/', trim($address))) {
+            throw new InvalidArgumentException('Enter the management controller\'s address, like 10.0.0.20.');
+        }
+        $user = $c['username'] ?? '';
+        if (!is_string($user) || strlen($user) > 64 || preg_match('/[\x00-\x1f\x7f]/', $user)) throw new InvalidArgumentException('The controller username is invalid.');
+        $out['controller'] = ['kind' => $c['kind'], 'address' => trim($address)];
+        if ($user !== '') $out['controller']['username'] = $user;
+        if ($sealed = slip_clean_sealed($c['secret'] ?? null)) $out['controller']['secret'] = $sealed;
+    }
+    return $out ?: null;
 }
 
 function slip_shared(): array

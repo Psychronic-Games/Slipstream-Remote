@@ -25,6 +25,10 @@ impl RemoteFs {
         self.support_done(StreamOpen::WakeOnLan { interface, mac })
             .await
     }
+    /// Restarts the remote computer (see `power`); it answers before going.
+    pub async fn power(&self, action: slipstream_core::proto::PowerAction) -> Result<()> {
+        self.support_done(StreamOpen::Power { action }).await
+    }
     pub async fn support_status(&self, text: String) -> Result<()> {
         status_text(&text)?;
         self.support_done(StreamOpen::SupportStatus { text }).await

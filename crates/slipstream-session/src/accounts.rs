@@ -41,7 +41,7 @@ pub enum Presence {
 }
 
 impl Client {
-    fn account(&self, r: &AccountRef) -> Result<StationAccount> {
+    pub(crate) fn account(&self, r: &AccountRef) -> Result<StationAccount> {
         self.inner.settings.lock().unwrap().accounts.iter().find(|a| r.matches(a)).cloned().ok_or_else(|| anyhow!("not signed in to {}", r.server))
     }
 
@@ -137,13 +137,24 @@ impl Client {
 
     /// Adds or updates a device in the technician's list (or, for station
     /// admins, the shared one). `password`: `Some("")` forgets a saved
-    /// one, `None` keeps what's there.
+    /// one, `None` keeps what's there. `device.management` likewise: `None`
+    /// keeps what's saved, an empty one clears it.
     pub async fn save_device(&self, r: &AccountRef, mut device: SavedDevice, password: Option<String>, shared: bool) -> Result<()> {
         let a = self.account(r)?;
         device.group = device.group.trim().chars().take(64).collect();
         if shared && !a.user.admin {
             bail!("only station admins can change the shared devices");
         }
+        if shared {
+            device.management = None;
+        } else {
+            device.management = match device.management.take() {
+                None => a.devices.iter().find(|d| d.id == device.id).and_then(|d| d.management.clone()),
+                Some(m) if m.is_empty() => None,
+                Some(m) => Some(m),
+            };
+        }
+        let wanted_management = device.management.clone();
         if !shared {
             device.secret = match password {
                 Some(p) if p.is_empty() => None,
@@ -158,9 +169,12 @@ impl Client {
         let state = if shared { dc.save_shared(&a.token, &device).await } else { dc.save_device(&a.token, &device).await };
         let state = state.map_err(|e| self.note_error(r, e))?;
         let list = if shared { &state.shared } else { &state.devices };
-        let group_saved = list.iter().find(|d| d.id == device.id).is_some_and(|d| d.group == device.group);
+        let saved = list.iter().find(|d| d.id == device.id);
+        let group_saved = saved.is_some_and(|d| d.group == device.group);
+        let management_saved = shared || saved.is_some_and(|d| d.management == wanted_management);
         self.apply_state(r, state);
         if !group_saved { bail!("that station needs an update to save device groups"); }
+        if !management_saved { bail!("that station needs an update to save remote management settings"); }
         Ok(())
     }
 

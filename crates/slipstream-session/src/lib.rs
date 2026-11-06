@@ -17,6 +17,8 @@ mod incoming;
 pub mod meetings;
 pub mod network;
 pub mod support;
+pub mod power;
+pub mod management;
 mod network_names;
 pub mod tunnel;
 pub mod update;
@@ -1713,6 +1715,90 @@ mod tests {
         assert_eq!(why, "they ended the session");
         viewer.shutdown().await;
         host.shutdown().await;
+    }
+
+    /// A management controller's Redfish API, reached through a gateway's
+    /// chat-only link and port forward: power state, a restart with basic
+    /// authentication, and refusals reported plainly.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn redfish_power_through_a_gateway() {
+        use slipstream_core::account::{Controller, ControllerKind};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // A tiny Redfish controller on this machine (plain HTTP).
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = requests.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 8192];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                    // "admin:secret" in basic authentication.
+                    let authorized = request.contains("Authorization: Basic YWRtaW46c2VjcmV0") || request.contains("authorization: Basic YWRtaW46c2VjcmV0");
+                    let line = request.lines().next().unwrap_or("").to_string();
+                    seen.lock().unwrap().push(request.clone());
+                    let (status, body) = if !authorized {
+                        ("401 Unauthorized", String::new())
+                    } else if line.starts_with("GET /redfish/v1/Systems ") {
+                        ("200 OK", r#"{"Members":[{"@odata.id":"/redfish/v1/Systems/1"}]}"#.to_string())
+                    } else if line.starts_with("GET /redfish/v1/Systems/1 ") {
+                        ("200 OK", r##"{"@odata.id":"/redfish/v1/Systems/1","PowerState":"On","Actions":{"#ComputerSystem.Reset":{"target":"/redfish/v1/Systems/1/Actions/ComputerSystem.Reset","ResetType@Redfish.AllowableValues":["On","ForceOff","GracefulShutdown","ForceRestart","GracefulRestart"]}}}"##.to_string())
+                    } else if line.starts_with("POST /redfish/v1/Systems/1/Actions/ComputerSystem.Reset ") {
+                        ("204 No Content", String::new())
+                    } else {
+                        ("404 Not Found", String::new())
+                    };
+                    let reply = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        let (gateway, _gev, gdir) = client_with("rf-gateway", true, Default::default(), |s| s.host.allow_tunnels = true).await;
+        let (viewer, _vev, vdir) = client("rf-viewer", false).await;
+        let (link, _events) = viewer
+            .connect_direct_with(gateway.endpoint_addr(), "correct horse battery", LinkMode::ChatOnly, |_| {})
+            .await
+            .unwrap();
+        let controller = Controller { kind: ControllerKind::Redfish, address: format!("http://127.0.0.1:{port}"), username: "admin".into(), secret: None };
+        assert_eq!(crate::management::controller_state(&link, &controller, "secret").await.unwrap(), "On");
+        let report = crate::management::controller_power(&link, &controller, "secret", crate::management::ControllerPower::Restart).await.unwrap();
+        assert!(report.contains("GracefulRestart"), "{report}");
+        let posted = requests.lock().unwrap().iter().find(|r| r.starts_with("POST")).cloned().unwrap();
+        assert!(posted.contains(r#""ResetType":"GracefulRestart""#), "{posted}");
+        let refused = crate::management::controller_power(&link, &controller, "wrong", crate::management::ControllerPower::On).await.unwrap_err();
+        assert!(format!("{refused:#}").contains("refused the username or password"), "{refused:#}");
+        let web = Controller { kind: ControllerKind::Web, ..controller.clone() };
+        assert!(crate::management::controller_power(&link, &web, "secret", crate::management::ControllerPower::On).await.is_err());
+        let console = crate::management::console(&link, &controller).await.unwrap();
+        assert!(console.url.starts_with("http://127.0.0.1:"), "{}", console.url);
+        drop(console);
+        drop(link);
+        viewer.shutdown().await;
+        gateway.shutdown().await;
+        let _ = std::fs::remove_dir_all(gdir);
+        let _ = std::fs::remove_dir_all(vdir);
+    }
+
+    /// Restarting needs Control permission; without it the host refuses.
+    /// (With it, a test would restart this computer: not tested here.)
+    #[tokio::test(flavor = "multi_thread")]
+    async fn restart_requests_need_control_permission() {
+        let (host, _hev, hdir) = client_with("power-host", true, Default::default(), |s| s.host.allow_input = false).await;
+        let (viewer, _vev, vdir) = client("power-viewer", false).await;
+        let (session, _events) = viewer
+            .connect_direct_with(host.endpoint_addr(), "correct horse battery", LinkMode::ChatOnly, |_| {})
+            .await
+            .unwrap();
+        let error = session.fs().power(slipstream_core::proto::PowerAction::Restart).await.unwrap_err();
+        assert!(format!("{error:#}").contains("not allowed"), "{error:#}");
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
     /// A chat-only link exchanges messages without the picture, sound or
