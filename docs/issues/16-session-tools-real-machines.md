@@ -84,7 +84,7 @@ Files and service-update recovery:
       transfers should fail visibly and port forwards should close.
 - [ ] Confirm incoming service chat reaches the signed-in user's LCARS window
       and replies return, including after a host restart.
-- [ ] Chat-only links (unreleased): **Chat** on a saved Linux workstation, a
+- [ ] Chat-only links (0.33): **Chat** on a saved Linux workstation, a
       Windows workstation running the app, and one running the service. Their
       banner reads *Inbound chat*; messages both ways carry device names; no
       clipboard crosses. **Connect** in the chat keeps the messages, starts the

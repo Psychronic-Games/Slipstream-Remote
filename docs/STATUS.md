@@ -21,6 +21,12 @@ checks for less-used paths stay open: the Windows service at UAC prompts and
 the login screen, real Android phones, sharing and control from a Mac. See
 [Next steps](#next-steps).
 
+Version **0.33** adds chat-only links with Subspace chat tabs, remote
+management (restarts, Wake-on-LAN through a gateway, BMC/vPro consoles and
+Redfish power), one Windows build meant to start on Windows 7 SP1/8.x as well,
+and about 40 fixes from a second code audit. Stations need 0.33 to save
+remote management settings.
+
 Version **0.32** adds named administrator sign-in, a wider responsive console,
 searchable checkbox pickers, multiple group memberships, compact device editing
 with a themed notes bar, and a wrapped/searchable relay activity report. Clients
@@ -33,7 +39,7 @@ October 29, with private rollback backups and existing technician accounts
 preserved. API/legacy-client checks and interactive browser audits at 1680, 1024
 and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
-**Unreleased** (after 0.32.1):
+**0.33.0** in detail:
 - **Chat-only links:** **Chat** beside a saved device messages the person there
   without sharing their screen. Chats open as tabs in a Subspace chat panel
   beside the device list, and **Connect** turns a chat into a session in place.
@@ -187,7 +193,8 @@ Each step has an issue with tasks and pointers into the code in
 
 0. **Usability polish from production use** (ongoing): try chat-only links
    between real machines, including a Windows workstation running the service,
-   then release the unreleased work above.
+   then confirm 0.33's remote management on real hardware (issue 18) and the
+   Windows 7 build on a real Windows 7 machine.
 1. **Real-machine pass** (issues 01, 04, 16): the Windows service at UAC
    prompts, elevated windows and the login screen; the new link approval on
    Windows (full window, compact window and service) and Linux; privacy mode;

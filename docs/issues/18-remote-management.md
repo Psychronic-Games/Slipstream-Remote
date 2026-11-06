@@ -5,7 +5,7 @@ labels: [feature, testing]
 
 ## Status
 
-Implemented (unreleased): **Manage** on saved devices, **Edit → Remote
+Implemented in 0.33.0: **Manage** on saved devices, **Edit → Remote
 management**, restarts in session **Tools**. End-to-end tests cover Redfish
 power through a gateway link against a local test controller, the console port
 forward, Control permission for restarts, and station storage. Real hardware

@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.33.0 — 2026-11-05
+
 - **Chat** beside each saved device opens a chat-only link: the workstation
   shares no picture, sound, clipboard or control, and its banner reads
   *Inbound chat (screen not shared)*. Each chat opens as a tab in a Subspace
