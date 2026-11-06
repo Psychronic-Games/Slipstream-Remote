@@ -392,7 +392,7 @@ fallbacks it already has. Screen capture uses GDI where Desktop Duplication
 renderer or the compact Win32 window when Direct3D 12 or Vulkan aren't
 available. Privacy mode isn't offered (it needs Windows 10 2004). Wine
 can't show any of this, because it has every newer function, so it needs a
-real Windows 7 machine.
+real Windows 7 machine: 0.33.1 was confirmed on one.
 
 ## Android
 

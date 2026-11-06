@@ -127,7 +127,7 @@ the same signature before installing anything.
 | Linux — Wayland (KDE, GNOME, wlroots) | desktop portal + PipeWire | ✅ | tested (KDE) |
 | Linux — X11 | MIT-SHM + XTest | ✅ | in testing |
 | Windows 10/11 | DXGI + SendInput | ✅ | tested |
-| Windows 7 SP1 / 8.x | GDI + SendInput (same download) | ⚠️ | builds for it; real-machine check pending |
+| Windows 7 SP1 / 8.x | GDI + SendInput (same download) | ✅ | Windows 7 tested (0.33.1); 8.x not yet |
 | macOS 12+ (Apple Silicon and Intel) | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | one universal app, built on GitHub's Macs; runs on a real Intel Mac; sharing and control being verified |
 | Android 8+ | MediaProjection + accessibility (on-device approval) | touch viewer | Android 16 emulator tested; real phones next |
 

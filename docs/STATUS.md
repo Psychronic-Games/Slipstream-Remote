@@ -135,12 +135,13 @@ Recent releases:
   work or real hardware. The largest is that saved passwords are sealed with
   a key derived from the sign-in password, which the station sees at sign-in.
   (The Windows service's unrestricted SYSTEM file access is by design.)
-- **Windows 7 SP1 / 8.x:** the one Windows build now links YY-Thunks, so it
-  no longer imports anything Windows 7 lacks (checked at build time by
+- **Windows 7 SP1 / 8.x:** the one Windows build links YY-Thunks, so it
+  imports nothing Windows 7 lacks (checked at build time by
   `scripts/check-windows-imports.py`; see
-  [BUILDING.md](BUILDING.md#older-windows-7-sp1-8x)). It hasn't been run on a
-  real Windows 7 machine yet. Expect GDI capture, the OpenGL/software/compact
-  window fallbacks and no privacy mode there.
+  [BUILDING.md](BUILDING.md#older-windows-7-sp1-8x)). 0.33.1 works on a real
+  Windows 7 machine (user report, 2026-11-05). Windows 8.x isn't tried yet.
+  There it uses GDI capture and the OpenGL/software/compact window
+  fallbacks, and has no privacy mode.
 - **Meetings**: the organizer must stay connected; no host migration or
   adaptive meeting bitrate yet. Invitations/rooms
   last four hours. Android incoming calls require a running, reachable app.
