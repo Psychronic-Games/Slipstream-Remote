@@ -62,6 +62,10 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.33.1**: the Subspace chat panel stays in view beside long device lists
+  (and comes first on narrow windows).
+- **0.33.0**: chat-only links and Subspace chat tabs, remote management,
+  Windows 7 SP1/8.x support in the one Windows build, second audit fixes.
 - **0.32.1**: independent batched online-status polling and connection lookups;
   signed heartbeat/inventory budgets per device so fleets behind one router
   do not consume one another's allowance. Older stations retain compatibility.
