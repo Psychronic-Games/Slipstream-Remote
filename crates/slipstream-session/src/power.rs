@@ -7,6 +7,7 @@ use anyhow::{Result, bail};
 use slipstream_core::proto::PowerAction;
 
 /// Seconds between answering and the system going down.
+#[cfg_attr(not(any(windows, target_os = "linux", target_os = "macos")), allow(dead_code))]
 const DELAY: u32 = 5;
 
 /// Checks the action can be done here and starts it.
@@ -34,7 +35,7 @@ pub(crate) fn restart(action: PowerAction, service: bool) -> Result<()> {
 }
 
 /// Runs a command after the delay, detached from this request.
-#[cfg(not(windows))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_later(program: &str, args: &[&str]) -> Result<()> {
     let (program, args): (String, Vec<String>) = (program.into(), args.iter().map(|a| a.to_string()).collect());
     std::thread::spawn(move || {
