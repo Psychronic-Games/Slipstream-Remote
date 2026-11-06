@@ -1,24 +1,25 @@
 # Project status
 
-*Updated 2026-10-29. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
+*Updated 2026-11-05. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
 changes: [CHANGELOG.md](../CHANGELOG.md).*
 
 ## Where things stand
 
-Slipstream Remote is usable day to day between Linux (KDE Wayland) and
-Windows machines, through the free **Slipstream Public** station or a
-self-hosted one. Both of the project's stations run current releases:
-`public.slipstreamremote.com` (keyless, default for raw downloads) and a
-private station. The main features (sessions, files, clipboard, sound, chat,
-support tools, meetings, technician accounts, the Windows service, the
-Android viewer/host, signed self-updates) are implemented and covered by
-automated end-to-end tests: 175+ workspace tests, plus Wine checks for the
-Windows build and native UI audits.
+Slipstream Remote is **in production use** on several Linux (KDE Wayland) and
+Windows systems, through the free **Slipstream Public** station and a
+self-hosted one, and works well day to day. Both of the project's stations run
+current releases: `public.slipstreamremote.com` (keyless, default for raw
+downloads) and a private station. The main features (sessions, files,
+clipboard, sound, chat, support tools, meetings, technician accounts, the
+Windows service, the Android viewer/host, signed self-updates) are implemented
+and covered by automated end-to-end tests: 210 workspace tests, station
+PHP/Node regressions, Wine checks for the Windows build and native UI audits.
+CI builds and tests every push on Linux, Windows and macOS.
 
-What remains is mostly **verification on real hardware** rather than new
-features: the Windows service at UAC prompts and the login screen, real
-Android phones, sharing and control from a Mac, and sound/clipboard files
-between two physical machines. See [Next steps](#next-steps).
+Work now follows **usability and UI polish** found in daily use. Real-hardware
+checks for less-used paths stay open: the Windows service at UAC prompts and
+the login screen, real Android phones, sharing and control from a Mac. See
+[Next steps](#next-steps).
 
 Version **0.32** adds named administrator sign-in, a wider responsive console,
 searchable checkbox pickers, multiple group memberships, compact device editing
@@ -31,6 +32,22 @@ The private station web changes were deployed and verified over HTTPS on
 October 29, with private rollback backups and existing technician accounts
 preserved. API/legacy-client checks and interactive browser audits at 1680, 1024
 and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
+
+**Unreleased** (after 0.32.1):
+- **Chat-only links:** **Chat** beside a saved device messages the person there
+  without sharing their screen. Chats open as tabs in a Subspace chat panel
+  beside the device list, and **Connect** turns a chat into a session in place.
+- **Bridge rows:** device actions stay beside the names on wide windows.
+- **Passwords:** saved passwords, including your own for shared devices, can be
+  changed from **Edit**, and a refused one asks for the current one.
+- **Chat labels:** messages carry Slipstream device names.
+- **Audit fixes:** about 40 fixes from a second whole-codebase audit
+  ([AUDIT-2026-11-05.md](AUDIT-2026-11-05.md)), covering meeting recordings,
+  sign-in throttling, chat-only enforcement on the host, station link
+  confirmation, station abuse limits and per-frame performance.
+- **Station console:** device search and sorting, an LCARS-styled device
+  register, full relay-log paging and export, and saving group visibility
+  from the picker.
 
 Recent releases:
 
@@ -75,7 +92,8 @@ Recent releases:
 | Linux → Windows Server 2016 VM over the internet | ✅ direct path, 20–50 ms round trip. Earlier measurements: DXGI capture 1.8 ms/frame, encoding 23 ms/frame, about 34 fps. Current camera-mode encoding needs remeasurement there; Speed/Low bandwidth can reduce moving-picture resolution, while Balanced/Quality preserve resolution. |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
-| Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. Not yet on the live station |
+| Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. In production use on the private station since its October 29 deploy; issue 08's two-computer and revocation checklist isn't recorded item by item |
+| Chat-only links and Subspace chat tabs | ✅ end-to-end test: chat both ways with no picture or clipboard either way, the host's viewing event only after Connect, then video. Bridge layout checked in native screenshots at 1680 and 1000 px. Not yet between two physical machines or through the Windows service (Windows build passes strict Clippy) |
 | Private station automatic enrollment and hardware summaries | ✅ isolated PHP API/admin checks: default names/Ungrouped, preserved edits and removals, legacy shared-list migration, signed metadata, admin access and public exclusion; batch technician assignment before sign-in and while offline, partial failures and retained credentials verified. Rust registration/authentication suites pass. Native Windows/macOS hardware summaries still need verification |
 | Scanner HTTP/HTTPS actions | ✅ Linux GUI to host launcher; exact URLs, failure reporting and host permission/target checks. Windows service launch needs real-VM confirmation |
 | System information window (live) | ✅ end-to-end test; Linux and Windows (under Wine) collectors checked by hand; macOS type-checks only |
@@ -95,6 +113,17 @@ Recent releases:
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
 ## Known gaps and limits
+
+- **Audit open items:** the
+  [2026-11-05 audit](AUDIT-2026-11-05.md#open) lists findings that need design
+  work or real hardware. The largest two are:
+  - **Saved passwords:** they are sealed with a key derived from the sign-in
+    password, which the station sees at sign-in.
+  - **Windows service file transfer:** it runs as SYSTEM.
+- **Windows 7/8:** not supported. Rust's standard Windows target needs
+  Windows 10, and the app fails to start on Windows 7 (missing
+  `GetSystemTimePreciseAsFileTime`). A separate Windows 7 build would need
+  the unofficial `x86_64-win7-windows-msvc` target and GDI capture.
 
 - **Meetings**: the organizer must stay connected; no host migration or
   adaptive meeting bitrate yet. Invitations/rooms
@@ -150,6 +179,9 @@ Recent releases:
 Each step has an issue with tasks and pointers into the code in
 [issues/](issues/README.md).
 
+0. **Usability polish from production use** (ongoing): try chat-only links
+   between real machines, including a Windows workstation running the service,
+   then release the unreleased work above.
 1. **Real-machine pass** (issues 01, 04, 16): the Windows service at UAC
    prompts, elevated windows and the login screen; the new link approval on
    Windows (full window, compact window and service) and Linux; privacy mode;
@@ -174,4 +206,5 @@ Each step has an issue with tasks and pointers into the code in
 - How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 - User-facing behaviour: [GETTING-STARTED.md](GETTING-STARTED.md) and
   [STATION-SETUP.md](STATION-SETUP.md).
-- Audit findings and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md).
+- Audit findings and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md) and
+  [AUDIT-2026-11-05.md](AUDIT-2026-11-05.md) (with open items).

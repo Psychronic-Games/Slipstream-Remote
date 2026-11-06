@@ -55,6 +55,10 @@ Android uses **Connect this app** or a setup code:
   and also shows your station's address and a **setup code** (like
   `K7MQ-2XPA`) to type in instead. Codes last 30 days; renewing the access
   key cancels them.
+- An app already linked to another private station asks before a
+  **Connect this app** link moves it (*Switch station?*), so a link on some
+  other web page can't take a computer away from its provider. Typing an
+  address and code into **Link to my organisation** switches straight away.
 
 ### Windows 10/11
 
@@ -178,7 +182,11 @@ The **Bridge** page shows:
 Your client reads both to you over the phone. While someone is connected, a
 red **Inbound link** banner shows who it is and for how long. It also has
 **Chat** and **Terminate** buttons, so the client can end the session at any
-time.
+time. A technician who only opened a chat (see
+[Chatting without connecting](#chatting-without-connecting)) shows as
+**Inbound chat** and *linked for chat only (screen not shared)*; if they then
+connect, the banner changes and the client is told that they can now see the
+screen.
 
 ---
 
@@ -247,8 +255,9 @@ On Bridge, each signed-in station's **Saved devices** panel has **+ Group**
 and **+ Device** controls. New groups can be empty and follow your technician
 account to other computers. Expand a group and choose **Add device** to start
 with that group selected. **Remove empty group** removes an unused group;
-move its devices elsewhere first. Shared-device editing still requires a
-station administrator. Configuring a relay address alone does not sign in a
+move its devices elsewhere first. Changing a shared device's name, group or
+notes still requires a station administrator; anyone can change their own
+saved password for it. Configuring a relay address alone does not sign in a
 technician; use **Config → Stations** if its saved list is not visible.
 
 The search field at the top of **Saved devices** filters all signed-in stations'
@@ -373,7 +382,19 @@ The Bridge then shows **Saved devices**, per station:
 - Optionally save its **unattended password** too: **Connect** then works
   in one click (🔑 marks those). The password is encrypted on your computer
   with a key made from your sign-in password before being stored on the station.
-  If an admin resets your sign-in password, saved passwords are cleared.
+  If an admin resets your sign-in password, saved passwords are cleared. The
+  station receives your sign-in password when you sign in, so someone in
+  control of the station itself could open saved passwords: save them only on
+  stations you trust.
+- Each device has **Connect**, **Chat**, **Meeting** and **Edit**, next to
+  its name however wide the window is.
+- **Edit** changes your saved password at any time, including for shared
+  devices (shown as **Your password**; it's saved in your own list only).
+  Technicians who aren't station admins can open **Edit** on a shared device to
+  change their password; its name, group and notes stay read-only.
+- When a saved password is refused (the workstation's unattended password
+  changed, or it was mistyped), the app asks for the current one, with
+  **Remember** ticked so it replaces the saved one.
 - The lamp shows which devices are online right now.
 - **Shared by …** lists groups assigned to your technician account, from the
   station or another technician. On a **private station**, workstations enroll
@@ -431,6 +452,29 @@ do not create personal copies; personal devices and passwords that a technician
 saved separately or received through an older copy action are preserved when
 an assignment is removed. Use **Move station workstations** to organize station
 devices. Nonempty station groups must be emptied before removal.
+
+### Chatting without connecting
+
+**Chat** beside a saved device opens a chat-only link: it signs in with the
+device's password as usual (saved, or asked for), but the workstation shares
+nothing: no picture, sound, clipboard or control. The person there sees
+**Inbound chat** and gets the usual chat window when you write.
+
+The **Subspace chat** panel appears when you open a chat: to the right of
+Saved devices on a wide Bridge, under them on a narrow window. It goes away
+when you close the last chat. Each workstation you chat with gets its own
+tab, with a status lamp (green connected, gold connecting, grey closed) and
+**◆** for unread messages; **×** closes it. A message arriving while you are
+elsewhere shows a notice and marks the tab and the device's **Chat** button.
+Messages are labelled with each side's Slipstream (device) name.
+
+The workstation enforces this too: anything beyond chat (files, tools, the
+picture) switches its banner to an ordinary inbound link.
+
+**Connect**, in the chat or beside the device, turns the chat into a full
+session in place: no new password and no reconnection, and the messages carry
+on in the session's chat panel. **Reconnect** reopens a closed chat; **End**
+closes it. Chats aren't saved: closing a tab or the app discards them.
 
 From the command line: `slipstream sign-in relay.example.com jsmith`,
 `slipstream saved`, `slipstream save 482913077 --station relay.example.com

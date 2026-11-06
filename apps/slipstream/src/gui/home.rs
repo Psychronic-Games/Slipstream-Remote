@@ -41,7 +41,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         ui.add_space(10.0);
     }
     #[cfg(target_os="linux")]
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() && app.client.settings().host.enabled {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() && app.client.with_settings(|s| s.host.enabled) {
         if let Some(Err(error)) = app.screen_access.result.clone() {
             ui.label(RichText::new(error).color(pal::GOLD));
             ui.horizontal(|ui| {
@@ -68,14 +68,49 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         connect_panel(app, ui);
     }
     ui.add_space(20.0);
-    super::saved::panel(app, ui);
+    devices_and_chats(app, ui);
     ui.add_space(20.0);
     recent_panel(app, ui);
 }
 
+/// Saved devices, and once a chat is open, Subspace chat beside them on a
+/// wide Bridge or under them otherwise. No chats, no panel.
+fn devices_and_chats(app: &mut App, ui: &mut Ui) {
+    const GAP: f32 = 16.0;
+    let total = ui.available_width();
+    if !app.chats.is_empty() && total >= 980.0 {
+        let right = (total * 0.4).clamp(380.0, 620.0);
+        let left = total - right - GAP;
+        let height = app.chats.beside.max(420.0);
+        let mut beside = 0.0;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            beside = ui.allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_width(left);
+                super::saved::panel(app, ui);
+            }).response.rect.height();
+            ui.allocate_ui_with_layout(vec2(right, 0.0), Layout::top_down(Align::Min), |ui| {
+                ui.set_width(right);
+                super::chats::panel(app, ui, height);
+            });
+        });
+        // The chat panel matches the list's height from the next frame on.
+        if (beside - app.chats.beside).abs() > 1.0 {
+            app.chats.beside = beside;
+            ui.ctx().request_repaint();
+        }
+    } else {
+        super::saved::panel(app, ui);
+        if !app.chats.is_empty() {
+            ui.add_space(16.0);
+            super::chats::panel(app, ui, 460.0);
+        }
+    }
+}
+
 fn station_tabs(app: &mut App, ui: &mut Ui) {
     let custom = app.client.has_custom_station();
-    let station = if custom { app.client.settings().server.url } else { None };
+    let station = if custom { app.client.with_settings(|s| s.server.url.clone()) } else { None };
     if app.primary_station != station {
         if app.selected_public { app.station_draft = Default::default(); }
         else { app.connect_id.clear(); app.connect_pw.clear(); }
@@ -143,7 +178,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         let public = app.selected_public || !custom;
         let directory = app.selected_dir_status();
         ui.label(RichText::new(if public { "public.slipstreamremote.com".to_string() } else {
-            app.client.settings().server.url.unwrap_or_default()
+            app.client.with_settings(|s| s.server.url.clone()).unwrap_or_default()
         }).small().color(pal::DIM));
         let (status, color) = match &directory {
             DirStatus::Online { .. } => ("ONLINE · READY FOR LINK", pal::GREEN),
@@ -154,8 +189,8 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         let own_id = match &directory {
             DirStatus::Online { id } => Some(*id),
             _ if app.via_service && (public || !app.service_station_matches()) => None,
-            _ if public => app.client.settings().host.public_device_id,
-            _ => app.client.settings().host.last_device_id,
+            _ if public => app.client.with_settings(|s| s.host.public_device_id),
+            _ => app.client.with_settings(|s| s.host.last_device_id),
         };
         // With the service hosting, partners need the ID it registered as.
         let hosted = if public { None } else { service_id(app) };
@@ -236,7 +271,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         }
         #[cfg(target_os="android")]
         super::android::hosting_panel(ui);
-        if app.client.settings().host.permanent_password_secret.is_some() {
+        if app.client.with_settings(|s| s.host.permanent_password_secret.is_some()) {
             ui.label(RichText::new(if cfg!(target_os="android") {"Your saved password also works while screen sharing is active."}else{"Unattended access enabled — your permanent password also works."}).small().color(pal::DIM));
         }
     });
@@ -258,7 +293,7 @@ fn one_time_password(app: &mut App, ui: &mut Ui) {
                 app.regenerate_password();
             }
         });
-        let help = if app.via_service || app.client.settings().host.permanent_password_secret.is_some() {
+        let help = if app.via_service || app.client.with_settings(|s| s.host.permanent_password_secret.is_some()) {
             "Either this code or the unattended password works. The code changes after a session ends."
         } else { "The code changes after a session ends." };
         ui.label(RichText::new(help).small().color(pal::DIM));
@@ -314,7 +349,7 @@ fn link_fields(app: &mut App, ui: &mut Ui) {
             app.toast("Enter the station address and the 8-character setup code", pal::RED);
         } else {
             let link = slipstream_core::provision::StationLink { station: app.link_station.trim().to_string(), code };
-            app.start_link(&ui.ctx().clone(), link, true);
+            app.start_link(&ui.ctx().clone(), link, true, false);
         }
     }
 }
@@ -362,7 +397,7 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
 }
 
 fn recent_panel(app: &mut App, ui: &mut Ui) {
-    let recent = app.client.settings().recent.into_iter().filter(|r| {
+    let recent = app.client.with_settings(|s| s.recent.clone()).into_iter().filter(|r| {
         match super::quick_connect::recent_station(app, r) {
             Some(slipstream_session::StationRef::Public) => app.selected_public,
             Some(slipstream_session::StationRef::Primary) => !app.selected_public || !app.client.has_custom_station(),
@@ -541,11 +576,12 @@ fn incoming_banner(app: &mut App, ui: &mut Ui, t: f64) {
         let mut chat = None;
         for s in &app.incoming {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("◆ INBOUND LINK").font(theme::display_bold(18.0)).color(pal::RED));
+                ui.label(RichText::new(if s.chat_only { "◆ INBOUND CHAT" } else { "◆ INBOUND LINK" }).font(theme::display_bold(18.0)).color(pal::RED));
                 ui.label(
                     RichText::new({
                         let secs = s.started.elapsed().as_secs();
-                        format!("{} is controlling this device · {:02}:{:02}", s.peer, secs / 60, secs % 60)
+                        let doing = if s.chat_only { "is linked for chat only (screen not shared)" } else { "is controlling this device" };
+                        format!("{} {doing} · {:02}:{:02}", s.peer, secs / 60, secs % 60)
                     })
                         .font(theme::body(17.0)),
                 );
@@ -633,9 +669,11 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
             .with_inner_size([460.0, 520.0])
             .with_min_inner_size([340.0, 300.0]);
         let (chat, client, session, peer) = (s.chat.clone(), app.client.clone(), s.id, s.peer.clone());
+        let me = app.client.with_settings(|s| s.device_name.clone());
         #[cfg(windows)]
         let service_sender=app.service_chat.as_ref().map(|g|g.sender());
         ctx.show_viewport_deferred(id, builder, move |ui, _class| {
+            let names = ChatNames { me: &me, them: &peer };
             let body=theme::native_title_bar_with_rail(ui,&format!("Chat · {peer}"),true);
             let body=theme::chat_body(ui,body);
             let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
@@ -649,10 +687,10 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
             #[cfg(windows)]
             if let Some(sender)=&service_sender {
                 if !sender.connected() {inner.label(RichText::new("Reconnecting to host service…").color(pal::GOLD));}
-                chat_ui_with_echo(&mut inner,&mut chat.log,&mut chat.input,false,|text|sender.chat(session,text));
-            } else {chat_ui(&mut inner,&mut chat.log,&mut chat.input,|text|client.host_chat(session,text));}
+                chat_ui_with_echo(&mut inner,&mut chat.log,&mut chat.input,names,false,|text|sender.chat(session,text));
+            } else {chat_ui(&mut inner,&mut chat.log,&mut chat.input,names,|text|client.host_chat(session,text));}
             #[cfg(not(windows))]
-            chat_ui(&mut inner, &mut chat.log, &mut chat.input, |text| client.host_chat(session, text));
+            chat_ui(&mut inner, &mut chat.log, &mut chat.input, names, |text| client.host_chat(session, text));
             if ui.input(|i| i.viewport().close_requested()) {
                 chat.open = false;
                 ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
@@ -661,23 +699,37 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Shared chat log + input. `send` is called with each outgoing message.
-pub fn chat_ui(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, send: impl FnOnce(String)) {
-    chat_ui_with_echo(ui,log,input,true,|text|{send(text);true});
+/// Who wrote a chat's messages: Slipstream names (each device's name), so
+/// nobody has to guess what "you" means at either end.
+#[derive(Clone, Copy)]
+pub struct ChatNames<'a> {
+    pub me: &'a str,
+    pub them: &'a str,
 }
 
-fn chat_ui_with_echo(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, echo:bool, send: impl FnOnce(String)->bool) {
+/// Shared chat log + input. `send` is called with each outgoing message.
+pub fn chat_ui(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, names: ChatNames, send: impl FnOnce(String)) {
+    chat_ui_with_echo(ui,log,input,names,true,|text|{send(text);true});
+}
+
+fn chat_ui_with_echo(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, names: ChatNames, echo:bool, send: impl FnOnce(String)->bool) {
     let log_height = (ui.available_height() - 52.0).max(0.0);
     egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false])
         .max_height(log_height).show(ui, |ui| {
         ui.set_width(ui.available_width());
         for (mine, text) in log.iter() {
-            let (who, color) = if *mine { ("YOU", pal::ORANGE) } else { ("REMOTE", pal::BLUE) };
+            let (who, color) = if *mine { (names.me, pal::ORANGE) } else { (names.them, pal::BLUE) };
+            let who = if who.trim().is_empty() { if *mine { "This computer" } else { "Remote computer" } } else { who };
             egui::Frame::new().fill(pal::PANEL).corner_radius(8.0)
                 .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.4)))
                 .inner_margin(10).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new(who).font(theme::display_bold(14.0)).color(color));
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Label::new(RichText::new(who.to_uppercase()).font(theme::display_bold(14.0)).color(color)).truncate());
+                        if *mine {
+                            ui.label(RichText::new("(you)").small().color(pal::DIM));
+                        }
+                    });
                     ui.label(text);
                 });
         }

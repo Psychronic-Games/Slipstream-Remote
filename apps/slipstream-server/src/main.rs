@@ -107,7 +107,12 @@ pub struct App {
 impl App {
     /// True the first time an endpoint registers in this process (for logs).
     fn seen_once(&self, endpoint: &str) -> bool {
-        self.seen.lock().unwrap().insert(endpoint.to_string())
+        let mut seen = self.seen.lock().unwrap();
+        // Only for logs: bounded, at the cost of logging some hosts again.
+        if seen.len() >= 100_000 {
+            seen.clear();
+        }
+        seen.insert(endpoint.to_string())
     }
 }
 

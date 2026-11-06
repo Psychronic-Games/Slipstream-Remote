@@ -18,6 +18,10 @@ struct Session {
     lines: Vec<Line>,
     #[serde(default)]
     status: String,
+    /// `Some(false)` while the link is chat-only; services before 0.33 send
+    /// nothing, which reads as a viewing link.
+    #[serde(default)]
+    viewing: Option<bool>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Snapshot {
@@ -111,6 +115,10 @@ pub enum Event {
     Ended {
         session: u64,
     },
+    /// The link started viewing (or always was: older services, viewers).
+    Viewing {
+        session: u64,
+    },
     Message {
         session: u64,
         ours: bool,
@@ -128,6 +136,7 @@ struct Cursor {
     sessions: BTreeMap<u64, u64>,
     password: Option<String>,
     statuses: BTreeMap<u64, String>,
+    viewing: std::collections::BTreeSet<u64>,
     directory: Option<slipstream_session::DirStatus>,
     public_directory: Option<slipstream_session::DirStatus>,
     station: Option<String>,
@@ -157,6 +166,7 @@ impl Cursor {
         }
         let old = std::mem::take(&mut self.sessions);
         let previous_statuses = std::mem::take(&mut self.statuses);
+        let previous_viewing = std::mem::take(&mut self.viewing);
         for &id in old.keys() {
             if self.epoch != Some(snapshot.epoch) || !snapshot.sessions.iter().any(|s| s.id == id) {
                 events.push(Event::Ended { session: id });
@@ -173,6 +183,12 @@ impl Cursor {
                     session: session.id,
                     peer: session.peer.clone(),
                 });
+            }
+            if session.viewing != Some(false) {
+                if previous.is_none() || !previous_viewing.contains(&session.id) {
+                    events.push(Event::Viewing { session: session.id });
+                }
+                self.viewing.insert(session.id);
             }
             if (!session.status.is_empty() || previous_statuses.get(&session.id).is_some_and(|s| !s.is_empty()))
                 && (previous.is_none() || previous_statuses.get(&session.id) != Some(&session.status)) {
@@ -485,7 +501,11 @@ mod native {
                         peer: peer.clone(),
                         lines: Vec::new(),
                         status: String::new(),
+                        viewing: Some(false),
                     });
+                }
+                ClientEvent::HostSessionViewing { session } => {
+                    if let Some(s) = state.sessions.iter_mut().find(|s| s.id == *session) {s.viewing = Some(true);}
                 }
                 ClientEvent::HostSessionEnded { session, .. } => state.sessions.retain(|s| s.id != *session),
                 ClientEvent::HostStatus { session, text } => {
@@ -764,7 +784,8 @@ mod tests {
     fn service_status_is_optional_and_changes_clear_without_replaying() {
         let mut snapshot: Snapshot = serde_json::from_str(r#"{"epoch":1,"sequence":0,"sessions":[{"id":7,"peer":"Tech","lines":[]}]}"#).unwrap();
         let mut cursor=Cursor::default();
-        assert_eq!(cursor.update(&snapshot),vec![Event::Started{session:7,peer:"Tech".into()}]);
+        // Older services say nothing about viewing: every link shows the screen.
+        assert_eq!(cursor.update(&snapshot),vec![Event::Started{session:7,peer:"Tech".into()},Event::Viewing{session:7}]);
         snapshot.sessions[0].status="Checking the printer".into();
         assert_eq!(cursor.update(&snapshot),vec![Event::Status{session:7,text:"Checking the printer".into()}]);
         assert!(cursor.update(&snapshot).is_empty());
@@ -784,6 +805,7 @@ mod tests {
                 peer: "Technician".into(),
                 lines: Vec::new(),
                 status: String::new(),
+                viewing: Some(false),
             }],
             password: None,
             call: None,
@@ -822,5 +844,22 @@ mod tests {
             snapshot.message(0, false, format!("{i}"));
         }
         assert_eq!(snapshot.sessions[0].lines.len(), 128);
+    }
+
+    #[test]
+    fn chat_only_links_report_viewing_once_and_again_after_a_service_restart() {
+        let mut snapshot: Snapshot = serde_json::from_str(r#"{"epoch":1,"sequence":0,"sessions":[{"id":3,"peer":"Tech","lines":[],"viewing":false}]}"#).unwrap();
+        let mut cursor = Cursor::default();
+        assert_eq!(cursor.update(&snapshot), vec![Event::Started { session: 3, peer: "Tech".into() }]);
+        assert!(cursor.update(&snapshot).is_empty());
+        snapshot.sessions[0].viewing = Some(true);
+        assert_eq!(cursor.update(&snapshot), vec![Event::Viewing { session: 3 }]);
+        assert!(cursor.update(&snapshot).is_empty());
+        snapshot.epoch = 2;
+        assert_eq!(cursor.update(&snapshot), vec![
+            Event::Ended { session: 3 },
+            Event::Started { session: 3, peer: "Tech".into() },
+            Event::Viewing { session: 3 },
+        ]);
     }
 }

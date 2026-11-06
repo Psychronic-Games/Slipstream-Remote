@@ -9,8 +9,10 @@ The repository is public at
 https://github.com/Psychronic-Games/Slipstream-Remote (October 2026), and
 releases are published there by `scripts/publish-github-release.sh`.
 `.github/workflows/ci.yml` builds and tests on Ubuntu, Windows and macOS
-on every push; its first runs need fixes. macOS has been cross-type-checked for Apple Silicon
-from Linux; native Mac builds and runtime checks remain pending.
+on every push, including the station administrator/account regressions; all
+three jobs have been green since 2026-10-23 (every push through 2026-10-30
+passed). The macOS app is built on GitHub's Macs (`macos.yml`); runtime
+checks on a real Mac are tracked in issue 03.
 
 `.github/workflows/release.yml` builds Linux/Windows/macOS by hand (from the
 Actions tab) into a draft pre-release. Windows publisher signing is
@@ -22,12 +24,7 @@ key kept on the build machine. Android is currently built locally.
 ## Tasks
 
 - [x] Create the GitHub repository, configure its remote, and push `main`.
-- [ ] Get all three CI jobs green. Expect fixes:
-  - Linux job: the apt package list may need adjusting for the x11rb and
-    PipeWire-dlopen changes.
-  - macOS: first native build of capture, input and tray dependencies.
-  - Windows: native MSVC build (so far only cross-compiled with
-    cargo-xwin).
+- [x] Get all three CI jobs green (2026-10-23).
 - [ ] Add `cargo clippy --workspace --all-targets --locked -- -D warnings`
       to CI and verify it on all three OSes.
 - [x] Prepare the tag release workflow and local station assembly from

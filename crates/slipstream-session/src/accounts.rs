@@ -234,6 +234,17 @@ impl Client {
         password: Option<String>,
         on_progress: impl Fn(String) + Send + Sync + 'static,
     ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
+        self.connect_via_with(r, id, password, crate::LinkMode::Full, on_progress).await
+    }
+
+    pub(crate) async fn connect_via_with(
+        &self,
+        r: &AccountRef,
+        id: DeviceId,
+        password: Option<String>,
+        mode: crate::LinkMode,
+        on_progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
         let a = self.account(r)?;
         let password = match password.filter(|p| !p.is_empty()) {
             Some(p) => p,
@@ -241,6 +252,6 @@ impl Client {
         };
         on_progress(format!("Locating {id} on {}…", a.label()));
         let found = Self::station_client(&a)?.lookup(id).await?;
-        self.connect_found(id, found, &password, on_progress, Some(a.server)).await
+        self.connect_found(id, found, &password, mode, on_progress, Some(a.server)).await
     }
 }

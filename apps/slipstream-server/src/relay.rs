@@ -142,6 +142,17 @@ pub async fn proxy(State(app): State<Arc<App>>, mut req: Request) -> Response {
             HeaderValue::from_str(&tunnel.to_string()).unwrap(),
         );
     }
+    // Dropping this request future (the client disconnected while we waited
+    // on the relay) must not leave its tunnel entry behind for ever.
+    struct Abandon(Arc<crate::relay_log::RelayLog>, Option<u64>);
+    impl Drop for Abandon {
+        fn drop(&mut self) {
+            if let Some(id) = self.1 {
+                self.0.abandon(id);
+            }
+        }
+    }
+    let mut pending = Abandon(app.relay_log.clone(), tunnel);
     let Some(upstream) = app.relay_addr else {
         app.relay_log
             .request_failed(tunnel, &path, "relay_disabled", None, Some(404));
@@ -200,6 +211,8 @@ pub async fn proxy(State(app): State<Arc<App>>, mut req: Request) -> Response {
         }
     };
     if resp.status() == StatusCode::SWITCHING_PROTOCOLS {
+        // The upgrade task owns the tunnel's record from here.
+        pending.1 = None;
         let upstream_upgrade = hyper::upgrade::on(&mut resp);
         tokio::spawn(async move {
             let (client, server) = tokio::join!(client_upgrade, upstream_upgrade);

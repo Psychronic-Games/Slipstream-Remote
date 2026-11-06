@@ -97,8 +97,10 @@ impl Backend for GenericBackend {
         cfg!(any(target_os = "linux", target_os = "windows"))
     }
 
+    /// Listed afresh: the backend is kept between sessions, and monitors,
+    /// resolutions and docking change in between.
     fn displays(&self) -> Vec<DisplayInfo> {
-        self.displays.clone()
+        list_displays().unwrap_or_else(|_| self.displays.clone())
     }
 
     #[cfg(target_os = "windows")]
@@ -121,12 +123,20 @@ impl Backend for GenericBackend {
 
     #[cfg(target_os = "linux")]
     fn capture(&mut self, display: u32, max_fps: u32) -> Result<FrameStream> {
+        // Input is mapped with this list too: keep it current.
+        if let Ok(fresh) = list_displays() {
+            self.displays = fresh;
+        }
         let d = self.displays.get(display as usize).cloned().with_context(|| format!("display {display} not found"))?;
         crate::x11::capture(d, max_fps)
     }
 
     #[cfg(not(target_os = "linux"))]
     fn capture(&mut self, display: u32, max_fps: u32) -> Result<FrameStream> {
+        // Input is mapped with this list too: keep it current.
+        if let Ok(fresh) = list_displays() {
+            self.displays = fresh;
+        }
         let d = self.displays.get(display as usize).cloned().with_context(|| format!("display {display} not found"))?;
         let origin = (d.x, d.y);
         #[cfg(target_os = "windows")]

@@ -82,8 +82,10 @@ function slip_update_state(): array
 function slip_update_save(array $state): void
 {
     $path = slip_update_dir() . '/state.json';
-    @file_put_contents("$path.tmp", json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-    @rename("$path.tmp", $path);
+    // A temporary name of its own: concurrent requests may save at once.
+    $tmp = "$path." . bin2hex(random_bytes(4)) . '.tmp';
+    @file_put_contents($tmp, json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    if (!@rename($tmp, $path)) @unlink($tmp);
 }
 
 /**
@@ -91,7 +93,7 @@ function slip_update_save(array $state): void
  * body (or true when saved); throws on failure. Uses the curl extension when
  * there is one, otherwise PHP's own HTTPS streams.
  */
-function slip_http_get(string $url, ?string $saveTo = null, int $timeout = 20)
+function slip_http_get(string $url, ?string $saveTo = null, int $timeout = 20, ?int $maxBytes = null)
 {
     $headers = ['User-Agent: Slipstream-Station', 'Accept: application/vnd.github+json, application/octet-stream;q=0.9, */*;q=0.8'];
     if (function_exists('curl_init')) {
@@ -107,6 +109,14 @@ function slip_http_get(string $url, ?string $saveTo = null, int $timeout = 20)
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_FAILONERROR => true,
         ]);
+        if ($maxBytes !== null) {
+            // A download never grows past what the signed manifest promised.
+            curl_setopt_array($ch, [
+                CURLOPT_MAXFILESIZE => $maxBytes,
+                CURLOPT_NOPROGRESS => false,
+                CURLOPT_XFERINFOFUNCTION => fn($ch, $total, $done) => $done > $maxBytes ? 1 : 0,
+            ]);
+        }
         if ($out) {
             curl_setopt($ch, CURLOPT_FILE, $out);
         } else {
@@ -139,11 +149,15 @@ function slip_http_get(string $url, ?string $saveTo = null, int $timeout = 20)
     }
     if ($saveTo) {
         $out = fopen($saveTo, 'wb');
-        $ok = stream_copy_to_stream($in, $out) !== false;
+        $copied = $maxBytes === null ? stream_copy_to_stream($in, $out) : stream_copy_to_stream($in, $out, $maxBytes + 1);
         fclose($out);
         fclose($in);
-        if (!$ok) {
+        if ($copied === false) {
             throw new RuntimeException("download of $url was interrupted");
+        }
+        if ($maxBytes !== null && $copied > $maxBytes) {
+            @unlink($saveTo);
+            throw new RuntimeException("download of $url is larger than expected");
         }
         return true;
     }
@@ -239,7 +253,8 @@ function slip_update_check(bool $force = false): array
             'version' => (string)$p['version'],
             'build' => (int)$p['build'],
             'commit' => (string)($p['commit'] ?? ''),
-            'page' => (string)($rel['html_url'] ?? ''),
+            // Unsigned, and shown as a link: only GitHub release pages.
+            'page' => preg_match('#^https://github\.com/[^\s"<>]+$#', (string)($rel['html_url'] ?? '')) ? (string)$rel['html_url'] : '',
             'assets' => array_intersect_key($assets, $p['assets']),
             'manifest' => $raw,
         ];
@@ -300,7 +315,7 @@ function slip_update_step(): array
             if (!preg_match($mirror ? '#^https?://#' : '#^https://#', $url)) {
                 throw new RuntimeException("the download for $name isn't HTTPS");
             }
-            slip_http_get($url, "$file.part", 900);
+            slip_http_get($url, "$file.part", 900, (int)$a['size']);
             if (filesize("$file.part") !== (int)$a['size'] || hash_file('sha256', "$file.part") !== $a['sha256']) {
                 @unlink("$file.part");
                 throw new RuntimeException("$name didn't match the signed checksum — try again");
@@ -451,6 +466,11 @@ function slip_update_cleanup(int $keep = 0): void
 function slip_update_background(): void
 {
     if (!slip_station_ready() || !slip_release_keys()) {
+        return;
+    }
+    // One request at a time decides whether this round is due and claims it.
+    $claim = @fopen(slip_update_dir() . '/claim.lock', 'c');
+    if (!$claim || !flock($claim, LOCK_EX | LOCK_NB)) {
         return;
     }
     $state = slip_update_state();

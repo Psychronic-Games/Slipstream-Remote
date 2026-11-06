@@ -331,7 +331,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             app.toast("Enter the server address above and the 8-character setup code", pal::RED);
         } else {
             let ctx = ui.ctx().clone();
-            app.start_link(&ctx, slipstream_core::provision::StationLink { station, code }, true);
+            app.start_link(&ctx, slipstream_core::provision::StationLink { station, code }, true, false);
         }
     }
     #[cfg(target_os = "linux")]

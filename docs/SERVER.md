@@ -172,13 +172,22 @@ unique devices every 30 seconds, rather than looking up each group row. A
 failed or throttled background refresh never falls back to spending the
 connection budget. Only an older station reporting `unknown op` uses legacy
 per-device lookups; older apps also keep using the legacy path until updated.
+Presence is also counted per device ID asked about: `presence_ids_per_minute`
+(10,000 per network IP by default) keeps batches from scanning the ID space
+far faster than lookups. Raise it if many technicians behind one router
+watch large lists.
 
 Hosts report their own heartbeat about twice per minute. Heartbeat/sign-off
 requests are limited per **verified device key**, not per office IP, so adding
 computers does not consume another host's allowance. `registers_per_minute`
 defaults to 30 per device; `inventory_per_minute` defaults to 6 per device in a
 separate bucket. Signatures are checked before using a device's budget, and
-invalid signatures have a separate IP bucket. Existing configuration overrides
+invalid signatures have a separate IP bucket. Keys are free to make, so a
+device's **first** registration also counts against `new_devices_per_minute`
+(20 per network IP by default; a large fleet installed at once registers over
+a few minutes, retrying by itself). Inventory reports are accepted only from
+devices that have registered. The admin web sign-in is limited per address
+and per account. Existing configuration overrides
 are preserved. These settings do not change technician sign-in limits or the
 host's wrong-password lockout.
 
@@ -191,7 +200,9 @@ The relay is the `slipstream-server` program in `bin/`. The PHP starts it as
 your site's own user on a private local port, restarts it automatically if
 it stops (e.g. after a reboot, the next app check-in revives it), and
 `.htaccess` forwards `/relay` to it. Start, stop and its log are on the
-admin page.
+admin page. `relay.log` in the data folder moves to `relay.log.1` once it
+reaches 32 MiB (the previous `relay.log.1` is replaced), so it can't fill
+the disk; the admin page shows and exports the current file.
 
 ## Meetings
 

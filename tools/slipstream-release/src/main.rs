@@ -109,11 +109,20 @@ fn create_key(path: &Path) -> Result<SecretKey> {
         fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, format!("{}\n", hex(&key.to_bytes())))?;
+    let _ = fs::remove_file(&tmp);
+    // Private from the moment it exists, not after it's written.
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    {
+        use std::io::Write;
+        let mut file = options.open(&tmp)?;
+        writeln!(file, "{}", hex(&key.to_bytes()))?;
+        file.sync_all()?;
     }
     fs::rename(&tmp, path)?;
     eprintln!();

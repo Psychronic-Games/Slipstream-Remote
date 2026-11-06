@@ -10,7 +10,7 @@ use anyhow::{Context, Result, bail};
 use iroh::endpoint::{Connection, SendStream};
 use slipstream_core::{
     auth::{HostAuth, password_secret},
-    framing::{MsgReader, expect_msg, write_msg},
+    framing::{MsgReader, expect_msg_max, write_msg},
     proto::{
         Capabilities, ClipboardData, DisplayInfo, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo, StreamSettings,
         VideoFrame, ViewerMsg,
@@ -33,6 +33,34 @@ const AUTH_QUEUE_WAIT: Duration = Duration::from_secs(15);
 /// How long the challenge and answer may take. The answer is computed, not
 /// typed, so this only cuts off stalled connections holding up the queue.
 const AUTH_RESPONSE_WAIT: Duration = Duration::from_secs(10);
+/// Answering the challenge needs only a round trip while the throttle is
+/// held, so a stalled answer counts as a failed attempt after this long.
+const AUTH_EXCHANGE_WAIT: Duration = Duration::from_secs(5);
+/// Messages before authentication are tiny (a name, SPAKE2 values); never
+/// let an unauthenticated peer make this host allocate more.
+const PRE_AUTH_MESSAGE: usize = 64 * 1024;
+
+/// Whether a link has asked to see or use this computer. Chat-only links
+/// haven't; anything beyond chat and health checks counts, so the person
+/// here is told (`ClientEvent::HostSessionViewing`) even if a modified
+/// viewer skips the picture.
+pub(crate) struct Viewing {
+    flag: std::sync::atomic::AtomicBool,
+    inner: Arc<Inner>,
+    session: u64,
+}
+
+impl Viewing {
+    pub(crate) fn note(&self) {
+        if !self.flag.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            self.inner.emit(ClientEvent::HostSessionViewing { session: self.session });
+        }
+    }
+
+    fn get(&self) -> bool {
+        self.flag.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
 
 async fn fail(send: &mut SendStream, reason: impl Into<String>, retry_after_secs: u32) -> Result<()> {
     write_msg(send, &HostMsg::AuthFailed { reason: reason.into(), retry_after_secs }).await?;
@@ -45,7 +73,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     let (mut send, mut recv, hello) = tokio::time::timeout(AUTH_RESPONSE_WAIT, async {
         let (send, mut recv) = conn.accept_bi().await.context("waiting for control stream")?;
         send.set_priority(slipstream_core::proto::PRIORITY_CONTROL).ok();
-        let hello = expect_msg::<ViewerMsg>(&mut recv).await?;
+        let hello = expect_msg_max::<ViewerMsg>(&mut recv, PRE_AUTH_MESSAGE).await?;
         anyhow::Ok((send, recv, hello))
     }).await.context("viewer did not start authentication")??;
     let ViewerMsg::Hello { version, viewer_name } = hello else {
@@ -83,13 +111,21 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
         let (auth, pakes) = HostAuth::start(&secrets, &host_id, &peer);
         let exchange = async {
             write_msg(&mut send, &HostMsg::AuthChallenge { pakes }).await?;
-            expect_msg(&mut recv).await
+            expect_msg_max(&mut recv, PRE_AUTH_MESSAGE).await
         };
-        let ViewerMsg::AuthResponse { pakes, confirms } = tokio::time::timeout(AUTH_RESPONSE_WAIT, exchange)
-            .await
-            .context("viewer didn't answer the password challenge")??
-        else {
-            bail!("expected AuthResponse");
+        // A stalled or malformed answer is a failed attempt: otherwise a
+        // peer could hold the queue for free, again and again.
+        let (pakes, confirms) = match tokio::time::timeout(AUTH_EXCHANGE_WAIT, exchange).await {
+            Ok(Ok(ViewerMsg::AuthResponse { pakes, confirms })) => (pakes, confirms),
+            other => {
+                throttle.record_failure();
+                drop(throttle);
+                return Err(match other {
+                    Err(_) => anyhow::anyhow!("viewer didn't answer the password challenge"),
+                    Ok(Err(e)) => e,
+                    Ok(Ok(_)) => anyhow::anyhow!("expected AuthResponse"),
+                });
+            }
         };
         match auth.finish(&pakes, &confirms) {
             Ok(c) => {
@@ -187,15 +223,17 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     drop(backend);
     inner.emit(ClientEvent::HostSessionStarted { session: id, peer: viewer_name.clone() });
 
-    let controlled = capabilities.input;
-    let reason = match session_loop(&inner, &conn, id, &viewer_name, send, recv, displays, capabilities, cmd_rx).await {
+    let viewing = Arc::new(Viewing { flag: Default::default(), inner: inner.clone(), session: id });
+    let input_allowed = capabilities.input;
+    let reason = match session_loop(&inner, &conn, id, &viewer_name, send, recv, displays, capabilities, cmd_rx, viewing.clone()).await {
         Ok(r) => r,
         // The video writer may observe a peer close before the control reader.
         Err(e) => conn.close_reason().map(|r| crate::closed_reason(&r, "they")).unwrap_or_else(|| format!("{e:#}")),
     };
     // The backend is cached across connections, so dropping a viewer does
-    // not drop its held keyboard/mouse state. Release it on every exit path.
-    if controlled && let Some(backend) = inner.backend.lock().await.as_mut() {
+    // not drop its held keyboard/mouse state. Release it on every exit path
+    // (a chat-only link never controlled anything: leave other sessions be).
+    if input_allowed && viewing.get() && let Some(backend) = inner.backend.lock().await.as_mut() {
         let display = backend.displays().first().map(|d| d.index).unwrap_or(0);
         let _ = backend.inject(display, InputEvent::ReleaseAll);
     }
@@ -359,6 +397,7 @@ async fn session_loop(
     displays: Vec<DisplayInfo>,
     caps: Capabilities,
     mut cmds: mpsc::UnboundedReceiver<HostSessionCmd>,
+    viewing: Arc<Viewing>,
 ) -> Result<String> {
     let mut recv = MsgReader::<ViewerMsg>::spawn(recv);
     // Video writer: owns the uni-stream, fed by the encoder thread.
@@ -402,7 +441,7 @@ async fn session_loop(
         allow_wake: support_settings.host.allow_wake_on_lan,
         status: Arc::new(move |text| status_inner.emit(ClientEvent::HostStatus { session: id, text })),
     });
-    let _files_guard = AbortOnDrop(tokio::spawn(files::serve(conn.clone(), policy, on_saved, clipboard.clone(), tools)));
+    let _files_guard = AbortOnDrop(tokio::spawn(files::serve(conn.clone(), policy, on_saved, clipboard.clone(), tools, viewing.clone())));
 
     let flow = Flow::new();
     let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();
@@ -467,6 +506,7 @@ async fn session_loop(
                 let Some(msg) = msg else { return Ok("they ended the session".into()) };
                 match msg {
                     ViewerMsg::StartStream { display: d, settings } => {
+                        viewing.note();
                         let Some(info) = displays.iter().find(|x| x.index == d) else {
                             write_msg(&mut send, &HostMsg::Notice(format!("no display {d}"))).await?;
                             continue;
@@ -503,6 +543,7 @@ async fn session_loop(
                         if let Some(p) = &pipeline { p.request_keyframe(); }
                     }
                     ViewerMsg::Input(ev) => {
+                        if caps.input { viewing.note(); }
                         if cfg!(windows) && caps.input && wants_sas(&mut held_mods, &ev) && !service_mode() {
                             write_msg(&mut send, &HostMsg::Notice(SAS_NOTICE.into())).await?;
                         }
@@ -516,7 +557,8 @@ async fn session_loop(
                         }
                     }
                     ViewerMsg::Clipboard(ClipboardData::Text(t)) => {
-                        if let Some(c) = &clipboard { c.set_text(t); }
+                        // Chat-only links don't share clipboards either way.
+                        if viewing.get() && let Some(c) = &clipboard { c.set_text(t); }
                     }
                     // Viewers paste files with uploads + StreamOpen::ClipboardFiles.
                     ViewerMsg::Clipboard(ClipboardData::Files { .. }) => {}
@@ -527,6 +569,7 @@ async fn session_loop(
                     ViewerMsg::Bye => return Ok("they ended the session".into()),
                     ViewerMsg::SetPrivacy(on) => {
                         if caps.privacy && on != privacy.on {
+                            if on { viewing.note(); }
                             let r = match inner.backend.lock().await.as_mut() {
                                 Some(b) => b.set_privacy(on, viewer),
                                 None => Err(anyhow::anyhow!("screen backend gone")),
@@ -540,6 +583,7 @@ async fn session_loop(
                     ViewerMsg::SetAudio(on) => {
                         _audio = None;
                         if on && caps.audio {
+                            viewing.note();
                             match send_audio(conn.clone(), inner.opts.test_pattern) {
                                 Ok(a) => _audio = Some(a),
                                 Err(e) => {
@@ -552,7 +596,8 @@ async fn session_loop(
                     ViewerMsg::Hello { .. } | ViewerMsg::AuthResponse { .. } => bail!("protocol violation"),
                 }
             }
-            Some(clip) = clip_rx.recv() => match clip {
+            // Nothing copied here goes to a chat-only link.
+            Some(clip) = clip_rx.recv() => if viewing.get() { match clip {
                 Clip::Text(text) if text.len() <= 1 << 20 => {
                     write_msg(&mut send, &HostMsg::Clipboard(ClipboardData::Text(text))).await?;
                 }
@@ -565,7 +610,7 @@ async fn session_loop(
                     write_msg(&mut send, &HostMsg::Clipboard(ClipboardData::Files { items, total_bytes, file_count })).await?;
                 }
                 Clip::Files(_) => {}
-            },
+            }},
             Some(err) = err_rx.recv() => {
                 drop(pipeline.take());
                 // The portal session may have been revoked; reopen next time.

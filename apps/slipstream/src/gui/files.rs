@@ -456,7 +456,7 @@ impl FileManager {
         let builder=egui::ViewportBuilder::default().with_decorations(false)
             .with_transparent(theme::transparent_window()).with_app_id("slipstream-remote")
             .with_title(format!("File transfer · {host} · Slipstream Remote"))
-            .with_icon(Arc::new(theme::icon(64)))
+            .with_icon(theme::window_icon())
             .with_inner_size([1000.0,640.0]).with_min_inner_size([640.0,360.0]);
         ctx.show_viewport_deferred(viewport,builder,move |ui,class| {
             let mut files=shared.lock().expect("file window");
@@ -506,7 +506,7 @@ impl FileManager {
         let viewport=egui::ViewportId::from_hash_of(("transfer-progress",id));
         let builder=egui::ViewportBuilder::default().with_decorations(false)
             .with_transparent(theme::transparent_window()).with_app_id("slipstream-remote")
-            .with_title(format!("Transfer progress · {host} · Slipstream Remote")).with_icon(Arc::new(theme::icon(64)))
+            .with_title(format!("Transfer progress · {host} · Slipstream Remote")).with_icon(theme::window_icon())
             .with_inner_size([520.0,360.0]).with_min_inner_size([360.0,220.0]);
         ctx.show_viewport_deferred(viewport,builder,move |ui,class| {
             let mut files=shared.lock().expect("transfer progress");

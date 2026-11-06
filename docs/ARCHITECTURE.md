@@ -130,6 +130,11 @@ portal prompt.
 
 ## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 6)
 
+* **Message limits:** frames are length-prefixed (`framing.rs`, 32 MiB at
+  most, for keyframes). Before authentication the host accepts at most 64 KiB
+  per message and the viewer 1 MiB; file request headers are limited to
+  1 MiB. The password exchange must complete within 5 s, and a stalled
+  answer counts as a failed attempt.
 * **Control stream** (bi-directional, length-prefixed `postcard`): auth,
   session info (displays and capabilities), input events, frame acks,
   clipboard, chat, display/quality selection.
@@ -154,7 +159,9 @@ portal prompt.
   `UploadTarget::Clipboard { batch }`, then `StreamOpen::ClipboardFiles {
   batch }` puts that batch's folder contents on the host's clipboard
   before the paste keystroke is sent. Paste folders older than a day are
-  removed.
+  removed. On Linux and macOS they live in the user's own cache folder
+  (`Slipstream Remote/paste`, mode 0700, refused if it is a link or owned by
+  someone else), not the shared temporary folder.
 * **Tunnels:** `StreamOpen::Tunnel { host, port }` asks the host to
   connect to `host:port` (10 s timeout); after `Ready` the stream carries
   that TCP connection's bytes both ways, half-closes included. The viewer
@@ -171,6 +178,24 @@ portal prompt.
   shows the mouse pointer (`cursor_in_video`). The viewer hides its own
   pointer only in that case.
 
+* **Chat-only links** (no wire change; protocol stays 6): a viewer opened with
+  `LinkMode::ChatOnly` (`Client::connect_on_with`) authenticates normally but
+  doesn't send `StartStream`, `SetAudio` or clipboard data, and doesn't start
+  its clipboard monitor. The host (`host::Viewing`) captures nothing and
+  exchanges no clipboard in either direction until the link sends
+  `StartStream`, input, `SetAudio(true)`, `SetPrivacy(true)` or any file/tool
+  stream other than the `Pace` health check. It then emits
+  `ClientEvent::HostSessionViewing`, so the host's banner changes from
+  *Inbound chat* to *Inbound link* even for a modified viewer. Older viewers
+  send `StartStream` immediately, so they always count as viewing. Ending a
+  link that never viewed leaves the shared input backend alone (no
+  `ReleaseAll`). `ViewerCmd::StartViewing` (or choosing a display) turns the
+  chat into a full session on the same connection: it sends `StartStream`
+  and starts the clipboard and sound as the viewer's settings ask; repeats
+  are ignored. The Windows service bridge carries the state as
+  `Session.viewing: Option<bool>`; services before 0.33 omit it, which the
+  GUI reads as viewing. The link still opens the screen backend at sign-in
+  (see the 2026-11-05 audit's open items).
 * **Technician accounts** (station API, not the session protocol):
   `login` returns a token, the station's config (access key included) and
   the account's vault salt; `account`/`device_*`/`shared_*` take the token.
@@ -187,6 +212,13 @@ portal prompt.
   Add this device uses this station's host ID and computer name (the service
   ID on Windows); it preserves an existing entry's details. Multiline notes
   grow inside a bounded scrolling form with the Save controls outside it.
+  A technician's password for a shared device is a personal entry with the
+  same ID (`saved.rs::password_entry`), the same one **Remember** in the
+  password prompt creates. The editor shows it as *Your password* for shared
+  devices; for non-admins only that field is editable (the station rejects
+  `shared_save` from them anyway). A connection or chat refused with *wrong
+  password* through an account reopens the prompt with a note, with
+  Remember ticked when a saved password exists.
 * **Desktop file drops:** Linux windows use X11/Xwayland where available,
   because winit 0.30 emits no native Wayland drop events. During a drag the
   viewer samples the X11 pointer and translates it into its viewport; normal
@@ -762,6 +794,19 @@ so full-screen commands and shortcuts target the right session. Focus changes
 release other sessions; unfocused tool repaints do not. Ending a link explicitly disconnects
 it before dropping shared callbacks, and texture retention includes detached
 sessions. Manual reconnect now uses the same retained-session recovery path.
+
+On the Bridge, `home::devices_and_chats` shows the Subspace chat panel
+(`gui/chats.rs`) only while a chat is open. It puts Saved devices and the
+panel side by side from 980 points wide, with the chat
+column at 40% (380–620 points) and matching the list's height from the
+previous frame; narrower windows stack them. Device rows are at most 760
+points wide, so their actions stay beside the names. Each `ChatLink` owns its
+connecting task or live `ViewerSession`; a forwarding task wakes the UI for
+chat, notices and disconnects, but not once-a-second stats. **Connect** moves
+the session and its messages into a `RemoteTab` through `App::open_link_tab`,
+the same path as an ordinary link. Chat messages are labelled with Slipstream
+device names (`home::ChatNames`): the session's `host_name` or the host's
+`peer`, and this device's name.
 
 `gui/session_tabs.rs` adds a shared tab strip and drag coordinator. Root tabs
 snapshot attached sessions; each floating group has its own selectable strip.

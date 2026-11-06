@@ -13,6 +13,70 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Chat** beside each saved device opens a chat-only link: the workstation
+  shares no picture, sound, clipboard or control, and its banner reads
+  *Inbound chat (screen not shared)*. Each chat opens as a tab in a Subspace
+  chat panel that appears beside Saved devices on a wide Bridge (under them on
+  narrow windows) while any chat is open,
+  with status lamps, unread marks and notices for messages that arrive
+  while you're elsewhere. **Connect** turns a chat into a full session on the
+  same connection, keeping its messages; the workstation is told that its
+  screen is now visible. Workstations need this version to show the
+  chat-only banner; older ones show an ordinary inbound link.
+
+- Device rows on the Bridge keep Connect, Chat, Meeting and Edit beside the
+  device name instead of at the far edge of a wide window.
+
+- Change a saved password from **Edit**, including your own password for a
+  shared device, without removing and re-adding it. Technicians who aren't
+  admins can edit their password for shared devices; the name, group and notes
+  stay read-only for them. A refused saved password asks for the current one,
+  ready to replace it.
+
+- Chat messages show each side's Slipstream name instead of *You* and
+  *Remote*, in sessions, Subspace chat and the workstation's chat window.
+
+- Code audit fixes (details in `docs/AUDIT-2026-11-05.md`):
+  - **Meetings:** your own voice is no longer garbled in recordings. A
+    refused join attempt no longer stalls the meeting for everyone, and
+    leaving while recording no longer freezes the window.
+  - **Sign-in and connections:**
+    - Hosts limit unauthenticated messages to 64 KiB. A stalled password
+      answer now counts as a failed attempt, so it can't keep real viewers
+      out.
+    - Automatic reconnect keeps trying while the host is busy or has no
+      screen yet.
+    - Switching displays keeps the chosen quality.
+  - **Chat-only links:** the workstation itself enforces them, so files,
+    tools or input switch its banner to an ordinary link. Clipboards stay
+    separate until viewing.
+  - **Station links:** a link from a web page asks before moving a computer
+    from one private station to another.
+  - **Certificates:** a certificate for another name no longer triggers the
+    wrong-clock fallback.
+  - **Linux and macOS:** pasted files go to a private per-user folder
+    instead of the shared temporary folder.
+  - **Windows service:** installing takes ownership of its data folder, and
+    the service's own updates no longer fail after the first one.
+  - **Performance:**
+    - The Bridge reads settings in place instead of copying them every frame.
+    - Session and file windows stop redrawing their icon.
+    - The software encoder stops allocating a picture per frame.
+    - X11 compares still frames in place.
+    - The meeting voice thread no longer spins after a microphone failure.
+  - **Hosts:** monitor changes between sessions are picked up. Copying huge
+    or link-cycling folders no longer stalls a session.
+  - **Bridge:** device actions wrap under the name on phones. Chat tabs
+    notice messages while minimized and respect their 12-chat limit.
+  - **Stations:**
+    - Inventory comes only from registered devices.
+    - New devices are limited per address (`new_devices_per_minute`), and
+      presence is counted per ID (`presence_ids_per_minute`).
+    - Heartbeats no longer read the whole shared list.
+    - `relay.log` rotates at 32 MiB.
+    - Update downloads stop at their signed size.
+    - Admin sign-in is limited per account.
+
 - Browse the entire retained relay log with Oldest/Newest jumps and Older/Newer
   pages, and download the full history as plain text. Paging and streaming
   exports stay bounded in memory and require current station admin access.

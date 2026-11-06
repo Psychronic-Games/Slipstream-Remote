@@ -1367,6 +1367,13 @@ pub fn render_logo(size: u32, badge: bool) -> egui::IconData {
 }
 
 /// The app icon (window, tray, desktop entry, Windows .exe).
+/// The 64-pixel window icon, drawn once (it's supersampled: far too slow
+/// to redraw for every viewport builder every frame).
+pub fn window_icon() -> std::sync::Arc<egui::IconData> {
+    static ICON: std::sync::OnceLock<std::sync::Arc<egui::IconData>> = std::sync::OnceLock::new();
+    ICON.get_or_init(|| std::sync::Arc::new(icon(64))).clone()
+}
+
 pub fn icon(size: u32) -> egui::IconData {
     render_logo(size, true)
 }

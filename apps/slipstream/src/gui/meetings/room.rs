@@ -110,6 +110,16 @@ impl View {
     }
 
     pub fn react(&mut self, chat: u64, reaction: u8, participant: u64, on: bool) {
+        // Only known reactions, and only for recent messages (the room keeps
+        // the last 128 messages' reactions too).
+        if usize::from(reaction) >= slipstream_core::meeting::REACTIONS {
+            return;
+        }
+        if !self.reactions.contains_key(&chat) && self.reactions.len() >= 256
+            && let Some(&oldest) = self.reactions.keys().min()
+        {
+            self.reactions.remove(&oldest);
+        }
         let who = self.reactions.entry(chat).or_default().entry(reaction).or_default();
         if on {
             who.insert(participant);

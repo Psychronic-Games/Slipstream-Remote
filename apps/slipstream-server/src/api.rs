@@ -28,6 +28,7 @@ const LOOKUPS_PER_MIN: u32 = 600;
 const PRESENCE_PER_MIN: u32 = 120;
 /// Signed heartbeats are counted per verified endpoint, independent of NAT.
 const REGISTERS_PER_MIN: u32 = 30;
+const NEW_DEVICES_PER_MIN: u32 = 20;
 /// Signed requests must be this fresh (seconds).
 const MAX_SKEW: i64 = 600;
 
@@ -52,6 +53,11 @@ impl RateLimiter {
         let mut b = self.buckets.lock().unwrap();
         if b.len() > 50_000 {
             b.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(60));
+            // Still that many live buckets (a flood of keys): start afresh
+            // rather than scanning them all on every request.
+            if b.len() > 50_000 {
+                b.clear();
+            }
         }
         let e = b.entry((subject, kind)).or_insert((Instant::now(), 0));
         if e.0.elapsed() > Duration::from_secs(60) {
@@ -217,6 +223,13 @@ pub async fn handle(
                 return Json(json!({ "ok": true })).into_response();
             }
             let Some(addr) = p.addr else { return err(StatusCode::BAD_REQUEST, "missing addr") };
+            // Heartbeats count per device key, which anyone can make anew:
+            // first registrations are also limited per address.
+            if app.db.describe_endpoint(&p.endpoint).ok().flatten().is_none()
+                && !app.limits.allow(ip, "new_device", NEW_DEVICES_PER_MIN)
+            {
+                return err(StatusCode::TOO_MANY_REQUESTS, "too many new devices from this network — wait a minute");
+            }
             let mut info = p.info.unwrap_or_default();
             info = DeviceInfo {
                 name: info.name.chars().take(64).collect(),

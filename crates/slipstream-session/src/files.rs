@@ -12,7 +12,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use slipstream_core::{
-    framing::{expect_msg, write_msg},
+    framing::{expect_msg, expect_msg_max, write_msg},
     proto::{DirListing, FilePreview, Place, StreamOpen, StreamReply, UploadTarget},
 };
 use tokio::io::AsyncReadExt;
@@ -42,6 +42,7 @@ pub(crate) async fn serve(
     on_saved: Arc<dyn Fn(PathBuf) + Send + Sync>,
     clipboard: Option<slipstream_platform::clipboard::Clipboard>,
     tools: Arc<crate::support::HostTools>,
+    viewing: Arc<crate::host::Viewing>,
 ) {
     let scans = Arc::new(tokio::sync::Semaphore::new(1));
     let mut requests = tokio::task::JoinSet::new();
@@ -50,9 +51,9 @@ pub(crate) async fn serve(
             _ = requests.join_next(), if !requests.is_empty() => {},
             incoming = conn.accept_bi(), if requests.len() < 64 => {
                 let Ok((send,recv)) = incoming else {break};
-                let (on_saved, clipboard, scans, tools) = (on_saved.clone(), clipboard.clone(), scans.clone(), tools.clone());
+                let (on_saved, clipboard, scans, tools, viewing) = (on_saved.clone(), clipboard.clone(), scans.clone(), tools.clone(), viewing.clone());
                 requests.spawn(async move {
-                    if let Err(e) = handle(send, recv, policy, on_saved, clipboard, scans, tools).await {
+                    if let Err(e) = handle(send, recv, policy, on_saved, clipboard, scans, tools, viewing).await {
                         tracing::debug!("file request failed: {e:#}");
                     }
                 });
@@ -68,6 +69,7 @@ async fn reply(send: &mut SendStream, r: &StreamReply) -> Result<()> {
     write_msg(send, r).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle(
     mut send: SendStream,
     mut recv: RecvStream,
@@ -76,8 +78,14 @@ async fn handle(
     clipboard: Option<slipstream_platform::clipboard::Clipboard>,
     scans: Arc<tokio::sync::Semaphore>,
     tools: Arc<crate::support::HostTools>,
+    viewing: Arc<crate::host::Viewing>,
 ) -> Result<()> {
-    let req: StreamOpen = tokio::time::timeout(std::time::Duration::from_secs(10), expect_msg(&mut recv)).await.context("file request header timed out")??;
+    // Request headers are paths and names: 1 MiB is plenty.
+    let req: StreamOpen = tokio::time::timeout(std::time::Duration::from_secs(10), expect_msg_max(&mut recv, 1 << 20)).await.context("file request header timed out")??;
+    // Health checks are part of any link; everything else is more than chat.
+    if !matches!(req, StreamOpen::Pace) {
+        viewing.note();
+    }
     let denied = |what: &str| StreamReply::Error(format!("{what} is not allowed on this computer"));
     match req {
         StreamOpen::WakeOnLan { interface, mac } => {
@@ -188,9 +196,9 @@ async fn handle(
         StreamOpen::ClipboardFiles { batch } => {
             let r = match &clipboard {
                 Some(cb) if policy.receive => {
-                    let dir = fsops::paste_dir(batch);
-                    let items: Vec<PathBuf> =
-                        std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
+                    let items: Vec<PathBuf> = tokio::task::spawn_blocking(move || {
+                        std::fs::read_dir(fsops::paste_dir(batch)).into_iter().flatten().flatten().map(|e| e.path()).collect()
+                    }).await?;
                     cb.set_files(items);
                     StreamReply::Done
                 }
@@ -221,6 +229,10 @@ async fn handle(
         }
         // What the computer is: anyone allowed in may see it.
         StreamOpen::SystemInfo => {
+            // One collection at a time: it runs external tools (nvidia-smi)
+            // and stats every mount, which can be slow; don't pile them up.
+            static COLLECTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+            let _one = COLLECTING.lock().await;
             let info = tokio::task::spawn_blocking(slipstream_platform::machine::collect).await?;
             reply(&mut send, &StreamReply::SystemInfo(info)).await?;
         }
@@ -234,7 +246,8 @@ async fn handle(
             reply(&mut send, &StreamReply::Pace(stages)).await?;
         }
         StreamOpen::Places => {
-            let r = if policy.browse { StreamReply::Places(fsops::places()) } else { denied("Browsing files") };
+            // Probing drives can stall on a disconnected network drive.
+            let r = if policy.browse { StreamReply::Places(tokio::task::spawn_blocking(fsops::places).await?) } else { denied("Browsing files") };
             reply(&mut send, &r).await?;
         }
         StreamOpen::List { path } => {
@@ -252,7 +265,7 @@ async fn handle(
             reply(&mut send, &r).await?;
         }
         StreamOpen::MakeDir { path } => {
-            let r = if !policy.browse {
+            let r = if !policy.receive {
                 denied("Changing files")
             } else {
                 match tokio::fs::create_dir_all(&path).await {
@@ -298,19 +311,20 @@ async fn handle(
                     return Ok(());
                 }
             };
-            let base = match &target {
-                UploadTarget::Default => fsops::default_upload_dir(),
-                UploadTarget::Folder(f) => PathBuf::from(f),
-                UploadTarget::UnderCursor => {
-                    crate::desktop_shell::folder_under_cursor().unwrap_or_else(fsops::default_upload_dir)
-                }
-                UploadTarget::Clipboard { batch } => {
-                    let dir = fsops::paste_dir(*batch);
-                    let _ = tokio::fs::create_dir_all(&dir).await;
-                    dir
-                }
-            };
-            if !base.is_dir() {
+            // Asking Explorer (PowerShell) and creating a paste folder block.
+            let (base, is_dir) = tokio::task::spawn_blocking(move || {
+                let base = match target {
+                    UploadTarget::Default => fsops::default_upload_dir(),
+                    UploadTarget::Folder(f) => PathBuf::from(f),
+                    UploadTarget::UnderCursor => {
+                        crate::desktop_shell::folder_under_cursor().unwrap_or_else(fsops::default_upload_dir)
+                    }
+                    UploadTarget::Clipboard { batch } => fsops::make_paste_dir(batch),
+                };
+                let is_dir = base.is_dir();
+                (base, is_dir)
+            }).await?;
+            if !is_dir {
                 reply(&mut send, &StreamReply::Error(format!("folder {} does not exist", base.display()))).await?;
                 return Ok(());
             }

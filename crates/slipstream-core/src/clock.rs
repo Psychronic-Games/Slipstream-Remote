@@ -80,10 +80,12 @@ fn human(secs: i64) -> String {
     format!("{s} ({})", if secs > 0 { "behind" } else { "ahead" })
 }
 
-/// Does this error text describe a certificate date problem?
+/// Does this error text describe a certificate date problem? Only dates:
+/// a certificate for another name ("not valid for name …") must never make
+/// us learn the time from an unverified server.
 pub fn is_time_error(msg: &str) -> bool {
     let m = msg.to_lowercase();
-    m.contains("certificate") && (m.contains("expired") || m.contains("not valid") || m.contains("notvalidyet"))
+    m.contains("certificate") && (m.contains("expired") || m.contains("not valid yet") || m.contains("notvalidyet"))
 }
 
 /// Verifies certificates against Mozilla's roots using our corrected clock.
@@ -218,6 +220,9 @@ mod tests {
         assert!(is_time_error("invalid peer certificate: Expired"));
         assert!(is_time_error("invalid peer certificate: certificate not valid yet: verification time 1"));
         assert!(!is_time_error("invalid peer certificate: UnknownIssuer"));
+        // Someone else's certificate is not a clock problem.
+        assert!(!is_time_error("invalid peer certificate: certificate not valid for name \"relay.example\"; certificate is only valid for DnsName(\"attacker.example\")"));
+        assert!(!is_time_error("invalid peer certificate: NotValidForName"));
     }
 
     #[test]

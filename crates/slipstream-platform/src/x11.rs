@@ -146,7 +146,9 @@ fn capture_loop(d: &DisplayInfo, interval: Duration, slot: &FrameSlot) -> Result
     let mut prev: Vec<u8> = Vec::new();
     let mut prev_cursor = None;
     while !slot.is_closed() {
-        let mut data = match &shm {
+        let pointer = if cursor { conn.xfixes_get_cursor_image()?.reply().ok() } else { None };
+        let pointer_at = pointer.as_ref().map(|c| (c.x, c.y, c.cursor_serial));
+        let data = match &shm {
             Some(shm) => {
                 let reply = conn
                     .shm_get_image(root, d.x as i16, d.y as i16, w, h, !0, ImageFormat::Z_PIXMAP.into(), shm.seg, 0)?
@@ -154,23 +156,28 @@ fn capture_loop(d: &DisplayInfo, interval: Duration, slot: &FrameSlot) -> Result
                 if reply.depth < 24 {
                     bail!("unsupported colour depth {}", reply.depth);
                 }
-                let mut data = slot.buffer(len);
-                data.extend_from_slice(&shm.bytes()[..len]);
-                data
+                // A still screen is compared in place, not copied first.
+                let fresh = &shm.bytes()[..len];
+                if pointer_at == prev_cursor && fresh == prev.as_slice() {
+                    None
+                } else {
+                    let mut data = slot.buffer(len);
+                    data.extend_from_slice(fresh);
+                    Some(data)
+                }
             }
             None => {
                 let reply = conn.get_image(ImageFormat::Z_PIXMAP, root, d.x as i16, d.y as i16, w, h, !0)?.reply()?;
                 if reply.depth < 24 || reply.data.len() < len {
                     bail!("unsupported image format (depth {})", reply.depth);
                 }
-                reply.data
+                Some(reply.data)
             }
         };
-        let pointer = if cursor { conn.xfixes_get_cursor_image()?.reply().ok() } else { None };
-        let pointer_at = pointer.as_ref().map(|c| (c.x, c.y, c.cursor_serial));
-        if data == prev && pointer_at == prev_cursor {
-            slot.reuse(data);
-        } else {
+        match data {
+            None => {}
+            Some(data) if data == prev && pointer_at == prev_cursor => slot.reuse(data),
+            Some(mut data) => {
             prev.clear();
             prev.extend_from_slice(&data);
             prev_cursor = pointer_at;
@@ -179,6 +186,7 @@ fn capture_loop(d: &DisplayInfo, interval: Duration, slot: &FrameSlot) -> Result
             }
             // Z_PIXMAP 24/32-bit on little-endian is B, G, R, X.
             slot.put(RawFrame { width: w as u32, height: h as u32, stride: w as u32 * 4, format: PixelFormat::Bgra, data });
+            }
         }
         next += interval;
         match next.checked_duration_since(Instant::now()) {

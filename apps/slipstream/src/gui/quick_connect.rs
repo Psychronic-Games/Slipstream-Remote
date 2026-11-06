@@ -326,13 +326,13 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
 }
 
 pub(super) fn recent_station(app: &App, recent: &RecentConnection) -> Option<StationRef> {
-    let settings = app.client.settings();
     let Some(station) = recent.station.as_deref() else { return Some(StationRef::Primary) };
     if slipstream_core::config::is_public_station(station) { return Some(StationRef::Public); }
     if app.client.station_settings().url.as_deref().is_some_and(|url| same_station(station, url)) {
         return Some(StationRef::Primary);
     }
-    settings.accounts.iter().find(|a| !a.signed_out && a.is_station(station)).map(|a| StationRef::Account(AccountRef::of(a)))
+    // Runs for every recent link every frame: don't copy all settings.
+    app.client.with_settings(|s| s.accounts.iter().find(|a| !a.signed_out && a.is_station(station)).map(|a| StationRef::Account(AccountRef::of(a))))
 }
 
 fn same_station(a: &str, b: &str) -> bool {

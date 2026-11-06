@@ -23,6 +23,7 @@ mod support_report;
 #[cfg(any(windows, test))]
 mod support_status;
 mod saved;
+mod chats;
 #[cfg(windows)]
 mod scheme;
 #[cfg(windows)]
@@ -251,7 +252,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
                 })?
             });
             if let Some((link, asked)) = link {
-                app.start_link(&cc.egui_ctx, link, asked);
+                app.start_link(&cc.egui_ctx, link, asked, asked);
             }
             app.start_hidden = opts.minimized && app.tray.is_some();
             app.open_files = opts.open_files;
@@ -299,6 +300,7 @@ pub struct Toast {
     until: Instant,
 }
 
+type LinkReply = oneshot::Receiver<Result<StationConfig, String>>;
 type ConnectResult = Result<(ViewerSession, tmpsc::UnboundedReceiver<ViewerEvent>), String>;
 type SessionAction = (u64, remote::TabAction);
 type SessionActionQueue = (mpsc::Sender<SessionAction>, mpsc::Receiver<SessionAction>);
@@ -343,11 +345,23 @@ pub struct HostChat {
     pub status_open: bool,
 }
 
+/// A chat-only link asked for the screen. Links that do so straight away
+/// (ordinary sessions) were already announced; a chat turning into one gets
+/// its own notice.
+fn host_session_viewing(incoming: &mut [IncomingSession], session: u64) -> Option<String> {
+    let s = incoming.iter_mut().find(|s| s.id == session && s.chat_only)?;
+    s.chat_only = false;
+    (s.started.elapsed() > Duration::from_secs(2)).then(|| format!("{} can now see this screen", s.peer))
+}
+
 pub struct IncomingSession {
     pub id: u64,
     pub peer: String,
     pub chat: Arc<Mutex<HostChat>>,
     pub started: Instant,
+    /// Chat only so far: the link hasn't asked for the screen, sound or
+    /// control (see `ClientEvent::HostSessionViewing`).
+    pub chat_only: bool,
 }
 
 pub struct App {
@@ -406,7 +420,11 @@ pub struct App {
     #[cfg(target_os = "macos")]
     links_installed: bool,
     /// Exchanging a setup code with a station: (asked by the user, result).
-    link_job: Option<(bool, oneshot::Receiver<Result<StationConfig, String>>)>,
+    /// A station link being exchanged: asked for by the person, and whether
+    /// it came from outside the app (a web page, another program).
+    link_job: Option<(bool, bool, LinkReply)>,
+    /// An outside link that would switch stations, waiting for Switch.
+    station_switch: Option<(String, StationConfig)>,
     /// The Windows service hosts this computer (see `crate::service`).
     pub via_service: bool,
     #[cfg(windows)]
@@ -419,6 +437,7 @@ pub struct App {
     pub link_open: bool,
     /// Station sign-ins and saved devices.
     saved: saved::Saved,
+    chats: chats::Chats,
     pub link_code: String,
     /// Asking for a recent link's password (Bridge → Recent links).
     pub recent_prompt: Option<home::RecentPrompt>,
@@ -512,6 +531,7 @@ impl App {
             #[cfg(target_os = "macos")]
             links_installed: false,
             link_job: None,
+            station_switch: None,
             via_service: false,
             #[cfg(windows)]
             service_chat: None,
@@ -519,6 +539,7 @@ impl App {
             link_station: String::new(),
             link_open: false,
             saved: saved::Saved::default(),
+            chats: chats::Chats::default(),
             link_code: String::new(),
             recent_prompt: None,
             logo: None,
@@ -581,9 +602,13 @@ impl App {
                                 peer,
                                 chat: Default::default(),
                                 started: Instant::now(),
+                                chat_only: true,
                             });
                         }
                     }
+                    Event::Viewing { session } => if let Some(note) = host_session_viewing(&mut self.incoming, session) {
+                        self.toasts.push(Toast { text: note, color: pal::RED, until: Instant::now() + Duration::from_secs(5) });
+                    },
                     Event::Status { session, text } => {
                         if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
                             let mut chat = s.chat.lock().unwrap();
@@ -627,8 +652,12 @@ impl App {
                         peer,
                         chat: Default::default(),
                         started: Instant::now(),
+                        chat_only: true,
                     });
                 }
+                ClientEvent::HostSessionViewing { session } => if let Some(note) = host_session_viewing(&mut self.incoming, session) {
+                    self.toast(note, pal::RED);
+                },
                 ClientEvent::HostSessionEnded { session, reason } => {
                     if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
                         let peer = s.peer.clone();
@@ -748,28 +777,49 @@ impl App {
         let attempt = self.attempt.take().expect("checked");
         match result {
             Ok((session, events)) => {
-                let id = self.next_tab;
-                self.next_tab += 1;
-                let play_audio = self.client.settings().viewer.play_audio;
-                let mut tab = remote::RemoteTab::new(id, session, events, attempt.password, ctx, play_audio);
-                tab.via = attempt.via;
-                tab.files.lock().unwrap().open = self.open_files;
-                self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
-                self.tabs.push(Arc::new(Mutex::new(tab)));
-                self.page = Page::Remote(id);
-                if let Some(destination)=attempt.destination {
-                    self.move_session_tab(ctx,id,destination,None);
-                } else if self.client.settings().viewer.separate_windows && !ctx.embed_viewports() {
-                    self.open_session_window(ctx, id);
-                }
+                self.open_link_tab(ctx, session, events, attempt.password, attempt.via, attempt.destination, Vec::new());
                 self.connect_pw.clear();
-                self.settings_form.refresh_recent(&self.client.settings());
             }
             Err(e) => {
                 tracing::warn!("link to {} failed: {e}", attempt.id);
                 self.toast(format!("Link failed: {e}"), pal::RED);
+                // A refused password for a saved device: ask again, offering
+                // to replace a saved password that no longer works.
+                if chats::wrong_password(&e)
+                    && let slipstream_session::StationRef::Account(account) = &attempt.via
+                {
+                    let name = saved::device_name(self, account, attempt.id);
+                    if !saved::prompt_open(self) {
+                        saved::ask_password(self, account, attempt.id, &name, saved::Purpose::Connect, Some(saved::REFUSED.into()));
+                        saved::set_prompt_destination(self, attempt.destination);
+                    }
+                }
             }
         }
+    }
+
+    /// Shows a newly established link as a session tab (or window), with
+    /// any chat it had before it was a session.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn open_link_tab(&mut self, ctx: &egui::Context, session: ViewerSession, events: tmpsc::UnboundedReceiver<ViewerEvent>,
+        password: String, via: slipstream_session::StationRef, destination: Option<egui::ViewportId>, chat: Vec<(bool, String)>) {
+        let id = self.next_tab;
+        self.next_tab += 1;
+        let play_audio = self.client.settings().viewer.play_audio;
+        let mut tab = remote::RemoteTab::new(id, session, events, password, ctx, play_audio);
+        tab.via = via;
+        tab.local_name = self.client.settings().device_name;
+        tab.adopt_chat(chat);
+        tab.files.lock().unwrap().open = self.open_files;
+        self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
+        self.tabs.push(Arc::new(Mutex::new(tab)));
+        self.page = Page::Remote(id);
+        if let Some(destination)=destination {
+            self.move_session_tab(ctx,id,destination,None);
+        } else if self.client.settings().viewer.separate_windows && !ctx.embed_viewports() {
+            self.open_session_window(ctx, id);
+        }
+        self.settings_form.refresh_recent(&self.client.settings());
     }
 
     /// Downloads and installs the pending update in the background.
@@ -841,10 +891,10 @@ impl App {
     /// Exchanges `link`'s setup code for its station's config, then switches
     /// to that station. `asked`: the user did this (a button, a typed code),
     /// so it replaces a server they typed in by hand and errors are shown.
-    pub fn start_link(&mut self, ctx: &egui::Context, link: StationLink, asked: bool) {
+    pub fn start_link(&mut self, ctx: &egui::Context, link: StationLink, asked: bool, external: bool) {
         let wake = ctx.clone();
         let (tx, rx) = oneshot::channel();
-        self.link_job = Some((asked, rx));
+        self.link_job = Some((asked, external, rx));
         self.rt.spawn(async move {
             let r = async { DirectoryClient::new(&link.station, None)?.link(&link.code).await }.await;
             let _ = tx.send(r.map_err(|e| format!("{e:#}")));
@@ -952,9 +1002,9 @@ impl App {
     }
 
     fn poll_link(&mut self) {
-        let Some((asked, rx)) = &mut self.link_job else { return };
+        let Some((asked, external, rx)) = &mut self.link_job else { return };
         let Ok(result) = rx.try_recv() else { return };
-        let asked = *asked;
+        let (asked, external) = (*asked, *external);
         self.link_job = None;
         match result {
             Ok(cfg) => {
@@ -962,22 +1012,58 @@ impl App {
                     if asked { self.select_public(true); self.toast("Slipstream Public is available on its tab", pal::GREEN); }
                     return;
                 }
-                self.client.update_settings(|s| {
-                    if asked {
-                        s.server.provisioned = true;
-                    }
-                    slipstream_core::provision::apply(s, &cfg);
-                });
-                self.settings_form = settings::SettingsForm::from(&self.client.settings());
-                self.select_public(false);
-                self.dir_status = self.client.dir_status();
-                self.org = cfg.org.clone();
-                self.link_code.clear();
-                let name = cfg.org.unwrap_or_else(|| cfg.server.clone());
-                self.toast(format!("Connected to {name}"), pal::GREEN);
+                // A link from a web page or another program never moves this
+                // computer to another organisation's station unasked.
+                if external
+                    && let Some(current) = self.client.with_settings(|s| slipstream_core::provision::switch_needs_confirmation(s, &cfg))
+                {
+                    self.station_switch = Some((current, cfg));
+                    return;
+                }
+                self.apply_station(cfg, asked);
             }
             Err(e) if asked => self.toast(format!("Couldn't connect to the station: {e}"), pal::RED),
             Err(e) => tracing::info!("linking from the download address failed: {e}"),
+        }
+    }
+
+    fn apply_station(&mut self, cfg: StationConfig, asked: bool) {
+        self.client.update_settings(|s| {
+            if asked {
+                s.server.provisioned = true;
+            }
+            slipstream_core::provision::apply(s, &cfg);
+        });
+        self.settings_form = settings::SettingsForm::from(&self.client.settings());
+        self.select_public(false);
+        self.dir_status = self.client.dir_status();
+        self.org = cfg.org.clone();
+        self.link_code.clear();
+        let name = cfg.org.unwrap_or_else(|| cfg.server.clone());
+        self.toast(format!("Connected to {name}"), pal::GREEN);
+    }
+
+    /// Confirms a station switch asked for by an outside link.
+    fn station_switch_window(&mut self, ctx: &egui::Context) {
+        let Some((current, cfg)) = self.station_switch.clone() else { return };
+        let (mut switch, mut keep) = (false, false);
+        theme::modal("station-switch", pal::GOLD).show(ctx, |ui| {
+            ui.set_width(theme::dialog_width(ctx, 460.0));
+            keep = theme::window_header_with_close(ui, "Switch station?", pal::GOLD, pal::BLUE).close;
+            let new = cfg.org.as_deref().map(|org| format!("{org} ({})", cfg.server)).unwrap_or_else(|| cfg.server.clone());
+            ui.label(format!("A link asks this computer to move from {current} to {new}."));
+            ui.label(egui::RichText::new("Support from your current provider stops reaching this computer. Only switch if your support provider sent you this link.").color(pal::DIM));
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                switch = theme::pill(ui, "Switch station", pal::GOLD).clicked();
+                keep |= theme::pill(ui, &format!("Keep {current}"), pal::BLUE).clicked();
+            });
+        });
+        if switch {
+            self.station_switch = None;
+            self.apply_station(cfg, true);
+        } else if keep {
+            self.station_switch = None;
         }
     }
 
@@ -1854,6 +1940,7 @@ impl eframe::App for App {
         self.handle_events();
         meetings::poll(self, ctx);
         approval::poll(self, ctx);
+        chats::poll(self, ctx);
         let title = window_title(self.org.as_deref());
         if self.window_title != title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -1862,6 +1949,7 @@ impl eframe::App for App {
         self.update_tray();
         home::incoming_windows(self, ctx);
         saved::windows(self, ctx);
+        self.station_switch_window(ctx);
         home::recent_prompt(self, ctx);
         quick_connect::window(self, ctx);
         if self.start_hidden {
@@ -1890,7 +1978,7 @@ impl eframe::App for App {
                     continue;
                 }
                 match StationLink::parse(&url) {
-                    Some(link) => self.start_link(ctx, link, true),
+                    Some(link) => self.start_link(ctx, link, true, true),
                     None => self.toast("That link isn't a Slipstream station link", pal::RED),
                 }
             }

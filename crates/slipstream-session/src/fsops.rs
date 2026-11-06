@@ -86,8 +86,13 @@ pub fn list(path: Option<&str>) -> Result<DirListing> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            // Follow symlinks for type/size; skip broken ones.
-            let meta = std::fs::metadata(e.path()).ok()?;
+            // The entry's own metadata needs no extra open (Windows) or
+            // stat; only symlinks are followed for type/size. Broken ones
+            // are skipped.
+            let meta = match e.file_type() {
+                Ok(t) if t.is_symlink() => std::fs::metadata(e.path()).ok()?,
+                _ => e.metadata().ok()?,
+            };
             let modified = meta
                 .modified()
                 .ok()
@@ -154,12 +159,53 @@ pub fn unique_path(path: &Path) -> PathBuf {
     (1..).map(|i| dir.join(format!("{stem} ({i}){ext}"))).find(|p| p.symlink_metadata().is_err()).expect("unbounded")
 }
 
-/// The temporary folder for one paste of copied files. Older ones (from a
-/// day ago) are removed when a new one is made.
+/// Where pastes of copied files go: a folder of this user's own. On Linux
+/// and macOS the temporary folder is shared by every user, so the user's
+/// cache folder is used instead.
+fn paste_root() -> PathBuf {
+    #[cfg(unix)]
+    if let Some(dirs) = directories::BaseDirs::new() {
+        return dirs.cache_dir().join("Slipstream Remote").join("paste");
+    }
+    std::env::temp_dir().join("Slipstream Remote paste")
+}
+
+/// The paste root, if it is a real folder (not a link somewhere else) that
+/// this user owns. Nothing is cleaned up or written through anything else.
+fn trusted_paste_root() -> Option<PathBuf> {
+    let root = paste_root();
+    let _ = std::fs::create_dir_all(&root);
+    let meta = std::fs::symlink_metadata(&root).ok()?;
+    if !meta.is_dir() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        // Owned by whoever owns the home folder (this user).
+        if std::fs::metadata(home()).is_ok_and(|h| h.uid() != meta.uid()) {
+            return None;
+        }
+        let _ = std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700));
+    }
+    Some(root)
+}
+
+/// The folder for one paste of copied files (it may not exist yet).
 pub fn paste_dir(batch: u64) -> PathBuf {
-    let root = std::env::temp_dir().join("Slipstream Remote paste");
-    if let Ok(entries) = std::fs::read_dir(&root) {
-        for e in entries.flatten() {
+    let name = format!("{batch:016x}");
+    match trusted_paste_root() {
+        Some(root) => root.join(name),
+        // Never fall back to a shared location; this one won't exist.
+        None => std::env::temp_dir().join(format!("slipstream-paste-unavailable-{name}")),
+    }
+}
+
+/// Creates the folder for a paste, first removing pastes from over a day ago.
+pub fn make_paste_dir(batch: u64) -> PathBuf {
+    let dir = paste_dir(batch);
+    if !dir.is_dir() && let Some(root) = trusted_paste_root() {
+        for e in std::fs::read_dir(&root).into_iter().flatten().flatten() {
             let old = e
                 .metadata()
                 .and_then(|m| m.modified())
@@ -168,8 +214,9 @@ pub fn paste_dir(batch: u64) -> PathBuf {
                 let _ = std::fs::remove_dir_all(e.path());
             }
         }
+        let _ = std::fs::create_dir_all(&dir);
     }
-    root.join(format!("{batch:016x}"))
+    dir
 }
 
 /// What a list of copied files amounts to: top-level items, total bytes
@@ -177,17 +224,25 @@ pub fn paste_dir(batch: u64) -> PathBuf {
 pub fn summarize(paths: &[PathBuf], limit: u64) -> (Vec<slipstream_core::proto::ClipFile>, u64, u64) {
     let (mut bytes, mut count) = (0u64, 0u64);
     let mut items = Vec::new();
+    // Folders count too, each is visited once (linked cycles), and a huge
+    // tree stops after a few seconds: this runs while a session waits.
+    let mut visited = std::collections::HashSet::new();
+    let mut folders = 0u64;
+    let started = std::time::Instant::now();
     for p in paths {
         let is_dir = p.is_dir();
         let mut size = 0;
         let mut stack = vec![p.clone()];
         while let Some(q) = stack.pop() {
-            if count > limit {
+            if count > limit || folders > limit || started.elapsed().as_secs() >= 3 {
                 break;
             }
             match std::fs::metadata(&q) {
                 Ok(m) if m.is_dir() => {
-                    stack.extend(std::fs::read_dir(&q).into_iter().flatten().flatten().map(|e| e.path()))
+                    folders += 1;
+                    if visited.insert(q.canonicalize().unwrap_or_else(|_| q.clone())) {
+                        stack.extend(std::fs::read_dir(&q).into_iter().flatten().flatten().map(|e| e.path()))
+                    }
                 }
                 Ok(m) => {
                     size += m.len();

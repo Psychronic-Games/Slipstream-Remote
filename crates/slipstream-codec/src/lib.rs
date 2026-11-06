@@ -17,7 +17,7 @@ use openh264::{
     },
     formats::YUVSource,
 };
-use yuv::{YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix};
+use yuv::{YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix};
 
 mod hardware;
 #[cfg(target_os = "linux")]
@@ -455,14 +455,18 @@ impl Encoder {
 
     /// Converts `frame` (at least `w`×`h`) to I420 in our planes.
     fn convert(&mut self, frame: &RawFrame, w: usize, h: usize) -> Result<()> {
-        let mut image = YuvPlanarImageMut::<u8>::alloc(w as u32, h as u32, YuvChromaSubsampling::Yuv420);
-        // Write straight into our planes by swapping buffers in and out.
-        image.y_plane = yuv::BufferStoreMut::Owned(std::mem::take(&mut self.planes.y));
-        image.u_plane = yuv::BufferStoreMut::Owned(std::mem::take(&mut self.planes.u));
-        image.v_plane = yuv::BufferStoreMut::Owned(std::mem::take(&mut self.planes.v));
-        image.y_stride = w as u32;
-        image.u_stride = (w / 2) as u32;
-        image.v_stride = (w / 2) as u32;
+        // Write straight into our planes by moving them in and out (alloc()
+        // would allocate and zero a whole new picture every frame).
+        let mut image = YuvPlanarImageMut::<u8> {
+            y_plane: yuv::BufferStoreMut::Owned(std::mem::take(&mut self.planes.y)),
+            y_stride: w as u32,
+            u_plane: yuv::BufferStoreMut::Owned(std::mem::take(&mut self.planes.u)),
+            u_stride: (w / 2) as u32,
+            v_plane: yuv::BufferStoreMut::Owned(std::mem::take(&mut self.planes.v)),
+            v_stride: (w / 2) as u32,
+            width: w as u32,
+            height: h as u32,
+        };
         let convert = match frame.format {
             PixelFormat::Bgra => yuv::bgra_to_yuv420,
             PixelFormat::Rgba => yuv::rgba_to_yuv420,

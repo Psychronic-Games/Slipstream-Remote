@@ -22,6 +22,12 @@ pub async fn write_msg<T: Serialize>(send: &mut SendStream, msg: &T) -> Result<(
 
 /// Reads one message; `Ok(None)` on a clean end of stream.
 pub async fn read_msg<T: DeserializeOwned>(recv: &mut RecvStream) -> Result<Option<T>> {
+    read_msg_max(recv, MAX_MESSAGE).await
+}
+
+/// [`read_msg`] with a smaller size limit, for messages from peers that
+/// haven't authenticated yet (the buffer is allocated before it fills).
+pub async fn read_msg_max<T: DeserializeOwned>(recv: &mut RecvStream, max: usize) -> Result<Option<T>> {
     let mut len = [0u8; 4];
     match recv.read_exact(&mut len).await {
         Ok(()) => {}
@@ -29,7 +35,7 @@ pub async fn read_msg<T: DeserializeOwned>(recv: &mut RecvStream) -> Result<Opti
         Err(e) => return Err(e).context("stream read"),
     }
     let len = u32::from_le_bytes(len) as usize;
-    if len > MAX_MESSAGE {
+    if len > max.min(MAX_MESSAGE) {
         bail!("peer sent oversized message: {len} bytes");
     }
     let mut body = vec![0u8; len];
@@ -76,4 +82,9 @@ impl<T> Drop for MsgReader<T> {
 /// Like [`read_msg`] but treats end of stream as an error.
 pub async fn expect_msg<T: DeserializeOwned>(recv: &mut RecvStream) -> Result<T> {
     read_msg(recv).await?.context("peer closed the stream")
+}
+
+/// [`expect_msg`] with [`read_msg_max`]'s limit.
+pub async fn expect_msg_max<T: DeserializeOwned>(recv: &mut RecvStream, max: usize) -> Result<T> {
+    read_msg_max(recv, max).await?.context("peer closed the stream")
 }

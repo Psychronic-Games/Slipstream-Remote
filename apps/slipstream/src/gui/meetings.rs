@@ -825,7 +825,10 @@ pub(super) fn ui(app: &mut App, ui: &mut Ui) {
         });
     }
     if leave {
-        if let Some(active) = meetings.active.take() {
+        if let Some(mut active) = meetings.active.take() {
+            // Finish a recording off the UI thread rather than in its drop.
+            #[cfg(not(target_os = "android"))]
+            recording::stop(&mut active, app, &ctx);
             active.meeting.command(Command::Leave);
         }
         meetings.outgoing = None;

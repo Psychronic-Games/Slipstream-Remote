@@ -58,8 +58,12 @@ impl Publisher {
         self.video.try_send(Arc::new(video)).is_ok()
     }
     pub fn audio(&self, packet: Bytes) {
-        if let Some(tap) = self.tap.lock().unwrap().as_ref() {
-            let _ = tap.try_send(packet.clone());
+        // Packets start with a 2-byte sequence number; the recorder decodes
+        // just the Opus frame after it.
+        if let Some(tap) = self.tap.lock().unwrap().as_ref()
+            && packet.len() > 2
+        {
+            let _ = tap.try_send(packet.slice(2..));
         }
         let _ = self.audio.try_send(packet);
     }
@@ -714,9 +718,14 @@ async fn host(endpoint: Endpoint, invitation: Invitation, channels: Channels) {
                         else if room.peers.values().any(|p|p.conn.remote_id()==conn.remote_id()){Some("This client is already in the meeting")}
                         else{None};
                     if let Some(reason)=denied{
-                        let _=tokio::time::timeout(Duration::from_millis(300),wire::write(&mut send,&ServerMessage::Ended(reason.into()),MAX_CONTROL)).await;
-                        let _=send.finish();let _=tokio::time::timeout(Duration::from_millis(300),send.stopped()).await;
-                        conn.close(2u32.into(),reason.as_bytes());continue;
+                        // Off the room's loop: a refused peer that never
+                        // reads must not stall everyone else's meeting.
+                        tokio::spawn(async move {
+                            let _=tokio::time::timeout(Duration::from_millis(300),wire::write(&mut send,&ServerMessage::Ended(reason.into()),MAX_CONTROL)).await;
+                            let _=send.finish();let _=tokio::time::timeout(Duration::from_millis(300),send.stopped()).await;
+                            conn.close(2u32.into(),reason.as_bytes());
+                        });
+                        continue;
                     }
                     let id=room.next;room.next+=1;
                     let peer=peer(id,conn,send,recv,Participant{id,name,microphone:false,source:Source::None},ticket,tx.clone());
@@ -919,7 +928,7 @@ async fn guest(
             message=cr.recv()=>match message{
                 Some(ServerMessage::State(state))=>{channels.state.send_replace(state);}
                 Some(ServerMessage::Chat(chat))=>{let _=channels.events.try_send(Event::Chat(chat));}
-                Some(ServerMessage::Reaction{chat,reaction,participant,on})=>{let _=channels.events.try_send(Event::Reaction{chat,reaction,participant,on});}
+                Some(ServerMessage::Reaction{chat,reaction,participant,on})=>if usize::from(reaction)<REACTIONS {let _=channels.events.try_send(Event::Reaction{chat,reaction,participant,on});},
                 Some(ServerMessage::Keyframe)=>{let _=channels.events.try_send(Event::Keyframe);}
                 Some(ServerMessage::VideoAck{generation,seq})=>{upload_ack.send_replace((generation,seq));}
                 Some(ServerMessage::Ended(reason))=>break reason,

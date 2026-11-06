@@ -415,6 +415,17 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     settings.host.enabled = true;
     let home = machine_home();
     std::fs::create_dir_all(&home)?;
+    // A link or junction could send SYSTEM's writes anywhere.
+    for dir in [home.clone(), public_dir()] {
+        if std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_symlink()) {
+            bail!("{} is a link, not a folder; remove it and install again", dir.display());
+        }
+    }
+    // Someone may have created the folder before the service was installed
+    // (ProgramData lets users do that): make administrators its owner and
+    // drop any entries they added, before restricting it.
+    let _ = quiet("icacls").arg(&home).args(["/setowner", "*S-1-5-32-544", "/T", "/C", "/Q"]).status();
+    let _ = quiet("icacls").arg(&home).args(["/reset", "/C", "/Q"]).status();
     // SYSTEM and administrators only: the profile holds the device key and
     // the password digest.
     let acl = quiet("icacls")

@@ -249,8 +249,12 @@ pub fn install(staged: &Path) -> Result<PathBuf> {
     }
     #[cfg(windows)]
     {
-        let old = exe.with_extension("old");
-        let _ = std::fs::remove_file(&old);
+        // A unique name: a signed-in user's tray app may still run the
+        // copy moved aside by the previous update, which can't be removed
+        // or replaced until it exits (`cleanup` removes it later).
+        let _ = std::fs::remove_file(exe.with_extension("old"));
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+        let old = exe.with_file_name(format!(".slipstream-previous-{}-{stamp}.old", std::process::id()));
         std::fs::rename(&exe, &old).context("moving the old app aside")?;
         if let Err(e) = std::fs::rename(staged, &exe) {
             let _ = std::fs::rename(&old, &exe); // roll back

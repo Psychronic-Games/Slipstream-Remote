@@ -242,6 +242,12 @@ impl RelayLog {
         });
         true
     }
+    /// Forgets a tunnel whose request was dropped part-way (the client went
+    /// away while we waited on the relay): no record, nothing left behind.
+    pub fn abandon(&self, tunnel: u64) {
+        self.state.lock().unwrap().tunnels.remove(&tunnel);
+    }
+
     pub fn request_failed(
         &self,
         tunnel: Option<u64>,

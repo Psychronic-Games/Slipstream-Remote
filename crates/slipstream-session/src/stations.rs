@@ -1,6 +1,6 @@
 //! A dedicated public endpoint keeps private relay credentials out of public
 //! registrations. Both listeners share the host, password and auth throttle.
-use crate::{AccountRef, Client, ClientEvent, DirStatus, Inner, ViewerEvent, ViewerSession};
+use crate::{AccountRef, Client, ClientEvent, DirStatus, Inner, LinkMode, ViewerEvent, ViewerSession};
 use anyhow::{Context, Result, bail};
 use iroh::{Endpoint, SecretKey, Watcher};
 use slipstream_core::{
@@ -145,10 +145,23 @@ impl Client {
         password: &str,
         progress: impl Fn(String) + Send + Sync + 'static,
     ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
+        self.connect_on_with(station, id, password, LinkMode::Full, progress).await
+    }
+
+    /// [`connect_on`](Self::connect_on), choosing what the link starts with
+    /// (a chat-only link shows nothing until it is turned into a session).
+    pub async fn connect_on_with(
+        &self,
+        station: &StationRef,
+        id: DeviceId,
+        password: &str,
+        mode: LinkMode,
+        progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
         match station {
-            StationRef::Primary => self.connect(id, password, progress).await,
+            StationRef::Primary => self.connect_with(id, password, mode, progress).await,
             StationRef::Account(account) => {
-                self.connect_via(account, id, Some(password.into()), progress)
+                self.connect_via_with(account, id, Some(password.into()), mode, progress)
                     .await
             }
             StationRef::Public => {
@@ -159,6 +172,7 @@ impl Client {
                     id,
                     found,
                     password,
+                    mode,
                     progress,
                     Some(dc.base_url().to_string()),
                 )
@@ -181,10 +195,15 @@ pub(crate) async fn directory_task(inner: Arc<Inner>) {
     let mut backoff = Duration::from_secs(1);
     loop {
         status(&inner, DirStatus::Connecting);
+        let started = std::time::Instant::now();
         let result = run(&inner).await;
         public.directory.send_replace(None);
         if public.endpoint.is_closed() {
             break;
+        }
+        // A link that stayed up for a while starts the backoff afresh.
+        if started.elapsed() > Duration::from_secs(60) {
+            backoff = Duration::from_secs(1);
         }
         if let Err(error) = result {
             status(&inner, DirStatus::Error(crate::short_error(&error)));

@@ -40,7 +40,11 @@ function slip_config(): array
         // per-IP budgets. Signed host traffic is counted per device key.
         'lookups_per_minute' => 600,
         'presence_per_minute' => 120,
+        // Device IDs asked about per IP and minute, across presence batches.
+        'presence_ids_per_minute' => 10000,
         'registers_per_minute' => 30,
+        // Devices registering for the first time, per IP and minute.
+        'new_devices_per_minute' => 20,
         'inventory_per_minute' => 6,
         'relay_bytes_per_second' => 0,
         'relay_max_connections' => 0,
@@ -168,6 +172,8 @@ interface SlipStore
     /** Returns the device's ID, assigning a new one if needed. */
     public function register(string $endpoint, array $info, string $addrJson): int;
     public function unregister(string $endpoint): void;
+    /** Whether this key has registered here before. */
+    public function known(string $endpoint): bool;
     /** ['status' => 'online'|'offline'|'not_found', 'addr' => json?, 'info' => array?] */
     public function lookup(int $id): array;
     /** [['id' => int, 'status' => 'online'|'offline'|'not_found'], ...] */
@@ -246,6 +252,11 @@ class SlipFileStore implements SlipStore
         $d = array_merge($d, $info, ['addr' => $addrJson, 'last_seen' => time()]);
         $this->save($endpoint, $d);
         return (int)$d['id'];
+    }
+
+    public function known(string $endpoint): bool
+    {
+        return is_file($this->devicePath($endpoint));
     }
 
     public function unregister(string $endpoint): void
@@ -373,6 +384,13 @@ class SlipPdoStore implements SlipStore
         $this->db->prepare('UPDATE slipstream_devices SET last_seen = 0 WHERE endpoint = ?')->execute([$endpoint]);
     }
 
+    public function known(string $endpoint): bool
+    {
+        $q = $this->db->prepare('SELECT 1 FROM slipstream_devices WHERE endpoint = ?');
+        $q->execute([$endpoint]);
+        return $q->fetchColumn() !== false;
+    }
+
     public function lookup(int $id): array
     {
         $q = $this->db->prepare('SELECT name, os, app_version, addr, last_seen FROM slipstream_devices WHERE device_id = ?');
@@ -476,6 +494,8 @@ function slip_user_load(string $u): ?array
 /** Runs $fn on the account under a lock and saves what it returns. */
 function slip_user_update(string $u, callable $fn): ?array
 {
+    // The name becomes a path: never a lock file outside the accounts.
+    if (!slip_user_valid($u)) return null;
     $path = slip_acct_dir('accounts') . "/$u.json";
     $fh = fopen("$path.lock", 'c');
     flock($fh, LOCK_EX);
@@ -815,7 +835,16 @@ function slip_save_json(string $path, array $value): void
 function slip_enroll_device(string $endpoint, int $id, string $name): void
 {
     if (slip_access_key() === null) return;
-    if ((slip_shared_state()['enrolled'][$endpoint] ?? null) === $id) return;
+    // Every heartbeat comes here: a small per-device marker answers the
+    // common case without reading the whole shared list.
+    $markers = slip_data_dir() . '/enrolled';
+    $marker = "$markers/$endpoint";
+    if (@file_get_contents($marker) === (string)$id) return;
+    if ((slip_shared_state()['enrolled'][$endpoint] ?? null) === $id) {
+        if (!is_dir($markers)) @mkdir($markers, 0750, true);
+        @file_put_contents($marker, (string)$id);
+        return;
+    }
     slip_shared_state_update(function (array $state) use ($endpoint, $id, $name) {
         if (($state['enrolled'][$endpoint] ?? null) === $id) return $state;
         $exists = array_filter($state['devices'], fn($d) => ($d['id'] ?? 0) === $id);
@@ -1185,9 +1214,31 @@ function slip_relay_running(): bool
     return false;
 }
 
+/** relay.log size at which it moves to relay.log.1 (the previous one goes). */
+const SLIP_RELAY_LOG_MAX = 32 * 1024 * 1024;
+
+/** Keeps relay.log bounded. The relay appends (O_APPEND), so truncating the
+ * file in place is safe while it runs; its next line starts the new log. */
+function slip_relay_log_rotate(): void
+{
+    $log = slip_data_dir() . '/relay.log';
+    clearstatcache(true, $log);
+    if ((@filesize($log) ?: 0) < SLIP_RELAY_LOG_MAX) return;
+    $fh = @fopen($log, 'c');
+    if (!$fh || !flock($fh, LOCK_EX | LOCK_NB)) return;
+    clearstatcache(true, $log);
+    if ((@filesize($log) ?: 0) >= SLIP_RELAY_LOG_MAX) {
+        @copy($log, "$log.1");
+        ftruncate($fh, 0);
+    }
+    flock($fh, LOCK_UN);
+    fclose($fh);
+}
+
 /** Supervisor events contain fixed operational fields, never command lines or keys. */
 function slip_relay_note(string $level, string $event, string $message, array $fields = []): void
 {
+    slip_relay_log_rotate();
     $line = gmdate('Y-m-d\TH:i:s\Z') . " $level slipstream_station: $message event=$event "
         . json_encode($fields, JSON_UNESCAPED_SLASHES) . "\n";
     @file_put_contents(slip_data_dir() . '/relay.log', $line, FILE_APPEND | LOCK_EX);
@@ -1196,6 +1247,7 @@ function slip_relay_note(string $level, string $event, string $message, array $f
 /** Starts the relay if it isn't running. Returns true if it's up. */
 function slip_relay_ensure(bool $force = false, string $reason = 'automatic_recovery'): bool
 {
+    slip_relay_log_rotate();
     if (!$force && slip_relay_running()) {
         return true;
     }
@@ -1354,7 +1406,7 @@ function slip_client_ip(): string
 }
 
 /** Per-IP by default; a verified device can use its own signed identity. */
-function slip_rate_ok(string $kind, int $perMinute, ?string $identity = null): bool
+function slip_rate_ok(string $kind, int $perMinute, ?string $identity = null, int $cost = 1): bool
 {
     $dir = slip_data_dir() . '/rate';
     if (!is_dir($dir)) {
@@ -1372,7 +1424,7 @@ function slip_rate_ok(string $kind, int $perMinute, ?string $identity = null): b
     if (time() - $start >= 60) {
         [$start, $count] = [time(), 0];
     }
-    $count++;
+    $count += max(1, $cost);
     ftruncate($fh, 0);
     rewind($fh);
     fwrite($fh, "$start $count");

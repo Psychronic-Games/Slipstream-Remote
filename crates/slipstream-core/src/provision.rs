@@ -182,6 +182,17 @@ fn attr_urls(bytes: &[u8]) -> Vec<String> {
 /// server is set, when the settings came from a station before (so a newer
 /// download can update the key), or when it's the same server. A server the
 /// user typed in by hand is left alone. Returns true if anything changed.
+/// The station a link from outside the app (a web page, another program)
+/// would switch away from, if the person should confirm it first: a
+/// configured private station other than the link's.
+pub fn switch_needs_confirmation(settings: &Settings, cfg: &StationConfig) -> Option<String> {
+    let current = settings.server.url.as_deref().map(str::trim).filter(|url| !url.is_empty())?;
+    let same = current == cfg.server.trim()
+        || crate::directory::normalize_server_url(current).ok() == crate::directory::normalize_server_url(&cfg.server).ok();
+    (!same && !crate::config::is_public_station(current) && !crate::config::is_public_station(&cfg.server))
+        .then(|| current.to_string())
+}
+
 pub fn apply(settings: &mut Settings, cfg: &StationConfig) -> bool {
     let s = &mut settings.server;
     let same_server = s.url.as_deref().map(str::trim) == Some(cfg.server.trim());
@@ -207,6 +218,19 @@ pub fn apply(settings: &mut Settings, cfg: &StationConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outside_links_confirm_only_a_switch_between_private_stations() {
+        let cfg = StationConfig { server: "new.example.com".into(), key: None, org: None };
+        let mut settings = Settings::default();
+        assert_eq!(switch_needs_confirmation(&settings, &cfg), None, "nothing configured yet");
+        settings.server.url = Some("new.example.com".into());
+        assert_eq!(switch_needs_confirmation(&settings, &cfg), None, "same station");
+        settings.server.url = Some("old.example.com".into());
+        assert_eq!(switch_needs_confirmation(&settings, &cfg).as_deref(), Some("old.example.com"));
+        settings.server.url = Some(crate::config::PUBLIC_STATION_URL.into());
+        assert_eq!(switch_needs_confirmation(&settings, &cfg), None, "leaving Slipstream Public");
+    }
 
     #[test]
     fn trailer_roundtrip_and_apply() {

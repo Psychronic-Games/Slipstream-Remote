@@ -164,6 +164,25 @@ fn ask_link(request: slipstream_session::approval::LinkRequest, answer: impl FnO
     });
 }
 
+/// Asks before an outside link moves this computer to another station.
+/// Keeping the current one is the default button.
+fn confirm_station_switch(current: &str, new: &str) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MessageBoxW,
+    };
+    let body = wide(&format!(
+        "A link asks this computer to move from {current} to {new}.\n\n\
+         Support from your current provider stops reaching this computer. Only switch if your support provider sent you this link.\n\n\
+         Switch station?"
+    ));
+    let title = wide("Slipstream Remote: switch station?");
+    // SAFETY: both strings outlive the call.
+    let choice = unsafe {
+        MessageBoxW(std::ptr::null_mut(), body.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND)
+    };
+    choice == IDYES
+}
+
 fn wake(msg: u32) {
     let h = HWND_BITS.load(Ordering::Relaxed);
     if h != 0 {
@@ -907,11 +926,25 @@ fn link(ui: &Ui, url: &str) {
         let result = async { DirectoryClient::new(&link.station, None)?.link(&link.code).await }.await;
         let note = match result {
             Ok(cfg) => {
-                client.update_settings(|s| {
-                    s.server.provisioned = true;
-                    slipstream_core::provision::apply(s, &cfg);
-                });
-                format!("Connected to {}.", cfg.org.unwrap_or(cfg.server))
+                // Links come from web pages and other programs: moving to
+                // another organisation's station needs the person's yes.
+                let current = client.with_settings(|s| slipstream_core::provision::switch_needs_confirmation(s, &cfg));
+                let allowed = match current {
+                    None => true,
+                    Some(current) => {
+                        let new = cfg.org.as_deref().map(|org| format!("{org} ({})", cfg.server)).unwrap_or_else(|| cfg.server.clone());
+                        tokio::task::spawn_blocking(move || confirm_station_switch(&current, &new)).await.unwrap_or(false)
+                    }
+                };
+                if allowed {
+                    client.update_settings(|s| {
+                        s.server.provisioned = true;
+                        slipstream_core::provision::apply(s, &cfg);
+                    });
+                    format!("Connected to {}.", cfg.org.unwrap_or(cfg.server))
+                } else {
+                    "Kept the current station.".into()
+                }
             }
             Err(e) => format!("Couldn't connect to the station: {e:#}"),
         };

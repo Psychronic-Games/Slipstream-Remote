@@ -11,8 +11,11 @@ each technician's saved devices, with passwords sealed in the app
 shared list kept by the admin, and sign-in to several stations
 (`session/src/accounts.rs`, `gui/saved.rs`). Group selection and synced empty
 groups are implemented through 0.22.1, alongside New Link search and private/
-shared grouping. Isolated PHP/native GUI checks pass; a live-station workflow
-check remains open.
+shared grouping. Isolated PHP/native GUI checks pass. Since the private
+station's 0.32 deploy (2026-10-29) the workflow is in production use on several
+systems; the items below haven't been recorded as a deliberate pass. Unreleased
+work adds editing a saved password (including a technician's own password for
+a shared device) and a prompt when a saved password is refused.
 
 ## Background
 

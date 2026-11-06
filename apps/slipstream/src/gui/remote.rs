@@ -102,6 +102,8 @@ pub struct RemoteTab {
     chat: Vec<(bool, String)>,
     chat_input: String,
     show_chat: bool,
+    /// This computer's Slipstream name, for its own chat messages.
+    pub local_name: String,
     unread: bool,
     captured: bool,
     fullscreen: bool,
@@ -176,6 +178,14 @@ impl RemoteTab {
         self.send(ViewerCmd::Disconnect);
     }
 
+    /// Messages from the chat this session grew out of.
+    pub fn adopt_chat(&mut self, chat: Vec<(bool, String)>) {
+        if !chat.is_empty() {
+            self.chat = chat;
+            self.show_chat = true;
+        }
+    }
+
     pub fn new(
         id: u64,
         session: ViewerSession,
@@ -220,6 +230,7 @@ impl RemoteTab {
             chat: Vec::new(),
             chat_input: String::new(),
             show_chat: false,
+            local_name: String::new(),
             unread: false,
             captured: false,
             fullscreen: false,
@@ -544,7 +555,8 @@ impl RemoteTab {
             theme::header(&mut child, "Subspace chat", pal::LAVENDER);
             child.add_space(6.0);
             let cmds = self.cmds.clone();
-            home::chat_ui(&mut child, &mut self.chat, &mut self.chat_input, |text| {
+            let names = home::ChatNames { me: &self.local_name, them: &self.info.host_name };
+            home::chat_ui(&mut child, &mut self.chat, &mut self.chat_input, names, |text| {
                 let _ = cmds.send(ViewerCmd::Chat(text));
             });
             self.unread = false;

@@ -60,9 +60,12 @@ struct Editor {
     password: String,
     had_password: bool,
     forget_password: bool,
+    /// A shared device seen by a technician who isn't a station admin:
+    /// only their own saved password for it can change.
+    locked: bool,
 }
 
-/// Asking for a password before connecting.
+/// Asking for a password before connecting or chatting.
 struct Prompt {
     destination: Option<egui::ViewportId>,
     account: AccountRef,
@@ -70,7 +73,23 @@ struct Prompt {
     name: String,
     password: String,
     remember: bool,
+    purpose: Purpose,
+    /// Why it's asking (a refused password).
+    note: Option<String>,
 }
+
+/// What a password prompt leads to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Purpose {
+    Connect,
+    Chat,
+}
+
+pub(super) const REFUSED: &str = "That password was refused. Enter the current one; Remember replaces a saved password.";
+
+/// Widest a device row grows: Connect, Chat, Meeting and Edit stay beside
+/// the name in a wide window instead of drifting to the far edge.
+const ROW_MAX_WIDTH: f32 = 760.0;
 
 fn accounts(app: &App) -> Vec<StationAccount> {
     app.client.settings().accounts
@@ -120,8 +139,7 @@ pub fn poll(app: &mut App, ctx: &egui::Context) {
         // Lists changed: look at who's online again soon.
         app.saved.last_presence = None;
     }
-    let accounts = accounts(app);
-    if accounts.is_empty() || app.saved.busy.load(Ordering::Relaxed) {
+    if app.client.with_settings(|s| s.accounts.is_empty()) || app.saved.busy.load(Ordering::Relaxed) {
         return;
     }
     let due = |t: Option<Instant>, every| t.is_none_or(|t: Instant| t.elapsed() >= every);
@@ -350,60 +368,91 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
         _=>(pal::GOLD,"checking…"),
     };
     let name=if d.name.is_empty() {d.id.to_string()} else {d.name.clone()};
-    // Reserve the actions first; long names and notes truncate in the space
-    // left for the system rather than pushing Connect/Edit out of the panel.
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let can_edit = !a.signed_out && (!shared || a.user.admin);
-            if can_edit && theme::pill_sized(ui, "Edit", pal::LAVENDER, vec2(58.0, 28.0)).clicked()
-            {
-                open_editor(app, r, Some(d), shared);
-            }
-            if ui
-                .add_enabled_ui(!a.signed_out, |ui| theme::pill(ui, "Meeting", pal::GREEN))
-                .inner
-                .clicked()
-            {
-                let mut server = app.client.settings().server;
-                server.url = Some(a.server.clone());
-                server.key = a.key.clone();
-                app.meetings.call_target(d.id, server);
-                app.page = Page::Meetings;
-            }
-            if ui
-                .add_enabled_ui(app.attempt.is_none() && !a.signed_out, |ui| {
-                    theme::pill(ui, "Connect", pal::ORANGE)
-                })
-                .inner
-                .clicked()
-            {
-                connect(app, ctx, r, d, shared);
-            }
-            ui.allocate_ui_with_layout(
-                vec2(ui.available_width(), 44.0),
-                Layout::top_down(Align::Min),
-                |ui| {
-                    ui.horizontal(|ui| {
-                        let (rect, _) = ui.allocate_exact_size(vec2(20.0, 21.0), Sense::hover());
-                        theme::lamp(ui.painter(), rect.center(), color, t);
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(name.to_uppercase())
-                                    .font(theme::display(18.0))
-                                    .color(pal::TAN),
-                            )
-                            .truncate(),
-                        )
-                        .on_hover_text(format!("{name} · {tip}"));
-                });
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(d.id.to_string()).font(theme::mono(13.0)).color(pal::BLUE));
-                    if a.devices.iter().any(|own| own.id == d.id && own.secret.is_some()) {ui.label(RichText::new("PASSWORD SAVED").font(theme::display(12.0)).color(pal::GOLD));}
-                    if !d.notes.is_empty() {ui.add(egui::Label::new(RichText::new(&d.notes).small().color(pal::DIM)).truncate()).on_hover_text(&d.notes);}
-                });
-            });
+    let chat_live = app.chats.live(r, d.id);
+    let unread = app.chats.unread(r, d.id);
+    let saved_password = a.devices.iter().any(|own| own.id == d.id && own.secret.is_some());
+    let info = |ui: &mut Ui| {
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(20.0, 21.0), Sense::hover());
+            theme::lamp(ui.painter(), rect.center(), color, t);
+            ui.add(egui::Label::new(RichText::new(name.to_uppercase()).font(theme::display(18.0)).color(pal::TAN)).truncate())
+                .on_hover_text(format!("{name} · {tip}"));
         });
-    });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(d.id.to_string()).font(theme::mono(13.0)).color(pal::BLUE));
+            if saved_password {ui.label(RichText::new("PASSWORD SAVED").font(theme::display(12.0)).color(pal::GOLD));}
+            if !d.notes.is_empty() {ui.add(egui::Label::new(RichText::new(&d.notes).small().color(pal::DIM)).truncate()).on_hover_text(&d.notes);}
+        });
+    };
+    let mut action = None;
+    // The four actions, laid out right to left (wide) or left to right
+    // (narrow); `action` records which was pressed.
+    let mut actions = |ui: &mut Ui, right_to_left: bool| {
+        let mut buttons: Vec<(&str, egui::Color32, bool, RowAction)> = vec![
+            ("Connect", pal::ORANGE, (app.attempt.is_none() || chat_live.is_some()) && !a.signed_out, RowAction::Connect),
+            (if unread { "Chat ◆" } else { "Chat" }, pal::BLUE, !a.signed_out, RowAction::Chat),
+            ("Meeting", pal::GREEN, !a.signed_out, RowAction::Meeting),
+            // Everyone may edit their own saved password for a shared
+            // device; only admins change its details.
+            ("Edit", pal::LAVENDER, !a.signed_out, RowAction::Edit),
+        ];
+        if right_to_left {
+            buttons.reverse();
+        }
+        for (label, color, enabled, which) in buttons {
+            let response = ui.add_enabled_ui(enabled, |ui| theme::pill_sized(ui, label, color, vec2(0.0, 28.0))).inner;
+            let response = if which == RowAction::Chat {
+                response.on_hover_text("Message the person at this computer without showing its screen")
+            } else {
+                response
+            };
+            if response.clicked() {
+                action = Some(which);
+            }
+        }
+    };
+    let width = ui.available_width().min(ROW_MAX_WIDTH);
+    if width < 470.0 {
+        // Phones and narrow windows: the actions go under the name.
+        ui.vertical(|ui| {
+            ui.set_width(width);
+            info(ui);
+            ui.horizontal_wrapped(|ui| actions(ui, false));
+        });
+        ui.add_space(4.0);
+    } else {
+        // Reserve the actions first; long names and notes truncate in the
+        // space left rather than pushing the actions out of the panel.
+        ui.allocate_ui_with_layout(vec2(width, 44.0), Layout::right_to_left(Align::Center), |ui| {
+            actions(ui, true);
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::top_down(Align::Min), info);
+        });
+    }
+    match action {
+        // An open chat becomes the session, keeping its messages.
+        Some(RowAction::Connect) => match chat_live {
+            Some(key) => super::chats::promote(app, ctx, key),
+            None => connect(app, ctx, r, d, shared),
+        },
+        Some(RowAction::Chat) => super::chats::open(app, ctx, r, d.id, &name),
+        Some(RowAction::Meeting) => {
+            let mut server = app.client.settings().server;
+            server.url = Some(a.server.clone());
+            server.key = a.key.clone();
+            app.meetings.call_target(d.id, server);
+            app.page = Page::Meetings;
+        }
+        Some(RowAction::Edit) => open_editor(app, r, Some(d), shared),
+        None => {}
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowAction {
+    Connect,
+    Chat,
+    Meeting,
+    Edit,
 }
 
 pub(super) fn connect(app: &mut App, ctx: &egui::Context, r: &AccountRef, d: &SavedDevice, _shared: bool) {
@@ -415,14 +464,48 @@ pub(super) fn connect(app: &mut App, ctx: &egui::Context, r: &AccountRef, d: &Sa
         Ok(None) => {}
         Err(e) => app.toast(format!("{e:#}"), pal::RED),
     }
+    let name = if d.name.is_empty() { d.id.to_string() } else { d.name.clone() };
+    ask_password(app, r, d.id, &name, Purpose::Connect, None);
+}
+
+/// Asks for a device's password, then connects or opens a chat. Remember
+/// starts ticked when a saved password exists, so typing replaces it.
+pub(super) fn ask_password(app: &mut App, r: &AccountRef, id: DeviceId, name: &str, purpose: Purpose, note: Option<String>) {
+    // An automatic re-prompt never replaces a prompt someone is typing in.
+    if note.is_some() && app.saved.prompt.is_some() {
+        return;
+    }
+    let saved = accounts(app).iter().find(|a| AccountRef::of(a) == *r)
+        .is_some_and(|a| a.devices.iter().any(|d| d.id == id && d.secret.is_some()));
     app.saved.prompt = Some(Prompt {
-        destination:app.connect_destination.take(),
+        destination: if purpose == Purpose::Connect { app.connect_destination.take() } else { None },
         account: r.clone(),
-        id: d.id,
-        name: if d.name.is_empty() { d.id.to_string() } else { d.name.clone() },
+        id,
+        name: name.to_string(),
         password: String::new(),
-        remember: false,
+        remember: saved,
+        purpose,
+        note,
     });
+}
+
+pub(super) fn prompt_open(app: &App) -> bool {
+    app.saved.prompt.is_some()
+}
+
+/// Where the open password prompt's link opens (a session window's +).
+pub(super) fn set_prompt_destination(app: &mut App, destination: Option<egui::ViewportId>) {
+    if let Some(p) = &mut app.saved.prompt {
+        p.destination = destination;
+    }
+}
+
+/// A saved device's name (its ID when it has none or isn't listed).
+pub(super) fn device_name(app: &App, r: &AccountRef, id: DeviceId) -> String {
+    accounts(app).iter().find(|a| AccountRef::of(a) == *r)
+        .and_then(|a| a.devices.iter().chain(&a.shared).find(|d| d.id == id && !d.name.is_empty()))
+        .map(|d| d.name.clone())
+        .unwrap_or_else(|| id.to_string())
 }
 
 /// From a recent link: save it in a signed-in station's list.
@@ -444,6 +527,11 @@ pub fn save_recent(app: &mut App, recent: &slipstream_core::config::RecentConnec
 }
 
 fn open_editor(app: &mut App, r: &AccountRef, d: Option<&SavedDevice>, shared: bool) {
+    let account = accounts(app).into_iter().find(|a| AccountRef::of(a) == *r);
+    // A shared device's password lives in this technician's own list.
+    let had_password = d.is_some_and(|d| d.secret.is_some())
+        || d.is_some_and(|d| account.as_ref().is_some_and(|a| a.devices.iter().any(|own| own.id == d.id && own.secret.is_some())));
+    let locked = shared && d.is_some() && !account.as_ref().is_some_and(|a| a.user.admin);
     app.saved.editor = Some(Editor {
         account: r.clone(),
         id: d.map(|d| d.id.to_string()).unwrap_or_default(),
@@ -453,8 +541,9 @@ fn open_editor(app: &mut App, r: &AccountRef, d: Option<&SavedDevice>, shared: b
         shared,
         original: d.map(|d| (d.id, shared)),
         password: String::new(),
-        had_password: d.is_some_and(|d| d.secret.is_some()),
+        had_password,
         forget_password: false,
+        locked,
     });
 }
 
@@ -553,42 +642,49 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                     ui.label(account.label());
                 }
                 ui.end_row();
+                let editable = !e.locked;
                 ui.label(RichText::new("ID").font(theme::display(15.0)).color(pal::LAVENDER));
-                field(ui, &mut e.id, "482 913 077", false, 200.0);
+                ui.add_enabled_ui(editable, |ui| field(ui, &mut e.id, "482 913 077", false, 200.0));
                 ui.end_row();
                 ui.label(RichText::new("NAME").font(theme::display(15.0)).color(pal::LAVENDER));
-                field(ui, &mut e.name, "Front desk PC", false, 280.0);
+                ui.add_enabled_ui(editable, |ui| field(ui, &mut e.name, "Front desk PC", false, 280.0));
                 ui.end_row();
                 ui.label(RichText::new("GROUP").font(theme::display(15.0)).color(pal::LAVENDER));
                 let groups: BTreeSet<_> = account.devices.iter().chain(&account.shared)
                     .map(|d|d.group.as_str()).chain(account.groups.iter().chain(&account.shared_groups).map(String::as_str))
                     .filter(|g|!g.is_empty()).collect();
-                group_field(ui,&mut e.group,groups);
+                ui.add_enabled_ui(editable, |ui| group_field(ui,&mut e.group,groups));
                 ui.end_row();
                 ui.label(RichText::new("NOTES").font(theme::display(15.0)).color(pal::LAVENDER));
                 // Keep the text editor out of the grid layout: a frame that
                 // inherits its cached row height cannot shrink after deleting lines.
                 ui.vertical(|ui| {
-                    ui.add(theme::text_area(&mut e.notes).hint_text("Optional notes…")
+                    ui.add_enabled(editable, theme::text_area(&mut e.notes).hint_text("Optional notes…")
                         .desired_rows(1).char_limit(500).desired_width(280.0));
                 });
                 ui.end_row();
-                if !e.shared {
-                    ui.label(RichText::new("PASSWORD").font(theme::display(15.0)).color(pal::LAVENDER));
-                    ui.vertical(|ui| {
-                        if e.had_password && !e.forget_password {
-                            ui.label(RichText::new("🔑 Saved. Type a new one to replace it.").color(pal::GOLD));
-                        }
-                        if !e.forget_password {
-                            field(ui, &mut e.password, "its unattended password (optional)", true, 280.0);
-                        }
-                        if e.had_password {
-                            ui.checkbox(&mut e.forget_password, "Forget the saved password");
-                        }
-                        ui.label(
-                            RichText::new("Kept on the station encrypted: only your sign-in can open it.").small().color(pal::DIM),
-                        );
-                    });
+                ui.label(RichText::new(if e.shared { "YOUR PASSWORD" } else { "PASSWORD" }).font(theme::display(15.0)).color(pal::LAVENDER));
+                ui.vertical(|ui| {
+                    if e.had_password && !e.forget_password {
+                        ui.label(RichText::new("🔑 Saved. Type a new one to replace it.").color(pal::GOLD));
+                    }
+                    if !e.forget_password {
+                        field(ui, &mut e.password, "its unattended password (optional)", true, 280.0);
+                    }
+                    if e.had_password {
+                        ui.checkbox(&mut e.forget_password, "Forget the saved password");
+                    }
+                    let note = if e.shared {
+                        "Saved in your own list, encrypted: only your sign-in can open it. Other technicians keep their own."
+                    } else {
+                        "Kept on the station encrypted: only your sign-in can open it."
+                    };
+                    ui.label(RichText::new(note).small().color(pal::DIM));
+                });
+                ui.end_row();
+                if e.locked {
+                    ui.label("");
+                    ui.label(RichText::new("A station admin manages this shared device's name, group and notes.").small().color(pal::DIM));
                     ui.end_row();
                 }
                 if account.user.admin {
@@ -596,8 +692,8 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                     ui.vertical(|ui| {
                         ui.checkbox(&mut e.shared, "Save in station list (visibility assigned in station admin)");
                         ui.label(
-                            RichText::new("Shown in everyone's list. Passwords aren't saved for shared devices: \
-                                           each technician types it when connecting.").small().color(pal::DIM),
+                            RichText::new("Shown in the lists of technicians it's assigned to. Each technician's \
+                                           password for it stays in their own list.").small().color(pal::DIM),
                         );
                     });
                     ui.end_row();
@@ -607,7 +703,7 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 save = theme::pill(ui, "Save", pal::GREEN).clicked();
-                if e.original.is_some() {
+                if e.original.is_some() && !e.locked {
                     delete = theme::pill(ui, "Remove", pal::RED).clicked();
                 }
             });
@@ -623,25 +719,32 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
             }
         };
         let device = SavedDevice { id, name: e.name.trim().to_string(), notes: e.notes.trim().to_string(), group: e.group.trim().to_string(), secret: None, added_by: None };
-        let password = if e.shared {
-            None
-        } else if e.forget_password {
+        let password = if e.forget_password {
             Some(String::new())
         } else if !e.password.is_empty() {
             Some(e.password.clone())
         } else {
             None
         };
-        let (client, r, shared, original) = (app.client.clone(), e.account.clone(), e.shared, e.original);
+        let (client, r, shared, original, locked) = (app.client.clone(), e.account.clone(), e.shared, e.original, e.locked);
         let name = if device.name.is_empty() { id.to_string() } else { device.name.clone() };
         spawn_job(app, ctx, "Saving", async move {
-            // Moved to another ID or list: the old entry goes.
-            if let Some((old_id, old_shared)) = original
-                && (old_id != id || old_shared != shared)
-            {
-                client.delete_device(&r, old_id, old_shared).await?;
+            if !locked {
+                // Moved to another ID or list: the old entry goes.
+                if let Some((old_id, old_shared)) = original
+                    && (old_id != id || old_shared != shared)
+                {
+                    client.delete_device(&r, old_id, old_shared).await?;
+                }
+                client.save_device(&r, device, if shared { None } else { password.clone() }, shared).await?;
             }
-            client.save_device(&r, device, password, shared).await?;
+            // A shared device's password goes in this technician's own list.
+            if shared && let Some(password) = password {
+                let a = client.settings().accounts.into_iter().find(|a| AccountRef::of(a) == r).ok_or_else(|| anyhow::anyhow!("signed out"))?;
+                let mut entry = password_entry(&a, id).ok_or_else(|| anyhow::anyhow!("device is no longer in the station list"))?;
+                entry.secret = None;
+                client.save_device(&r, entry, Some(password), false).await?;
+            }
             Ok(format!("Saved {name}"))
         });
         return;
@@ -663,7 +766,10 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
     let Some(mut p) = app.saved.prompt.take() else { return };
     let mut open = true;
     let mut go = false;
-    let title = format!("Connect to {}", p.name);
+    let title = match p.purpose {
+        Purpose::Connect => format!("Connect to {}", p.name),
+        Purpose::Chat => format!("Chat with {}", p.name),
+    };
     theme::window("saved-prompt", pal::ORANGE)
         .id(egui::Id::unique("saved-prompt"))
         .collapsible(false)
@@ -675,13 +781,19 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
             if chrome.close {
                 open = false;
             }
+            if let Some(note) = &p.note {
+                ui.label(RichText::new(note).color(pal::GOLD));
+            }
             ui.label(RichText::new(format!("{} · its one-time or unattended password", p.id)).color(pal::DIM));
             let r = field(ui, &mut p.password, "password", true, 300.0);
             r.request_focus();
             go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.checkbox(&mut p.remember, "Remember unattended password in my list");
+            if p.purpose == Purpose::Chat {
+                ui.label(RichText::new("Opens a chat only: their screen isn't shared until you press Connect.").small().color(pal::DIM));
+            }
             ui.add_space(6.0);
-            go |= theme::pill(ui, "Engage", pal::ORANGE).clicked();
+            go |= theme::pill(ui, if p.purpose == Purpose::Chat { "Open chat" } else { "Engage" }, pal::ORANGE).clicked();
             chrome.footer(ui);
         });
     if go && !p.password.is_empty() {
@@ -696,8 +808,13 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
                 Ok(String::new())
             });
         }
-        app.connect_destination=p.destination;
-        app.start_connect_to(ctx, p.id, p.password, Some(p.account));
+        match p.purpose {
+            Purpose::Connect => {
+                app.connect_destination=p.destination;
+                app.start_connect_to(ctx, p.id, p.password, Some(p.account));
+            }
+            Purpose::Chat => super::chats::start(app, ctx, &p.account, p.id, &p.name, p.password),
+        }
         return;
     }
     if open {

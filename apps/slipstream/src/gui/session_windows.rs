@@ -51,7 +51,7 @@ pub(super) fn show(
             .with_app_id("slipstream-remote")
             .with_decorations(false)
             .with_transparent(theme::transparent_window())
-            .with_icon(Arc::new(theme::icon(64)))
+            .with_icon(theme::window_icon())
             .with_inner_size([1180.0, 780.0])
             .with_min_inner_size([520.0, 360.0]);
         if let Some(position) = position {

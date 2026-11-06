@@ -74,9 +74,15 @@ impl Microphone {
             ready(Ok(()));
             while !stop.load(Ordering::Relaxed) && MICROPHONE_EPOCH.load(Ordering::Acquire) == epoch
             {
-                let Ok(frame) = capture_rx.recv_timeout(std::time::Duration::from_millis(30))
-                else {
-                    continue;
+                let frame = match capture_rx.recv_timeout(std::time::Duration::from_millis(30)) {
+                    Ok(frame) => frame,
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    // The microphone stopped (unplugged, sound server
+                    // restarted): don't spin on a closed channel.
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        tracing::warn!("microphone stopped; meeting voice ends");
+                        break;
+                    }
                 };
                 for rendered in render_rx.try_iter() {
                     for chunk in rendered.as_chunks::<960>().0 {

@@ -276,7 +276,20 @@ impl DirectoryClient {
             crate::clock::learn_server_time(t.as_secs() as i64);
         }
         let status = resp.status();
-        let text = resp.text().await?;
+        // Stations are only trusted so far: cap what one answer may hold.
+        const MAX_BODY: usize = 8 << 20;
+        let mut resp = resp;
+        if resp.content_length().is_some_and(|n| n > MAX_BODY as u64) {
+            bail!("{} sent an oversized answer", self.base.host_str().unwrap_or("server"));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = resp.chunk().await? {
+            if body.len() + chunk.len() > MAX_BODY {
+                bail!("{} sent an oversized answer", self.base.host_str().unwrap_or("server"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let text = String::from_utf8_lossy(&body).into_owned();
         let env: Envelope = serde_json::from_str(&text).map_err(|_| {
             anyhow!(
                 "{} did not answer like a Slipstream server (HTTP {status}) — check the address",

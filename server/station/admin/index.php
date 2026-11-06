@@ -110,10 +110,11 @@ if (!$admin || empty($admin['admin'])) {
     if ($inlineSave || $logRequest) slip_admin_json(['ok' => false, 'error' => 'Your station admin sign-in has ended. Sign in again before retrying.'], 401);
     $err = null;
     if ($action === 'login') {
-        if (!slip_rate_ok('adminlogin', 8)) {
+        $username = slip_user_norm($_POST['username'] ?? '');
+        // Per address, and per account against guesses from many addresses.
+        if (!slip_rate_ok('adminlogin', 8) || !slip_rate_ok("login|$username", 10, 'account')) {
             $err = 'Too many attempts — wait a minute.';
         } else {
-            $username = slip_user_norm($_POST['username'] ?? '');
             $account = slip_user_load($username);
             $hash = $account['hash'] ?? '$2y$12$qbJtzQ04aH6DWxr8jJh0g.VgXGS8MRZznxb3JTdipy/6KCYInoaAu';
             if (password_verify((string)($_POST['password'] ?? ''), $hash) && !empty($account['admin'])) {

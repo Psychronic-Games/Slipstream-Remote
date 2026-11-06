@@ -69,6 +69,10 @@ the same signature before installing anything.
   Android's rear camera can show equipment to a technician. The default room size is 20;
   usable video capacity depends on the organizer's upload connection.
   See the [meeting guide](docs/MEETINGS.md).
+- **Chat without connecting** — message the person at a saved workstation
+  from the Bridge without seeing their screen. Each workstation gets its own
+  tab in the Subspace chat panel, and **Connect** turns a chat into a full
+  session in place, keeping the conversation.
 - **Clipboard sync, chat, and a two-pane file manager** — copy and paste
   text and files between the computers, browse both, send and receive
   folders, or drag files from your desktop straight onto the remote screen.

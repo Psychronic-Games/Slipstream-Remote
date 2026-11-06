@@ -48,7 +48,7 @@ use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
 pub use accounts::{AccountRef, Presence};
 pub use files::RemoteFs;
-pub use viewer::{AudioOut, FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
+pub use viewer::{AudioOut, FrameShared, LinkMode, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 
 /// Connection state to the directory server.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -72,6 +72,9 @@ pub enum ClientEvent {
     /// Name of the organisation running the station, if any.
     Org(Option<String>),
     HostSessionStarted { session: u64, peer: String },
+    /// The link asked for the picture, sound or control: until then it is
+    /// a chat-only link (viewers before 0.33 ask straight away).
+    HostSessionViewing { session: u64 },
     HostSessionEnded { session: u64, reason: String },
     HostChat { session: u64, text: String },
     HostStatus { session: u64, text: String },
@@ -292,6 +295,12 @@ impl Client {
         self.inner.settings.lock().unwrap().clone()
     }
 
+    /// Reads the settings without copying them all (they include every
+    /// signed-in station's device lists): for code that runs every frame.
+    pub fn with_settings<R>(&self, read: impl FnOnce(&Settings) -> R) -> R {
+        read(&self.inner.settings.lock().unwrap())
+    }
+
     /// Approve screen/input access locally before any viewer connects. The
     /// backend stays available while the host runs, including in the tray.
     /// Returns whether the desktop supplied a permission token for later runs.
@@ -414,11 +423,21 @@ impl Client {
         password: &str,
         on_progress: impl Fn(String) + Send + Sync + 'static,
     ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
+        self.connect_with(id, password, LinkMode::Full, on_progress).await
+    }
+
+    pub(crate) async fn connect_with(
+        &self,
+        id: DeviceId,
+        password: &str,
+        mode: LinkMode,
+        on_progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
         on_progress(format!("Locating {id}…"));
         let directory = self.directory().await?;
         let station = Some(directory.base_url().to_string());
         let found = directory.lookup(id).await?;
-        self.connect_found(id, found, password, on_progress, station).await
+        self.connect_found(id, found, password, mode, on_progress, station).await
     }
 
     /// The rest of [`connect`](Self::connect), once `id` is looked up (on
@@ -428,6 +447,7 @@ impl Client {
         id: DeviceId,
         found: Lookup,
         password: &str,
+        mode: LinkMode,
         on_progress: impl Fn(String) + Send + Sync + 'static,
         station: Option<String>,
     ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
@@ -453,6 +473,7 @@ impl Client {
             viewer_settings,
             self.inner.opts.clipboard.clone(),
             self.inner.opts.audio_out.clone(),
+            mode,
             Box::new(on_progress),
         )
         .await?;
@@ -475,6 +496,17 @@ impl Client {
         password: &str,
         on_progress: impl Fn(String) + Send + Sync + 'static,
     ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
+        self.connect_direct_with(addr, password, LinkMode::Full, on_progress).await
+    }
+
+    /// [`connect_direct`](Self::connect_direct) choosing what the link starts with.
+    pub async fn connect_direct_with(
+        &self,
+        addr: iroh::EndpointAddr,
+        password: &str,
+        mode: LinkMode,
+        on_progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
         let (name, viewer_settings) = {
             let s = self.inner.settings.lock().unwrap();
             (s.device_name.clone(), s.viewer.clone())
@@ -488,6 +520,7 @@ impl Client {
             viewer_settings,
             self.inner.opts.clipboard.clone(),
             self.inner.opts.audio_out.clone(),
+            mode,
             Box::new(on_progress),
         )
         .await
@@ -568,6 +601,11 @@ fn set_status(inner: &Inner, status: DirStatus) {
 async fn directory_task(inner: Arc<Inner>) {
     let mut backoff = Duration::from_secs(1);
     loop {
+        // Listen for a station change before reading the settings: a change
+        // in between would otherwise be missed (notify_waiters keeps no permit).
+        let changed = inner.server_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
         let (server, key) = {
             let s = inner.settings.lock().unwrap();
             (s.server.url.clone().filter(|u| !u.trim().is_empty()
@@ -576,12 +614,10 @@ async fn directory_task(inner: Arc<Inner>) {
         let Some(server) = server else {
             inner.dir_client.send_replace(None);
             set_status(&inner, DirStatus::NotConfigured);
-            inner.server_changed.notified().await;
+            changed.await;
             continue;
         };
         set_status(&inner, DirStatus::Connecting);
-        let changed = inner.server_changed.notified();
-        tokio::pin!(changed);
         let result = tokio::select! {
             r = run_directory(&inner, &server, key) => r,
             _ = &mut changed => Ok(()),
@@ -1677,6 +1713,73 @@ mod tests {
         assert_eq!(why, "they ended the session");
         viewer.shutdown().await;
         host.shutdown().await;
+    }
+
+    /// A chat-only link exchanges messages without the picture, sound or
+    /// either clipboard, until it asks to view; then it's a normal session.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn chat_only_links_share_nothing_until_they_start_viewing() {
+        use slipstream_platform::clipboard::{Clip, ClipboardSource};
+        let host_clip = Arc::new(Mutex::new(Some(Clip::Text("host start".into()))));
+        let viewer_clip = Arc::new(Mutex::new(Some(Clip::Text("viewer start".into()))));
+        let (host, mut hev, hdir) = client_with("chatonly-host", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
+        let (viewer, _vev, vdir) = client_with("chatonly-viewer", false, ClipboardSource::Memory(viewer_clip.clone()), |s| s.viewer.play_audio = true).await;
+        let (session, mut events) = viewer
+            .connect_direct_with(host.endpoint_addr(), "correct horse battery", LinkMode::ChatOnly, |_| {})
+            .await
+            .unwrap();
+        let mut id = None;
+        assert!(wait_for(&mut hev, |e| match e {
+            ClientEvent::HostSessionStarted { session, peer } => { id = Some(*session); peer == "chatonly-viewer" }
+            _ => false,
+        }).await);
+        let id = id.unwrap();
+
+        // Chat both ways, while nothing else moves.
+        session.send(ViewerCmd::Chat("can I help?".into()));
+        let mut early = Vec::new();
+        assert!(wait_for(&mut hev, |e| {
+            early.push(format!("{e:?}"));
+            matches!(e, ClientEvent::HostChat { text, .. } if text == "can I help?")
+        }).await);
+        host.host_chat(id, "yes please".into());
+        *host_clip.lock().unwrap() = Some(Clip::Text("copied on host".into()));
+        *viewer_clip.lock().unwrap() = Some(Clip::Text("copied on viewer".into()));
+        let mut seen = Vec::new();
+        let replied = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match events.recv().await {
+                    Some(ViewerEvent::Chat(t)) if t == "yes please" => return true,
+                    Some(e) => seen.push(e),
+                    None => return false,
+                }
+            }
+        }).await.unwrap_or(false);
+        assert!(replied, "host reply");
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        while let Ok(e) = events.try_recv() { seen.push(e); }
+        while let Ok(e) = hev.try_recv() { early.push(format!("{e:?}")); }
+        assert!(!seen.iter().any(|e| matches!(e, ViewerEvent::StreamStarted { .. })), "no picture: {seen:?}");
+        assert!(seen.iter().filter_map(|e| match e { ViewerEvent::Stats(s) => Some(s.fps), _ => None }).all(|fps| fps == 0.0));
+        assert!(!early.iter().any(|e| e.contains("HostSessionViewing")), "reported as viewing: {early:?}");
+        assert!(matches!(&*viewer_clip.lock().unwrap(), Some(Clip::Text(t)) if t == "copied on viewer"), "host clipboard leaked");
+        assert!(matches!(&*host_clip.lock().unwrap(), Some(Clip::Text(t)) if t == "copied on host"), "viewer clipboard leaked");
+
+        // Turned into a session: the host says so, and the picture flows.
+        session.send(ViewerCmd::StartViewing);
+        assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::HostSessionViewing { session } if *session == id)).await);
+        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::StreamStarted { .. })).await);
+        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Stats(s) if s.fps > 5.0)).await, "video flowing");
+        // A second StartViewing changes nothing.
+        session.send(ViewerCmd::StartViewing);
+        session.send(ViewerCmd::Chat("still here".into()));
+        assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::HostChat { text, .. } if text == "still here")).await);
+
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
     /// One-time-password links wait for Allow when the host asks for it;

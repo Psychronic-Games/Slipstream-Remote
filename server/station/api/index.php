@@ -254,10 +254,14 @@ try {
             foreach ($ids as $id) {
                 if (!is_int($id) || $id < SLIP_ID_MIN || $id > SLIP_ID_MAX) fail('invalid presence device ID');
             }
-            if (!slip_rate_ok('presence', (int)$cfg['presence_per_minute'])) {
+            $ids = array_values(array_unique($ids));
+            // Counted per request and per ID asked about, so presence can't
+            // be used to scan the ID space far faster than lookups.
+            if (!slip_rate_ok('presence', (int)$cfg['presence_per_minute'])
+                || !slip_rate_ok('presence_ids', (int)$cfg['presence_ids_per_minute'], null, count($ids))) {
                 fail('online-status refresh limit reached — wait a minute', 429);
             }
-            reply(['ok' => true, 'devices' => slip_store()->presence(array_values(array_unique($ids)))]);
+            reply(['ok' => true, 'devices' => slip_store()->presence($ids)]);
 
         case 'lookup':
             if (!slip_rate_ok('lookup', (int)$cfg['lookups_per_minute'])) {
@@ -284,6 +288,9 @@ try {
         case 'inventory':
             if (slip_access_key() === null) fail('inventory is only available on private stations', 403);
             $p = verified_device_request($req, 'inventory');
+            // Only registered devices: a fresh key per request must not be
+            // able to fill the disk with reports.
+            if (!slip_store()->known($p->endpoint)) fail('register this device first', 403);
             $inventory = slip_clean_inventory($p->inventory ?? null);
             if (!slip_rate_ok('inventory', (int)$cfg['inventory_per_minute'], 'device:' . $p->endpoint)) fail('too many inventory requests for this device', 429);
             slip_inventory_save($p->endpoint, $inventory);
@@ -301,6 +308,12 @@ try {
             }
             if (!isset($p->addr)) {
                 fail('missing addr');
+            }
+            // Heartbeats are counted per device key, which anyone can make
+            // anew: new devices are also limited per network.
+            if (!slip_store()->known($p->endpoint)
+                && !slip_rate_ok('new_device', (int)$cfg['new_devices_per_minute'])) {
+                fail('too many new devices from this network — wait a minute', 429);
             }
             $i = $p->info ?? new stdClass();
             $info = [

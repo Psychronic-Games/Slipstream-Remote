@@ -16,7 +16,7 @@ use slipstream_core::{
     auth::ViewerAuth,
     config::ViewerSettings,
     directory::DeviceId,
-    framing::{MsgReader, expect_msg, read_msg, write_msg},
+    framing::{MsgReader, expect_msg_max, read_msg, write_msg},
     proto::{
         ALPN_REMOTE, ClipFile, ClipboardData, DisplayInfo, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
         StreamSettings, UploadTarget, VideoFrame, ViewerMsg,
@@ -41,7 +41,22 @@ pub enum ViewerCmd {
     Audio(bool),
     /// Black out the remote computer's own screen, or stop.
     Privacy(bool),
+    /// Turn a chat-only link into a full session: start the picture, and
+    /// the clipboard and sound the viewer's settings ask for. Does nothing
+    /// once the picture has started.
+    StartViewing,
     Disconnect,
+}
+
+/// What a new link starts with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LinkMode {
+    /// Picture, clipboard and sound as the viewer's settings say.
+    #[default]
+    Full,
+    /// Chat only: authenticated as usual, but the host captures nothing and
+    /// no clipboard or sound is exchanged until [`ViewerCmd::StartViewing`].
+    ChatOnly,
 }
 
 /// Where the viewer plays the remote computer's sound.
@@ -304,6 +319,7 @@ pub(crate) async fn connect(
     settings: ViewerSettings,
     clipboard: ClipboardSource,
     audio_out: AudioOut,
+    mode: LinkMode,
     on_progress: Box<dyn Fn(String) + Send + Sync>,
 ) -> Result<(ViewerSession, mpsc::UnboundedReceiver<ViewerEvent>)> {
     on_progress("Opening encrypted channel…".into());
@@ -317,22 +333,22 @@ pub(crate) async fn connect(
     write_msg(&mut send, &ViewerMsg::Hello { version: PROTOCOL_VERSION, viewer_name }).await?;
 
     on_progress("Authenticating…".into());
-    let pakes = match expect_msg::<HostMsg>(&mut recv).await? {
+    let pakes = match expect_msg_max::<HostMsg>(&mut recv, PRE_AUTH_MESSAGE).await? {
         HostMsg::AuthChallenge { pakes } => pakes,
-        HostMsg::AuthFailed { reason, retry_after_secs } => bail!(auth_error(reason, retry_after_secs)),
+        HostMsg::AuthFailed { reason, retry_after_secs } => return Err(auth_error(reason, retry_after_secs)),
         other => bail!("unexpected message from host: {other:?}"),
     };
     let (auth, pakes, confirms) = ViewerAuth::respond(password, &pakes, &host_id, &endpoint.id())?;
     write_msg(&mut send, &ViewerMsg::AuthResponse { pakes, confirms }).await?;
 
     let info = loop {
-        match expect_msg::<HostMsg>(&mut recv).await? {
+        match expect_msg_max::<HostMsg>(&mut recv, PRE_AUTH_MESSAGE).await? {
             HostMsg::AuthOk { confirm, session } => {
                 auth.verify_host(&confirm).map_err(|e|AuthRejected(format!("Remote identity verification failed: {e:#}")))?;
                 break session;
             }
             HostMsg::Notice(n) => on_progress(n),
-            HostMsg::AuthFailed { reason, retry_after_secs } => bail!(auth_error(reason, retry_after_secs)),
+            HostMsg::AuthFailed { reason, retry_after_secs } => return Err(auth_error(reason, retry_after_secs)),
             other => bail!("unexpected message from host: {other:?}"),
         }
     };
@@ -363,6 +379,7 @@ pub(crate) async fn connect(
         clipboard,
         audio,
         audio_out,
+        mode == LinkMode::Full,
     ));
     let max_fps = stream_settings.max_fps;
     Ok((ViewerSession { cmds: cmd_tx, conn: tunnel_conn, fs, frames, info, peer, max_fps }, ev_rx))
@@ -432,9 +449,18 @@ impl std::fmt::Display for AuthRejected {
     fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result {f.write_str(&self.0)}
 }
 impl std::error::Error for AuthRejected {}
-fn auth_error(reason:String,retry_after:u32)->AuthRejected {
-    AuthRejected(if retry_after>0 {format!("{reason} (wait {retry_after}s)")} else {reason})
+/// A refusal ends automatic reconnects ([`AuthRejected`]) unless the host
+/// says it's only for now: busy with another sign-in, or no screen yet.
+fn auth_error(reason:String,retry_after:u32)->anyhow::Error {
+    let transient = reason.contains("busy with another sign-in") || reason.starts_with("screen sharing unavailable")
+        || reason.starts_with("No screen is currently available") || reason.starts_with("On the phone, tap Start sharing");
+    let text = if retry_after>0 {format!("{reason} (wait {retry_after}s)")} else {reason};
+    if transient { anyhow::anyhow!(text) } else { AuthRejected(text).into() }
 }
+
+/// Host messages before the session starts are small (the session info
+/// lists displays and capabilities).
+const PRE_AUTH_MESSAGE: usize = 1024 * 1024;
 
 struct SessionEnd {reason:String,retryable:bool}
 impl SessionEnd {
@@ -461,9 +487,10 @@ async fn run(
     sync_clipboard: Option<ClipboardSource>,
     audio: bool,
     audio_out: AudioOut,
+    viewing: bool,
 ) {
     let mut recv = MsgReader::<HostMsg>::spawn(recv);
-    let ended = match session(&conn, &mut send, &mut recv, &mut cmds, &events, frames, display, stream_settings, sync_clipboard, audio, audio_out)
+    let ended = match session(&conn, &mut send, &mut recv, &mut cmds, &events, frames, display, stream_settings, sync_clipboard, audio, audio_out, viewing)
         .await
     {
         Ok(r) => r,
@@ -494,13 +521,16 @@ async fn session(
     sync_clipboard: Option<ClipboardSource>,
     play_audio: bool,
     audio_out: AudioOut,
+    mut viewing: bool,
 ) -> Result<SessionEnd> {
-    write_msg(send, &ViewerMsg::StartStream { display, settings }).await?;
-
+    let (mut display, mut settings) = (display, settings);
     // Sound: datagrams → decoder → player, while wanted.
     let mut _audio: Option<Abort<()>> = None;
-    if play_audio {
-        _audio = start_audio(conn, send, events, &audio_out).await?;
+    if viewing {
+        write_msg(send, &ViewerMsg::StartStream { display, settings }).await?;
+        if play_audio {
+            _audio = start_audio(conn, send, events, &audio_out).await?;
+        }
     }
 
     // Video: network → decoder thread.
@@ -531,7 +561,8 @@ async fn session(
     let _video_guard = Abort(video_task);
 
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();
-    let clipboard = sync_clipboard.and_then(|source| Clipboard::start(clip_tx, &source));
+    // A chat-only link starts the clipboard with the picture (StartViewing).
+    let mut clipboard = if viewing { sync_clipboard.as_ref().and_then(|source| Clipboard::start(clip_tx.clone(), source)) } else { None };
     // The latest fetch of files copied over there (a newer copy replaces it).
     let mut _clip_fetch: Option<Abort<()>> = None;
 
@@ -600,15 +631,30 @@ async fn session(
             }
             cmd = cmds.recv() => match cmd {
                 Some(ViewerCmd::Input(ev)) => write_msg(send, &ViewerMsg::Input(ev)).await?,
-                Some(ViewerCmd::SelectDisplay(d)) => {
+                Some(ViewerCmd::SelectDisplay(d)) if viewing => {
+                    display = d;
                     write_msg(send, &ViewerMsg::StartStream { display: d, settings }).await?;
                 }
-                Some(ViewerCmd::Settings(s)) => write_msg(send, &ViewerMsg::SetSettings(s)).await?,
+                // Remembered, so switching displays keeps the chosen quality.
+                Some(ViewerCmd::Settings(s)) => {
+                    settings = s;
+                    write_msg(send, &ViewerMsg::SetSettings(s)).await?;
+                }
                 Some(ViewerCmd::Chat(t)) => write_msg(send, &ViewerMsg::Chat(t)).await?,
                 Some(ViewerCmd::Clipboard(t)) => {
                     write_msg(send, &ViewerMsg::Clipboard(ClipboardData::Text(t))).await?;
                 }
                 Some(ViewerCmd::Privacy(on)) => write_msg(send, &ViewerMsg::SetPrivacy(on)).await?,
+                // Choosing a display on a chat-only link starts viewing it.
+                Some(cmd @ (ViewerCmd::StartViewing | ViewerCmd::SelectDisplay(_))) => if !viewing {
+                    if let ViewerCmd::SelectDisplay(d) = cmd { display = d; }
+                    viewing = true;
+                    write_msg(send, &ViewerMsg::StartStream { display, settings }).await?;
+                    clipboard = sync_clipboard.as_ref().and_then(|source| Clipboard::start(clip_tx.clone(), source));
+                    if play_audio && _audio.is_none() {
+                        _audio = start_audio(conn, send, events, &audio_out).await?;
+                    }
+                },
                 Some(ViewerCmd::Audio(on)) => {
                     _audio = None;
                     if on {
@@ -634,7 +680,9 @@ async fn session(
                 let host = host_pace.lock().unwrap().clone();
                 let decode_ms = decode_us.swap(0, Ordering::Relaxed) as f32 / 1000.0 / frames as f32;
                 let rtt_ms = rtt.as_secs_f32() * 1000.0;
-                if last_log.0.elapsed() >= Duration::from_secs(30) {
+                if !viewing {
+                    last_log = (Instant::now(), b1, f1);
+                } else if last_log.0.elapsed() >= Duration::from_secs(30) {
                     let secs = last_log.0.elapsed().as_secs_f32();
                     tracing::info!(
                         "link: {width}x{height}, {:.1} fps, {:.0} kbps, round trip {rtt_ms:.0} ms {}, decode {decode_ms:.1} ms; host: {}",
@@ -753,7 +801,7 @@ mod health_tests {
             let worker_conn=incoming.clone();
             let worker=tokio::spawn(async move {
                 let (_send,mut recv)=worker_conn.accept_bi().await.unwrap();
-                assert!(matches!(expect_msg::<slipstream_core::proto::StreamOpen>(&mut recv).await.unwrap(),slipstream_core::proto::StreamOpen::Pace));
+                assert!(matches!(slipstream_core::framing::expect_msg::<slipstream_core::proto::StreamOpen>(&mut recv).await.unwrap(),slipstream_core::proto::StreamOpen::Pace));
                 if !unsupported {std::future::pending::<()>().await;}
             });
             let answer=tokio::time::timeout(Duration::from_secs(8),poll_host_pace(RemoteFs::new(out.clone()),Arc::default())).await.unwrap();

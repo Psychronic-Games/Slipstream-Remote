@@ -1,6 +1,6 @@
 # Open issues
 
-The work queue, reviewed 2026-10-22 against published **0.24.0, build 127**. Each
+The work queue, reviewed 2026-11-05 against published **0.32.1, build 179**. Each
 file is one issue: background, tasks or a test checklist, a "done when" where
 it applies, and pointers into the code.
 Once the repository is on GitHub, `scripts/file-issues.sh` files them all as
@@ -10,13 +10,13 @@ track them.
 | # | Issue | Labels |
 |---|---|---|
 | 01 | [Verify desktop sessions on real machines](01-verify-0.5.0-on-real-machines.md) | testing, **high** |
-| 02 | [Get CI green on Linux, Windows and macOS](02-github-and-ci.md) | infra, **high** |
+| 02 | [Get CI green on Linux, Windows and macOS](02-github-and-ci.md) (green since 2026-10-23; Clippy in CI, release secrets and issue filing open) | infra |
 | 03 | [macOS: build Slipstream.app on a Mac and test it](03-macos-app.md) | macOS, **high** |
 | 04 | [Windows service: verify UAC, elevated apps and the login screen](04-windows-service.md) (implemented; device checks open) | Windows, testing |
 | 05 | [Code signing, and downloads browsers trust](05-code-signing.md) | Windows, macOS, infra, **high** |
 | 06 | [Hardware video encoding](06-hardware-encoding.md) | performance, feature |
 | 07 | [Stream the host's audio](07-audio.md) (Windows and Linux done; Mac hosts left) | feature |
-| 08 | [Verify station-saved devices and passwords on the live station](08-address-book.md) (implemented; live workflow check open) | testing |
+| 08 | [Verify station-saved devices and passwords on the live station](08-address-book.md) (in production use; recorded checklist open) | testing |
 | 09 | [Android app](09-android.md) (in progress) | Android, feature |
 | 10 | [Test the X11 host for real](10-x11-host-testing.md) | Linux, testing |
 | 11 | [Wayland unattended access after reboot](11-wayland-unattended-after-reboot.md) | Linux, testing |
