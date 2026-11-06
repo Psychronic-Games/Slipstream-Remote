@@ -1,0 +1,14 @@
+# YY-Thunks: lets the one Windows build start on Windows 7 SP1 and 8.x.
+# Rust's standard library and some dependencies import functions that only
+# exist on Windows 8/10 (GetSystemTimePreciseAsFileTime, WaitOnAddress,
+# ProcessPrng, ...); Windows refuses to start a program that imports a
+# missing function. Linking this object replaces those imports with small
+# stubs that call the real function when Windows has it and an equivalent
+# fallback when it doesn't. Newer Windows behaves exactly as before.
+# MIT licensed: https://github.com/Chuyu-Team/YY-Thunks
+# scripts/build-station.sh and the release workflow fetch it, check these
+# hashes and hand it to build.rs as SLIPSTREAM_YY_THUNKS;
+# scripts/check-windows-imports.py then checks the built executable.
+version 1.2.3
+archive https://github.com/Chuyu-Team/YY-Thunks/releases/download/v1.2.3/YY-Thunks-Objs.zip 4dc68ec8784e0afed7284e4393aec672873608161c3a5ae52faf618875d95b81
+file objs/x64/YY_Thunks_for_Win7.obj 964684f398e84777e0430a0ec6806ffbede7760024380311f483af527406ceae

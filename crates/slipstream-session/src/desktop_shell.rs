@@ -189,24 +189,31 @@ mod native {
 
     pub fn drop_folder(x: i32, y: i32) -> Result<PathBuf> {
         use slipstream_platform::windesk;
-        use windows_sys::Win32::UI::HiDpi::{
-            DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE,
-            SetThreadDpiAwarenessContext,
-        };
+        use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE};
         // Viewer coordinates describe capture pixels, even when the host's
         // headless service process otherwise has DPI virtualization enabled.
-        struct DpiGuard(DPI_AWARENESS_CONTEXT);
+        // Looked up at run time: Windows before 10 (1607) doesn't have it,
+        // and there threads have no DPI awareness of their own to set.
+        type SetContext = unsafe extern "system" fn(DPI_AWARENESS_CONTEXT) -> DPI_AWARENESS_CONTEXT;
+        let set_context: Option<SetContext> = unsafe {
+            let user32 = windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(windows_sys::core::w!("user32.dll"));
+            windows_sys::Win32::System::LibraryLoader::GetProcAddress(user32, windows_sys::core::s!("SetThreadDpiAwarenessContext"))
+                // SAFETY: the documented signature of SetThreadDpiAwarenessContext.
+                .map(|f| std::mem::transmute::<unsafe extern "system" fn() -> isize, SetContext>(f))
+        };
+        struct DpiGuard(Option<SetContext>, DPI_AWARENESS_CONTEXT);
         impl Drop for DpiGuard {
             fn drop(&mut self) {
-                if !self.0.is_null() {
+                if let Some(set) = self.0 && !self.1.is_null() {
                     unsafe {
-                        SetThreadDpiAwarenessContext(self.0);
+                        set(self.1);
                     }
                 }
             }
         }
-        let _dpi = DpiGuard(unsafe {
-            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE)
+        let _dpi = DpiGuard(set_context, match set_context {
+            Some(set) => unsafe { set(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE) },
+            None => std::ptr::null_mut(),
         });
         windesk::follow();
         if windesk::following() && !windesk::on_default_desktop() {

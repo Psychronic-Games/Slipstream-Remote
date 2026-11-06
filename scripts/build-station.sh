@@ -47,6 +47,28 @@ softgl() {
   rm -rf "$tmp"
 }
 
+# YY-Thunks, so the one Windows build also starts on Windows 7 SP1 and 8.x:
+# the object pinned in packaging/windows/yy-thunks.txt, for build.rs. The
+# archive is downloaded once and cached.
+YYTHUNKS="${XDG_CACHE_HOME:-$HOME/.cache}/slipstream-yy-thunks/$(awk '$1 == "version" { print $2 }' packaging/windows/yy-thunks.txt)"
+yythunks() {
+  local pins=packaging/windows/yy-thunks.txt url sha archive name fsha
+  read -r url sha < <(awk '$1 == "archive" { print $2, $3 }' "$pins")
+  read -r name fsha < <(awk '$1 == "file" { print $2, $3 }' "$pins")
+  archive="$YYTHUNKS/$(basename "$url")"
+  mkdir -p "$YYTHUNKS" || return 1
+  if [ ! -f "$archive" ]; then
+    echo "==> Downloading $(basename "$url")"
+    curl -fsSL -o "$archive.part" "$url" && mv "$archive.part" "$archive" || return 1
+  fi
+  echo "$sha  $archive" | sha256sum -c --quiet || { rm -f "$archive"; return 1; }
+  YYTHUNKS_OBJ="$YYTHUNKS/$(basename "$name")"
+  if [ ! -f "$YYTHUNKS_OBJ" ]; then
+    command -v unzip >/dev/null || { echo "unzip is needed to unpack YY-Thunks" >&2; return 1; }
+    unzip -p "$archive" "$name" > "$YYTHUNKS_OBJ.part" && mv "$YYTHUNKS_OBJ.part" "$YYTHUNKS_OBJ" || return 1
+  fi
+  echo "$fsha  $YYTHUNKS_OBJ" | sha256sum -c --quiet || { rm -f "$YYTHUNKS_OBJ"; return 1; }
+}
 
 # Every station build is a release with its own version: entries still
 # under "Unreleased" mean scripts/release-version.sh hasn't been run.
@@ -173,8 +195,12 @@ else
     else
       echo "warning: building without the software renderer; machines like Windows Server 2016 get the compact window" >&2
     fi
+    # Windows 7/8 support is part of every Windows build, not optional.
+    yythunks || { echo "error: couldn't get YY-Thunks (packaging/windows/yy-thunks.txt)" >&2; exit 1; }
+    export SLIPSTREAM_YY_THUNKS="$YYTHUNKS_OBJ"
     cargo xwin build --release --target x86_64-pc-windows-msvc -p slipstream
     check_asm target/x86_64-pc-windows-msvc/release
+    python3 scripts/check-windows-imports.py target/x86_64-pc-windows-msvc/release/slipstream.exe "$YYTHUNKS_OBJ"
     cp target/x86_64-pc-windows-msvc/release/slipstream.exe "$OUT/clients/slipstream-windows-x86_64.exe"
   else
     echo "==> Skipping Windows app (install cargo-xwin to build it)"

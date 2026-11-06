@@ -36,6 +36,12 @@ show in small print: `0.6.0 (build N · commit)`.
 - Chat messages show each side's Slipstream name instead of *You* and
   *Remote*, in sessions, Subspace chat and the workstation's chat window.
 
+- The Windows app no longer requires Windows 10. The same download is meant
+  to start on Windows 7 SP1 and 8.x too: functions those versions lack are
+  answered by YY-Thunks fallbacks, while newer Windows uses the real ones. On
+  older systems the app uses its GDI capture and the OpenGL, software or
+  compact window. Not yet tested on a real Windows 7 machine.
+
 - Code audit fixes (details in `docs/AUDIT-2026-11-05.md`):
   - **Meetings:** your own voice is no longer garbled in recordings. A
     refused join attempt no longer stalls the meeting for everyone, and

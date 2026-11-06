@@ -116,15 +116,15 @@ Recent releases:
 
 - **Audit open items:** the
   [2026-11-05 audit](AUDIT-2026-11-05.md#open) lists findings that need design
-  work or real hardware. The largest two are:
-  - **Saved passwords:** they are sealed with a key derived from the sign-in
-    password, which the station sees at sign-in.
-  - **Windows service file transfer:** it runs as SYSTEM.
-- **Windows 7/8:** not supported. Rust's standard Windows target needs
-  Windows 10, and the app fails to start on Windows 7 (missing
-  `GetSystemTimePreciseAsFileTime`). A separate Windows 7 build would need
-  the unofficial `x86_64-win7-windows-msvc` target and GDI capture.
-
+  work or real hardware. The largest is that saved passwords are sealed with
+  a key derived from the sign-in password, which the station sees at sign-in.
+  (The Windows service's unrestricted SYSTEM file access is by design.)
+- **Windows 7 SP1 / 8.x:** the one Windows build now links YY-Thunks, so it
+  no longer imports anything Windows 7 lacks (checked at build time by
+  `scripts/check-windows-imports.py`; see
+  [BUILDING.md](BUILDING.md#older-windows-7-sp1-8x)). It hasn't been run on a
+  real Windows 7 machine yet. Expect GDI capture, the OpenGL/software/compact
+  window fallbacks and no privacy mode there.
 - **Meetings**: the organizer must stay connected; no host migration or
   adaptive meeting bitrate yet. Invitations/rooms
   last four hours. Android incoming calls require a running, reachable app.

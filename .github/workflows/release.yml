@@ -76,11 +76,23 @@ jobs:
             gzip -9n -c "softgl-raw/$name" > "softgl/$name.gz"
           done
           echo "SLIPSTREAM_SOFTGL_DIR=$(cygpath -w "$PWD/softgl")" >> "$GITHUB_ENV"
+      - name: Windows 7/8 support (YY-Thunks, pinned in packaging/windows/yy-thunks.txt)
+        shell: bash
+        run: |
+          read -r url sha < <(awk '$1 == "archive" { print $2, $3 }' packaging/windows/yy-thunks.txt)
+          read -r name fsha < <(awk '$1 == "file" { print $2, $3 }' packaging/windows/yy-thunks.txt)
+          curl -fsSL -o yy-thunks.zip "$url"
+          echo "$sha  yy-thunks.zip" | sha256sum -c
+          7z e -y -oyy-thunks yy-thunks.zip "$name" >/dev/null
+          mv "yy-thunks/$(basename "$name")" yy-thunks.obj
+          echo "$fsha  yy-thunks.obj" | sha256sum -c
+          echo "SLIPSTREAM_YY_THUNKS=$(cygpath -w "$PWD/yy-thunks.obj")" >> "$GITHUB_ENV"
       - name: Build
         shell: bash
         run: |
           cargo build --release -p slipstream
           ! grep -qs "not using any assembly" target/release/build/openh264-sys2-*/output
+          python scripts/check-windows-imports.py target/release/slipstream.exe yy-thunks.obj
           mkdir out && cp target/release/slipstream.exe out/slipstream-windows-x86_64.exe
       - id: unsigned
         uses: actions/upload-artifact@v7

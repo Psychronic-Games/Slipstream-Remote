@@ -41,6 +41,30 @@ fn main() {
         }
     }
     software_renderer(windows);
+    older_windows();
+}
+
+/// `SLIPSTREAM_YY_THUNKS`: YY-Thunks' Windows 7 object, pinned in
+/// packaging/windows/yy-thunks.txt. Linked first, it answers the imports
+/// Windows 7/8 lack with stubs that use the real function where it exists,
+/// so one executable runs on every Windows version. Without it the build
+/// needs Windows 10 (scripts/check-windows-imports.py says which imports).
+fn older_windows() {
+    println!("cargo:rerun-if-env-changed=SLIPSTREAM_YY_THUNKS");
+    let msvc = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+    if let (true, Ok(path)) = (msvc, std::env::var("SLIPSTREAM_YY_THUNKS")) {
+        let path = std::path::Path::new(&path).canonicalize().unwrap_or_else(|_| panic!("SLIPSTREAM_YY_THUNKS: no file at {path}"));
+        println!("cargo:rerun-if-changed={}", path.display());
+        println!("cargo:rustc-link-arg-bins={}", path.display());
+        // The object asks for these import libraries in mixed case
+        // ("PowrProf.lib"), which a case-sensitive cross-build sysroot
+        // can't find. Ask for them in lower case instead (Windows doesn't mind).
+        for lib in ["Advapi32", "crypt32", "Dnsapi", "DXGI", "Gdi32", "Iphlpapi", "mfplat", "Ole32", "PowrProf", "User32", "uuid", "winhttp", "Ws2_32"] {
+            println!("cargo:rustc-link-arg-bins=/NODEFAULTLIB:{lib}.lib");
+            println!("cargo:rustc-link-arg-bins={}.lib", lib.to_lowercase());
+        }
+    }
 }
 
 /// `SLIPSTREAM_SOFTGL_DIR`: a folder with the gzipped Mesa DLLs named in

@@ -120,7 +120,7 @@ prune old generated APKs. Everything removed can be rebuilt.
 |---|---|---|
 | `clients/slipstream-linux-x86_64` | `cargo zigbuild` for glibc 2.31 | Runs on Debian 11 / Ubuntu 20.04 and newer. Falls back to a native build (newer glibc only) without zig. |
 | `bin/slipstream-server-linux-x86_64` | same | The relay the station runs. |
-| `clients/slipstream-windows-x86_64.exe` | `cargo xwin` (MSVC target, cross-compiled from Linux) | Skipped when cargo-xwin isn't installed. Carries Mesa's CPU OpenGL driver for machines whose graphics can't run the full window: [mesa-dist-win](https://github.com/pal1000/mesa-dist-win), pinned in `packaging/windows/softgl.txt`, downloaded once into `~/.cache/slipstream-mesa` (needs `7z`) and handed to `build.rs` as `SLIPSTREAM_SOFTGL_DIR`. Without it the app builds without the renderer, with a warning. |
+| `clients/slipstream-windows-x86_64.exe` | `cargo xwin` (MSVC target, cross-compiled from Linux) | Skipped when cargo-xwin isn't installed. Carries Mesa's CPU OpenGL driver for machines whose graphics can't run the full window: [mesa-dist-win](https://github.com/pal1000/mesa-dist-win), pinned in `packaging/windows/softgl.txt`, downloaded once into `~/.cache/slipstream-mesa` (needs `7z`) and handed to `build.rs` as `SLIPSTREAM_SOFTGL_DIR`. Without it the app builds without the renderer, with a warning. Always links [YY-Thunks](https://github.com/Chuyu-Team/YY-Thunks) (pinned in `packaging/windows/yy-thunks.txt`, cached in `~/.cache/slipstream-yy-thunks`, handed over as `SLIPSTREAM_YY_THUNKS`; needs `unzip`) so the same .exe starts on Windows 7 SP1 and 8.x; `scripts/check-windows-imports.py` then fails the build if any import newer than Windows 7 is left. |
 | `clients/slipstream-macos.zip` | `scripts/build-macos.sh` on a Mac | Universal (Apple Silicon + Intel), ad-hoc signed. Taken from `dist/slipstream-macos.zip` if it's from the same build. |
 | `clients/slipstream-android.apk` | `scripts/build-android.sh` (arm64 only: phones and tablets) | Skipped without the Android SDK and cargo-ndk (see *Android* below). Signed with the Android release key; not in the update manifest, since the app can't update itself yet. |
 | `clients/manifest.json` | `tools/slipstream-release` | Version, build number, commit, and size, SHA-256 and release signature of each app, for self-update. |
@@ -362,6 +362,32 @@ CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER=wine \
 
 Real DXGI capture, SmartScreen and input on the secure desktop need a real
 Windows machine.
+
+## Older Windows (7 SP1, 8.x)
+
+There is one Windows build. Rust's standard library and a few dependencies
+import functions that only exist on Windows 8 or 10, and Windows refuses to
+start a program whose imports it lacks. The build links YY-Thunks' Windows 7
+object: each such import becomes a stub that calls the real function where
+it exists and a fallback where it doesn't, so Windows 10/11 behave exactly
+as before. Code of our own that needs a newer function looks it up at run
+time instead (`GetProcAddress`), as `desktop_shell.rs` does for
+`SetThreadDpiAwarenessContext`. To check a build by hand:
+
+```sh
+SLIPSTREAM_YY_THUNKS=~/.cache/slipstream-yy-thunks/1.2.3/YY_Thunks_for_Win7.obj \
+  scripts/check.sh cargo xwin build --target x86_64-pc-windows-msvc -p slipstream
+python3 scripts/check-windows-imports.py target/x86_64-pc-windows-msvc/debug/slipstream.exe \
+  ~/.cache/slipstream-yy-thunks/1.2.3/YY_Thunks_for_Win7.obj
+```
+
+Starting is only the first step: on Windows 7 the app also relies on
+fallbacks it already has. Screen capture uses GDI where Desktop Duplication
+(Windows 8+) is missing. The window falls back to OpenGL, the software
+renderer or the compact Win32 window when Direct3D 12 or Vulkan aren't
+available. Privacy mode isn't offered (it needs Windows 10 2004). Wine
+can't show any of this, because it has every newer function, so it needs a
+real Windows 7 machine.
 
 ## Android
 
