@@ -819,9 +819,11 @@ sessions. Manual reconnect now uses the same retained-session recovery path.
 
 On the Bridge, `home::devices_and_chats` shows the Subspace chat panel
 (`gui/chats.rs`) only while a chat is open. It puts Saved devices and the
-panel side by side from 980 points wide, with the chat
-column at 40% (380–620 points) and matching the list's height from the
-previous frame; narrower windows stack them. Device rows are at most 760
+panel side by side from 980 points wide (narrower windows put chats first), with the chat
+column at 40% (380–620 points). Beside the list the panel is as tall as
+what's visible from its top down (380–760 points), at most the list's height
+(from the previous frame), and offset by the scroll position within the
+list, so its message box stays on screen. Device rows are at most 760
 points wide, so their actions stay beside the names. Each `ChatLink` owns its
 connecting task or live `ViewerSession`; a forwarding task wakes the UI for
 chat, notices and disconnects, but not once-a-second stats. **Connect** moves

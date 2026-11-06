@@ -13,6 +13,10 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- The Subspace chat panel fits the window and follows the scroll beside a long
+  device list, so its message box stays in view; on narrow windows it sits
+  above the list instead of below it.
+
 ## 0.33.0 — 2026-11-05
 
 - **Chat** beside each saved device opens a chat-only link: the workstation

@@ -461,8 +461,9 @@ nothing: no picture, sound, clipboard or control. The person there sees
 **Inbound chat** and gets the usual chat window when you write.
 
 The **Subspace chat** panel appears when you open a chat: to the right of
-Saved devices on a wide Bridge, under them on a narrow window. It goes away
-when you close the last chat. Each workstation you chat with gets its own
+Saved devices on a wide Bridge, above them on a narrow window. It goes away
+when you close the last chat. Beside a long list it fits the window and moves
+with you as you scroll, so the message box is always in view. Each workstation you chat with gets its own
 tab, with a status lamp (green connected, gold connecting, grey closed) and
 **◆** for unread messages; **×** closes it. A message arriving while you are
 elsewhere shows a notice and marks the tab and the device's **Chat** button.

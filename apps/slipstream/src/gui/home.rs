@@ -74,37 +74,56 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
 }
 
 /// Saved devices, and once a chat is open, Subspace chat beside them on a
-/// wide Bridge or under them otherwise. No chats, no panel.
+/// wide Bridge (above them on a narrow one). No chats, no panel.
+///
+/// Beside a long list the panel is window-sized and follows the scroll, so
+/// its message box stays on screen wherever you are in the list.
 fn devices_and_chats(app: &mut App, ui: &mut Ui) {
     const GAP: f32 = 16.0;
     let total = ui.available_width();
     if !app.chats.is_empty() && total >= 980.0 {
         let right = (total * 0.4).clamp(380.0, 620.0);
         let left = total - right - GAP;
-        let height = app.chats.beside.max(420.0);
+        // What's visible of the Bridge's scroll area right now.
+        let visible = ui.clip_rect();
+        let list_height = app.chats.beside;
         let mut beside = 0.0;
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = GAP;
+            let top = ui.cursor().top();
             beside = ui.allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(left);
                 super::saved::panel(app, ui);
             }).response.rect.height();
             ui.allocate_ui_with_layout(vec2(right, 0.0), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(right);
+                // As tall as what's visible from its top down (so the
+                // message box is on screen), never taller than the list
+                // beside it, and moved down with the scroll within the list.
+                let start = top.max(visible.top() + 8.0);
+                let mut height = (visible.bottom() - start - 16.0).clamp(380.0, 760.0);
+                if list_height > 380.0 {
+                    // Near the end of the list, shrink rather than slide
+                    // the tabs out of view.
+                    height = height.min(list_height).min((top + list_height - start).max(380.0));
+                }
+                let offset = (visible.top() + 8.0 - top).clamp(0.0, (list_height - height).max(0.0));
+                ui.add_space(offset);
                 super::chats::panel(app, ui, height);
             });
         });
-        // The chat panel matches the list's height from the next frame on.
+        // The list's height, for the next frame's limits.
         if (beside - app.chats.beside).abs() > 1.0 {
             app.chats.beside = beside;
             ui.ctx().request_repaint();
         }
     } else {
-        super::saved::panel(app, ui);
+        // One column: chats first, so their message box isn't below a long list.
         if !app.chats.is_empty() {
-            ui.add_space(16.0);
             super::chats::panel(app, ui, 460.0);
+            ui.add_space(16.0);
         }
+        super::saved::panel(app, ui);
     }
 }
 
