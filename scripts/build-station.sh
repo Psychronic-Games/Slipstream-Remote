@@ -198,7 +198,10 @@ else
     # Windows 7/8 support is part of every Windows build, not optional.
     yythunks || { echo "error: couldn't get YY-Thunks (packaging/windows/yy-thunks.txt)" >&2; exit 1; }
     export SLIPSTREAM_YY_THUNKS="$YYTHUNKS_OBJ"
-    cargo xwin build --release --target x86_64-pc-windows-msvc -p slipstream
+    # lld-link needs YY-Thunks' object ahead of the import libraries.
+    mkdir -p "$YYTHUNKS/linker"
+    ln -sf "$PWD/scripts/lld-link-thunks-first" "$YYTHUNKS/linker/lld-link"
+    PATH="$YYTHUNKS/linker:$PATH" cargo xwin build --release --target x86_64-pc-windows-msvc -p slipstream
     check_asm target/x86_64-pc-windows-msvc/release
     python3 scripts/check-windows-imports.py target/x86_64-pc-windows-msvc/release/slipstream.exe "$YYTHUNKS_OBJ"
     cp target/x86_64-pc-windows-msvc/release/slipstream.exe "$OUT/clients/slipstream-windows-x86_64.exe"

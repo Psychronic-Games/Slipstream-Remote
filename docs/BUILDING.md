@@ -372,7 +372,12 @@ object: each such import becomes a stub that calls the real function where
 it exists and a fallback where it doesn't, so Windows 10/11 behave exactly
 as before. Code of our own that needs a newer function looks it up at run
 time instead (`GetProcAddress`), as `desktop_shell.rs` does for
-`SetThreadDpiAwarenessContext`. To check a build by hand:
+`SetThreadDpiAwarenessContext`. The cross-build's `lld-link` reads its inputs
+in order, and with release LTO it would take those imports from the `windows`
+crates' import libraries first (duplicate symbols), so `build-station.sh` runs
+it through `scripts/lld-link-thunks-first`, which puts the object first.
+MSVC's own linker (GitHub's Windows runner) reads object files first anyway.
+To check a build by hand:
 
 ```sh
 SLIPSTREAM_YY_THUNKS=~/.cache/slipstream-yy-thunks/1.2.3/YY_Thunks_for_Win7.obj \

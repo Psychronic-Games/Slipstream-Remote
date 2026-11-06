@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# lld-link reads its inputs in order: an import library it reaches before
+# YY-Thunks' object supplies the very imports the object replaces, and the
+# link then fails with duplicate symbols (seen with release LTO builds).
+# MSVC's link.exe reads object files before libraries, so it needs no help.
+#
+# scripts/build-station.sh puts this first on PATH as `lld-link` for the
+# Windows cross-build (cargo-xwin always runs "lld-link"). It moves
+# YY_Thunks_for_*.obj to the front and runs the real lld-link.
+# scripts/check-windows-imports.py then checks the result.
+set -euo pipefail
+self=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+here=$(cd "$(dirname "$0")" && pwd)
+real=""
+IFS=: read -ra dirs <<<"$PATH"
+for d in "${dirs[@]}"; do
+  d=$(cd "$d" 2>/dev/null && pwd) || continue
+  [ "$d" = "$here" ] || [ "$d" = "$self" ] && continue
+  if [ -x "$d/lld-link" ]; then real="$d/lld-link"; break; fi
+done
+[ -n "$real" ] || { echo "lld-link-thunks-first: no lld-link on PATH" >&2; exit 127; }
+# rustc may start with "-flavor link", which lld only accepts first.
+lead=()
+if [ "${1:-}" = "-flavor" ] && [ $# -ge 2 ]; then
+  lead=("$1" "$2")
+  shift 2
+fi
+first=()
+rest=()
+for arg in "$@"; do
+  case "$arg" in
+    *YY_Thunks_for_*.obj) first+=("$arg") ;;
+    *) rest+=("$arg") ;;
+  esac
+done
+exec "$real" "${lead[@]}" "${first[@]}" "${rest[@]}"
