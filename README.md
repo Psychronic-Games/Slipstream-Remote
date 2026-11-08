@@ -111,8 +111,8 @@ the same signature before installing anything.
 - **Stations and apps update themselves** — stations install new signed
   releases from GitHub (automatically, or with one click on the admin page),
   and the desktop apps then offer *Install & restart*, keeping their settings. Windows app updates
-  also update an installed service. Android updates
-  are installed from the station's APK.
+  also update an installed service. The Android app downloads, verifies
+  and installs its updates too (Android asks you to confirm).
 - **Works immediately, with self-hosting available** — raw downloads use
   `public.slipstreamremote.com`. A configured self-hosted station stays the
   default; shared tabs above Your ID and Establish link switch both panels

@@ -235,3 +235,14 @@ extern "system" fn Java_com_slipstreamremote_app_RelayBridge_onRelayStatus(
     let stats = [linked, connections, up, down].map(|v| v.max(0) as u64);
     slipstream_platform::android::relay_status(&state, name, passphrase, ip, joined.max(0) as u32, stats, phone_wifi != 0, message);
 }
+
+/// `UpdateInstaller.onInstallStatus`: how handing an update to Android went.
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_UpdateInstaller_onInstallStatus(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    message: jni::objects::JString,
+) {
+    let message = env.get_string(&message).map(String::from).unwrap_or_default();
+    slipstream_platform::android::install_status(message);
+}

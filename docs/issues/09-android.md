@@ -56,7 +56,7 @@ ARCHITECTURE.md, "The Android app", and BUILDING.md, "Android").
       visitors (the phone's camera app opens it, so the app needs no
       scanner).
 - [x] Release signing key for the APK, beside the update key (0.8.0).
-- [ ] `android` in the update manifest, once the app can install updates
+- [x] `android` in the update manifest (`android-aarch64`, 0.34.2).
       (phase 3).
 - [x] Try on real phones and tablets (works on a real phone, user
       2026-11-08; models and Android versions not recorded).
@@ -103,7 +103,8 @@ manufacturer agreements (Samsung Knox and others).
 - [ ] Clipboard (JNI `ClipboardManager`; arboard has no Android support).
 - [ ] Files: the app's own folder and Downloads (MediaStore).
 - [ ] Hardware H.264 decoding (MediaCodec) for the viewer.
-- [ ] Self-update through `PackageInstaller` (the user confirms).
+- [x] Self-update through `PackageInstaller` (the user confirms; 0.34.2,
+      `UpdateInstaller.java`). Needs trying on a real phone.
 
 ## Pointers
 

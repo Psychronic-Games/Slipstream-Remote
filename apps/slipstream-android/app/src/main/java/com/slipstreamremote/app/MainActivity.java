@@ -88,12 +88,39 @@ public class MainActivity extends GameActivity {
             meetingAction(action);
         }
     }
-    @Override protected void onResume() { super.onResume(); resumed = true; resumeMeetingAction(); }
+    @Override protected void onResume() { super.onResume(); resumed = true; resumeMeetingAction(); resumeUpdate(); }
     @Override protected void onPause() { resumed = false; super.onPause(); }
     public static void sharingStarted() {
         MainActivity activity = current.get();
         if (activity != null && !activity.isFinishing()) activity.moveTaskToBack(true);
     }
+    /**
+     * An update from Rust, already verified: install it, after letting the
+     * person allow installs from this app if they haven't yet.
+     */
+    public static void installUpdate(String path) {
+        MainActivity activity = current.get();
+        if (activity == null) {UpdateInstaller.onInstallStatus("Open Slipstream to install the update.");return;}
+        activity.runOnUiThread(() -> {
+            if (!activity.getPackageManager().canRequestPackageInstalls()) {
+                activity.pendingUpdate = path;
+                activity.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + activity.getPackageName())));
+                return;
+            }
+            new Thread(() -> UpdateInstaller.install(activity.getApplicationContext(), path), "slipstream-update").start();
+        });
+    }
+    private String pendingUpdate;
+    /** Back from allowing installs: carry on with the update (or say it can't). */
+    private void resumeUpdate() {
+        String path = pendingUpdate;
+        if (path == null) return;
+        pendingUpdate = null;
+        if (getPackageManager().canRequestPackageInstalls())
+            new Thread(() -> UpdateInstaller.install(getApplicationContext(), path), "slipstream-update").start();
+        else UpdateInstaller.onInstallStatus("To install updates, allow Slipstream to install apps (Settings → Install unknown apps).");
+    }
+
     /** Subspace Relay from Rust: 1 starts it with this name, password and band, 0 stops it. */
     public static void relayAction(int action,String name,String password,String band) {
         MainActivity activity = current.get();

@@ -654,9 +654,14 @@ Current apps refresh the signed offer immediately before downloading and retry
 a publication race once with a newer verified release. Hash/signature checks
 remain mandatory.
 
-**Updating Android.** Download the latest APK from the station and install
-it over the existing app. It must use the same Android signing certificate.
-Android does not yet offer *Install & restart* updates.
+**Updating Android.** From 0.34.2 the Android app offers updates like the
+desktop apps: **Install update** downloads the new APK from the station,
+checks it against the signed manifest, and hands it to Android, which asks
+you to confirm. The first time, Android asks you to allow Slipstream to
+install apps (*Install unknown apps*); turn it on and press back. Android
+then closes the app and replaces it; open it again. Older versions update
+by downloading the APK from the station and installing it over the app (it
+must carry the same Android signing certificate).
 
 When an update changes the connection protocol, both computers need the new
 version. The older side gets a clear "please update" message instead of a

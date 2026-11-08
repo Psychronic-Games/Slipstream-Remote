@@ -560,7 +560,8 @@ pub(super) fn update_banner(app: &mut App, ui: &mut Ui) {
                         };
                         theme::progress(ui, frac, 260.0, pal::GREEN, &text);
                     } else {
-                        install = theme::pill(ui, if service_only { "Update service" } else { "Install & restart" }, pal::GREEN).clicked();
+                        let label = if service_only { "Update service" } else if cfg!(target_os = "android") { "Install update" } else { "Install & restart" };
+                        install = theme::pill(ui, label, pal::GREEN).clicked();
                         dismiss = ui.small_button("Later").clicked();
                     }
                 });

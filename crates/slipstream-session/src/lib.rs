@@ -551,6 +551,12 @@ impl Client {
         Ok((info, staged))
     }
 
+    /// Downloads and verifies the latest signed build to `staged` (Android:
+    /// the app hands it to the system installer itself).
+    pub async fn download_update(&self, info: &update::UpdateInfo, staged: &std::path::Path, progress: impl FnMut(u64, u64)) -> Result<update::UpdateInfo> {
+        self.download_latest_update(info, staged, progress).await
+    }
+
     pub async fn install_update(&self, info: &update::UpdateInfo, progress: impl FnMut(u64, u64)) -> Result<std::path::PathBuf> {
         let staged = update::staging_path()?;
         self.download_latest_update(info, &staged, progress).await?;

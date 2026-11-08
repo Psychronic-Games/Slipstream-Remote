@@ -860,13 +860,15 @@ impl App {
                 wake.request_repaint();
                 return;
             }
-            let r = crate::update::install(&client, &info, move |done, total| {
-                    *progress.lock().unwrap() = (done, total);
-                    w.request_repaint_after(Duration::from_millis(100));
-                })
-                .await
-                .map(Some)
-                .map_err(|e| format!("{e:#}"));
+            let report = move |done, total| {
+                *progress.lock().unwrap() = (done, total);
+                w.request_repaint_after(Duration::from_millis(100));
+            };
+            // Android installs it itself: nothing to relaunch (`None`).
+            #[cfg(target_os = "android")]
+            let r = crate::update::install_android(&client, &info, report).await.map(|()| None).map_err(|e| format!("{e:#}"));
+            #[cfg(not(target_os = "android"))]
+            let r = crate::update::install(&client, &info, report).await.map(Some).map_err(|e| format!("{e:#}"));
             let _ = tx.send(r);
             wake.request_repaint();
         });
@@ -1109,12 +1111,25 @@ impl App {
                 Err(e) => self.toast(format!("Update check failed: {e}"), pal::RED),
             }
         }
+        // What Android's installer said about an update handed to it.
+        #[cfg(target_os = "android")]
+        if let Some(message) = slipstream_platform::android::take_install_status()
+            && !message.is_empty()
+        {
+            self.toast(message, pal::RED);
+        }
         let Some(u) = &mut self.update else { return };
         let Some(rx) = &mut u.rx else { return };
         let Ok(result) = rx.try_recv() else { return };
         u.rx = None;
         u.installing = false;
         match result {
+            #[cfg(target_os = "android")]
+            Ok(None) => {
+                self.update = None;
+                self.toast("Android is installing the update: confirm when it asks", pal::GREEN);
+            }
+            #[cfg(not(target_os = "android"))]
             Ok(None) => {
                 self.update = None;
                 self.toast("The Windows service is up to date; this app stays open", pal::GREEN);

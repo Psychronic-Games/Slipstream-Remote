@@ -13,6 +13,13 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **The Android app updates itself:** when your station has a newer
+  version, **Install update** downloads it, checks it against the station's
+  signed release list like the desktop apps do, and hands it to Android,
+  which asks you to confirm. The first time, allow Slipstream to install
+  apps when Android asks. Stations list the Android app in their update
+  manifest from this release.
+
 - The relay's Wi-Fi band is back to **Automatic** by default (Android then
   uses the phone's own Wi-Fi channel, so its radio needn't switch between
   two), with 2.4 GHz and 5 GHz under **Advanced**. 0.34.1's note that 5 GHz

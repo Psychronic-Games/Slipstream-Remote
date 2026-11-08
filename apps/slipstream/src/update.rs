@@ -21,6 +21,20 @@ pub async fn install(
     }
 }
 
+/// Android: downloads and verifies the update into the app's own storage
+/// (the same signed-manifest checks as on computers), then hands the APK to
+/// Android's installer, which asks the person to confirm, replaces the app
+/// and closes it. [`slipstream_platform::android::take_install_status`]
+/// reports what Android said.
+#[cfg(target_os = "android")]
+pub async fn install_android(client: &Client, info: &UpdateInfo, progress: impl FnMut(u64, u64)) -> Result<()> {
+    let dir = slipstream_core::config::Store::open_default()?.dir().join("updates");
+    tokio::fs::create_dir_all(&dir).await?;
+    let staged = dir.join("slipstream.apk");
+    client.download_update(info, &staged, progress).await?;
+    slipstream_platform::android::install_update(&staged)
+}
+
 /// Reuse the installed app for service catch-up; only its signed release
 /// metadata is fetched by the caller. The privileged helper rechecks the bytes.
 #[cfg(windows)]

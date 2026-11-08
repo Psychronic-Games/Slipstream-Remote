@@ -840,6 +840,12 @@ plus the tray app if it's on.
   hash to the download URL to distinguish cached releases. If publication
   races a download, it retries once only when a separately verified newer
   signed offer exists. Unchanged damaged files still fail verification.
+  Android (`android-aarch64`, 0.34.2+) downloads and verifies the same way
+  into the app's settings folder (`updates/slipstream.apk`), then
+  `UpdateInstaller` writes it into a `PackageInstaller` session (after
+  *Install unknown apps* is allowed for the app) and commits it; Android
+  checks the APK's signing certificate matches, asks the person to confirm,
+  and replaces the app.
 * **Single instance:** a loopback TCP port derived from the settings folder.
   A second launch asks the first to show its window. `SLIPSTREAM_HOME` gives
   an independent instance.

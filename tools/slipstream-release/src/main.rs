@@ -34,6 +34,9 @@ const PLATFORMS: &[(&str, &str, &str)] = &[
     // One universal app for both kinds of Mac.
     ("macos-aarch64", "macos", "slipstream-macos.zip"),
     ("macos-x86_64", "macos", "slipstream-macos.zip"),
+    // Phones and tablets (arm64): the app hands the verified APK to Android's
+    // installer (0.34.2 and newer).
+    ("android-aarch64", "android", "slipstream-android.apk"),
 ];
 
 #[derive(Parser)]
@@ -207,11 +210,15 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("slipstream-linux-x86_64"), b"linux app").unwrap();
         fs::write(dir.join("slipstream-windows-x86_64.exe"), b"windows app").unwrap();
+        fs::write(dir.join("slipstream-android.apk"), b"android app").unwrap();
         let key = SecretKey::generate();
         manifest(&key, &dir, "0.5.1", 15, "abc1234", &["windows-x86_64".into()]).unwrap();
 
         let m: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("manifest.json")).unwrap()).unwrap();
-        assert_eq!(m["platforms"].as_object().unwrap().len(), 2);
+        assert_eq!(m["platforms"].as_object().unwrap().len(), 3);
+        // The Android app updates itself through the same signed entries.
+        assert_eq!(m["platforms"]["android-aarch64"]["os"], "android");
+        assert_eq!(m["platforms"]["android-aarch64"]["file"], "slipstream-android.apk");
         assert_eq!(m["platforms"]["windows-x86_64"]["signed"], true);
         assert_eq!(m["platforms"]["linux-x86_64"]["signed"], false);
         for (platform, e) in m["platforms"].as_object().unwrap() {

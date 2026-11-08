@@ -339,3 +339,32 @@ pub fn relay_status(state: &str, name: String, passphrase: String, ip: String, j
         _ => RelayGroup::Off,
     };
 }
+
+/// What Android's installer said about an update; taken (and cleared) by
+/// [`take_install_status`]. Empty: Android has taken over (it asks the
+/// person to confirm, then replaces and reopens the app).
+static INSTALL_STATUS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Hands a downloaded, verified APK to Android's installer (asking to allow
+/// installs from this app first, if needed).
+pub fn install_update(path: &std::path::Path) -> Result<()> {
+    let b = BRIDGE.get().context("Android bridge not initialized")?;
+    let mut env = b.vm.attach_current_thread()?;
+    let class = JClass::from(env.new_local_ref(b.class.as_obj())?);
+    let path = env.new_string(path.to_string_lossy())?;
+    let result = env.call_static_method(class, "installUpdate", "(Ljava/lang/String;)V", &[JValue::Object(&path)]);
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
+    result?;
+    Ok(())
+}
+
+/// `UpdateInstaller.onInstallStatus`.
+pub fn install_status(message: String) {
+    *INSTALL_STATUS.lock().unwrap() = Some(message);
+}
+
+pub fn take_install_status() -> Option<String> {
+    INSTALL_STATUS.lock().unwrap().take()
+}

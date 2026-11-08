@@ -211,7 +211,8 @@ else
 
   VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
   # The Android app for phones and tablets (arm64), signed with the Android
-  # release key. It's not in the update manifest: it can't update itself yet.
+  # release key. It's in the update manifest (android-aarch64): the app
+  # verifies it like the desktop apps, then hands it to Android's installer.
   if [ -d "${ANDROID_HOME:-$HOME/Android/Sdk}/ndk" ] && command -v cargo-ndk >/dev/null; then
     echo "==> Android app"
     SLIPSTREAM_STATION_BUILD=1 ABIS=arm64-v8a scripts/build-android.sh
