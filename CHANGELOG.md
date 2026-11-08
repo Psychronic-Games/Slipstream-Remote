@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.34.3 — 2026-11-08
+
 - **Stations require HTTPS:** once a station has been reached over HTTPS,
   plain `http://` requests to it are redirected to HTTPS (pages, downloads
   and the apps' requests alike), so the admin sign-in, the download

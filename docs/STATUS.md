@@ -72,6 +72,8 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.34.3**: stations redirect plain HTTP to HTTPS once HTTPS works
+  (HSTS optional in `config.php`).
 - **0.34.2**: the Android app installs its own updates; Subspace Relay's
   band back to automatic, DNS lookups no longer inflate its connection count.
 - **0.34.1**: Subspace Relay runs in its own process on the phone, uses
