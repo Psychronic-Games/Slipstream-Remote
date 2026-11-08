@@ -26,6 +26,11 @@ unattended access after a reboot and remote-management restarts. Wake-on-LAN
 through a gateway and management controllers (BMC/vPro consoles, Redfish)
 haven't been tried on real hardware yet. See [Next steps](#next-steps).
 
+Version **0.34** adds **Subspace Relay**: a computer online through an
+Android phone's mobile data (the phone's Wi-Fi Direct network, then a
+tunnel through Slipstream on the phone; [issue 19](issues/19-subspace-relay.md)).
+Chat-only links no longer open the workstation's screen.
+
 Version **0.33** adds chat-only links with Subspace chat tabs, remote
 management (restarts, Wake-on-LAN through a gateway, BMC/vPro consoles and
 Redfish power), one Windows build meant to start on Windows 7 SP1/8.x as well,
@@ -67,6 +72,8 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.34.0**: Subspace Relay; chat-only links open the screen only when
+  asked to view.
 - **0.33.1**: the Subspace chat panel stays in view beside long device lists
   (and comes first on narrow windows).
 - **0.33.0**: chat-only links and Subspace chat tabs, remote management,
@@ -113,7 +120,7 @@ Recent releases:
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ✅ end-to-end test; pasted in Explorer and Dolphin between real machines (user, 2026-11-08) |
 | Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. In production use on the private station since its October 29 deploy; issue 08's two-computer and revocation checklist isn't recorded item by item |
-| Subspace Relay (unreleased) | ✅ loopback QUIC unit tests and the real Linux tunnel between network namespaces (`scripts/test-relay-tunnel.sh`). ⚠️ Not yet on a real phone or on Windows/macOS computers ([issue 19](issues/19-subspace-relay.md)) |
+| Subspace Relay (0.34) | ✅ loopback QUIC unit tests and the real Linux tunnel between network namespaces (`scripts/test-relay-tunnel.sh`). ⚠️ Not yet on a real phone or on Windows/macOS computers ([issue 19](issues/19-subspace-relay.md)) |
 | Remote management (restarts, wake, controllers) | ✅ end-to-end tests: Redfish power state, graceful restart with authentication and refusals against a local test controller through a real gateway link and port forward; the console forward; restarts refused without Control. Station storage, validation and older-app preservation in the account suite. Restarts (normal, Safe Mode with Networking, BIOS setup) confirmed on real machines (user, 2026-11-08). ⚠️ Wake-on-LAN through a gateway and real Supermicro, iDRAC, iLO or vPro controllers not yet tried ([issue 18](issues/18-remote-management.md)) |
 | Chat-only links and Subspace chat tabs | ✅ end-to-end test: chat both ways with no picture or clipboard either way, the host's viewing event only after Connect, then video. Bridge layout checked in native screenshots at 1680 and 1000 px. Used between real machines (user, 2026-11-08) |
 | Private station automatic enrollment and hardware summaries | ✅ isolated PHP API/admin checks: default names/Ungrouped, preserved edits and removals, legacy shared-list migration, signed metadata, admin access and public exclusion; batch technician assignment before sign-in and while offline, partial failures and retained credentials verified. Rust registration/authentication suites pass. Native Windows/macOS hardware summaries still need verification |
@@ -208,8 +215,8 @@ Each step has an issue with tasks and pointers into the code in
 0. **Usability polish from production use** (ongoing), starting with the
    open audit items that show in daily use: under the Windows service the
    Files window's default places and pasted files should resolve to the
-   signed-in user's folders. (Chat-only links no longer open the screen:
-   unreleased, after 0.33.1.)
+   signed-in user's folders. (Chat-only links no longer open the screen
+   since 0.34.)
 1. **Subspace Relay on real devices** (issue 19): the phone's Wi-Fi Direct
    group and relay, and Windows, macOS and Linux computers through it.
 2. **Saved-password vault** (audit, high): derive separate sign-in and vault

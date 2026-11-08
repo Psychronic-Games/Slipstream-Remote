@@ -64,7 +64,7 @@ Licensing: `tun2proxy` was considered, but depends on GPL-3.0
 
 ## Status
 
-Implemented (unreleased after 0.33.1). Verified so far: unit tests over a
+Released in 0.34.0. Verified so far: unit tests over a
 loopback QUIC link (TCP both ways, UDP datagrams, refusals, counters);
 `scripts/test-relay-tunnel.sh`, which runs the real Linux tunnel between two
 network namespaces (5 MB download and UDP through it, the app's helper mode,
