@@ -282,15 +282,27 @@ pub fn block_button_pointing(ui: &mut Ui, rect: Rect, label: &str, code: &str, c
         let arrow = vec![at(c - 10.0, 2.0), at(c, 14.0), at(c + 10.0, 2.0)];
         painter.add(Shape::convex_polygon(arrow, lighten(color, 0.15), Stroke::NONE));
     }
-    painter.text(
-        rect.right_bottom() + vec2(-8.0, -4.0),
-        Align2::RIGHT_BOTTOM,
-        label.to_uppercase(),
-        if active { display_bold(17.0) } else { display(17.0) },
-        Color32::BLACK,
-    );
-    if !code.is_empty() {
-        painter.text(rect.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, code, mono(11.0), Color32::BLACK.gamma_multiply(0.6));
+    let font = |size: f32| if active { display_bold(size) } else { display(size) };
+    if up {
+        // A phone's row of narrow buttons: each label centred, smaller
+        // where it wouldn't fit, and the panel code only where there's room.
+        let room = rect.width() - 6.0;
+        let mut size = 17.0;
+        let mut text = painter.layout_no_wrap(label.to_uppercase(), font(size), Color32::BLACK);
+        while text.size().x > room && size > 11.0 {
+            size -= 1.0;
+            text = painter.layout_no_wrap(label.to_uppercase(), font(size), Color32::BLACK);
+        }
+        let at = pos2(rect.center().x - text.size().x / 2.0, rect.bottom() - 4.0 - text.size().y);
+        painter.galley(at, text, Color32::BLACK);
+        if !code.is_empty() && rect.width() >= 72.0 {
+            painter.text(rect.center_top() + vec2(0.0, 4.0), Align2::CENTER_TOP, code, mono(11.0), Color32::BLACK.gamma_multiply(0.6));
+        }
+    } else {
+        painter.text(rect.right_bottom() + vec2(-8.0, -4.0), Align2::RIGHT_BOTTOM, label.to_uppercase(), font(17.0), Color32::BLACK);
+        if !code.is_empty() {
+            painter.text(rect.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, code, mono(11.0), Color32::BLACK.gamma_multiply(0.6));
+        }
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

@@ -5,8 +5,20 @@
 
 use android_activity::AndroidApp;
 
+mod relay;
+
+/// Whether this process has run the app's window before: its window
+/// library (winit) can only start once per process.
+static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
+    // Android reused a process whose window had closed (a service kept it
+    // alive): the window can't start again here, so start a fresh process.
+    if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        relaunch(&app);
+        return;
+    }
     // Settings, the device identity and the log live in the app's private
     // storage (there's no home folder to find them in).
     if let Some(dir) = app.internal_data_path() {
@@ -36,6 +48,21 @@ fn android_main(app: AndroidApp) {
     if let Err(e) = result {
         tracing::error!("Slipstream Remote couldn't start: {e:#}");
     }
+    // The window has closed for good: end the process so the next launch
+    // starts fresh (Subspace Relay runs in a process of its own).
+    std::process::exit(0);
+}
+
+/// Asks the activity to start the app again in a new process.
+fn relaunch(app: &AndroidApp) {
+    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { std::process::exit(0) };
+    if let Ok(mut env) = vm.attach_current_thread() {
+        let activity = unsafe { jni::objects::JObject::from_raw(app.activity_as_ptr().cast()) };
+        if env.call_method(&activity, "relaunch", "()V", &[]).is_err() {
+            let _ = env.exception_clear();
+        }
+    }
+    std::process::exit(0);
 }
 
 /// `MainActivity.onLink`: the activity was opened with a `slipstream://`
@@ -184,33 +211,26 @@ extern "system" fn Java_com_slipstreamremote_app_RemoteInputService_inputAllowed
     _env:jni::JNIEnv,_class:jni::objects::JClass,
 )->u8 {u8::from(slipstream_platform::android::input_allowed())}
 
-/// `RelayBridge`: Subspace Relay's Wi-Fi Direct group (see SubspaceRelayService).
+/// `RelayBridge.onRelayStatus`: Subspace Relay's state, from its process
+/// (see SubspaceRelayService), about once a second while it runs.
 #[unsafe(no_mangle)]
-extern "system" fn Java_com_slipstreamremote_app_RelayBridge_onRelayGroup(
+#[allow(clippy::too_many_arguments)]
+extern "system" fn Java_com_slipstreamremote_app_RelayBridge_onRelayStatus(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
+    state: jni::objects::JString,
     name: jni::objects::JString,
     passphrase: jni::objects::JString,
     ip: jni::objects::JString,
-) {
-    let mut text = |s: &jni::objects::JString| env.get_string(s).map(String::from).unwrap_or_default();
-    let (name, passphrase, ip) = (text(&name), text(&passphrase), text(&ip));
-    slipstream_platform::android::relay_group_up(name, passphrase, ip);
-}
-#[unsafe(no_mangle)]
-extern "system" fn Java_com_slipstreamremote_app_RelayBridge_onRelayStopped(
-    mut env: jni::JNIEnv,
-    _class: jni::objects::JClass,
+    joined: jni::sys::jint,
+    linked: jni::sys::jlong,
+    connections: jni::sys::jlong,
+    up: jni::sys::jlong,
+    down: jni::sys::jlong,
     message: jni::objects::JString,
 ) {
-    let message = env.get_string(&message).map(String::from).unwrap_or_default();
-    slipstream_platform::android::relay_stopped(message);
-}
-#[unsafe(no_mangle)]
-extern "system" fn Java_com_slipstreamremote_app_RelayBridge_onRelayClients(
-    _env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-    count: jni::sys::jint,
-) {
-    slipstream_platform::android::relay_clients(count.max(0) as u32);
+    let mut text = |s: &jni::objects::JString| env.get_string(s).map(String::from).unwrap_or_default();
+    let (state, name, passphrase, ip, message) = (text(&state), text(&name), text(&passphrase), text(&ip), text(&message));
+    let stats = [linked, connections, up, down].map(|v| v.max(0) as u64);
+    slipstream_platform::android::relay_status(&state, name, passphrase, ip, joined.max(0) as u32, stats, message);
 }

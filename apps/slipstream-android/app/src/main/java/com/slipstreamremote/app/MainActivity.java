@@ -94,8 +94,8 @@ public class MainActivity extends GameActivity {
         MainActivity activity = current.get();
         if (activity != null && !activity.isFinishing()) activity.moveTaskToBack(true);
     }
-    /** Subspace Relay from Rust: 1 starts it with this name and password, 0 stops it. */
-    public static void relayAction(int action,String name,String password) {
+    /** Subspace Relay from Rust: 1 starts it with this name, password and band, 0 stops it. */
+    public static void relayAction(int action,String name,String password,String band) {
         MainActivity activity = current.get();
         if (activity == null) return;
         activity.runOnUiThread(() -> {
@@ -103,14 +103,22 @@ public class MainActivity extends GameActivity {
                 activity.startService(new Intent(activity,SubspaceRelayService.class).setAction("stop"));
                 return;
             }
-            if (Build.VERSION.SDK_INT < 29) {RelayBridge.onRelayStopped("Subspace Relay needs Android 10 or newer.");return;}
-            activity.relayName = name; activity.relayPassword = password;
+            if (Build.VERSION.SDK_INT < 29) {RelayBridge.failed("Subspace Relay needs Android 10 or newer.");return;}
+            activity.relayName = name; activity.relayPassword = password; activity.relayBand = band;
             String[] needed = activity.relayPermissionsMissing();
             if (needed.length > 0) activity.requestPermissions(needed,1005);
             else activity.startRelay();
         });
     }
-    private String relayName, relayPassword;
+    private String relayName, relayPassword, relayBand;
+    private android.content.BroadcastReceiver relayStatus;
+    /** Starts the app again in a new process (lib.rs: this one can't show the window again). */
+    public void relaunch() {
+        Intent intent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (intent == null) return;
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
+    }
     private String[] relayPermissionsMissing() {
         java.util.List<String> missing = new java.util.ArrayList<>();
         java.util.List<String> wanted = new java.util.ArrayList<>();
@@ -123,7 +131,7 @@ public class MainActivity extends GameActivity {
     }
     private void startRelay() {
         if (relayName == null) return;
-        startForegroundService(new Intent(this,SubspaceRelayService.class).putExtra("name",relayName).putExtra("password",relayPassword));
+        startForegroundService(new Intent(this,SubspaceRelayService.class).putExtra("name",relayName).putExtra("password",relayPassword).putExtra("band",relayBand));
     }
     public static void remoteInput(int kind,float x,float y,String key,boolean down) { RemoteInputService.dispatch(kind,x,y,key,down); }
     private void requestProjection() {
@@ -142,7 +150,7 @@ public class MainActivity extends GameActivity {
             for (int i = 0; i < permissions.length && i < results.length; i++)
                 if (!android.Manifest.permission.POST_NOTIFICATIONS.equals(permissions[i]) && results[i] != android.content.pm.PackageManager.PERMISSION_GRANTED) wifiDirect = false;
             if (wifiDirect && results.length > 0) startRelay();
-            else RelayBridge.onRelayStopped(Build.VERSION.SDK_INT >= 33
+            else RelayBridge.failed(Build.VERSION.SDK_INT >= 33
                 ? "Subspace Relay needs the Nearby devices permission to start a Wi-Fi Direct network."
                 : "Subspace Relay needs the Location permission to start a Wi-Fi Direct network (Android uses it for Wi-Fi Direct).");
         }
@@ -171,6 +179,13 @@ public class MainActivity extends GameActivity {
         super.onCreate(savedInstanceState);
         current = new WeakReference<>(this);
         reportInsets();
+        // Subspace Relay runs in its own process and reports here.
+        relayStatus = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context context, Intent status) { RelayBridge.deliver(status); }
+        };
+        android.content.IntentFilter filter = new android.content.IntentFilter(RelayBridge.STATUS);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(relayStatus, filter, RECEIVER_NOT_EXPORTED);
+        else registerReceiver(relayStatus, filter);
         // Focused from the start: otherwise the first tap only focuses the
         // view (touch mode), and the app's request for the keyboard, made
         // as that tap focuses a text field, is ignored.
@@ -186,8 +201,9 @@ public class MainActivity extends GameActivity {
         if (isFinishing()) {
             stopService(new Intent(this,ScreenShareService.class));
             stopService(new Intent(this,MeetingCaptureService.class));
-            stopService(new Intent(this,SubspaceRelayService.class));
         }
+        // Subspace Relay keeps running until it's stopped (its notification has Stop).
+        if (relayStatus != null) unregisterReceiver(relayStatus);
         super.onDestroy();
     }
 

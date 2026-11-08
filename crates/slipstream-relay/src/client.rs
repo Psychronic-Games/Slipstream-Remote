@@ -152,7 +152,7 @@ mod tests {
     use crate::{Server, ServerOptions};
 
     async fn relay() -> (Server, Client) {
-        let server = Server::start(ServerOptions { ip: Ipv4Addr::LOCALHOST.into(), port: 0, allow_local_targets: true })
+        let server = Server::start(ServerOptions { ip: Ipv4Addr::LOCALHOST.into(), port: 0, allow_local_targets: true, secret_key: None })
             .await
             .unwrap();
         let client = Client::connect(server.addr()).await.unwrap();
@@ -198,7 +198,7 @@ mod tests {
         let err = client.forward_tcp("127.0.0.1:1".parse().unwrap(), relayed).await.unwrap_err();
         assert!(err.to_string().contains("127.0.0.1:1"), "{err:#}");
 
-        let strict = Server::start(ServerOptions { ip: Ipv4Addr::LOCALHOST.into(), port: 0, allow_local_targets: false })
+        let strict = Server::start(ServerOptions { ip: Ipv4Addr::LOCALHOST.into(), port: 0, allow_local_targets: false, secret_key: None })
             .await
             .unwrap();
         let client = Client::connect(strict.addr()).await.unwrap();

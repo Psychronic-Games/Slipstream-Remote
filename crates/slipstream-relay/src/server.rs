@@ -41,12 +41,30 @@ pub struct ServerOptions {
     /// Let computers reach this device's own loopback and link-local
     /// addresses (tests only).
     pub allow_local_targets: bool,
+    /// The relay's identity. Keep it (see [`load_or_create_key`]) so
+    /// computers recognise this phone and can connect by themselves.
+    pub secret_key: Option<iroh::SecretKey>,
 }
 
 impl Default for ServerOptions {
     fn default() -> Self {
-        Self { ip: proto::PHONE_IP, port: proto::PORT, allow_local_targets: false }
+        Self { ip: proto::PHONE_IP, port: proto::PORT, allow_local_targets: false, secret_key: None }
     }
+}
+
+/// The relay key kept in `path`, made on first use.
+pub fn load_or_create_key(path: &std::path::Path) -> Result<iroh::SecretKey> {
+    if let Ok(bytes) = std::fs::read(path)
+        && let Ok(bytes) = <[u8; 32]>::try_from(bytes.as_slice())
+    {
+        return Ok(iroh::SecretKey::from_bytes(&bytes));
+    }
+    let key = iroh::SecretKey::generate();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, key.to_bytes()).with_context(|| format!("saving {}", path.display()))?;
+    Ok(key)
 }
 
 /// A running relay; stops when dropped.
@@ -61,7 +79,11 @@ impl Server {
     pub async fn start(opts: ServerOptions) -> Result<Self> {
         let hello = TcpListener::bind((opts.ip, opts.port)).await.with_context(|| format!("listening on {}:{}", opts.ip, opts.port))?;
         let hello_addr = hello.local_addr()?;
-        let endpoint = Endpoint::builder(presets::Minimal)
+        let mut builder = Endpoint::builder(presets::Minimal);
+        if let Some(key) = opts.secret_key.clone() {
+            builder = builder.secret_key(key);
+        }
+        let endpoint = builder
             .relay_mode(RelayMode::Disabled)
             .clear_ip_transports()
             .bind_addr(SocketAddr::new(opts.ip, opts.port))
@@ -268,5 +290,15 @@ mod tests {
         assert!(!ok("224.0.0.251"));
         assert!(!ok("255.255.255.255"));
         assert!(target_allowed("127.0.0.1".parse().unwrap(), true));
+    }
+
+    #[test]
+    fn the_relay_keeps_its_identity_between_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("relay.key");
+        let first = load_or_create_key(&path).unwrap();
+        assert_eq!(load_or_create_key(&path).unwrap().public(), first.public());
+        std::fs::write(&path, b"damaged").unwrap();
+        assert_ne!(load_or_create_key(&path).unwrap().public(), first.public(), "a damaged key is replaced");
     }
 }

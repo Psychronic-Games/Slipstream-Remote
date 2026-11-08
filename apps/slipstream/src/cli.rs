@@ -552,7 +552,7 @@ pub async fn relay_helper(phone: std::net::IpAddr, port: u16, dns: std::net::IpA
 
 /// `slipstream relay serve`: a relay on this computer (testing).
 pub async fn relay_serve(ip: std::net::IpAddr, port: u16) -> Result<()> {
-    let server = slipstream_relay::Server::start(slipstream_relay::ServerOptions { ip, port, allow_local_targets: false }).await?;
+    let server = slipstream_relay::Server::start(slipstream_relay::ServerOptions { ip, port, ..Default::default() }).await?;
     println!("Subspace Relay listening on {} ({}); Ctrl+C to stop.", server.addr(), server.id());
     let stats = server.stats();
     loop {

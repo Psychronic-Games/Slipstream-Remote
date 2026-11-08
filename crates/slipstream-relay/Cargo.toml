@@ -21,3 +21,6 @@ tracing.workspace = true
 ipstack = "1.0.1"
 tproxy-config = { version = "7.0.9", default-features = false }
 tun = { version = "0.8.14", features = ["async"] }
+
+[dev-dependencies]
+tempfile.workspace = true

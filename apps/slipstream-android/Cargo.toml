@@ -14,6 +14,9 @@ slipstream = { path = "../slipstream" }
 slipstream-core.workspace = true
 slipstream-platform.workspace = true
 slipstream-audio.workspace = true
+slipstream-relay.workspace = true
+tokio.workspace = true
+ndk-context = "0.1.1"
 android-activity = { version = "0.6.1", features = ["game-activity"] }
 jni = "0.21.1"
 tracing.workspace = true

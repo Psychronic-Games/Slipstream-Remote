@@ -210,6 +210,11 @@ pub fn run(opts: GuiOptions) -> Result<()> {
         options,
         Box::new(move |cc| {
             theme::install(&cc.egui_ctx);
+            // SLIPSTREAM_TEST_ZOOM=2: a desktop window drawn like a phone's
+            // (screenshots of the narrow layout).
+            if let Some(zoom) = std::env::var("SLIPSTREAM_TEST_ZOOM").ok().and_then(|z| z.parse::<f32>().ok()) {
+                cc.egui_ctx.set_zoom_factor(zoom);
+            }
             #[cfg(target_os = "android")]
             if let Some(app) = &opts.android_app {
                 android::install(app.clone(), &cc.egui_ctx);
@@ -1950,7 +1955,7 @@ impl eframe::App for App {
         meetings::poll(self, ctx);
         approval::poll(self, ctx);
         chats::poll(self, ctx);
-        relay::tick(self);
+        relay::tick(self, ctx);
         let title = window_title(self.org.as_deref());
         if self.window_title != title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));

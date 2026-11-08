@@ -702,14 +702,24 @@ cancelled or disconnected state. Ending the tab closes both file viewports.
 A computer's traffic through an Android phone's mobile data, as the phone's
 own data (design and open work: [issue 19](issues/19-subspace-relay.md)).
 
-- **Phone:** `SubspaceRelayService` (Java, Android 10+) starts a Wi-Fi Direct
-  group `DIRECT-ss-<name>` with the user's password, holds a partial wake
-  lock and a low-latency Wi-Fi lock, and reports the group through
-  `RelayBridge` to `slipstream_platform::android::relay_group`. The GUI
-  (`gui/relay.rs`) then starts `slipstream_relay::Server` on the group's
-  address (normally `192.168.49.1`): a TCP hello on port 47100 answers with
-  its endpoint ID and QUIC port, and an iroh endpoint with relays and
-  discovery off accepts ALPN `slipstream/relay/1` on UDP 47100. Each
+- **Phone:** `SubspaceRelayService` (Java, Android 10+) runs in its own
+  process (`:relay`), so the relay outlives the app's window. It starts a
+  Wi-Fi Direct group `DIRECT-ss-<name>` with the user's password, on
+  2.4 GHz unless the user picks 5 GHz or automatic (on 5 GHz Android
+  advertises a transmit power envelope that makes Linux clients drop to
+  0 dBm), and holds a partial wake lock and a low-latency Wi-Fi lock. It then
+  starts `slipstream_relay::Server` through `RelayNative`
+  (`apps/slipstream-android/src/relay.rs`, which sets up ndk-context in that
+  process for iroh) on the group's address (normally `192.168.49.1`), with
+  a key kept in `relay.key` so computers recognise the phone. A TCP hello on
+  port 47100 answers with its endpoint ID and QUIC port, and an iroh
+  endpoint with relays and discovery off accepts ALPN `slipstream/relay/1`
+  on UDP 47100. The service broadcasts its state and counters every second;
+  `MainActivity` forwards them through `RelayBridge` to
+  `slipstream_platform::android::relay_group` for the Relay page. The app's
+  own process now exits when its window closes, and relaunches itself if
+  Android reuses a process whose window already ran (winit can't start
+  twice in one process). Each
   bi-stream opens one TCP connection or UDP flow (`proto::Open`) with the
   phone's own sockets; loopback, link-local and multicast targets are
   refused.
@@ -720,6 +730,12 @@ own data (design and open work: [issue 19](issues/19-subspace-relay.md)).
   gets `~.` on the tunnel), and turns its packets back into connections with
   `ipstack` (vendored without its Windows build script). Each becomes a QUIC
   stream to the phone; UDP datagrams are length-prefixed on their stream.
+- **Connecting by itself:** every 3 s while idle, the computer's Relay
+  page checks whether its route to the phone's address leaves from the same
+  /24 (no packet sent) and, if so, asks the hello for the endpoint ID. A
+  phone it has connected through before (`relay_trusted`) is connected to
+  by itself unless the user chose Connect only by hand; a Disconnect holds
+  it off until that phone has gone away.
 - **Privileges:** the GUI starts `slipstream relay connect --control ADDR
   --token T` through pkexec, UAC (`service::run_elevated`) or the macOS
   administrator prompt. The helper connects back to the app's loopback

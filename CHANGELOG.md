@@ -13,6 +13,24 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Subspace Relay keeps running** when the app is closed or reopened on the
+  phone: it now runs in a process of its own, until you stop it on the
+  Relay page or from its notification. Reopening the app no longer hangs on
+  its splash screen.
+- The phone's relay network uses **2.4 GHz** by default. On 5 GHz, Android
+  tells computers to cut their transmit power, which Linux computers obey
+  and then can't stay connected (it looked like a wrong password). 5 GHz and
+  automatic are under **Advanced** on the phone.
+- **Computers connect by themselves:** after the first **Connect**, a
+  computer that joins that phone's network links through it without
+  anything to type (an administrator prompt still appears). It only does so
+  for phones it has connected through before. The phone address and DNS
+  moved under **Advanced**, with the choice to connect only by hand.
+- The relay password field no longer fills itself with a new random
+  password when you empty it.
+- The phone's row of section buttons is evenly laid out: labels are
+  centred and shrink to fit.
+
 ## 0.34.0 — 2026-11-08
 
 - **Subspace Relay** (new **Relay** page): put a computer online through an

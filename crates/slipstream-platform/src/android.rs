@@ -269,13 +269,23 @@ fn dispatch(kind: i32, x: f32, y: f32, key: &str, down: bool) -> Result<()> {
     Ok(())
 }
 
-/// Subspace Relay's Wi-Fi Direct group, as `SubspaceRelayService` reports it.
+/// Subspace Relay as `SubspaceRelayService` (in its own process) reports it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum RelayGroup {
     #[default]
     Off,
     Starting,
-    Up { name: String, passphrase: String, ip: String, computers: u32 },
+    Up {
+        name: String,
+        passphrase: String,
+        ip: String,
+        /// Devices on the Wi-Fi network, and computers linked to the relay.
+        joined: u32,
+        linked: u64,
+        connections: u64,
+        up: u64,
+        down: u64,
+    },
     Failed(String),
 }
 
@@ -285,27 +295,28 @@ pub fn relay_group() -> RelayGroup {
     RELAY.lock().unwrap().clone()
 }
 
-/// Starts the Wi-Fi Direct group `DIRECT-ss-<name>` (asking for permission
-/// first if needed); [`relay_group`] reports how it goes.
-pub fn relay_start(name: &str, password: &str) -> Result<()> {
+/// Starts the Wi-Fi Direct group `DIRECT-ss-<name>` on `band` (`"2.4"`,
+/// `"5"` or `"auto"`), asking for permission first if needed;
+/// [`relay_group`] reports how it goes.
+pub fn relay_start(name: &str, password: &str, band: &str) -> Result<()> {
     *RELAY.lock().unwrap() = RelayGroup::Starting;
-    relay_action(1, name, password).inspect_err(|e| *RELAY.lock().unwrap() = RelayGroup::Failed(format!("{e:#}")))
+    relay_action(1, name, password, band).inspect_err(|e| *RELAY.lock().unwrap() = RelayGroup::Failed(format!("{e:#}")))
 }
 
 pub fn relay_stop() -> Result<()> {
-    relay_action(0, "", "")
+    relay_action(0, "", "", "")
 }
 
-fn relay_action(action: i32, name: &str, password: &str) -> Result<()> {
+fn relay_action(action: i32, name: &str, password: &str, band: &str) -> Result<()> {
     let b = BRIDGE.get().context("Android bridge not initialized")?;
     let mut env = b.vm.attach_current_thread()?;
     let class = JClass::from(env.new_local_ref(b.class.as_obj())?);
-    let (name, password) = (env.new_string(name)?, env.new_string(password)?);
+    let (name, password, band) = (env.new_string(name)?, env.new_string(password)?, env.new_string(band)?);
     let result = env.call_static_method(
         class,
         "relayAction",
-        "(ILjava/lang/String;Ljava/lang/String;)V",
-        &[JValue::Int(action), JValue::Object(&name), JValue::Object(&password)],
+        "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+        &[JValue::Int(action), JValue::Object(&name), JValue::Object(&password), JValue::Object(&band)],
     );
     if result.is_err() {
         let _ = env.exception_clear();
@@ -314,16 +325,14 @@ fn relay_action(action: i32, name: &str, password: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn relay_group_up(name: String, passphrase: String, ip: String) {
-    *RELAY.lock().unwrap() = RelayGroup::Up { name, passphrase, ip, computers: 0 };
-}
-
-pub fn relay_clients(count: u32) {
-    if let RelayGroup::Up { computers, .. } = &mut *RELAY.lock().unwrap() {
-        *computers = count;
-    }
-}
-
-pub fn relay_stopped(message: String) {
-    *RELAY.lock().unwrap() = if message.is_empty() { RelayGroup::Off } else { RelayGroup::Failed(message) };
+/// `RelayBridge.onRelayStatus`: `state` is starting, up, off or failed.
+#[allow(clippy::too_many_arguments)]
+pub fn relay_status(state: &str, name: String, passphrase: String, ip: String, joined: u32, stats: [u64; 4], message: String) {
+    let [linked, connections, up, down] = stats;
+    *RELAY.lock().unwrap() = match state {
+        "starting" => RelayGroup::Starting,
+        "up" => RelayGroup::Up { name, passphrase, ip, joined, linked, connections, up, down },
+        "failed" => RelayGroup::Failed(message),
+        _ => RelayGroup::Off,
+    };
 }

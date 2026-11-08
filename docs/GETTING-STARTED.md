@@ -701,17 +701,30 @@ app data rather than hotspot data, which many plans cap far lower.
    name and password (or keep the ones offered) and press **Start relay**.
    Allow *Nearby devices* when Android asks. The phone starts a Wi-Fi
    network called `DIRECT-ss-<name>`; Wi-Fi has to be on, but needn't be
-   connected to anything. It keeps running with the screen off, with a
-   notification to stop it.
+   connected to anything. The relay keeps running with the screen off and
+   with the app closed, until you stop it on the Relay page or from its
+   notification.
 2. **On the computer**, join that Wi-Fi network with the password shown.
+   Windows and Linux report it as having no internet: that's expected,
+   because the internet comes through Slipstream.
 3. Open **Relay** on the computer and press **Connect**. It asks for
    administrator rights (it changes the computer's routes and DNS), then
    sends everything through the phone. **Disconnect** puts the network
    settings back as they were.
 
-The phone's address and the DNS server can be changed on the computer's
-page; the defaults suit Android. From a terminal, run
-`slipstream relay connect` as administrator (root) instead, until Ctrl+C.
+After the first time, Slipstream connects by itself whenever the computer
+joins that phone's network (the administrator prompt still appears). It
+does this only for phones it has connected through before. **Advanced** on
+the computer turns this off, and changes the phone's address or the DNS
+server (the defaults suit Android). **Advanced** on the phone chooses the
+Wi-Fi band: 2.4 GHz by default, because on 5 GHz Android tells computers to
+cut their transmit power and Linux computers then can't stay connected.
+From a terminal, run `slipstream relay connect` as administrator (root)
+instead, until Ctrl+C.
+
+A device without Slipstream can join the phone's network but gets no
+internet through it: Android only lets its own hotspot pass other devices'
+traffic on, and that's what carriers count as hotspot data.
 
 Carriers' terms often count any data another device uses as hotspot data,
 whatever carries it, and some can detect it: check your plan first. Pings

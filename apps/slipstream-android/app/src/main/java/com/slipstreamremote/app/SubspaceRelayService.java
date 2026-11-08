@@ -29,6 +29,10 @@ public class SubspaceRelayService extends Service {
     private String title = "Starting…";
     private boolean reported;
     private final Handler main = new Handler(Looper.getMainLooper());
+    private HandlerThread worker;
+    private Handler work;
+    private String groupName = "", groupPassphrase = "", groupIp = "";
+    private int joined;
 
 
     @Override public IBinder onBind(Intent intent) { return null; }
@@ -38,16 +42,16 @@ public class SubspaceRelayService extends Service {
             teardown("");
             return START_NOT_STICKY;
         }
-        if (Build.VERSION.SDK_INT < 29) {
-            RelayBridge.onRelayStopped("Subspace Relay needs Android 10 or newer.");
-            stopSelf();
-            return START_NOT_STICKY;
-        }
         if (running) return START_NOT_STICKY;
         running = true;
         reported = false;
+        publish("starting", "");
         String name = intent.getStringExtra("name");
         String passphrase = intent.getStringExtra("password");
+        String band = intent.getStringExtra("band");
+        worker = new HandlerThread("slipstream-relay");
+        worker.start();
+        work = new Handler(worker.getLooper());
         try {
             startForeground(4, notice(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
         } catch (RuntimeException error) {
@@ -69,7 +73,7 @@ public class SubspaceRelayService extends Service {
                 if (!running || channel == null) return;
                 try {
                     p2p.requestGroupInfo(channel, group -> {
-                        if (group != null && group.isGroupOwner()) RelayBridge.onRelayClients(group.getClientList().size());
+                        if (group != null && group.isGroupOwner()) joined = group.getClientList().size();
                     });
                 } catch (SecurityException ignored) {}
             }
@@ -77,20 +81,24 @@ public class SubspaceRelayService extends Service {
         registerReceiver(changes, new IntentFilter(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION), Context.RECEIVER_NOT_EXPORTED);
         // A group left from before (or another app's) would block ours.
         p2p.removeGroup(channel, new WifiP2pManager.ActionListener() {
-            @Override public void onSuccess() { create(name, passphrase); }
-            @Override public void onFailure(int reason) { create(name, passphrase); }
+            @Override public void onSuccess() { create(name, passphrase, band); }
+            @Override public void onFailure(int reason) { create(name, passphrase, band); }
         });
         return START_NOT_STICKY;
     }
 
-    private void create(String name, String passphrase) {
+    private void create(String name, String passphrase, String band) {
         if (!running) return;
+        // 2.4 GHz by default: on 5 GHz Android advertises a transmit power
+        // limit that makes Linux computers turn their radio almost off.
+        int owner = "5".equals(band) ? WifiP2pConfig.GROUP_OWNER_BAND_5GHZ
+            : "auto".equals(band) ? WifiP2pConfig.GROUP_OWNER_BAND_AUTO : WifiP2pConfig.GROUP_OWNER_BAND_2GHZ;
         WifiP2pConfig config;
         try {
             config = new WifiP2pConfig.Builder()
                 .setNetworkName("DIRECT-ss-" + name)
                 .setPassphrase(passphrase)
-                .setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_AUTO)
+                .setGroupOperatingBand(owner)
                 .build();
         } catch (IllegalArgumentException error) {
             fail("That network name or password isn't allowed: " + error.getMessage());
@@ -118,16 +126,45 @@ public class SubspaceRelayService extends Service {
                 }
                 p2p.requestConnectionInfo(channel, info -> {
                     String ip = info != null && info.groupOwnerAddress != null ? info.groupOwnerAddress.getHostAddress() : "192.168.49.1";
-                    title = "Join “" + group.getNetworkName() + "” · password " + group.getPassphrase();
+                    groupName = group.getNetworkName(); groupPassphrase = group.getPassphrase(); groupIp = ip;
+                    joined = group.getClientList().size();
+                    title = "Join “" + groupName + "” · password " + groupPassphrase;
                     getSystemService(NotificationManager.class).notify(4, notice());
-                    reported = true;
-                    RelayBridge.onRelayGroup(group.getNetworkName(), group.getPassphrase(), ip);
-                    RelayBridge.onRelayClients(group.getClientList().size());
+                    String home = getFilesDir().getPath();
+                    work.post(() -> {
+                        String error = RelayNative.startServer(this, ip, home);
+                        main.post(() -> {
+                            if (!running) return;
+                            if (error != null && !error.isEmpty()) { fail(error); return; }
+                            reported = true;
+                            tick();
+                        });
+                    });
                 });
             });
         } catch (SecurityException error) {
             fail("Slipstream needs the Nearby devices permission to start the relay.");
         }
+    }
+
+    /** Tells the app's window (in the main process) how the relay is doing, every second while up. */
+    private void tick() {
+        if (!running || !reported) return;
+        publish("up", "");
+        main.postDelayed(this::tick, 1000);
+    }
+
+    private void publish(String state, String message) {
+        Intent status = new Intent(RelayBridge.STATUS).setPackage(getPackageName())
+            .putExtra("state", state).putExtra("message", message);
+        if ("up".equals(state)) {
+            long[] s = RelayNative.stats();
+            status.putExtra("name", groupName).putExtra("passphrase", groupPassphrase).putExtra("ip", groupIp)
+                .putExtra("joined", joined);
+            if (s != null && s.length == 4)
+                status.putExtra("linked", s[0]).putExtra("connections", s[1]).putExtra("up", s[2]).putExtra("down", s[3]);
+        }
+        sendBroadcast(status);
     }
 
     private static String reasonText(int reason) {
@@ -164,7 +201,12 @@ public class SubspaceRelayService extends Service {
         }
         if (wifi != null && wifi.isHeld()) wifi.release();
         if (wake != null && wake.isHeld()) wake.release();
-        if (was || !message.isEmpty()) RelayBridge.onRelayStopped(message);
+        if (work != null) {
+            HandlerThread w = worker;
+            work.post(() -> { RelayNative.stopServer(); w.quitSafely(); });
+            work = null; worker = null;
+        }
+        if (was || !message.isEmpty()) publish(message.isEmpty() ? "off" : "failed", message);
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }

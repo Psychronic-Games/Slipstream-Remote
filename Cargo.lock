@@ -7310,10 +7310,13 @@ version = "0.34.0"
 dependencies = [
  "android-activity",
  "jni 0.21.1",
+ "ndk-context",
  "slipstream",
  "slipstream-audio",
  "slipstream-core",
  "slipstream-platform",
+ "slipstream-relay",
+ "tokio",
  "tracing",
 ]
 
@@ -7416,6 +7419,7 @@ dependencies = [
  "serde",
  "serde_json",
  "slipstream-core",
+ "tempfile",
  "tokio",
  "tproxy-config",
  "tracing",

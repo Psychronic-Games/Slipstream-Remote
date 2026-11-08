@@ -33,7 +33,7 @@ pub enum HelperStatus {
     Failed(String),
 }
 
-pub use server::{Server, ServerOptions};
+pub use server::{Server, ServerOptions, load_or_create_key};
 
 /// Data moved and links in use, for status displays. "Up" is from the
 /// computer towards the internet, "down" back to it.

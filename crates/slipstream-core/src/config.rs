@@ -215,10 +215,19 @@ pub struct AppSettings {
     /// `DIRECT-ss-`) and password; chosen at first use when empty.
     pub relay_name: String,
     pub relay_password: String,
+    /// The phone's network band: empty or `2.4` (works with every
+    /// computer), `5` or `auto`.
+    pub relay_band: String,
     /// Subspace Relay on a computer: the phone's address (empty: the usual
     /// Wi-Fi Direct one) and the DNS server to use (empty: 1.1.1.1).
     pub relay_phone: String,
     pub relay_dns: String,
+    /// Don't connect by itself when this computer joins a known phone's
+    /// network (Connect on the Relay page only).
+    pub relay_manual: bool,
+    /// Phones (relay endpoint IDs) this computer has connected through, so
+    /// it may connect to them again by itself.
+    pub relay_trusted: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

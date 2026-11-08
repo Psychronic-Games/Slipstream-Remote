@@ -84,6 +84,11 @@ on Windows or macOS computers.
 - [x] Android: foreground service, Wi-Fi Direct group with the chosen name
       and password, permissions (nearby Wi-Fi devices), relay start/stop,
       page with name, password, computers joined and data relayed.
+- [x] The relay survives the app's window (own process); 2.4 GHz by
+      default (5 GHz made Linux clients drop to 0 dBm transmit power);
+      computers connect by themselves to phones they've used.
+- [ ] Optional proxy mode for devices without Slipstream (browsers and
+      apps that follow a manually set proxy).
 - [ ] IPv6 through the tunnel (blocked to fall back to IPv4 at first).
 - [ ] UDP as QUIC datagrams instead of streams, if games need it.
 - [ ] Real-device checks: Windows, Linux and macOS computers joined to a
