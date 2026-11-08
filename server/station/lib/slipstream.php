@@ -1703,11 +1703,13 @@ require_once __DIR__ . '/update.php';
 /**
  * Plain HTTP would expose the admin sign-in, the download password and the
  * apps' access key. Once this station has been reached over HTTPS under a
- * name (so it has a working certificate for it), HTTP requests for that
- * name go to HTTPS instead, and browsers are told to stay on HTTPS (HSTS).
- * A station without a certificate keeps working over HTTP until it has one.
- * Set 'force_https' => false in config.php for a station behind a proxy that
- * talks plain HTTP to it without saying so (X-Forwarded-Proto).
+ * name, HTTP requests for that name go to HTTPS instead. A station without
+ * HTTPS keeps working over HTTP until it has it. Browsers can still click
+ * past a certificate warning. HSTS (browsers then refuse plain HTTP, and
+ * refuse to let anyone past a certificate error) only with 'hsts' => true,
+ * for stations with a proper certificate. Set 'force_https' => false for a
+ * station behind a proxy that talks plain HTTP to it without saying so
+ * (X-Forwarded-Proto).
  */
 function slip_enforce_https(): void
 {
@@ -1722,7 +1724,9 @@ function slip_enforce_https(): void
             $hosts[] = $name;
             @file_put_contents($file, json_encode(array_values($hosts)), LOCK_EX);
         }
-        header('Strict-Transport-Security: max-age=31536000');
+        if ((slip_config()['hsts'] ?? false) === true) {
+            header('Strict-Transport-Security: max-age=31536000');
+        }
         return;
     }
     if (!in_array($name, $hosts, true)) {

@@ -5,10 +5,14 @@
  * change where data is kept or to use a database.
  */
 return [
-    // HTTP goes to HTTPS once the station has been reached over HTTPS (and
-    // browsers are told to stay there). Turn this off only for a proxy that
-    // speaks plain HTTP to the station without an X-Forwarded-Proto header.
+    // HTTP goes to HTTPS once the station has been reached over HTTPS. Turn
+    // this off only for a proxy that speaks plain HTTP to the station without
+    // an X-Forwarded-Proto header.
     // 'force_https' => true,
+    // With a proper certificate (e.g. Let's Encrypt), also tell browsers to
+    // use only HTTPS for a year (HSTS). Don't with a self-signed or expiring
+    // one: browsers then refuse to let anyone past a certificate warning.
+    // 'hsts' => true,
 
     // Where device records and station settings are kept. By default a
     // "slipstream-data" folder next to the web root, or ./data if that

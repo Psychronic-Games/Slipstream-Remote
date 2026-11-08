@@ -72,9 +72,13 @@ transfer or replace host-level monitoring. Private station defaults stay unlimit
 - A domain or subdomain with HTTPS, e.g. `support.example.com`. The station
   must live at the **root** of it (not in a subfolder). Once it has been
   reached over HTTPS under a name, plain HTTP requests for that name are
-  redirected to HTTPS (301, or 308 for the apps' POSTs) and browsers are
-  told to stay on HTTPS (`Strict-Transport-Security`, one year). Until then
-  HTTP keeps working, so a station without a certificate isn't locked out.
+  redirected to HTTPS (301, or 308 for the apps' POSTs). Until then HTTP
+  keeps working, so a station without a certificate isn't locked out. With
+  a proper certificate, `'hsts' => true` in `config.php` also tells browsers
+  to use only HTTPS for a year; don't set it with a self-signed one, because
+  browsers then refuse to let anyone past a certificate warning. The apps
+  always check the certificate: they need a valid one (Let's Encrypt is
+  fine), with no way to click past.
   Behind a proxy that terminates HTTPS, pass `X-Forwarded-Proto`; if it
   can't, set `'force_https' => false` in `config.php`.
 - PHP 8.0+ with the `sodium` extension (standard).

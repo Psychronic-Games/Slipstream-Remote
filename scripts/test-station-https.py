@@ -5,7 +5,8 @@ Runs a copy of the station on PHP's built-in server (plain HTTP) and plays
 HTTPS through X-Forwarded-Proto, as a TLS-terminating proxy or host would:
 
 - before the station has been reached over HTTPS, HTTP keeps working;
-- an HTTPS request records the name and sends HSTS;
+- an HTTPS request records the name; HSTS only with 'hsts' => true (it
+  would stop people clicking past a certificate warning);
 - then HTTP for that name redirects to HTTPS (301 for GET, 308 for POST,
   keeping the path and dropping a port), other names are left alone;
 - 'force_https' => false turns it off.
@@ -67,9 +68,9 @@ def main():
             status, headers = request(port, 'station.test')
             assert status != 301 and 'Strict-Transport-Security' not in headers, (status, headers)
 
-            # Reached over HTTPS: the name is recorded and browsers told to stay.
+            # Reached over HTTPS: the name is recorded; no HSTS unless asked for.
             status, headers = request(port, 'station.test', https=True)
-            assert headers.get('Strict-Transport-Security') == 'max-age=31536000', headers
+            assert 'Strict-Transport-Security' not in headers, headers
             assert json.loads((data / 'https-hosts.json').read_text()) == ['station.test']
 
             # Now HTTP for that name goes to HTTPS, path kept, port dropped.
@@ -87,6 +88,16 @@ def main():
             server.kill()
             server.wait()
 
+        # HSTS for a station with a proper certificate.
+        config.write_text('<?php return ["data_dir" => ' + repr(str(data)) + ', "hsts" => true];\n')
+        server, port = serve(php, web)
+        try:
+            status, headers = request(port, 'station.test', https=True)
+            assert headers.get('Strict-Transport-Security') == 'max-age=31536000', headers
+        finally:
+            server.kill()
+            server.wait()
+
         # Switched off for a proxy that doesn't say it terminated HTTPS.
         config.write_text('<?php return ["data_dir" => ' + repr(str(data)) + ', "force_https" => false];\n')
         server, port = serve(php, web)
@@ -96,7 +107,7 @@ def main():
         finally:
             server.kill()
             server.wait()
-    print('Station HTTPS: HTTP kept before HTTPS works, then redirected (301/308, port dropped), HSTS sent, other names and force_https=false left alone')
+    print('Station HTTPS: HTTP kept before HTTPS works, then redirected (301/308, port dropped); HSTS only with hsts=true; other names and force_https=false left alone')
 
 
 if __name__ == '__main__':
