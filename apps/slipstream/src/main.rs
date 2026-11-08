@@ -192,6 +192,11 @@ enum RelayCmd {
         /// The DNS server to use while connected.
         #[arg(long, default_value = "1.1.1.1")]
         dns: std::net::IpAddr,
+        /// Report to the app that started this (and stop when it says).
+        #[arg(long, hide = true, requires = "token")]
+        control: Option<std::net::SocketAddr>,
+        #[arg(long, hide = true)]
+        token: Option<String>,
     },
     /// Run a relay on this computer instead of a phone (testing).
     #[command(hide = true)]
@@ -317,7 +322,10 @@ fn main() -> anyhow::Result<()> {
         Some(Command::EncodeTest { size }) => cli::encode_test(&size),
         Some(Command::Update) => rt.block_on(cli::update()),
         Some(Command::ExportIcon { path, size }) => gui::export_icon(&path, size),
-        Some(Command::Relay { action: RelayCmd::Connect { phone, port, dns } }) => rt.block_on(cli::relay_connect(phone, port, dns)),
+        Some(Command::Relay { action: RelayCmd::Connect { phone, port, dns, control: Some(control), token: Some(token) } }) => {
+            rt.block_on(cli::relay_helper(phone, port, dns, control, token))
+        }
+        Some(Command::Relay { action: RelayCmd::Connect { phone, port, dns, .. } }) => rt.block_on(cli::relay_connect(phone, port, dns)),
         Some(Command::Relay { action: RelayCmd::Serve { ip, port } }) => rt.block_on(cli::relay_serve(ip, port)),
         None => {
             drop(rt);

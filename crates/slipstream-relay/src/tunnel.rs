@@ -6,7 +6,7 @@
 
 use std::{
     future::Future,
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     time::Duration,
 };
 
@@ -47,9 +47,14 @@ pub async fn run(client: Client, opts: TunnelOptions, stop: impl Future<Output =
     #[cfg(target_os = "linux")]
     config.tun_name("slipstream0");
     #[cfg(target_os = "windows")]
+    let _wintun_file = match &opts.wintun {
+        Some(_) => None,
+        None => Some(wintun::extract().context("preparing the Wintun driver library")?),
+    };
+    #[cfg(target_os = "windows")]
     {
         config.tun_name("Subspace Relay");
-        let wintun = opts.wintun.clone();
+        let wintun = opts.wintun.clone().or_else(|| _wintun_file.as_ref().map(|f| f.0.clone()));
         config.platform_config(move |p| {
             // A fixed GUID, so Windows treats each start as the same
             // network instead of asking about a new one every time.
@@ -93,7 +98,7 @@ pub async fn run(client: Client, opts: TunnelOptions, stop: impl Future<Output =
             why = client.closed() => break format!("the phone's relay went away: {why}"),
             accepted = stack.accept() => match accepted {
                 Ok(IpStackStream::Tcp(tcp)) => {
-                    let (client, target) = (client.clone(), tcp.peer_addr());
+                    let (client, target) = (client.clone(), destination(tcp.peer_addr(), opts.dns));
                     tokio::spawn(async move {
                         if let Err(e) = client.forward_tcp(target, tcp).await {
                             debug!(%target, "relayed TCP ended: {e:#}");
@@ -101,7 +106,7 @@ pub async fn run(client: Client, opts: TunnelOptions, stop: impl Future<Output =
                     });
                 }
                 Ok(IpStackStream::Udp(udp)) => {
-                    let (client, target) = (client.clone(), udp.peer_addr());
+                    let (client, target) = (client.clone(), destination(udp.peer_addr(), opts.dns));
                     tokio::spawn(async move {
                         if let Err(e) = client.forward_udp(target, udp).await {
                             debug!(%target, "relayed UDP ended: {e:#}");
@@ -121,6 +126,17 @@ pub async fn run(client: Client, opts: TunnelOptions, stop: impl Future<Output =
     }
     client.close().await;
     Ok(reason)
+}
+
+/// `tproxy-config` gives every system the tunnel's gateway as its DNS
+/// server (resolv.conf, the Windows adapter, the macOS service): lookups sent
+/// there go to the chosen server through the phone.
+fn destination(target: SocketAddr, dns: IpAddr) -> SocketAddr {
+    if target.ip() == IpAddr::V4(TUN_GATEWAY) && target.port() == 53 {
+        SocketAddr::new(dns, 53)
+    } else {
+        target
+    }
 }
 
 /// With systemd-resolved, apps look names up through it rather than
@@ -143,5 +159,57 @@ async fn route_linux_dns(tun: &str, dns: IpAddr) {
             // Not a systemd-resolved system: /etc/resolv.conf is enough.
             Err(_) => return,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookups_sent_to_the_tunnel_go_to_the_chosen_dns_server() {
+        let dns = IpAddr::from([9, 9, 9, 9]);
+        assert_eq!(destination(SocketAddr::from((TUN_GATEWAY, 53)), dns), SocketAddr::new(dns, 53));
+        let web = SocketAddr::from(([93, 184, 215, 14], 443));
+        assert_eq!(destination(web, dns), web);
+        let other = SocketAddr::from((TUN_GATEWAY, 80));
+        assert_eq!(destination(other, dns), other, "only DNS is redirected");
+    }
+}
+
+/// Wintun's driver library travels inside the one Windows executable and is
+/// written out for each tunnel (see `packaging/windows/wintun`).
+#[cfg(target_os = "windows")]
+mod wintun {
+    use std::{io::Write, path::PathBuf};
+
+    #[cfg(target_arch = "x86_64")]
+    const DLL: &[u8] = include_bytes!("../../../packaging/windows/wintun/wintun.dll");
+    #[cfg(not(target_arch = "x86_64"))]
+    const DLL: &[u8] = &[];
+
+    /// The written copy, removed when dropped (if Windows lets go of it).
+    pub struct Extracted(pub PathBuf);
+
+    impl Drop for Extracted {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// Writes the library under a name nobody could have prepared, in
+    /// Windows' own temporary folder, which other users can't change files
+    /// in. The tunnel runs as administrator and loads it from there.
+    pub fn extract() -> std::io::Result<Extracted> {
+        if DLL.is_empty() {
+            return Err(std::io::Error::other("Subspace Relay's tunnel isn't available on this processor yet"));
+        }
+        let windows = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        let name = format!("slipstream-wintun-{:016x}{:016x}.dll", rand::random::<u64>(), rand::random::<u64>());
+        let path = windows.join("Temp").join(name);
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
+        file.write_all(DLL)?;
+        file.sync_all()?;
+        Ok(Extracted(path))
     }
 }

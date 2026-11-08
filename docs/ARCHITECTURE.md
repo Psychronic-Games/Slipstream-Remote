@@ -697,6 +697,38 @@ Running/Confirming until each remote Saved reply arrives; terminal results
 are retained until cleared. Begin/finish transitions cannot overwrite a
 cancelled or disconnected state. Ending the tab closes both file viewports.
 
+## Subspace Relay (`crates/slipstream-relay`)
+
+A computer's traffic through an Android phone's mobile data, as the phone's
+own data (design and open work: [issue 19](issues/19-subspace-relay.md)).
+
+- **Phone:** `SubspaceRelayService` (Java, Android 10+) starts a Wi-Fi Direct
+  group `DIRECT-ss-<name>` with the user's password, holds a partial wake
+  lock and a low-latency Wi-Fi lock, and reports the group through
+  `RelayBridge` to `slipstream_platform::android::relay_group`. The GUI
+  (`gui/relay.rs`) then starts `slipstream_relay::Server` on the group's
+  address (normally `192.168.49.1`): a TCP hello on port 47100 answers with
+  its endpoint ID and QUIC port, and an iroh endpoint with relays and
+  discovery off accepts ALPN `slipstream/relay/1` on UDP 47100. Each
+  bi-stream opens one TCP connection or UDP flow (`proto::Open`) with the
+  phone's own sockets; loopback, link-local and multicast targets are
+  refused.
+- **Computer:** `tunnel::run` creates a TUN device (`tun`: Linux
+  `slipstream0`, macOS `utun`, Windows Wintun with the DLL embedded and
+  written to `%SystemRoot%\Temp` under an unguessable name), routes IPv4
+  into it and sets DNS (`tproxy-config`, restored on stop; systemd-resolved
+  gets `~.` on the tunnel), and turns its packets back into connections with
+  `ipstack` (vendored without its Windows build script). Each becomes a QUIC
+  stream to the phone; UDP datagrams are length-prefixed on their stream.
+- **Privileges:** the GUI starts `slipstream relay connect --control ADDR
+  --token T` through pkexec, UAC (`service::run_elevated`) or the macOS
+  administrator prompt. The helper connects back to the app's loopback
+  listener, sends the token, then `HelperStatus` JSON lines; the app closing
+  its side stops the tunnel.
+- **Tests:** unit tests run the relay over loopback QUIC; 
+  `scripts/test-relay-tunnel.sh` runs the real tunnel between two private
+  network namespaces without root.
+
 ## The Windows service
 
 The service (`apps/slipstream/src/service.rs`) runs as LocalSystem in

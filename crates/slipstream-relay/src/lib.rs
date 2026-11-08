@@ -19,6 +19,20 @@ use std::{
 };
 
 pub use client::{Client, find_phone};
+
+/// What `slipstream relay connect --control` (running as administrator)
+/// tells the app that started it over a local TCP connection: first the
+/// token the app gave it (so the app knows it's its helper), then one JSON
+/// line per status. The helper stops when the app closes its side.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HelperStatus {
+    Linking,
+    Up(StatsSnapshot),
+    /// The tunnel stopped (routes and DNS restored), and why.
+    Down(String),
+    Failed(String),
+}
+
 pub use server::{Server, ServerOptions};
 
 /// Data moved and links in use, for status displays. "Up" is from the

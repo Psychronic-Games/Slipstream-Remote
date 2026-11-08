@@ -94,6 +94,37 @@ public class MainActivity extends GameActivity {
         MainActivity activity = current.get();
         if (activity != null && !activity.isFinishing()) activity.moveTaskToBack(true);
     }
+    /** Subspace Relay from Rust: 1 starts it with this name and password, 0 stops it. */
+    public static void relayAction(int action,String name,String password) {
+        MainActivity activity = current.get();
+        if (activity == null) return;
+        activity.runOnUiThread(() -> {
+            if (action == 0) {
+                activity.startService(new Intent(activity,SubspaceRelayService.class).setAction("stop"));
+                return;
+            }
+            if (Build.VERSION.SDK_INT < 29) {RelayBridge.onRelayStopped("Subspace Relay needs Android 10 or newer.");return;}
+            activity.relayName = name; activity.relayPassword = password;
+            String[] needed = activity.relayPermissionsMissing();
+            if (needed.length > 0) activity.requestPermissions(needed,1005);
+            else activity.startRelay();
+        });
+    }
+    private String relayName, relayPassword;
+    private String[] relayPermissionsMissing() {
+        java.util.List<String> missing = new java.util.ArrayList<>();
+        java.util.List<String> wanted = new java.util.ArrayList<>();
+        if (Build.VERSION.SDK_INT >= 33) {
+            wanted.add(android.Manifest.permission.NEARBY_WIFI_DEVICES);
+            wanted.add(android.Manifest.permission.POST_NOTIFICATIONS);
+        } else wanted.add(android.Manifest.permission.ACCESS_FINE_LOCATION);
+        for (String p : wanted) if (checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED) missing.add(p);
+        return missing.toArray(new String[0]);
+    }
+    private void startRelay() {
+        if (relayName == null) return;
+        startForegroundService(new Intent(this,SubspaceRelayService.class).putExtra("name",relayName).putExtra("password",relayPassword));
+    }
     public static void remoteInput(int kind,float x,float y,String key,boolean down) { RemoteInputService.dispatch(kind,x,y,key,down); }
     private void requestProjection() {
         MediaProjectionManager manager = getSystemService(MediaProjectionManager.class);
@@ -105,6 +136,16 @@ public class MainActivity extends GameActivity {
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results) {
         super.onRequestPermissionsResult(request,permissions,results);
         if (request == 1002) requestProjection();
+        if (request == 1005) {
+            // Notifications are optional; Wi-Fi Direct (nearby devices or, before Android 13, location) isn't.
+            boolean wifiDirect = true;
+            for (int i = 0; i < permissions.length && i < results.length; i++)
+                if (!android.Manifest.permission.POST_NOTIFICATIONS.equals(permissions[i]) && results[i] != android.content.pm.PackageManager.PERMISSION_GRANTED) wifiDirect = false;
+            if (wifiDirect && results.length > 0) startRelay();
+            else RelayBridge.onRelayStopped(Build.VERSION.SDK_INT >= 33
+                ? "Subspace Relay needs the Nearby devices permission to start a Wi-Fi Direct network."
+                : "Subspace Relay needs the Location permission to start a Wi-Fi Direct network (Android uses it for Wi-Fi Direct).");
+        }
         if (request == 1003) {
             int action = pendingMeetingAction; pendingMeetingAction = -1;
             if (action >= 10 && results.length > 0 && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -145,6 +186,7 @@ public class MainActivity extends GameActivity {
         if (isFinishing()) {
             stopService(new Intent(this,ScreenShareService.class));
             stopService(new Intent(this,MeetingCaptureService.class));
+            stopService(new Intent(this,SubspaceRelayService.class));
         }
         super.onDestroy();
     }

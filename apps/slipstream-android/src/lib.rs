@@ -183,3 +183,34 @@ extern "system" fn Java_com_slipstreamremote_app_RemoteInputService_onAvailabili
 extern "system" fn Java_com_slipstreamremote_app_RemoteInputService_inputAllowed(
     _env:jni::JNIEnv,_class:jni::objects::JClass,
 )->u8 {u8::from(slipstream_platform::android::input_allowed())}
+
+/// `RelayBridge`: Subspace Relay's Wi-Fi Direct group (see SubspaceRelayService).
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_RelayBridge_onRelayGroup(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    name: jni::objects::JString,
+    passphrase: jni::objects::JString,
+    ip: jni::objects::JString,
+) {
+    let mut text = |s: &jni::objects::JString| env.get_string(s).map(String::from).unwrap_or_default();
+    let (name, passphrase, ip) = (text(&name), text(&passphrase), text(&ip));
+    slipstream_platform::android::relay_group_up(name, passphrase, ip);
+}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_RelayBridge_onRelayStopped(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    message: jni::objects::JString,
+) {
+    let message = env.get_string(&message).map(String::from).unwrap_or_default();
+    slipstream_platform::android::relay_stopped(message);
+}
+#[unsafe(no_mangle)]
+extern "system" fn Java_com_slipstreamremote_app_RelayBridge_onRelayClients(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    count: jni::sys::jint,
+) {
+    slipstream_platform::android::relay_clients(count.max(0) as u32);
+}

@@ -113,6 +113,7 @@ Recent releases:
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
 | Copy and paste files (both ways) | ✅ end-to-end test; pasted in Explorer and Dolphin between real machines (user, 2026-11-08) |
 | Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. In production use on the private station since its October 29 deploy; issue 08's two-computer and revocation checklist isn't recorded item by item |
+| Subspace Relay (unreleased) | ✅ loopback QUIC unit tests and the real Linux tunnel between network namespaces (`scripts/test-relay-tunnel.sh`). ⚠️ Not yet on a real phone or on Windows/macOS computers ([issue 19](issues/19-subspace-relay.md)) |
 | Remote management (restarts, wake, controllers) | ✅ end-to-end tests: Redfish power state, graceful restart with authentication and refusals against a local test controller through a real gateway link and port forward; the console forward; restarts refused without Control. Station storage, validation and older-app preservation in the account suite. Restarts (normal, Safe Mode with Networking, BIOS setup) confirmed on real machines (user, 2026-11-08). ⚠️ Wake-on-LAN through a gateway and real Supermicro, iDRAC, iLO or vPro controllers not yet tried ([issue 18](issues/18-remote-management.md)) |
 | Chat-only links and Subspace chat tabs | ✅ end-to-end test: chat both ways with no picture or clipboard either way, the host's viewing event only after Connect, then video. Bridge layout checked in native screenshots at 1680 and 1000 px. Used between real machines (user, 2026-11-08) |
 | Private station automatic enrollment and hardware summaries | ✅ isolated PHP API/admin checks: default names/Ungrouped, preserved edits and removals, legacy shared-list migration, signed metadata, admin access and public exclusion; batch technician assignment before sign-in and while offline, partial failures and retained credentials verified. Rust registration/authentication suites pass. Native Windows/macOS hardware summaries still need verification |
@@ -209,18 +210,20 @@ Each step has an issue with tasks and pointers into the code in
    Files window's default places and pasted files should resolve to the
    signed-in user's folders. (Chat-only links no longer open the screen:
    unreleased, after 0.33.1.)
-1. **Saved-password vault** (audit, high): derive separate sign-in and vault
+1. **Subspace Relay on real devices** (issue 19): the phone's Wi-Fi Direct
+   group and relay, and Windows, macOS and Linux computers through it.
+2. **Saved-password vault** (audit, high): derive separate sign-in and vault
    keys on the client so the station never sees what opens saved passwords;
    needs a station/app migration, best done before 1.0.
-2. **Remote management on real hardware** (issue 18): Wake-on-LAN through a
+3. **Remote management on real hardware** (issue 18): Wake-on-LAN through a
    gateway, and Supermicro/iDRAC/iLO/vPro consoles and Redfish power.
-3. **Code signing** (issue 05): apply to SignPath now that the repository is
+4. **Code signing** (issue 05): apply to SignPath now that the repository is
    public; Apple notarisation once the Developer Program is joined.
-4. **Hardware encoding** (issue 06): `slipstream encode-test` on AMD/Intel
+5. **Hardware encoding** (issue 06): `slipstream encode-test` on AMD/Intel
    Windows machines to turn Media Foundation on by default; then VideoToolbox
    on Macs.
-5. **Meetings robustness** (issue 17 and the audit's meeting items).
-6. Android host audio/clipboard/files and self-updates, sound from Mac hosts.
+6. **Meetings robustness** (issue 17 and the audit's meeting items).
+7. Android host audio/clipboard/files and self-updates, sound from Mac hosts.
 
 ## Picking the work back up
 

@@ -62,17 +62,28 @@ datagrams.
 Licensing: `tun2proxy` was considered, but depends on GPL-3.0
 `socks5-impl`; the crates used here are MIT, Apache-2.0 and WTFPL.
 
+## Status
+
+Implemented (unreleased after 0.33.1). Verified so far: unit tests over a
+loopback QUIC link (TCP both ways, UDP datagrams, refusals, counters);
+`scripts/test-relay-tunnel.sh`, which runs the real Linux tunnel between two
+network namespaces (5 MB download and UDP through it, the app's helper mode,
+routes, DNS and adapter restored); strict Clippy for Linux, Windows, macOS
+and arm64 Android; a release APK with lint. Not yet run on a real phone, or
+on Windows or macOS computers.
+
 ## Tasks
 
-- [ ] `crates/slipstream-relay`: protocol, phone-side server, computer-side
+- [x] `crates/slipstream-relay`: protocol, phone-side server, computer-side
       flow forwarding; end-to-end tests over a local QUIC link.
-- [ ] Computer tunnel: TUN + ipstack + routes/DNS; `slipstream relay connect`.
-- [ ] Desktop GUI: **Subspace Relay** panel (connect, status, data used),
-      elevated helper and control connection on Linux, Windows and macOS.
-- [ ] Windows: ship `wintun.dll` inside the one executable (pinned, checked).
-- [ ] Android: foreground service, Wi-Fi Direct group with the chosen name
+- [x] Computer tunnel: TUN + ipstack + routes/DNS; `slipstream relay connect`.
+- [x] Desktop GUI: **Relay** page (connect, status, data used), elevated
+      helper and control connection on Linux, Windows and macOS.
+- [x] Windows: ship `wintun.dll` inside the one executable
+      (`packaging/windows/wintun`, official 0.14.1, hash in its README).
+- [x] Android: foreground service, Wi-Fi Direct group with the chosen name
       and password, permissions (nearby Wi-Fi devices), relay start/stop,
-      panel with name, password, connected computers and data relayed.
+      page with name, password, computers joined and data relayed.
 - [ ] IPv6 through the tunnel (blocked to fall back to IPv4 at first).
 - [ ] UDP as QUIC datagrams instead of streams, if games need it.
 - [ ] Real-device checks: Windows, Linux and macOS computers joined to a
@@ -82,5 +93,7 @@ Licensing: `tun2proxy` was considered, but depends on GPL-3.0
 ## Pointers
 
 - `crates/slipstream-relay/`
-- `apps/slipstream/src/cli.rs` (`relay` subcommand), `gui/relay.rs`
-- `apps/slipstream-android/app/src/main/java/.../SubspaceRelayService.java`
+- `apps/slipstream/src/cli.rs` (`relay_connect`, `relay_helper`), `gui/relay.rs`
+- `apps/slipstream-android/app/src/main/java/.../SubspaceRelayService.java`,
+  `RelayBridge.java`; `slipstream_platform::android::relay_*`
+- `scripts/test-relay-tunnel.sh`

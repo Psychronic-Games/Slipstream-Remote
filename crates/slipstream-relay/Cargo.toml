@@ -8,8 +8,10 @@ description = "Subspace Relay: a computer's connection through a phone's mobile 
 [dependencies]
 anyhow.workspace = true
 iroh.workspace = true
+rand.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 slipstream-core.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true

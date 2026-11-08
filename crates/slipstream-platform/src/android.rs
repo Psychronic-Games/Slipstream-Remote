@@ -268,3 +268,62 @@ fn dispatch(kind: i32, x: f32, y: f32, key: &str, down: bool) -> Result<()> {
     result?;
     Ok(())
 }
+
+/// Subspace Relay's Wi-Fi Direct group, as `SubspaceRelayService` reports it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RelayGroup {
+    #[default]
+    Off,
+    Starting,
+    Up { name: String, passphrase: String, ip: String, computers: u32 },
+    Failed(String),
+}
+
+static RELAY: std::sync::Mutex<RelayGroup> = std::sync::Mutex::new(RelayGroup::Off);
+
+pub fn relay_group() -> RelayGroup {
+    RELAY.lock().unwrap().clone()
+}
+
+/// Starts the Wi-Fi Direct group `DIRECT-ss-<name>` (asking for permission
+/// first if needed); [`relay_group`] reports how it goes.
+pub fn relay_start(name: &str, password: &str) -> Result<()> {
+    *RELAY.lock().unwrap() = RelayGroup::Starting;
+    relay_action(1, name, password).inspect_err(|e| *RELAY.lock().unwrap() = RelayGroup::Failed(format!("{e:#}")))
+}
+
+pub fn relay_stop() -> Result<()> {
+    relay_action(0, "", "")
+}
+
+fn relay_action(action: i32, name: &str, password: &str) -> Result<()> {
+    let b = BRIDGE.get().context("Android bridge not initialized")?;
+    let mut env = b.vm.attach_current_thread()?;
+    let class = JClass::from(env.new_local_ref(b.class.as_obj())?);
+    let (name, password) = (env.new_string(name)?, env.new_string(password)?);
+    let result = env.call_static_method(
+        class,
+        "relayAction",
+        "(ILjava/lang/String;Ljava/lang/String;)V",
+        &[JValue::Int(action), JValue::Object(&name), JValue::Object(&password)],
+    );
+    if result.is_err() {
+        let _ = env.exception_clear();
+    }
+    result?;
+    Ok(())
+}
+
+pub fn relay_group_up(name: String, passphrase: String, ip: String) {
+    *RELAY.lock().unwrap() = RelayGroup::Up { name, passphrase, ip, computers: 0 };
+}
+
+pub fn relay_clients(count: u32) {
+    if let RelayGroup::Up { computers, .. } = &mut *RELAY.lock().unwrap() {
+        *computers = count;
+    }
+}
+
+pub fn relay_stopped(message: String) {
+    *RELAY.lock().unwrap() = if message.is_empty() { RelayGroup::Off } else { RelayGroup::Failed(message) };
+}

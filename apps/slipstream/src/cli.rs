@@ -488,6 +488,68 @@ pub async fn relay_connect(phone: std::net::IpAddr, port: u16, dns: std::net::Ip
     }
 }
 
+/// `slipstream relay connect --control`: the tunnel for the app's Subspace
+/// Relay page, started as administrator. Reports to the app over a local
+/// connection and stops (restoring routes and DNS) when the app closes it,
+/// or quits.
+pub async fn relay_helper(phone: std::net::IpAddr, port: u16, dns: std::net::IpAddr, control: std::net::SocketAddr, token: String) -> Result<()> {
+    use slipstream_relay::HelperStatus;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let socket = tokio::net::TcpStream::connect(control).await.context("reaching the app")?;
+    let (mut from_app, mut to_app) = socket.into_split();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<HelperStatus>();
+    let writer = tokio::spawn(async move {
+        to_app.write_all(format!("{token}\n").as_bytes()).await?;
+        while let Some(status) = rx.recv().await {
+            let mut line = serde_json::to_string(&status)?;
+            line.push('\n');
+            to_app.write_all(line.as_bytes()).await?;
+        }
+        to_app.shutdown().await?;
+        anyhow::Ok(())
+    });
+    let _ = tx.send(HelperStatus::Linking);
+    let outcome = async {
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+        {
+            let client = slipstream_relay::Client::connect(std::net::SocketAddr::new(phone, port)).await?;
+            let stats = client.stats();
+            let reporter = {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    loop {
+                        if tx.send(HelperStatus::Up(stats.snapshot())).is_err() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                })
+            };
+            // Anything from the app, or its side closing, means stop.
+            let stop = async move {
+                let mut byte = [0u8; 1];
+                let _ = from_app.read(&mut byte).await;
+            };
+            let opts = slipstream_relay::tunnel::TunnelOptions { dns, ..Default::default() };
+            let reason = slipstream_relay::tunnel::run(client, opts, stop).await;
+            reporter.abort();
+            reason
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        {
+            let _ = (phone, port, dns, from_app);
+            anyhow::bail!("Subspace Relay connects from Windows, macOS and Linux computers")
+        }
+    }.await;
+    let _ = tx.send(match &outcome {
+        Ok(reason) => HelperStatus::Down(reason.clone()),
+        Err(e) => HelperStatus::Failed(format!("{e:#}")),
+    });
+    drop(tx);
+    let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
+    outcome.map(|_| ())
+}
+
 /// `slipstream relay serve`: a relay on this computer (testing).
 pub async fn relay_serve(ip: std::net::IpAddr, port: u16) -> Result<()> {
     let server = slipstream_relay::Server::start(slipstream_relay::ServerOptions { ip, port, allow_local_targets: false }).await?;

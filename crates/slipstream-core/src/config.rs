@@ -211,7 +211,14 @@ pub struct AppSettings {
     pub tray_hint_shown: bool,
     /// Windows: no tray icon while the Slipstream service hosts this
     /// computer (by default the app sits in the tray then, from sign-in).
-    pub hide_tray_with_service: bool,
+    pub hide_tray_with_service: bool,    /// Subspace Relay on a phone: its Wi-Fi network's name (after
+    /// `DIRECT-ss-`) and password; chosen at first use when empty.
+    pub relay_name: String,
+    pub relay_password: String,
+    /// Subspace Relay on a computer: the phone's address (empty: the usual
+    /// Wi-Fi Direct one) and the DNS server to use (empty: 1.1.1.1).
+    pub relay_phone: String,
+    pub relay_dns: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

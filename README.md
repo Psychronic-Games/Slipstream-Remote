@@ -91,6 +91,11 @@ the same signature before installing anything.
 - **System information** — the remote computer's hardware, manufacturer serial
   number (when available), drives, temperatures and network, live, plus
   peripherals, printers/scanners and network drives.
+- **Subspace Relay** — put a computer online through an Android phone's
+  mobile data: the phone starts its own Wi-Fi network, and everything the
+  computer sends goes through Slipstream on the phone as the phone's own
+  data (check your carrier's terms). See the
+  [guide](docs/GETTING-STARTED.md#subspace-relay-a-computer-online-through-a-phone).
 - **Sound** from the remote computer, when you want it.
 - **Unattended Windows servers** — the Slipstream service hosts from boot,
   with support for UAC prompts, administrator windows and the login screen.

@@ -26,6 +26,7 @@ track them.
 | 16 | [Verify session windows and support tools on real machines](16-session-tools-real-machines.md) | testing |
 | 17 | [Group meetings with incoming calls and mobile Show me](17-group-meetings-and-show-me.md) (implemented in 0.23.0; physical room measurements open) | feature, testing |
 | 18 | [Verify remote management on real hardware](18-remote-management.md) (implemented in 0.33.0; restarts confirmed on real machines; Wake-on-LAN, BMC/vPro consoles and Redfish open) | feature, testing |
+| 19 | [Subspace Relay: a computer's connection through a phone's mobile data](19-subspace-relay.md) (implemented; real phone and computers to try) | feature, Android, testing |
 
 For meetings, see the [usage guide](../MEETINGS.md).
 

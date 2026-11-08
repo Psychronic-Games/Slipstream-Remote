@@ -13,6 +13,14 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Subspace Relay** (new **Relay** page): an Android phone (10 or newer)
+  starts its own Wi-Fi network, and a Windows, macOS or Linux computer that
+  joins it sends all of its traffic through Slipstream on the phone, which
+  uses its mobile data as the app's own data rather than hotspot data. The
+  computer's routes and DNS are put back when it disconnects. Also from a
+  terminal: `slipstream relay connect`. Carriers' terms may still count it
+  as hotspot use.
+
 - **Chat** no longer opens the workstation's screen: on Wayland no
   screen-sharing prompt appears just to chat, and a phone that isn't sharing
   its screen can still chat. The screen opens when you press **Connect**.

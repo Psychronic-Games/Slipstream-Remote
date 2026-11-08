@@ -33,6 +33,7 @@ mod settings;
 #[cfg(target_os = "linux")]
 mod screen_access;
 mod quick_connect;
+mod relay;
 mod single;
 pub mod theme;
 mod window_shape;
@@ -219,6 +220,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             app.page = match opts.page.as_deref() {
                 Some("links") => Page::Links,
                 Some("meetings") => Page::Meetings,
+                Some("relay") => Page::Relay,
                 Some("config") => Page::Settings,
                 Some("about") => Page::About,
                 _ => Page::Home,
@@ -277,10 +279,11 @@ pub fn run(opts: GuiOptions) -> Result<()> {
 pub const NARROW: f32 = 600.0;
 
 /// The console's sections: label, page, colour.
-const NAV: [(&str, Page, Color32); 5] = [
+const NAV: [(&str, Page, Color32); 6] = [
     ("Bridge", Page::Home, pal::PEACH),
     ("Links", Page::Links, pal::BLUE),
     ("Meetings", Page::Meetings, pal::GREEN),
+    ("Relay", Page::Relay, pal::CYAN),
     ("Config", Page::Settings, pal::VIOLET),
     ("About", Page::About, pal::GOLD),
 ];
@@ -290,6 +293,7 @@ pub enum Page {
     Home,
     Links,
     Meetings,
+    Relay,
     Settings,
     About,
     Remote(u64),
@@ -439,6 +443,7 @@ pub struct App {
     /// Station sign-ins and saved devices.
     saved: saved::Saved,
     chats: chats::Chats,
+    relay: relay::Relay,
     manage: manage::Manage,
     pub link_code: String,
     /// Asking for a recent link's password (Bridge → Recent links).
@@ -542,6 +547,7 @@ impl App {
             link_open: false,
             saved: saved::Saved::default(),
             chats: chats::Chats::default(),
+            relay: relay::Relay::default(),
             manage: manage::Manage::default(),
             link_code: String::new(),
             recent_prompt: None,
@@ -1944,6 +1950,7 @@ impl eframe::App for App {
         meetings::poll(self, ctx);
         approval::poll(self, ctx);
         chats::poll(self, ctx);
+        relay::tick(self);
         let title = window_title(self.org.as_deref());
         if self.window_title != title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -2175,6 +2182,7 @@ impl eframe::App for App {
                         Page::Home => home::ui(self, ui),
                         Page::Links => home::links_ui(self, ui),
                         Page::Meetings => meetings::ui(self, ui),
+                        Page::Relay => relay::ui(self, ui),
                         Page::Settings => settings::ui(self, ui),
                         Page::About => settings::about_ui(self, ui),
                         Page::Remote(_) => {}

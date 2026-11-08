@@ -691,6 +691,32 @@ Each app writes a log file, `slipstream.log`, in its settings folder.
 `slipstream info` shows where. Send it along with any bug report.
 
 
+## Subspace Relay: a computer online through a phone
+
+When a computer has no connection of its own (a power cut, travel), the
+**Relay** page lets it use an Android phone's mobile data as the phone's own
+app data rather than hotspot data, which many plans cap far lower.
+
+1. **On the phone** (Android 10 or newer), open **Relay**, choose a network
+   name and password (or keep the ones offered) and press **Start relay**.
+   Allow *Nearby devices* when Android asks. The phone starts a Wi-Fi
+   network called `DIRECT-ss-<name>`; Wi-Fi has to be on, but needn't be
+   connected to anything. It keeps running with the screen off, with a
+   notification to stop it.
+2. **On the computer**, join that Wi-Fi network with the password shown.
+3. Open **Relay** on the computer and press **Connect**. It asks for
+   administrator rights (it changes the computer's routes and DNS), then
+   sends everything through the phone. **Disconnect** puts the network
+   settings back as they were.
+
+The phone's address and the DNS server can be changed on the computer's
+page; the defaults suit Android. From a terminal, run
+`slipstream relay connect` as administrator (root) instead, until Ctrl+C.
+
+Carriers' terms often count any data another device uses as hotspot data,
+whatever carries it, and some can detect it: check your plan first. Pings
+(ICMP) don't go through; IPv6 is off while connected, so apps use IPv4.
+
 ## Scan the remote network
 
 During a session, open **Tools → Network scan…** (on a phone, **Console →
