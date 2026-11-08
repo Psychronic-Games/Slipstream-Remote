@@ -7,8 +7,10 @@ labels: [platform:linux, testing]
 
 X11 capture (MIT-SHM with a GetImage fallback, XFixes pointer, RandR
 monitors) and XTest input are implemented, and unit tests cover the
-pointer blending. But no one has been controlled from a real X11 desktop
-yet. The dev machine runs Wayland.
+pointer blending. The dev machine runs Wayland.
+
+**Confirmed (user, 2026-11-08):** hosting from a real X11 session works. The
+detailed checks below weren't recorded one by one.
 
 ## Checklist
 

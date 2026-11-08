@@ -17,9 +17,9 @@ a Config default. What's left:
       permission (introduced with protocol 4; current protocol is 6).
 - [ ] macOS capture: ScreenCaptureKit audio (`SCStreamConfiguration.
       capturesAudio`), needs the Screen Recording permission it already has.
-- [ ] Listen on real machines: Linux → Windows and back; check latency
+- [x] Listen on real machines: Linux → Windows and back; check latency
       (should feel in sync with the picture) and that a lost packet is
-      inaudible.
+      inaudible. (User, 2026-11-08.)
 - [ ] A volume slider, if people want one.
 
 ## Pointers

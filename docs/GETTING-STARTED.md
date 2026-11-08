@@ -136,9 +136,8 @@ an update.
 ### Android (8 or newer): preview
 
 The Android app can control computers and share the phone's screen with a
-computer. Hosting and touch controls have been tested on an Android 16
-emulator; real-phone and older-Android verification remain open
-([issue 09](issues/09-android.md)). In a viewer session, tap to click,
+computer. It works on real phones; sound, clipboard and files from a phone
+and self-updates are still to come ([issue 09](issues/09-android.md)). In a viewer session, tap to click,
 long-press to right-click, drag with one finger, pinch to zoom and drag two
 fingers to look around (or to scroll, when not zoomed in). Everything else
 is under **Console**.
@@ -570,9 +569,9 @@ With the service:
 - the app starts hidden in the tray at every sign-in, so the service's
   presence shows there (*Config → Tray icon* turns that off).
 
-Install/reinstall and normal-desktop hosting have been verified on Windows
-Server 2016. UAC, login-screen control, Ctrl+Alt+Del, session switching and
-service-update recovery still need the [real-Windows checks](issues/04-windows-service.md).
+Install/reinstall and hosting work on real Windows, including UAC prompts,
+the login screen and Ctrl+Alt+Del. The remaining finer checks (session
+switching, service-update recovery) are in [issue 04](issues/04-windows-service.md).
 
 The service keeps its own copy of the settings: after changing the
 unattended password or permissions, press **Update** next to it. From an

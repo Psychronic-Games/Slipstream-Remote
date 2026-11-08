@@ -58,7 +58,8 @@ ARCHITECTURE.md, "The Android app", and BUILDING.md, "Android").
 - [x] Release signing key for the APK, beside the update key (0.8.0).
 - [ ] `android` in the update manifest, once the app can install updates
       (phase 3).
-- [ ] Try on real phones and tablets (which models and Android versions?).
+- [x] Try on real phones and tablets (works on a real phone, user
+      2026-11-08; models and Android versions not recorded).
 
 ## Phase 2: control an Android device from a PC
 
@@ -66,15 +67,15 @@ Initial host shipped in 0.17.0: a persistent ID/password, explicit capture
 consent, MediaProjection foreground service, accessibility input and desktop
 Android navigation. Android 16 emulator runtime checks cover view-only access,
 PC input/typing/dragging, background capture, rotation and notification stop.
-Real phones still need confirmation. Capture currently uses bounded RGBA
+It works on a real phone (user, 2026-11-08). Capture currently uses bounded RGBA
 ImageReader output and the existing software H.264 encoder.
 
 0.17.1 fixes retention of the last pending still frame and disables Android
 UDP segmentation offload after reproducing a cold direct-link stall. Three
 fresh direct connections then passed; a cold relayed connection also passed.
 Idle capture revocation/regrant, PC control and rotation were rechecked.
-See the [audit](../AUDIT-2026-10-18.md). Physical-device and older-Android checks remain
-open; emulator checks do not complete the real-phone task above.
+See the [audit](../AUDIT-2026-10-18.md). An older supported Android version
+hasn't been recorded yet.
 
 
 - [ ] Screen capture with MediaProjection into the hardware H.264 encoder

@@ -74,6 +74,11 @@ Windows argument parsing
 passes with spaces, Unicode, quotes and trailing backslashes. These checks do
 not exercise real UAC or a running Windows service's capture/helper restart.
 
+**Confirmed (user, 2026-11-08):** on real Windows, UAC prompts, elevated
+windows, the login screen and Ctrl+Alt+Del work through the service, which
+meets *Done when* below. The remaining unticked items weren't recorded one
+by one.
+
 ## Still to check on real Windows
 
 - [ ] Install from Config on Windows 11 (Server 2016: done).
@@ -82,8 +87,8 @@ not exercise real UAC or a running Windows service's capture/helper restart.
 - [ ] App **Install & restart** updates both programs after UAC, keeps the same
       ID/password/settings and restores an active host. Repeat starting from
       0.24.0 to exercise the new app's older-service startup check.
-- [ ] Approve a UAC prompt remotely; type into an elevated window.
-- [ ] Ctrl+Alt+Del from *Keys*; log in at the login screen; lock and unlock.
+- [x] Approve a UAC prompt remotely; type into an elevated window.
+- [x] Ctrl+Alt+Del from *Keys*; log in at the login screen; lock and unlock.
 - [ ] Log off and back on, switch users: the host follows the session.
 - [ ] An update arrives: the service restarts on the new program.
 - [ ] Remove from Config: the app hosts again.

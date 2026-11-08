@@ -5,8 +5,8 @@ labels: [testing, priority:high]
 
 ## Background
 
-These checks originated with 0.5.0. Run them against the current published
-release, **0.23.2**, carrying forward the remaining laptop/Debian checks:
+These checks originated with 0.5.0. Run them against the latest published
+release, carrying forward the remaining laptop/Debian checks:
 
 - the host's pointer drawn into Windows video,
 - host-side chat as its own window on Windows (KDE Wayland is verified),

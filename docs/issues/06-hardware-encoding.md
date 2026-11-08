@@ -30,8 +30,9 @@ the encoder. Measured on an RTX 5070 (release build, 32-thread desktop):
 NVENC's time is mostly the copy to the GPU and is constant on any CPU;
 OpenH264's grows several times on laptop processors (the RTX 3060 laptop
 that prompted this capped near 40 fps) and costs 8 threads. A local
-144 fps session reached 130 fps with 1.7 ms NVENC encodes. Still to confirm
-on real Windows hardware, including the Windows service (session 0).
+144 fps session reached 130 fps with 1.7 ms NVENC encodes. Confirmed on
+real Windows hardware (user, 2026-11-08); the Windows service (session 0)
+wasn't recorded separately.
 
 ## Tasks
 

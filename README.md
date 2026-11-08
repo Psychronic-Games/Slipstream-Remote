@@ -94,7 +94,6 @@ the same signature before installing anything.
 - **Sound** from the remote computer, when you want it.
 - **Unattended Windows servers** — the Slipstream service hosts from boot,
   with support for UAC prompts, administrator windows and the login screen.
-  Secure-desktop control still needs [real-Windows verification](docs/issues/04-windows-service.md).
 - **Privacy mode** blacks out the remote screen while you work, and
   **port forwarding** reaches services on the remote network (its Remote
   Desktop, a router's admin page).
@@ -125,11 +124,11 @@ the same signature before installing anything.
 | | Share screen (host) | Control others (viewer) | Status |
 |---|---|---|---|
 | Linux — Wayland (KDE, GNOME, wlroots) | desktop portal + PipeWire | ✅ | tested (KDE) |
-| Linux — X11 | MIT-SHM + XTest | ✅ | in testing |
+| Linux — X11 | MIT-SHM + XTest | ✅ | tested |
 | Windows 10/11 | DXGI + SendInput | ✅ | tested |
-| Windows 7 SP1 / 8.x | GDI + SendInput (same download) | ✅ | Windows 7 tested (0.33.1); 8.x not yet |
-| macOS 12+ (Apple Silicon and Intel) | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | one universal app, built on GitHub's Macs; runs on a real Intel Mac; sharing and control being verified |
-| Android 8+ | MediaProjection + accessibility (on-device approval) | touch viewer | Android 16 emulator tested; real phones next |
+| Windows 7 SP1 / 8.x | GDI + SendInput (same download) | ✅ | tested |
+| macOS 12+ (Apple Silicon and Intel) | ScreenCaptureKit + CGEvent (grant Screen Recording + Accessibility) | ✅ | one universal app, built on GitHub's Macs; tested |
+| Android 8+ | MediaProjection + accessibility (on-device approval) | touch viewer | tested |
 
 The portable Linux app is a single x86_64 file targeting glibc 2.31+
 (Debian 11 / Ubuntu 20.04 and newer), with no optional capture libraries
@@ -211,8 +210,9 @@ protocol, the latency control loop and the platform backends.
 
 ## Roadmap
 
-- Real-hardware verification: Windows service (UAC, login screen), Android
-  phones, sharing and control from a Mac
+- Saved-password vault keys the station never sees (before 1.0)
+- Remote management against real BMC/vPro controllers and Wake-on-LAN
+  through a gateway
 - Hardware encoding: Media Foundation proven on real AMD and Intel Windows
   machines (it's opt-in until then), VideoToolbox on Macs, Android
 - Android host audio/clipboard/files and self-updates

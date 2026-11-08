@@ -19,6 +19,10 @@ reopening an empty cached backend, and recovery of idle KDE portal services
 using stale Qt libraries. Automated/isolated checks cover these paths; a
 future real KDE upgrade and fresh consent/reboot remain device checks.
 
+**Confirmed (user, 2026-11-08):** unattended access survives a reboot
+without a new prompt on the user's machines (KDE). Other desktops' portals
+are still untried.
+
 ## Tasks
 
 - [ ] Test on KDE Plasma 6, GNOME 46+ and Sway/Hyprland (xdg-desktop-portal-wlr

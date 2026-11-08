@@ -8,8 +8,10 @@ labels: [feature, testing]
 Implemented in 0.33.0: **Manage** on saved devices, **Edit → Remote
 management**, restarts in session **Tools**. End-to-end tests cover Redfish
 power through a gateway link against a local test controller, the console port
-forward, Control permission for restarts, and station storage. Real hardware
-hasn't been tried.
+forward, Control permission for restarts, and station storage. Restarts (normal,
+Safe Mode with Networking, BIOS setup) are confirmed on real machines (user,
+2026-11-08); Wake-on-LAN and management controllers haven't been tried on
+real hardware.
 
 ## Checklist
 
@@ -20,7 +22,7 @@ hasn't been tried.
 - [ ] Intel vPro (AMT) workstation: web page on 16992/16993 through the
       gateway.
 - [ ] Wake-on-LAN through a gateway on the same subnet wakes a powered-off PC.
-- [ ] Windows (app and service): **Restart** comes back and the session tab
+- [x] Windows (app and service): **Restart** comes back and the session tab
       reconnects. **Restart in Safe Mode with Networking** (service) starts in
       Safe Mode, hosts there, and the following restart is normal. **Restart
       into BIOS setup** enters UEFI setup (seen through a controller).

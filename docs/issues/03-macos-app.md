@@ -6,10 +6,13 @@ labels: [platform:macos, priority:high]
 ## Background
 
 `scripts/build-macos.sh` builds a universal (Apple Silicon + Intel), ad-hoc
-signed `Slipstream.app` and zips it to `dist/slipstream-macos.zip`. The code
-type-checks for `aarch64-apple-darwin` (cross-checked from Linux, which
-already caught one macOS-only compile error), but it has never been built
-or run on a Mac.
+signed `Slipstream.app` and zips it to `dist/slipstream-macos.zip`. Since
+0.30 it is built on GitHub's Macs for each release (`.github/workflows/macos.yml`,
+fetched by `scripts/fetch-macos.sh`) and served by both stations.
+
+**Confirmed (user, 2026-11-08):** sharing the screen and being controlled
+work on a real Mac. The items below that aren't ticked weren't recorded
+one by one.
 
 The station serves the zip untouched; the app links to its station from the
 download address or a setup code. Self-updates replace the bundle's
@@ -33,7 +36,7 @@ SLIPSTREAM_UPDATE_KEYS=PUBLIC_KEY scripts/check.sh scripts/build-macos.sh
       setup code on the Bridge.
 
 **Being controlled (host)**
-- [ ] Screen Recording and Accessibility prompts appear; after granting and
+- [x] Screen Recording and Accessibility prompts appear; after granting and
       restarting, a viewer sees the screen and can move, click and type.
 - [ ] Retina scaling: the pointer lands where it should; the keyboard works
       across layouts (try a non-US layout).
@@ -53,10 +56,9 @@ SLIPSTREAM_UPDATE_KEYS=PUBLIC_KEY scripts/check.sh scripts/build-macos.sh
 
 ## Known gaps
 
-- `slipstream://` links don't reach the app: macOS delivers them as Apple
-  Events and winit (through eframe) doesn't pass them on. Setup codes work.
-  A fix needs an Apple Event handler (`NSAppleEventManager`) or winit
-  support.
+- `slipstream://` links arrive as Apple Events, which winit (through eframe)
+  doesn't pass on; since 0.30 the app installs its own handler
+  (`apps/slipstream/src/gui/macos_links.rs`). Setup codes work too.
 - Not notarised (Developer ID signing and Apple Developer Program membership
   remain pending; see issue 05).
 

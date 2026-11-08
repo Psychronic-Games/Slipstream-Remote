@@ -5,10 +5,13 @@ labels: [testing]
 
 ## Background
 
-Current release: **0.24.0, protocol 6**. Local encrypted-session tests and
-isolated native Linux/Wine checks cover the implemented tools and windows.
-The OS/device checks below remain open; run the
-current published build on both peers. Windows service elevation/identity
+Local encrypted-session tests and isolated native Linux/Wine checks cover
+the implemented tools and windows. Run the latest published build on both
+peers.
+
+**Confirmed (user, 2026-11-08):** pasting copied files in Explorer and
+Dolphin, privacy mode, and chat-only links between real machines. The
+remaining unticked items weren't recorded one by one. Windows service elevation/identity
 checks are in issue 04, and phone hosting is in issue 09.
 
 ## Checklist
@@ -32,7 +35,7 @@ Copy and paste files:
 - [ ] Windows → Windows: copy a file and a folder in Explorer, Ctrl+V in
       an Explorer window on the remote screen. Both arrive, nested folders
       intact.
-- [ ] Linux (KDE/Dolphin) → Windows, and Windows → Linux.
+- [x] Linux (KDE/Dolphin) → Windows, and Windows → Linux.
 - [ ] Copy files on the remote computer, then paste them locally (the
       notice says *ready to paste here*).
 - [ ] Too big (over 64 MB): the notice points to *Files*.
@@ -42,7 +45,7 @@ Copy and paste files:
 
 Privacy mode (Windows 10 2004 or later on the remote side):
 
-- [ ] *Tools ▾ → Blank remote screen*: the remote monitors go black with the
+- [x] *Tools ▾ → Blank remote screen*: the remote monitors go black with the
       message; the viewer still sees the desktop and can work.
 - [ ] Under the Slipstream service, the remote keyboard and mouse are
       blocked; Ctrl+Alt+Del at the remote computer still works (Windows
@@ -84,7 +87,7 @@ Files and service-update recovery:
       transfers should fail visibly and port forwards should close.
 - [ ] Confirm incoming service chat reaches the signed-in user's LCARS window
       and replies return, including after a host restart.
-- [ ] Chat-only links (0.33): **Chat** on a saved Linux workstation, a
+- [x] Chat-only links (0.33): **Chat** on a saved Linux workstation, a
       Windows workstation running the app, and one running the service. Their
       banner reads *Inbound chat*; messages both ways carry device names; no
       clipboard crosses. **Connect** in the chat keeps the messages, starts the

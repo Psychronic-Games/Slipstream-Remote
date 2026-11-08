@@ -565,7 +565,7 @@ existing active-console-session backend and require no portal approval.
 | Linux (X11) | MIT-SHM (GetImage fallback) via pure-Rust `x11rb`, RandR monitors, pointer composited from XFixes | XTest via `enigo` |
 | Windows | DXGI Desktop Duplication of our own (`win_dxgi.rs`, one copy per frame, created per session); under the service, DXGI on the normal desktop and a reusable GDI capturer (`win_gdi.rs`) on the login screen and UAC's secure desktop. Pointer composited by us (`win_cursor.rs`) | `SendInput` via `enigo` |
 | macOS | ScreenCaptureKit via `xcap` | CGEvent via `enigo` |
-| Android (implemented; emulator-tested, issue 09) | MediaProjection + bounded ImageReader frames, software H.264 | AccessibilityService with active full-display sharing and explicit enablement |
+| Android (issue 09) | MediaProjection + bounded ImageReader frames, software H.264 | AccessibilityService with active full-display sharing and explicit enablement |
 
 Keyboard events travel as physical key codes (W3C `code` names) and are
 mapped to evdev / Windows scancodes / macOS keycodes on the host.

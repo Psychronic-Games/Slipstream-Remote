@@ -1,12 +1,12 @@
 # Project status
 
-*Updated 2026-11-05. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
+*Updated 2026-11-08. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
 changes: [CHANGELOG.md](../CHANGELOG.md).*
 
 ## Where things stand
 
-Slipstream Remote is **in production use** on several Linux (KDE Wayland) and
-Windows systems, through the free **Slipstream Public** station and a
+Slipstream Remote is **in production use** on several Linux and Windows
+systems, through the free **Slipstream Public** station and a
 self-hosted one, and works well day to day. Both of the project's stations run
 current releases: `public.slipstreamremote.com` (keyless, default for raw
 downloads) and a private station. The main features (sessions, files,
@@ -16,10 +16,15 @@ and covered by automated end-to-end tests: 214 workspace tests, station
 PHP/Node regressions, Wine checks for the Windows build and native UI audits.
 CI builds and tests every push on Linux, Windows and macOS.
 
-Work now follows **usability and UI polish** found in daily use. Real-hardware
-checks for less-used paths stay open: the Windows service at UAC prompts and
-the login screen, real Android phones, sharing and control from a Mac. See
-[Next steps](#next-steps).
+Work now follows **usability and UI polish** found in daily use. As of
+November 8 the user has confirmed on real machines the paths that were long
+listed as open: the Windows service at UAC prompts and the login screen,
+privacy mode, NVENC on Windows, Windows 8.x, copying files in
+Explorer/Dolphin, sound between machines, chat-only links, meeting recording,
+Android phones, sharing and control from a Mac, the X11 host, Wayland
+unattended access after a reboot and remote-management restarts. Wake-on-LAN
+through a gateway and management controllers (BMC/vPro consoles, Redfish)
+haven't been tried on real hardware yet. See [Next steps](#next-steps).
 
 Version **0.33** adds chat-only links with Subspace chat tabs, remote
 management (restarts, Wake-on-LAN through a gateway, BMC/vPro consoles and
@@ -106,26 +111,29 @@ Recent releases:
 | Full window through the built-in software renderer (Mesa llvmpipe) | ✅ on real Windows Server 2016 (VMware VM), through the copy of the app beside Mesa (loading Mesa in-process found no adapter there). Idle CPU use cut by slower animations on llvmpipe (0.6.0); not re-measured |
 | Linux → Windows Server 2016 VM over the internet | ✅ direct path, 20–50 ms round trip. Earlier measurements: DXGI capture 1.8 ms/frame, encoding 23 ms/frame, about 34 fps. Current camera-mode encoding needs remeasurement there; Speed/Low bandwidth can reduce moving-picture resolution, while Balanced/Quality preserve resolution. |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |
-| Copy and paste files (both ways) | ⚠️ end-to-end test; file lists on the real KDE clipboard both ways; not yet pasted in Explorer or Dolphin during a session |
+| Copy and paste files (both ways) | ✅ end-to-end test; pasted in Explorer and Dolphin between real machines (user, 2026-11-08) |
 | Technician accounts, saved devices, several stations | ✅ against a local PHP station: sign-in (wrong password, unknown user), sealed passwords stored unreadable, live presence, connecting through another station with the saved password, admin-only shared list, password reset signing out and clearing secrets; GUI checked by screenshots. In production use on the private station since its October 29 deploy; issue 08's two-computer and revocation checklist isn't recorded item by item |
-| Remote management (restarts, wake, controllers) | ✅ end-to-end tests: Redfish power state, graceful restart with authentication and refusals against a local test controller through a real gateway link and port forward; the console forward; restarts refused without Control. Station storage, validation and older-app preservation in the account suite. Not yet against a real Supermicro, iDRAC or vPro controller, and Safe Mode and firmware restarts not yet on real Windows ([issue 18](issues/18-remote-management.md)) |
-| Chat-only links and Subspace chat tabs | ✅ end-to-end test: chat both ways with no picture or clipboard either way, the host's viewing event only after Connect, then video. Bridge layout checked in native screenshots at 1680 and 1000 px. Not yet between two physical machines or through the Windows service (Windows build passes strict Clippy) |
+| Remote management (restarts, wake, controllers) | ✅ end-to-end tests: Redfish power state, graceful restart with authentication and refusals against a local test controller through a real gateway link and port forward; the console forward; restarts refused without Control. Station storage, validation and older-app preservation in the account suite. Restarts (normal, Safe Mode with Networking, BIOS setup) confirmed on real machines (user, 2026-11-08). ⚠️ Wake-on-LAN through a gateway and real Supermicro, iDRAC, iLO or vPro controllers not yet tried ([issue 18](issues/18-remote-management.md)) |
+| Chat-only links and Subspace chat tabs | ✅ end-to-end test: chat both ways with no picture or clipboard either way, the host's viewing event only after Connect, then video. Bridge layout checked in native screenshots at 1680 and 1000 px. Used between real machines (user, 2026-11-08) |
 | Private station automatic enrollment and hardware summaries | ✅ isolated PHP API/admin checks: default names/Ungrouped, preserved edits and removals, legacy shared-list migration, signed metadata, admin access and public exclusion; batch technician assignment before sign-in and while offline, partial failures and retained credentials verified. Rust registration/authentication suites pass. Native Windows/macOS hardware summaries still need verification |
 | Scanner HTTP/HTTPS actions | ✅ Linux GUI to host launcher; exact URLs, failure reporting and host permission/target checks. Windows service launch needs real-VM confirmation |
 | System information window (live) | ✅ end-to-end test; Linux and Windows (under Wine) collectors checked by hand; macOS type-checks only |
 | Port forwarding | ✅ end-to-end test (echo through the tunnel, unreachable target, refused when not allowed) |
-| Privacy mode | ⚠️ builds for Windows; needs a real Windows 10 2004+ machine (capture exclusion doesn't exist under Wine) |
-| Windows service | ⚠️ installs, reinstalls over an older one, starts without the administrator prompt, and hosts under the app's ID on real Server 2016 (from 0.6.0). Install, start, a session and the published ID also checked under Wine. UAC, login screen and Ctrl+Alt+Del still to try for real (issue 04). Once, after *Update*, the service ended up stopped for reasons not yet known; the app now restarts it and the readable service log records why it stops |
+| Privacy mode | ✅ on a real Windows 10 2004+/11 machine (user, 2026-11-08); capture exclusion doesn't exist under Wine |
+| Windows service | ✅ installs, reinstalls over an older one, starts without the administrator prompt, and hosts under the app's ID (real Server 2016 from 0.6.0). UAC prompts, the login screen and Ctrl+Alt+Del work through it on real Windows (user, 2026-11-08). Once, after *Update*, the service ended up stopped for reasons not yet known; the app now restarts it and the readable service log records why it stops |
+| Windows 7 SP1 / 8.x (the one Windows build) | ✅ 0.33.1 on a real Windows 7 machine (user, 2026-11-05) and on Windows 8.x (user, 2026-11-08); imports checked at build time by `scripts/check-windows-imports.py` |
+| Sound between two machines | ✅ end-to-end test with a test tone; heard on real speakers between machines (user, 2026-11-08) |
+| Wayland unattended access after a reboot | ✅ portal restore token survives a reboot without a new prompt (user, 2026-11-08); other desktops' portals may differ |
 | Portable Linux binary (glibc 2.31, no PipeWire link) | ⚠️ needs only libc, libm, libpthread and libdl (glibc symbols ≤ 2.30); the Debian server that failed before hasn't re-tried it |
 | Host chat as its own window (KDE Wayland) | ✅ |
 | Windows pointer drawing | ✅ unit tests under Wine; on the Server 2016 VM, which has no mouse, the arrow is drawn when Windows hides the pointer (0.6.0, to confirm) |
 | Adaptive resolution and idle sharpening | ✅ pipeline test with a simulated slow encoder (shrinks to fit 60 fps, full-size frame once still) and a local session at 30 ms a simulated frame |
 | Host pace in the viewer (stats tooltip, 30 s log line) | ✅ local sessions and the live Server 2016 VM |
-| X11 host | ⚠️ implemented, lightly tested |
-| macOS | ⚠️ universal app (Apple Silicon and Intel) built by `.github/workflows/macos.yml` and served by both stations since 0.30; runs on a real Intel Mac and connects to Slipstream Public. Linking to a private station through `slipstream://` or **Link to my organisation** (0.30), screen sharing, control and permissions still to confirm |
-| Hardware encoding | ✅ NVENC on Linux (RTX 5070: 1.4 ms a 1080p frame) and VA-API on AMD (radeonsi: 4.5 ms), both decoded and checked by `slipstream encode-test`. ⚠️ NVENC on real Windows (RTX 3060 laptop) still to confirm; Media Foundation only tested against Wine's software encoder, so it stays opt-in (`SLIPSTREAM_HWENC=mf`) |
-| Meeting recording | ✅ native UI audit records MP4 and MKV, which ffprobe reads (H.264 and Opus frames); the desktop's real save dialog still to try by hand |
-| Android viewer and host | ⚠️ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; real phones still need confirmation. Software host encoding; audio/clipboard/files pending. |
+| X11 host | ✅ hosting from a real X11 session (user, 2026-11-08) |
+| macOS | ✅ universal app (Apple Silicon and Intel) built by `.github/workflows/macos.yml` and served by both stations since 0.30; sharing the screen and being controlled work on a real Mac (user, 2026-11-08) |
+| Hardware encoding | ✅ NVENC on Linux (RTX 5070: 1.4 ms a 1080p frame) and VA-API on AMD (radeonsi: 4.5 ms), both decoded and checked by `slipstream encode-test`; NVENC on real Windows (user, 2026-11-08). ⚠️ Media Foundation only tested against Wine's software encoder, so it stays opt-in (`SLIPSTREAM_HWENC=mf`) |
+| Meeting recording | ✅ native UI audit records MP4 and MKV, which ffprobe reads (H.264 and Opus frames); saved through the desktop's real save dialog (user, 2026-11-08) |
+| Android viewer and host | ✅ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; works on a real phone (user, 2026-11-08). Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
 ## Known gaps and limits
@@ -138,8 +146,8 @@ Recent releases:
 - **Windows 7 SP1 / 8.x:** the one Windows build links YY-Thunks, so it
   imports nothing Windows 7 lacks (checked at build time by
   `scripts/check-windows-imports.py`; see
-  [BUILDING.md](BUILDING.md#older-windows-7-sp1-8x)). 0.33.1 works on a real
-  Windows 7 machine (user report, 2026-11-05). Windows 8.x isn't tried yet.
+  [BUILDING.md](BUILDING.md#older-windows-7-sp1-8x)). It works on real
+  Windows 7 (0.33.1, 2026-11-05) and Windows 8.x (2026-11-08) machines.
   There it uses GDI capture and the OpenGL/software/compact window
   fallbacks, and has no privacy mode.
 - **Meetings**: the organizer must stay connected; no host migration or
@@ -147,16 +155,17 @@ Recent releases:
   last four hours. Android incoming calls require a running, reachable app.
   See [meeting scope](issues/17-group-meetings-and-show-me.md) for remaining work.
 - **macOS**: the universal app is built on GitHub's Macs for each release
-  (`scripts/fetch-macos.sh`); sharing and control on a real Mac remain to
-  verify. Not notarised (Apple Developer Program not joined yet), so users choose
+  (`scripts/fetch-macos.sh`); sharing and control work on a real Mac.
+  Not notarised (Apple Developer Program not joined yet), so users choose
   *Open Anyway*, and permissions may need granting again after updates. Its
   capture may or may not show the pointer (`cursor_in_video` is false, so
-  the viewer keeps its own pointer visible). `slipstream://` links reach the app on macOS through its own Apple Event
-  handler (0.30, to confirm on a Mac); setup codes work too.
+  the viewer keeps its own pointer visible). `slipstream://` links reach the
+  app on macOS through its own Apple Event handler (0.30); setup codes work
+  too.
 - **Windows elevation**: without the Slipstream service the app runs as
   the user, so it can't control UAC prompts, elevated windows or the login
-  screen. The service does (it runs on real Server 2016), but UAC and the
-  login screen haven't been tried through it yet.
+  screen. The service does: UAC prompts, the login screen and Ctrl+Alt+Del
+  work through it on real Windows.
 - **Privacy mode** needs Windows 10 2004 or later on the remote side, and
   blocks the local keyboard and mouse only under the service (Windows
   allows `BlockInput` only to elevated programs).
@@ -169,20 +178,19 @@ Recent releases:
   and AMD on Windows) is opt-in until proven on real hardware, and Macs and
   Android have none yet. Other computers encode with OpenH264 on the
   processor (SIMD; builds need `nasm`), where slow processors drop
-  resolution while the picture moves. NVENC needs confirming on real Windows
-  hardware and under the Windows service. Decoding is OpenH264 everywhere.
+  resolution while the picture moves. Decoding is OpenH264 everywhere.
 - **Windows capture** uses its own DXGI duplication since 0.7.1: one
   copy per frame, BGRA straight to the encoder, released by each session
   (xcap's recorder blocked later sessions). Not yet measured at 1440p and
   4K on real hardware (issue 15).
 - **Sound**: Windows and Linux hosts share it; Mac hosts can't yet
-  (ScreenCaptureKit audio). Not yet heard on real speakers between two
-  machines: end-to-end test with a test tone; real devices open on Linux.
+  (ScreenCaptureKit audio).
 - **Desktop/station ARM builds**: Linux and Windows apps and the station relay
   are currently distributed for x86_64 only. Android releases are arm64;
   the macOS app is universal (Apple Silicon and Intel).
 - **Wayland unattended access**: depends on the portal's restore token
-  surviving. A reboot may bring the permission prompt back on some desktops.
+  surviving. It survives a reboot on the user's machines; other desktops'
+  portals may still ask again.
 - **File transfer**: no resume for interrupted large transfers.
 - **CI** (`.github/workflows/ci.yml`) builds and tests on Linux, Windows and
   macOS for every push; green on all three since October 23, 2026.
@@ -196,25 +204,22 @@ Recent releases:
 Each step has an issue with tasks and pointers into the code in
 [issues/](issues/README.md).
 
-0. **Usability polish from production use** (ongoing): try chat-only links
-   between real machines, including a Windows workstation running the service,
-   then confirm 0.33's remote management on real hardware (issue 18) and the
-   Windows 7 build on a real Windows 7 machine.
-1. **Real-machine pass** (issues 01, 04, 16): the Windows service at UAC
-   prompts, elevated windows and the login screen; the new link approval on
-   Windows (full window, compact window and service) and Linux; privacy mode;
-   copying files in Explorer/Dolphin; sound between two machines.
-2. **Android on real phones** (issue 09): persistent ID, sharing consent,
-   accessibility setup, PC input, direct and relayed links, rotation, Stop,
-   link approval. Include an older supported Android version.
-3. **macOS** (issue 03): on a real Mac, *Connect this app* and **Link to my
-   organisation**, permissions, sharing the screen, being controlled, and an
-   update.
-4. **Hardware encoding** (issue 06): `slipstream encode-test` on the RTX 3060
-   laptop (NVENC on Windows) and on AMD/Intel Windows machines (Media
-   Foundation, to turn it on by default); then VideoToolbox on Macs.
-5. **Code signing** (issue 05): apply to SignPath now that the repository is
+0. **Usability polish from production use** (ongoing), starting with the
+   open audit items that show in daily use: chat-only links shouldn't open
+   screen capture (no Wayland prompt for a chat), and under the Windows
+   service the Files window's default places and pasted files should resolve
+   to the signed-in user's folders.
+1. **Saved-password vault** (audit, high): derive separate sign-in and vault
+   keys on the client so the station never sees what opens saved passwords;
+   needs a station/app migration, best done before 1.0.
+2. **Remote management on real hardware** (issue 18): Wake-on-LAN through a
+   gateway, and Supermicro/iDRAC/iLO/vPro consoles and Redfish power.
+3. **Code signing** (issue 05): apply to SignPath now that the repository is
    public; Apple notarisation once the Developer Program is joined.
+4. **Hardware encoding** (issue 06): `slipstream encode-test` on AMD/Intel
+   Windows machines to turn Media Foundation on by default; then VideoToolbox
+   on Macs.
+5. **Meetings robustness** (issue 17 and the audit's meeting items).
 6. Android host audio/clipboard/files and self-updates, sound from Mac hosts.
 
 ## Picking the work back up
