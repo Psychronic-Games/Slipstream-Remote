@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.34.1 — 2026-11-08
+
 - **Subspace Relay keeps running** when the app is closed or reopened on the
   phone: it now runs in a process of its own, until you stop it on the
   Relay page or from its notification. Reopening the app no longer hangs on

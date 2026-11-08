@@ -7266,7 +7266,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slipstream"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "android-activity",
  "anyhow",
@@ -7306,7 +7306,7 @@ dependencies = [
 
 [[package]]
 name = "slipstream-android"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "android-activity",
  "jni 0.21.1",
@@ -7322,7 +7322,7 @@ dependencies = [
 
 [[package]]
 name = "slipstream-audio"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "anyhow",
  "cc",
@@ -7334,7 +7334,7 @@ dependencies = [
 
 [[package]]
 name = "slipstream-codec"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "anyhow",
  "fast_image_resize",
@@ -7348,7 +7348,7 @@ dependencies = [
 
 [[package]]
 name = "slipstream-core"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -7381,7 +7381,7 @@ dependencies = [
 
 [[package]]
 name = "slipstream-platform"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -7409,7 +7409,7 @@ dependencies = [
 
 [[package]]
 name = "slipstream-relay"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "anyhow",
  "ipstack",
@@ -7428,7 +7428,7 @@ dependencies = [
 
 [[package]]
 name = "slipstream-release"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -7441,7 +7441,7 @@ dependencies = [
 
 [[package]]
 name = "slipstream-server"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -7464,7 +7464,7 @@ dependencies = [
 
 [[package]]
 name = "slipstream-session"
-version = "0.34.0"
+version = "0.34.1"
 dependencies = [
  "anyhow",
  "bytes",

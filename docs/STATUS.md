@@ -72,6 +72,9 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.34.1**: Subspace Relay runs in its own process on the phone, uses
+  2.4 GHz by default (5 GHz made Linux computers cut their transmit power),
+  and computers connect by themselves to phones they've used.
 - **0.34.0**: Subspace Relay; chat-only links open the screen only when
   asked to view.
 - **0.33.1**: the Subspace chat panel stays in view beside long device lists
