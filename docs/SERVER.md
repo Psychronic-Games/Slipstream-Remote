@@ -70,7 +70,13 @@ transfer or replace host-level monitoring. Private station defaults stay unlimit
 ## Requirements
 
 - A domain or subdomain with HTTPS, e.g. `support.example.com`. The station
-  must live at the **root** of it (not in a subfolder).
+  must live at the **root** of it (not in a subfolder). Once it has been
+  reached over HTTPS under a name, plain HTTP requests for that name are
+  redirected to HTTPS (301, or 308 for the apps' POSTs) and browsers are
+  told to stay on HTTPS (`Strict-Transport-Security`, one year). Until then
+  HTTP keeps working, so a station without a certificate isn't locked out.
+  Behind a proxy that terminates HTTPS, pass `X-Forwarded-Proto`; if it
+  can't, set `'force_https' => false` in `config.php`.
 - PHP 8.0+ with the `sodium` extension (standard).
 - Linux web host where PHP may start programs (`proc_open`), Apache with
   `mod_rewrite` + `mod_proxy_http` (2.4.47+) and `.htaccess` allowed. That's

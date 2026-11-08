@@ -1699,3 +1699,40 @@ function slip_page_end(): void
 require_once __DIR__ . '/groups.php';
 require_once __DIR__ . '/relay-history.php';
 require_once __DIR__ . '/update.php';
+
+/**
+ * Plain HTTP would expose the admin sign-in, the download password and the
+ * apps' access key. Once this station has been reached over HTTPS under a
+ * name (so it has a working certificate for it), HTTP requests for that
+ * name go to HTTPS instead, and browsers are told to stay on HTTPS (HSTS).
+ * A station without a certificate keeps working over HTTP until it has one.
+ * Set 'force_https' => false in config.php for a station behind a proxy that
+ * talks plain HTTP to it without saying so (X-Forwarded-Proto).
+ */
+function slip_enforce_https(): void
+{
+    if (PHP_SAPI === 'cli' || (slip_config()['force_https'] ?? true) === false) {
+        return;
+    }
+    $name = strtolower(preg_replace('/:\d+$/', '', slip_host()));
+    $file = slip_data_dir() . '/https-hosts.json';
+    $hosts = is_file($file) ? (json_decode((string)@file_get_contents($file), true) ?: []) : [];
+    if (slip_scheme() === 'https') {
+        if (!in_array($name, $hosts, true) && count($hosts) < 20) {
+            $hosts[] = $name;
+            @file_put_contents($file, json_encode(array_values($hosts)), LOCK_EX);
+        }
+        header('Strict-Transport-Security: max-age=31536000');
+        return;
+    }
+    if (!in_array($name, $hosts, true)) {
+        return;
+    }
+    // 308 keeps an app's POST (and its body) as it is; browsers get 301.
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    header('Location: https://' . $name . ($_SERVER['REQUEST_URI'] ?? '/'), true, in_array($method, ['GET', 'HEAD'], true) ? 301 : 308);
+    header('Cache-Control: no-store');
+    exit;
+}
+
+slip_enforce_https();

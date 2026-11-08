@@ -39,7 +39,9 @@ fixture accounts, without touching a running station or real settings:
 ```sh
 scripts/check.sh python3 scripts/test-station-accounts.py --client target/debug/slipstream
 scripts/check.sh python3 scripts/test-station-admin.py --browser
-# Set SLIPSTREAM_TEST_PHP=/path/to/php if PHP is not on PATH.
+scripts/check.sh python3 scripts/test-station-https.py
+# Set SLIPSTREAM_TEST_PHP=/path/to/php if PHP is not on PATH (the accounts
+# check also needs its pdo_sqlite extension).
 ```
 
 The admin check covers initial setup, legacy migration (including username

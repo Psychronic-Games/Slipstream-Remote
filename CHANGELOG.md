@@ -13,6 +13,14 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Stations require HTTPS:** once a station has been reached over HTTPS,
+  plain `http://` requests to it are redirected to HTTPS (pages, downloads
+  and the apps' requests alike), and browsers are told to stay on HTTPS.
+  The admin sign-in, the download password and the apps' access key no
+  longer cross the network unencrypted. A station without a certificate
+  keeps working over HTTP until it has one; `'force_https' => false` in
+  `config.php` turns this off for unusual proxies.
+
 ## 0.34.2 — 2026-11-08
 
 - **The Android app updates itself:** when your station has a newer
