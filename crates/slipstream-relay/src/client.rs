@@ -134,10 +134,18 @@ impl Client {
             }
             anyhow::Ok(())
         };
-        // Either direction ending ends the flow.
+        // Either direction ending ends the flow; a DNS lookup's soon anyway.
+        let lifetime = async {
+            if target.port() == 53 {
+                tokio::time::sleep(proto::DNS_FLOW).await
+            } else {
+                std::future::pending().await
+            }
+        };
         tokio::select! {
             r = up => r,
             r = down => r,
+            () = lifetime => Ok(()),
         }
     }
 }
@@ -273,5 +281,21 @@ mod tests {
         drop(to_flow);
         flow.await.unwrap().unwrap();
         assert_eq!(server.stats().snapshot().up, 3 + 4 + 1200);
+    }
+
+    /// A DNS lookup's flow ends by itself soon after, even while the app
+    /// keeps its end open (resolvers use a fresh port for each lookup).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dns_lookups_dont_linger_as_open_flows() {
+        let (_server, client) = relay().await;
+        // Port 53 on loopback: nothing need answer for the flow to open.
+        let target: std::net::SocketAddr = "127.0.0.1:53".parse().unwrap();
+        let (_keep_open, rx) = tokio::sync::mpsc::channel(1);
+        let (tx, _from_flow) = tokio::sync::mpsc::channel(1);
+        let c = client.clone();
+        let flow = tokio::spawn(async move { c.forward_udp(target, Datagrams { rx, tx }).await });
+        tokio::time::sleep(proto::DNS_FLOW + Duration::from_secs(1)).await;
+        assert!(flow.is_finished(), "a DNS flow lingered");
+        assert_eq!(client.stats().snapshot().flows, 0);
     }
 }

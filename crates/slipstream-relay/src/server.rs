@@ -231,7 +231,8 @@ async fn serve_flow(mut send: SendStream, mut recv: RecvStream, stats: &Stats, a
                 Err(e) => return refuse(&mut send, format!("{addr}: {e}")).await,
             };
             write_msg(&mut send, &Reply::Opened).await?;
-            relay_udp(socket, send, recv, stats).await?;
+            let idle = if addr.port() == 53 { proto::DNS_FLOW } else { UDP_IDLE };
+            relay_udp(socket, send, recv, stats, idle).await?;
         }
     }
     Ok(())
@@ -244,7 +245,7 @@ async fn refuse(send: &mut SendStream, reason: String) -> Result<()> {
     Ok(())
 }
 
-async fn relay_udp(socket: UdpSocket, mut send: SendStream, mut recv: RecvStream, stats: &Stats) -> Result<()> {
+async fn relay_udp(socket: UdpSocket, mut send: SendStream, mut recv: RecvStream, stats: &Stats, idle: Duration) -> Result<()> {
     use std::sync::atomic::Ordering;
     let mut from_computer = Vec::with_capacity(2048);
     let mut from_net = vec![0u8; 65536];
@@ -265,7 +266,7 @@ async fn relay_udp(socket: UdpSocket, mut send: SendStream, mut recv: RecvStream
                 proto::write_datagram(&mut send, &from_net[..n]).await?;
                 stats.down.fetch_add(n as u64, Ordering::Relaxed);
             }
-            _ = tokio::time::sleep(UDP_IDLE) => break,
+            _ = tokio::time::sleep(idle) => break,
         }
     }
     let _ = send.finish();

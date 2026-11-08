@@ -22,6 +22,14 @@ pub const PHONE_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 49, 1));
 
 pub(crate) const HELLO: &str = "SLIPSTREAM-RELAY 1";
 
+/// A DNS lookup is one question and its answer, each from a fresh port: its
+/// flow ends this soon instead of waiting out the usual UDP idle time (so
+/// lookups don't pile up as open "connections").
+#[cfg(not(test))]
+pub(crate) const DNS_FLOW: std::time::Duration = std::time::Duration::from_secs(10);
+#[cfg(test)]
+pub(crate) const DNS_FLOW: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// Opening a flow: where the computer's app wanted to go.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Open {

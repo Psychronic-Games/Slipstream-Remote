@@ -84,9 +84,10 @@ on Windows or macOS computers.
 - [x] Android: foreground service, Wi-Fi Direct group with the chosen name
       and password, permissions (nearby Wi-Fi devices), relay start/stop,
       page with name, password, computers joined and data relayed.
-- [x] The relay survives the app's window (own process); 2.4 GHz by
-      default (5 GHz made Linux clients drop to 0 dBm transmit power);
-      computers connect by themselves to phones they've used.
+- [x] The relay survives the app's window (own process); computers
+      connect by themselves to phones they've used. (A Linux computer that
+      couldn't join turned out to have a hung `ath12k` Wi-Fi card, not a
+      relay problem; it ran through the relay once its driver was reset.)
 - [ ] Optional proxy mode for devices without Slipstream (browsers and
       apps that follow a manually set proxy).
 - [ ] IPv6 through the tunnel (blocked to fall back to IPv4 at first).

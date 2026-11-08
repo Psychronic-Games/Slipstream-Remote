@@ -13,6 +13,17 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- The relay's Wi-Fi band is back to **Automatic** by default (Android then
+  uses the phone's own Wi-Fi channel, so its radio needn't switch between
+  two), with 2.4 GHz and 5 GHz under **Advanced**. 0.34.1's note that 5 GHz
+  stopped Linux computers connecting was wrong: that computer's Wi-Fi card
+  had hung (see the guide's troubleshooting).
+- The phone's Relay page says when the phone is also on another Wi-Fi
+  network, which can make computers drop.
+- The connection count no longer includes finished DNS lookups, which used
+  to stay counted for a minute or two each.
+- **Advanced** on the phone no longer shows a missing-character box.
+
 ## 0.34.1 — 2026-11-08
 
 - **Subspace Relay keeps running** when the app is closed or reopened on the

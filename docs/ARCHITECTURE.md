@@ -704,17 +704,19 @@ own data (design and open work: [issue 19](issues/19-subspace-relay.md)).
 
 - **Phone:** `SubspaceRelayService` (Java, Android 10+) runs in its own
   process (`:relay`), so the relay outlives the app's window. It starts a
-  Wi-Fi Direct group `DIRECT-ss-<name>` with the user's password, on
-  2.4 GHz unless the user picks 5 GHz or automatic (on 5 GHz Android
-  advertises a transmit power envelope that makes Linux clients drop to
-  0 dBm), and holds a partial wake lock and a low-latency Wi-Fi lock. It then
+  Wi-Fi Direct group `DIRECT-ss-<name>` with the user's password (band
+  automatic unless the user picks 2.4 or 5 GHz; automatic shares the
+  phone's own Wi-Fi channel), and holds a partial wake lock and a low-latency Wi-Fi lock. It then
   starts `slipstream_relay::Server` through `RelayNative`
   (`apps/slipstream-android/src/relay.rs`, which sets up ndk-context in that
   process for iroh) on the group's address (normally `192.168.49.1`), with
   a key kept in `relay.key` so computers recognise the phone. A TCP hello on
   port 47100 answers with its endpoint ID and QUIC port, and an iroh
   endpoint with relays and discovery off accepts ALPN `slipstream/relay/1`
-  on UDP 47100. The service broadcasts its state and counters every second;
+  on UDP 47100. UDP flows to port 53 end 10 s after opening (one lookup
+  each) rather than at the usual idle time. The service broadcasts its
+  state, counters and whether the phone is on another Wi-Fi network every
+  second;
   `MainActivity` forwards them through `RelayBridge` to
   `slipstream_platform::android::relay_group` for the Relay page. The app's
   own process now exits when its window closes, and relaunches itself if

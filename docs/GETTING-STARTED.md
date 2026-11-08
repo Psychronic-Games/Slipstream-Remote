@@ -717,8 +717,15 @@ joins that phone's network (the administrator prompt still appears). It
 does this only for phones it has connected through before. **Advanced** on
 the computer turns this off, and changes the phone's address or the DNS
 server (the defaults suit Android). **Advanced** on the phone chooses the
-Wi-Fi band: 2.4 GHz by default, because on 5 GHz Android tells computers to
-cut their transmit power and Linux computers then can't stay connected.
+Wi-Fi band: Automatic by default (the channel the phone's own Wi-Fi uses),
+or 2.4 GHz (every device) or 5 GHz (faster).
+
+If a computer associates but then "the password is wrong" for every
+network, its Wi-Fi card has probably hung, not the phone: check that it can
+still join another network. On Linux, reload the Wi-Fi driver or shut down
+fully (a Qualcomm Wi-Fi 7 card on the `ath12k` driver was seen hanging when
+a relay network went away). Linux also logs `Limiting TX power to 0` for
+Android hotspots and relay networks alike; it doesn't stop them working.
 From a terminal, run `slipstream relay connect` as administrator (root)
 instead, until Ctrl+C.
 

@@ -52,7 +52,8 @@ pub fn tick(app: &mut App, ctx: &eframe::egui::Context) {
 
 /// A heading that folds a section open and shut.
 fn fold_button(open: bool) -> eframe::egui::Button<'static> {
-    let text = if open { "▾ ADVANCED" } else { "▸ ADVANCED" };
+    // Plain characters: the phone's font has no arrow glyphs.
+    let text = if open { "ADVANCED  -" } else { "ADVANCED  +" };
     eframe::egui::Button::new(RichText::new(text).font(theme::display(15.0)).color(pal::LAVENDER)).frame(false)
 }
 
@@ -152,8 +153,8 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
         if app.relay.phone.advanced {
             ui.label(RichText::new("WI-FI BAND").font(theme::display(15.0)).color(pal::LAVENDER));
             ui.horizontal_wrapped(|ui| {
-                for (value, label) in [("", "2.4 GHz"), ("5", "5 GHz"), ("auto", "Automatic")] {
-                    let chosen = band == value || (value.is_empty() && band == "2.4");
+                for (value, label) in [("", "Automatic"), ("2.4", "2.4 GHz"), ("5", "5 GHz")] {
+                    let chosen = band == value || (value.is_empty() && band == "auto");
                     let color = if chosen { pal::GREEN } else { pal::DIM };
                     if ui.add_enabled_ui(editable, |ui| theme::pill(ui, label, color)).inner.clicked() {
                         let v = value.to_string();
@@ -161,8 +162,7 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
                     }
                 }
             });
-            ui.label(RichText::new("2.4 GHz works with every computer. 5 GHz is faster, but on it Android tells computers to cut their \
-                                    transmit power, which Linux computers obey and then can't stay connected. Takes effect when the relay starts.")
+            ui.label(RichText::new("Automatic matches this phone's own Wi-Fi channel. 2.4 GHz reaches every device; 5 GHz is faster.")
                 .small()
                 .color(pal::DIM));
         }
@@ -186,8 +186,13 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
                 }
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
             }
-            RelayGroup::Up { name, passphrase, joined, linked, connections, up, down, .. } => {
+            RelayGroup::Up { name, passphrase, joined, linked, connections, up, down, phone_wifi, .. } => {
                 ui.label(RichText::new("RELAY ACTIVE").font(theme::display_bold(18.0)).color(pal::GREEN));
+                if *phone_wifi {
+                    ui.label(RichText::new("This phone is also connected to a Wi-Fi network. If computers can't join or keep \
+                                            dropping, disconnect the phone from that network (keep Wi-Fi on).")
+                        .color(pal::GOLD));
+                }
                 ui.label(RichText::new(format!("Wi-Fi network: {name}")).font(theme::mono(16.0)).color(pal::TEXT));
                 ui.label(RichText::new(format!("Password: {passphrase}")).font(theme::mono(16.0)).color(pal::TEXT));
                 ui.label(format!("{joined} on the network · {linked} linked"));

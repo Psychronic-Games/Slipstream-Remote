@@ -7,6 +7,12 @@
 #
 #   scripts/test-relay-tunnel.sh [path/to/slipstream]   (default target/debug)
 if [ "${1:-}" != "--inside" ]; then
+    # While this computer is itself connected through a relay, its
+    # resolv.conf is a read-only mount the namespaces inherit.
+    if grep -qE ' /etc/resolv.conf ro[, ]' /proc/self/mountinfo; then
+        echo "SKIPPED: /etc/resolv.conf is mounted read-only (is this computer connected through a relay? Disconnect, then run this again)."
+        exit 2
+    fi
     BIN="$(realpath "${1:-target/debug/slipstream}")"
     WORK="$(mktemp -d)"
     trap 'rm -rf "$WORK"' EXIT

@@ -227,10 +227,11 @@ extern "system" fn Java_com_slipstreamremote_app_RelayBridge_onRelayStatus(
     connections: jni::sys::jlong,
     up: jni::sys::jlong,
     down: jni::sys::jlong,
+    phone_wifi: jni::sys::jboolean,
     message: jni::objects::JString,
 ) {
     let mut text = |s: &jni::objects::JString| env.get_string(s).map(String::from).unwrap_or_default();
     let (state, name, passphrase, ip, message) = (text(&state), text(&name), text(&passphrase), text(&ip), text(&message));
     let stats = [linked, connections, up, down].map(|v| v.max(0) as u64);
-    slipstream_platform::android::relay_status(&state, name, passphrase, ip, joined.max(0) as u32, stats, message);
+    slipstream_platform::android::relay_status(&state, name, passphrase, ip, joined.max(0) as u32, stats, phone_wifi != 0, message);
 }

@@ -285,6 +285,9 @@ pub enum RelayGroup {
         connections: u64,
         up: u64,
         down: u64,
+        /// The phone is on another Wi-Fi network too: its radio then
+        /// shares its time between the two, which some computers can't ride out.
+        phone_wifi: bool,
     },
     Failed(String),
 }
@@ -296,7 +299,7 @@ pub fn relay_group() -> RelayGroup {
 }
 
 /// Starts the Wi-Fi Direct group `DIRECT-ss-<name>` on `band` (`"2.4"`,
-/// `"5"` or `"auto"`), asking for permission first if needed;
+/// `"5"`, or empty for automatic), asking for permission first if needed;
 /// [`relay_group`] reports how it goes.
 pub fn relay_start(name: &str, password: &str, band: &str) -> Result<()> {
     *RELAY.lock().unwrap() = RelayGroup::Starting;
@@ -327,11 +330,11 @@ fn relay_action(action: i32, name: &str, password: &str, band: &str) -> Result<(
 
 /// `RelayBridge.onRelayStatus`: `state` is starting, up, off or failed.
 #[allow(clippy::too_many_arguments)]
-pub fn relay_status(state: &str, name: String, passphrase: String, ip: String, joined: u32, stats: [u64; 4], message: String) {
+pub fn relay_status(state: &str, name: String, passphrase: String, ip: String, joined: u32, stats: [u64; 4], phone_wifi: bool, message: String) {
     let [linked, connections, up, down] = stats;
     *RELAY.lock().unwrap() = match state {
         "starting" => RelayGroup::Starting,
-        "up" => RelayGroup::Up { name, passphrase, ip, joined, linked, connections, up, down },
+        "up" => RelayGroup::Up { name, passphrase, ip, joined, linked, connections, up, down, phone_wifi },
         "failed" => RelayGroup::Failed(message),
         _ => RelayGroup::Off,
     };

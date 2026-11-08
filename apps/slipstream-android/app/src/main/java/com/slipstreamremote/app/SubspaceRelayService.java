@@ -89,10 +89,10 @@ public class SubspaceRelayService extends Service {
 
     private void create(String name, String passphrase, String band) {
         if (!running) return;
-        // 2.4 GHz by default: on 5 GHz Android advertises a transmit power
-        // limit that makes Linux computers turn their radio almost off.
+        // Automatic by default: Android then uses the channel the phone's
+        // own Wi-Fi is on, so its radio needn't switch between two.
         int owner = "5".equals(band) ? WifiP2pConfig.GROUP_OWNER_BAND_5GHZ
-            : "auto".equals(band) ? WifiP2pConfig.GROUP_OWNER_BAND_AUTO : WifiP2pConfig.GROUP_OWNER_BAND_2GHZ;
+            : "2.4".equals(band) ? WifiP2pConfig.GROUP_OWNER_BAND_2GHZ : WifiP2pConfig.GROUP_OWNER_BAND_AUTO;
         WifiP2pConfig config;
         try {
             config = new WifiP2pConfig.Builder()
@@ -160,11 +160,23 @@ public class SubspaceRelayService extends Service {
         if ("up".equals(state)) {
             long[] s = RelayNative.stats();
             status.putExtra("name", groupName).putExtra("passphrase", groupPassphrase).putExtra("ip", groupIp)
-                .putExtra("joined", joined);
+                .putExtra("joined", joined).putExtra("phoneWifi", onOtherWifi());
             if (s != null && s.length == 4)
                 status.putExtra("linked", s[0]).putExtra("connections", s[1]).putExtra("up", s[2]).putExtra("down", s[3]);
         }
         sendBroadcast(status);
+    }
+
+    /** Whether the phone itself is connected to a Wi-Fi network (not its own group). */
+    @SuppressWarnings("deprecation")
+    private boolean onOtherWifi() {
+        android.net.ConnectivityManager cm = getSystemService(android.net.ConnectivityManager.class);
+        if (cm == null) return false;
+        for (android.net.Network n : cm.getAllNetworks()) {
+            android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+            if (caps != null && caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) return true;
+        }
+        return false;
     }
 
     private static String reasonText(int reason) {

@@ -81,6 +81,8 @@ pub async fn run(client: Client, opts: TunnelOptions, stop: impl Future<Output =
         .tun_name(&tun_name)
         .proxy_addr(phone)
         .ipv6_default_route(false);
+    #[cfg(target_os = "linux")]
+    clear_stale_resolv_conf();
     let state = tproxy_config::tproxy_setup(&args).await.context("routing traffic into the tunnel")?;
     #[cfg(target_os = "linux")]
     route_linux_dns(&tun_name, opts.dns).await;
@@ -136,6 +138,22 @@ fn destination(target: SocketAddr, dns: IpAddr) -> SocketAddr {
         SocketAddr::new(dns, 53)
     } else {
         target
+    }
+}
+
+/// A tunnel that was killed (not stopped) leaves its read-only resolv.conf
+/// mounted, pointing at a gateway that's gone: no name lookups work until
+/// it's removed. Clear such a leftover before setting up again.
+#[cfg(target_os = "linux")]
+fn clear_stale_resolv_conf() {
+    let ours = format!("nameserver {TUN_GATEWAY}");
+    let mounted = std::fs::read_to_string("/proc/self/mountinfo").is_ok_and(|m| m.lines().any(|l| l.split(' ').nth(4) == Some("/etc/resolv.conf")));
+    let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
+    if mounted && content.trim() == ours {
+        match std::process::Command::new("umount").arg("/etc/resolv.conf").status() {
+            Ok(s) if s.success() => info!("removed a resolv.conf left by an earlier tunnel"),
+            other => warn!("couldn't remove an earlier tunnel's resolv.conf: {other:?}"),
+        }
     }
 }
 

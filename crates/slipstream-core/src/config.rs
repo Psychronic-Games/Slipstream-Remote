@@ -215,8 +215,8 @@ pub struct AppSettings {
     /// `DIRECT-ss-`) and password; chosen at first use when empty.
     pub relay_name: String,
     pub relay_password: String,
-    /// The phone's network band: empty or `2.4` (works with every
-    /// computer), `5` or `auto`.
+    /// The phone's network band: empty for automatic (the phone's own
+    /// Wi-Fi channel), `2.4` or `5`.
     pub relay_band: String,
     /// Subspace Relay on a computer: the phone's address (empty: the usual
     /// Wi-Fi Direct one) and the DNS server to use (empty: 1.1.1.1).

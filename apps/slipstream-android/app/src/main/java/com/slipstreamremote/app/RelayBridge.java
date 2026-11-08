@@ -10,17 +10,17 @@ final class RelayBridge {
      * `linked` computers use the relay, with `connections` open and `up`/`down` bytes.
      */
     static native void onRelayStatus(String state, String name, String passphrase, String ip, int joined,
-        long linked, long connections, long up, long down, String message);
+        long linked, long connections, long up, long down, boolean phoneWifi, String message);
 
     /** Forwards a status broadcast from the relay's process. */
     static void deliver(android.content.Intent i) {
         onRelayStatus(text(i, "state"), text(i, "name"), text(i, "passphrase"), text(i, "ip"), i.getIntExtra("joined", 0),
             i.getLongExtra("linked", 0), i.getLongExtra("connections", 0), i.getLongExtra("up", 0), i.getLongExtra("down", 0),
-            text(i, "message"));
+            i.getBooleanExtra("phoneWifi", false), text(i, "message"));
     }
 
     static void failed(String message) {
-        onRelayStatus("failed", "", "", "", 0, 0, 0, 0, 0, message);
+        onRelayStatus("failed", "", "", "", 0, 0, 0, 0, 0, false, message);
     }
 
     private static String text(android.content.Intent i, String key) {
