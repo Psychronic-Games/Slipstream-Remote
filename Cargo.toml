@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "tools/*"]
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.33.1"
@@ -15,6 +16,7 @@ slipstream-codec = { path = "crates/slipstream-codec" }
 slipstream-platform = { path = "crates/slipstream-platform" }
 slipstream-session = { path = "crates/slipstream-session" }
 slipstream-audio = { path = "crates/slipstream-audio" }
+slipstream-relay = { path = "crates/slipstream-relay" }
 
 anyhow = "1"
 thiserror = "2"
@@ -44,3 +46,7 @@ opt-level = 2
 # No debug info for dependencies: it was most of target/'s size, and
 # backtraces through our own crates keep theirs.
 debug = false
+
+# ipstack without its Windows build script (see vendor/ipstack/Cargo.toml).
+[patch.crates-io]
+ipstack = { path = "vendor/ipstack" }

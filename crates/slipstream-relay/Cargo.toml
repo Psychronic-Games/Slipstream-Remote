@@ -1,0 +1,21 @@
+[package]
+name = "slipstream-relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Subspace Relay: a computer's connection through a phone's mobile data"
+
+[dependencies]
+anyhow.workspace = true
+iroh.workspace = true
+postcard = { workspace = true, features = ["use-std"] }
+serde = { workspace = true, features = ["derive"] }
+slipstream-core.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+
+# The computer's side: capture its traffic in a TUN device.
+[target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
+ipstack = "1.0.1"
+tproxy-config = { version = "7.0.9", default-features = false }
+tun = { version = "0.8.14", features = ["async"] }

@@ -454,3 +454,54 @@ pub async fn update() -> Result<()> {
     client.shutdown().await;
     result
 }
+
+/// `slipstream relay connect`: this computer's traffic through a phone's
+/// Subspace Relay until Ctrl+C.
+pub async fn relay_connect(phone: std::net::IpAddr, port: u16, dns: std::net::IpAddr) -> Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    {
+        let hello = std::net::SocketAddr::new(phone, port);
+        println!("Linking to Subspace Relay at {hello}…");
+        let client = slipstream_relay::Client::connect(hello).await?;
+        let stats = client.stats();
+        println!("Linked. All of this computer's traffic now goes through the phone; Ctrl+C to stop.");
+        let report = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                let s = stats.snapshot();
+                println!("{} connections · {:.1} MB up · {:.1} MB down", s.flows, s.up as f64 / 1e6, s.down as f64 / 1e6);
+            }
+        });
+        let opts = slipstream_relay::tunnel::TunnelOptions { dns, ..Default::default() };
+        let stop = async {
+            let _ = tokio::signal::ctrl_c().await;
+        };
+        let reason = slipstream_relay::tunnel::run(client, opts, stop).await?;
+        report.abort();
+        println!("Disconnected ({reason}); routes and DNS restored.");
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (phone, port, dns);
+        anyhow::bail!("Subspace Relay connects from Windows, macOS and Linux computers")
+    }
+}
+
+/// `slipstream relay serve`: a relay on this computer (testing).
+pub async fn relay_serve(ip: std::net::IpAddr, port: u16) -> Result<()> {
+    let server = slipstream_relay::Server::start(slipstream_relay::ServerOptions { ip, port, allow_local_targets: false }).await?;
+    println!("Subspace Relay listening on {} ({}); Ctrl+C to stop.", server.addr(), server.id());
+    let stats = server.stats();
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break,
+            _ = tokio::time::sleep(Duration::from_secs(10)) => {
+                let s = stats.snapshot();
+                println!("{} computers · {} connections · {:.1} MB up · {:.1} MB down", s.computers, s.flows, s.up as f64 / 1e6, s.down as f64 / 1e6);
+            }
+        }
+    }
+    server.stop().await;
+    Ok(())
+}

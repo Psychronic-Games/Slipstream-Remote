@@ -167,9 +167,40 @@ enum Command {
         #[command(subcommand)]
         action: ServiceCmd,
     },
+    /// Subspace Relay: use an Android phone's mobile data for this whole
+    /// computer, through the phone's Wi-Fi Direct network.
+    Relay {
+        #[command(subcommand)]
+        action: RelayCmd,
+    },
     /// Write the app icon as a PNG (used by packaging scripts).
     #[command(hide = true)]
     ExportIcon { path: std::path::PathBuf, #[arg(long, default_value_t = 256)] size: u32 },
+}
+
+#[derive(Debug, Subcommand)]
+enum RelayCmd {
+    /// Send all of this computer's traffic through the phone, until Ctrl+C.
+    /// Join the phone's Wi-Fi network first; needs administrator (root)
+    /// rights to change routes and DNS, which are put back afterwards.
+    Connect {
+        /// The phone's address on its network.
+        #[arg(long, default_value_t = slipstream_relay::proto::PHONE_IP)]
+        phone: std::net::IpAddr,
+        #[arg(long, default_value_t = slipstream_relay::proto::PORT)]
+        port: u16,
+        /// The DNS server to use while connected.
+        #[arg(long, default_value = "1.1.1.1")]
+        dns: std::net::IpAddr,
+    },
+    /// Run a relay on this computer instead of a phone (testing).
+    #[command(hide = true)]
+    Serve {
+        #[arg(long)]
+        ip: std::net::IpAddr,
+        #[arg(long, default_value_t = slipstream_relay::proto::PORT)]
+        port: u16,
+    },
 }
 
 #[cfg(windows)]
@@ -237,7 +268,8 @@ fn main() -> anyhow::Result<()> {
         }
     }
     slipstream::logging::init();
-    let provision = !matches!(args.command, Some(Command::ExportIcon { .. }));
+    // Relay commands run as administrator/root: leave settings alone.
+    let provision = !matches!(args.command, Some(Command::ExportIcon { .. } | Command::Relay { .. }));
     #[cfg(windows)]
     // Machine profiles are authoritative; unsigned station trailers must
     // not reconfigure the SYSTEM host or privileged update helper.
@@ -285,6 +317,8 @@ fn main() -> anyhow::Result<()> {
         Some(Command::EncodeTest { size }) => cli::encode_test(&size),
         Some(Command::Update) => rt.block_on(cli::update()),
         Some(Command::ExportIcon { path, size }) => gui::export_icon(&path, size),
+        Some(Command::Relay { action: RelayCmd::Connect { phone, port, dns } }) => rt.block_on(cli::relay_connect(phone, port, dns)),
+        Some(Command::Relay { action: RelayCmd::Serve { ip, port } }) => rt.block_on(cli::relay_serve(ip, port)),
         None => {
             drop(rt);
             report_crashes();

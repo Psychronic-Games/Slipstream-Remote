@@ -11,6 +11,7 @@ slipstream-session.workspace = true
 slipstream-platform.workspace = true
 slipstream-audio.workspace = true
 slipstream-codec.workspace = true
+slipstream-relay.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
