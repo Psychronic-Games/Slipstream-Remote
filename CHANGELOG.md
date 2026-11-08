@@ -13,6 +13,12 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Chat** no longer opens the workstation's screen: on Wayland no
+  screen-sharing prompt appears just to chat, and a phone that isn't sharing
+  its screen can still chat. The screen opens when you press **Connect**.
+  Remote management through a gateway computer no longer opens its screen
+  either. Both computers need this version; older ones work as before.
+
 ## 0.33.1 — 2026-11-05
 
 - The Subspace chat panel fits the window and follows the scroll beside a long

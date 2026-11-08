@@ -103,6 +103,12 @@ impl NetworkScanner {
         self.fs=fs;self.can_open_web=can_open_web;self.can_tunnel=can_tunnel;
     }
 
+    /// The host's permissions became known (a chat-only link started viewing).
+    pub fn set_permissions(&mut self, can_open_web: bool, can_tunnel: bool) {
+        self.can_open_web = can_open_web;
+        self.can_tunnel = can_tunnel;
+    }
+
     pub fn new(fs: RemoteFs, can_open_web: bool, can_tunnel: bool) -> Self {
         Self {
             open: std::env::var_os("SLIPSTREAM_TEST_NETWORK").is_some(),

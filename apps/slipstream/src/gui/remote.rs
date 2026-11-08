@@ -290,6 +290,10 @@ impl RemoteTab {
                 ViewerEvent::Stats(s) => self.stats = s,
                 ViewerEvent::StreamStarted { display, .. } => self.display = display,
                 ViewerEvent::Displays(d) => self.info.displays = d,
+                ViewerEvent::Capabilities(c) => {
+                    self.network.lock().unwrap().set_permissions(c.input, c.tunnels);
+                    self.info.capabilities = c;
+                }
                 ViewerEvent::Chat(text) => {
                     self.chat.push((false, text));
                     self.unread = !self.show_chat;

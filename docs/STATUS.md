@@ -205,10 +205,10 @@ Each step has an issue with tasks and pointers into the code in
 [issues/](issues/README.md).
 
 0. **Usability polish from production use** (ongoing), starting with the
-   open audit items that show in daily use: chat-only links shouldn't open
-   screen capture (no Wayland prompt for a chat), and under the Windows
-   service the Files window's default places and pasted files should resolve
-   to the signed-in user's folders.
+   open audit items that show in daily use: under the Windows service the
+   Files window's default places and pasted files should resolve to the
+   signed-in user's folders. (Chat-only links no longer open the screen:
+   unreleased, after 0.33.1.)
 1. **Saved-password vault** (audit, high): derive separate sign-in and vault
    keys on the client so the station never sees what opens saved passwords;
    needs a station/app migration, best done before 1.0.

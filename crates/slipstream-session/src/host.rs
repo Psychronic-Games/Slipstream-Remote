@@ -10,10 +10,10 @@ use anyhow::{Context, Result, bail};
 use iroh::endpoint::{Connection, SendStream};
 use slipstream_core::{
     auth::{HostAuth, password_secret},
-    framing::{MsgReader, expect_msg_max, write_msg},
+    framing::{MsgReader, expect_msg_max, expect_msg_with_extras, write_msg},
     proto::{
-        Capabilities, ClipboardData, DisplayInfo, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo, StreamSettings,
-        VideoFrame, ViewerMsg,
+        Capabilities, ClipboardData, DisplayInfo, HelloExtras, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
+        StreamSettings, VideoFrame, ViewerMsg,
     },
 };
 use slipstream_platform::{
@@ -73,10 +73,10 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     let (mut send, mut recv, hello) = tokio::time::timeout(AUTH_RESPONSE_WAIT, async {
         let (send, mut recv) = conn.accept_bi().await.context("waiting for control stream")?;
         send.set_priority(slipstream_core::proto::PRIORITY_CONTROL).ok();
-        let hello = expect_msg_max::<ViewerMsg>(&mut recv, PRE_AUTH_MESSAGE).await?;
+        let hello = expect_msg_with_extras::<ViewerMsg, HelloExtras>(&mut recv, PRE_AUTH_MESSAGE).await?;
         anyhow::Ok((send, recv, hello))
     }).await.context("viewer did not start authentication")??;
-    let ViewerMsg::Hello { version, viewer_name } = hello else {
+    let (ViewerMsg::Hello { version, viewer_name }, extras) = hello else {
         bail!("expected Hello");
     };
     let viewer_name: String = viewer_name.chars().take(64).collect();
@@ -161,56 +161,38 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
         }
     }
 
-    // Open (or reuse) the screen session. On Wayland the first time this
-    // shows the desktop's "allow screen sharing" dialog on this machine.
-    let backend = {
-        let open = screen_backend(&inner);
-        tokio::pin!(open);
-        // Only mention the prompt if there evidently is one (opening
-        // is instant on X11, Windows, or with a remembered permission).
-        let opened = tokio::select! {
-            r = &mut open => r,
-            _ = tokio::time::sleep(Duration::from_millis(700)) => {
-                write_msg(&mut send, &HostMsg::Notice("Preparing screen sharing on the remote computer…".into()))
-                    .await?;
-                open.await
-            }
-        };
-        match opened {
-            Ok(backend) => backend,
-            Err(e) => {
-                warn!("screen sharing unavailable: {e:#}");
-                fail(&mut send, format!("screen sharing unavailable: {e:#}"), 0).await?;
+    // A chat-only link from a current viewer doesn't open the screen until it
+    // asks to see or control it (`session_loop`), so chatting shows no
+    // screen-sharing prompt here and works on a phone that isn't sharing.
+    // Until then it gets no displays, and input as the permission says.
+    let deferred = extras.chat_only;
+    let (backend, screen) = if deferred {
+        (None, Screen { input_supported: true, ..Default::default() })
+    } else {
+        match open_screen(&inner, &mut send).await? {
+            Ok((backend, screen)) => (Some(backend), screen),
+            Err(reason) => {
+                fail(&mut send, reason, 0).await?;
                 return Ok(());
             }
         }
     };
-    let (displays, cursor_in_video, privacy, input_supported) = backend.as_ref()
-        .map(|b| (b.displays(), b.cursor_in_video(), b.privacy_supported(), b.input_supported())).unwrap_or_default();
 
-    if displays.is_empty() {
-        let reason=if cfg!(target_os="android") {
-            "On the phone, tap Start sharing and approve Android's screen-sharing prompt"
-        } else {"No screen is currently available on the remote device"};
-        fail(&mut send,reason,0).await?;
-        return Ok(());
-    }
-
-    let capabilities = Capabilities {
-        input: settings.host.allow_input && input_supported,
+    let mut capabilities = Capabilities {
+        input: settings.host.allow_input && screen.input_supported,
         clipboard: settings.host.allow_clipboard && !cfg!(target_os="android"),
         file_transfer: settings.host.allow_file_transfer && !cfg!(target_os="android"),
         audio: settings.host.allow_audio && (inner.opts.test_pattern || slipstream_audio::capture_supported()),
-        privacy,
         tunnels: settings.host.allow_tunnels,
         network_scan: settings.host.allow_network_scan && !cfg!(target_os="android"),
         chat: true,
-        cursor_in_video,
+        cursor_in_video: screen.cursor_in_video,
+        privacy: screen.privacy,
     };
     let session = SessionInfo {
         host_name: settings.device_name.clone(),
         os: slipstream_core::os_name(),
-        displays: displays.clone(),
+        displays: screen.displays.clone(),
         capabilities: capabilities.clone(),
     };
     write_msg(&mut send, &HostMsg::AuthOk { confirm, session }).await?;
@@ -224,8 +206,8 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     inner.emit(ClientEvent::HostSessionStarted { session: id, peer: viewer_name.clone() });
 
     let viewing = Arc::new(Viewing { flag: Default::default(), inner: inner.clone(), session: id });
-    let input_allowed = capabilities.input;
-    let reason = match session_loop(&inner, &conn, id, &viewer_name, send, recv, displays, capabilities, cmd_rx, viewing.clone()).await {
+    let screen = ScreenState { open: !deferred, displays: screen.displays, allow_input: settings.host.allow_input };
+    let reason = match session_loop(&inner, &conn, id, &viewer_name, send, recv, screen, &mut capabilities, cmd_rx, viewing.clone()).await {
         Ok(r) => r,
         // The video writer may observe a peer close before the control reader.
         Err(e) => conn.close_reason().map(|r| crate::closed_reason(&r, "they")).unwrap_or_else(|| format!("{e:#}")),
@@ -233,7 +215,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     // The backend is cached across connections, so dropping a viewer does
     // not drop its held keyboard/mouse state. Release it on every exit path
     // (a chat-only link never controlled anything: leave other sessions be).
-    if input_allowed && viewing.get() && let Some(backend) = inner.backend.lock().await.as_mut() {
+    if capabilities.input && viewing.get() && let Some(backend) = inner.backend.lock().await.as_mut() {
         let display = backend.displays().first().map(|d| d.index).unwrap_or(0);
         let _ = backend.inject(display, InputEvent::ReleaseAll);
     }
@@ -252,6 +234,95 @@ fn rotate_password(inner: &Inner) {
     let pw = slipstream_core::auth::generate_password(len);
     *inner.password.lock().unwrap() = pw.clone();
     inner.emit(ClientEvent::Password(pw));
+}
+
+/// What the opened screen offers a session.
+#[derive(Default)]
+struct Screen {
+    displays: Vec<DisplayInfo>,
+    cursor_in_video: bool,
+    privacy: bool,
+    input_supported: bool,
+}
+
+type BackendGuard<'a> = tokio::sync::MutexGuard<'a, Option<Box<dyn slipstream_platform::Backend>>>;
+
+/// Opens (or reuses) the screen session. On Wayland the first time this
+/// shows the desktop's "allow screen sharing" dialog on this machine. The
+/// outer error is the control stream failing; the inner one, why the screen
+/// can't be shared (for the viewer).
+async fn open_screen<'a>(inner: &'a Inner, send: &mut SendStream) -> Result<Result<(BackendGuard<'a>, Screen), String>> {
+    let open = screen_backend(inner);
+    tokio::pin!(open);
+    // Only mention the prompt if there evidently is one (opening
+    // is instant on X11, Windows, or with a remembered permission).
+    let opened = tokio::select! {
+        r = &mut open => r,
+        _ = tokio::time::sleep(Duration::from_millis(700)) => {
+            write_msg(send, &HostMsg::Notice("Preparing screen sharing on the remote computer…".into())).await?;
+            open.await
+        }
+    };
+    let backend = match opened {
+        Ok(backend) => backend,
+        Err(e) => {
+            warn!("screen sharing unavailable: {e:#}");
+            return Ok(Err(format!("screen sharing unavailable: {e:#}")));
+        }
+    };
+    let screen = backend.as_ref().map(|b| Screen {
+        displays: b.displays(),
+        cursor_in_video: b.cursor_in_video(),
+        privacy: b.privacy_supported(),
+        input_supported: b.input_supported(),
+    }).unwrap_or_default();
+    if screen.displays.is_empty() {
+        let reason = if cfg!(target_os = "android") {
+            "On the phone, tap Start sharing and approve Android's screen-sharing prompt"
+        } else {
+            "No screen is currently available on the remote device"
+        };
+        return Ok(Err(reason.into()));
+    }
+    Ok(Ok((backend, screen)))
+}
+
+/// A session's view of the screen: a chat-only link starts with it closed.
+struct ScreenState {
+    open: bool,
+    displays: Vec<DisplayInfo>,
+    /// Host permission, applied once the screen says whether it takes input.
+    allow_input: bool,
+}
+
+impl ScreenState {
+    /// Opens a chat-only link's screen on its first request to see or
+    /// control it, and tells the viewer what it now has. False (after a
+    /// notice) if it can't be opened; the chat carries on and a later
+    /// request tries again.
+    async fn ensure_open(&mut self, inner: &Inner, send: &mut SendStream, caps: &mut Capabilities) -> Result<bool> {
+        if self.open {
+            return Ok(true);
+        }
+        let screen = match open_screen(inner, send).await? {
+            Ok((backend, screen)) => {
+                drop(backend);
+                screen
+            }
+            Err(reason) => {
+                write_msg(send, &HostMsg::Notice(reason)).await?;
+                return Ok(false);
+            }
+        };
+        caps.input = self.allow_input && screen.input_supported;
+        caps.privacy = screen.privacy;
+        caps.cursor_in_video = screen.cursor_in_video;
+        self.displays = screen.displays;
+        self.open = true;
+        write_msg(send, &HostMsg::Capabilities(caps.clone())).await?;
+        write_msg(send, &HostMsg::Displays(self.displays.clone())).await?;
+        Ok(true)
+    }
 }
 
 /// Shared by local approval and incoming sessions, so preparing access never
@@ -394,8 +465,8 @@ async fn session_loop(
     viewer: &str,
     mut send: SendStream,
     recv: iroh::endpoint::RecvStream,
-    displays: Vec<DisplayInfo>,
-    caps: Capabilities,
+    mut screen: ScreenState,
+    caps: &mut Capabilities,
     mut cmds: mpsc::UnboundedReceiver<HostSessionCmd>,
     viewing: Arc<Viewing>,
 ) -> Result<String> {
@@ -446,7 +517,7 @@ async fn session_loop(
     let flow = Flow::new();
     let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();
     let mut pipeline: Option<Pipeline> = None;
-    let mut display = displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
+    let mut display = screen.displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
     // The host's sound, while the viewer wants it (capture stops on drop).
     let mut _audio: Option<slipstream_audio::Capture> = None;
     // Privacy mode, lifted however the session ends.
@@ -487,7 +558,8 @@ async fn session_loop(
                 return Ok(reason);
             }
             _ = desktop_tick.tick() => {
-                if desktop_hidden() {
+                // A chat-only link isn't looking at the screen.
+                if viewing.get() && desktop_hidden() {
                     let due = hidden_since.is_none_or(|t| t.elapsed() >= Duration::from_secs(15));
                     if due {
                         hidden_since = Some(Instant::now());
@@ -507,11 +579,20 @@ async fn session_loop(
                 match msg {
                     ViewerMsg::StartStream { display: d, settings } => {
                         viewing.note();
-                        let Some(info) = displays.iter().find(|x| x.index == d) else {
+                        let was_open = screen.open;
+                        if !screen.ensure_open(inner, &mut send, caps).await? {
+                            continue;
+                        }
+                        let info = screen.displays.iter().find(|x| x.index == d).or_else(|| {
+                            // A chat-only link asked before it knew the displays: show the main one.
+                            if was_open { return None; }
+                            screen.displays.iter().find(|x| x.primary).or(screen.displays.first())
+                        }).cloned();
+                        let Some(info) = info else {
                             write_msg(&mut send, &HostMsg::Notice(format!("no display {d}"))).await?;
                             continue;
                         };
-                        display = d;
+                        display = info.index;
                         let stream_settings = sanitize_settings(settings);
                         drop(pipeline.take()); // stop the old capture first
                         match open_capture(inner, display, stream_settings.max_fps).await? {
@@ -543,6 +624,8 @@ async fn session_loop(
                         if let Some(p) = &pipeline { p.request_keyframe(); }
                     }
                     ViewerMsg::Input(ev) => {
+                        // Nothing to control before the viewer has asked to see the screen.
+                        if !screen.open { continue; }
                         if caps.input { viewing.note(); }
                         if cfg!(windows) && caps.input && wants_sas(&mut held_mods, &ev) && !service_mode() {
                             write_msg(&mut send, &HostMsg::Notice(SAS_NOTICE.into())).await?;

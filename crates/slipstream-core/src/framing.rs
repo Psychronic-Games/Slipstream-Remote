@@ -84,7 +84,65 @@ pub async fn expect_msg<T: DeserializeOwned>(recv: &mut RecvStream) -> Result<T>
     read_msg(recv).await?.context("peer closed the stream")
 }
 
+/// [`expect_msg_max`] for a message that may carry optional extras after it
+/// in the same frame (see `proto::HelloExtras`). Missing extras, or ones
+/// that don't decode, read as the default.
+pub async fn expect_msg_with_extras<T: DeserializeOwned, E: DeserializeOwned + Default>(
+    recv: &mut RecvStream,
+    max: usize,
+) -> Result<(T, E)> {
+    let mut len = [0u8; 4];
+    recv.read_exact(&mut len).await.context("stream read")?;
+    let len = u32::from_le_bytes(len) as usize;
+    if len > max.min(MAX_MESSAGE) {
+        bail!("peer sent oversized message: {len} bytes");
+    }
+    let mut body = vec![0u8; len];
+    recv.read_exact(&mut body).await.context("stream read")?;
+    decode_with_extras(&body)
+}
+
+fn decode_with_extras<T: DeserializeOwned, E: DeserializeOwned + Default>(body: &[u8]) -> Result<(T, E)> {
+    let (msg, rest) = postcard::take_from_bytes::<T>(body)?;
+    let extras = if rest.is_empty() { E::default() } else { postcard::from_bytes(rest).unwrap_or_default() };
+    Ok((msg, extras))
+}
+
 /// [`expect_msg`] with [`read_msg_max`]'s limit.
 pub async fn expect_msg_max<T: DeserializeOwned>(recv: &mut RecvStream, max: usize) -> Result<T> {
     read_msg_max(recv, max).await?.context("peer closed the stream")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::{HelloExtras, ViewerMsg};
+
+    fn hello() -> ViewerMsg {
+        ViewerMsg::Hello { version: 6, viewer_name: "viewer".into() }
+    }
+
+    #[test]
+    fn hello_extras_stay_compatible_both_ways() {
+        let extras = HelloExtras { chat_only: true };
+        let with = postcard::to_stdvec(&(hello(), extras.clone())).unwrap();
+        let without = postcard::to_stdvec(&hello()).unwrap();
+
+        // A host that predates the extras reads just the Hello.
+        let old: ViewerMsg = postcard::from_bytes(&with).unwrap();
+        assert!(matches!(old, ViewerMsg::Hello { version: 6, .. }));
+
+        // A current host reads them, and an older viewer's Hello as the default.
+        let (msg, read) = decode_with_extras::<ViewerMsg, HelloExtras>(&with).unwrap();
+        assert!(matches!(msg, ViewerMsg::Hello { .. }));
+        assert_eq!(read, extras);
+        let (_, read) = decode_with_extras::<ViewerMsg, HelloExtras>(&without).unwrap();
+        assert_eq!(read, HelloExtras::default());
+
+        // Unreadable extras fall back to the default rather than failing.
+        let mut junk = without.clone();
+        junk.push(7);
+        let (_, read) = decode_with_extras::<ViewerMsg, HelloExtras>(&junk).unwrap();
+        assert_eq!(read, HelloExtras::default());
+    }
 }

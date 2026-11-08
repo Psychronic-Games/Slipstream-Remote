@@ -194,8 +194,24 @@ portal prompt.
   and starts the clipboard and sound as the viewer's settings ask; repeats
   are ignored. The Windows service bridge carries the state as
   `Session.viewing: Option<bool>`; services before 0.33 omit it, which the
-  GUI reads as viewing. The link still opens the screen backend at sign-in
-  (see the 2026-11-05 audit's open items).
+  GUI reads as viewing.
+
+  The screen opens late (still protocol 6): the viewer writes
+  `HelloExtras { chat_only: true }` after `ViewerMsg::Hello` in the same
+  message. Older hosts stop reading after the `Hello` (postcard ignores
+  trailing bytes) and open their screen at sign-in as before. A current
+  host (`framing::expect_msg_with_extras`) then answers `AuthOk` with no
+  displays and input as the permission says, without opening the screen
+  backend, so there's no Wayland prompt and a phone that isn't sharing can
+  chat. Remote-management gateway links benefit too. The first `StartStream`
+  opens it (`host::ScreenState::ensure_open`, with the usual *Preparing
+  screen sharing* notice) and sends `HostMsg::Capabilities` (input, privacy,
+  pointer) then `HostMsg::Displays`, and streams the main display if the
+  one asked for is unknown. Only viewers that sent the extras receive
+  `HostMsg::Capabilities`, a variant older viewers can't decode. Input
+  before that is dropped. If the screen can't open, the viewer gets a
+  notice, the chat carries on, and the next `StartStream` tries again.
+  Windows lock-screen notices wait until the link views.
 * **Restarts** (`StreamOpen::Power { action }`, appended; older hosts refuse
   the stream): the host checks Control permission, answers `Done`, then
   restarts after five seconds (`power.rs`). Windows uses `shutdown /r` (`/fw`

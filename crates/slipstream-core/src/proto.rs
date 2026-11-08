@@ -74,6 +74,25 @@ pub enum HostMsg {
     /// A non-fatal problem the viewer should show to the user.
     Notice(String),
     Bye { reason: String },
+    /// The session's capabilities changed: a chat-only link's screen opened
+    /// on its first request to view, so input, privacy and pointer support
+    /// are now known. Sent only to viewers that sent [`HelloExtras`] (older
+    /// viewers can't decode it).
+    Capabilities(Capabilities),
+}
+
+/// Optional additions to [`ViewerMsg::Hello`], written after it in the same
+/// message. Hosts that predate them stop reading after the `Hello` (postcard
+/// ignores trailing bytes), and a `Hello` without them reads as the
+/// default, so this needs no protocol version change. Only ever append
+/// fields: a host reads a newer, longer value and ignores what it doesn't
+/// know.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HelloExtras {
+    /// The viewer wants chat only for now: the host doesn't open its screen
+    /// until the viewer asks to see or control it, so no screen-sharing
+    /// prompt appears (and a phone that isn't sharing can still chat).
+    pub chat_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

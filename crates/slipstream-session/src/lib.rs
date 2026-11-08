@@ -1850,11 +1850,22 @@ mod tests {
         assert!(!early.iter().any(|e| e.contains("HostSessionViewing")), "reported as viewing: {early:?}");
         assert!(matches!(&*viewer_clip.lock().unwrap(), Some(Clip::Text(t)) if t == "copied on viewer"), "host clipboard leaked");
         assert!(matches!(&*host_clip.lock().unwrap(), Some(Clip::Text(t)) if t == "copied on host"), "viewer clipboard leaked");
+        // The host's screen was never opened (no Wayland prompt for a chat),
+        // so the link learned no displays.
+        assert!(host.inner.backend.lock().await.is_none(), "screen opened for a chat");
+        assert!(session.info().displays.is_empty());
 
-        // Turned into a session: the host says so, and the picture flows.
+        // Turned into a session: the host says so, opens its screen, tells
+        // the viewer what it has, and the picture flows.
         session.send(ViewerCmd::StartViewing);
         assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::HostSessionViewing { session } if *session == id)).await);
-        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::StreamStarted { .. })).await);
+        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Capabilities(c) if c.input && c.chat)).await);
+        let mut shown = None;
+        assert!(wait_for(&mut events, |e| match e {
+            ViewerEvent::Displays(d) => { shown = d.first().map(|d| d.index); d.len() == 1 && d[0].width == 1280 }
+            _ => false,
+        }).await, "displays sent once the screen opened");
+        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::StreamStarted { display, .. } if Some(*display) == shown)).await);
         assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Stats(s) if s.fps > 5.0)).await, "video flowing");
         // A second StartViewing changes nothing.
         session.send(ViewerCmd::StartViewing);

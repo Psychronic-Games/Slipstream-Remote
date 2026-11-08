@@ -18,7 +18,7 @@ use slipstream_core::{
     directory::DeviceId,
     framing::{MsgReader, expect_msg_max, read_msg, write_msg},
     proto::{
-        ALPN_REMOTE, ClipFile, ClipboardData, DisplayInfo, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
+        ALPN_REMOTE, Capabilities, ClipFile, ClipboardData, DisplayInfo, HelloExtras, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
         StreamSettings, UploadTarget, VideoFrame, ViewerMsg,
     },
 };
@@ -73,6 +73,8 @@ pub enum AudioOut {
 pub enum ViewerEvent {
     StreamStarted { display: u32, width: u32, height: u32 },
     Displays(Vec<DisplayInfo>),
+    /// What the host can do changed (a chat-only link's screen opened).
+    Capabilities(Capabilities),
     Chat(String),
     Notice(String),
     Stats(ViewerStats),
@@ -330,7 +332,10 @@ pub(crate) async fn connect(
         .context("could not reach the device")?;
     let (mut send, mut recv) = conn.open_bi().await?;
     send.set_priority(slipstream_core::proto::PRIORITY_CONTROL).ok();
-    write_msg(&mut send, &ViewerMsg::Hello { version: PROTOCOL_VERSION, viewer_name }).await?;
+    // A chat-only link asks the host not to open its screen yet (older hosts
+    // ignore the extras and open it as before).
+    let hello = ViewerMsg::Hello { version: PROTOCOL_VERSION, viewer_name };
+    write_msg(&mut send, &(hello, HelloExtras { chat_only: mode == LinkMode::ChatOnly })).await?;
 
     on_progress("Authenticating…".into());
     let pakes = match expect_msg_max::<HostMsg>(&mut recv, PRE_AUTH_MESSAGE).await? {
@@ -592,6 +597,7 @@ async fn session(
                         let _ = events.send(ViewerEvent::StreamStarted { display, width, height });
                     }
                     HostMsg::Displays(d) => { let _ = events.send(ViewerEvent::Displays(d)); }
+                    HostMsg::Capabilities(c) => { let _ = events.send(ViewerEvent::Capabilities(c)); }
                     HostMsg::Clipboard(ClipboardData::Text(t)) => {
                         if let Some(c) = &clipboard { c.set_text(t); }
                     }
