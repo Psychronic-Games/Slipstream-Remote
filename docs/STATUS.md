@@ -72,6 +72,8 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.34.2**: the Android app installs its own updates; Subspace Relay's
+  band back to automatic, DNS lookups no longer inflate its connection count.
 - **0.34.1**: Subspace Relay runs in its own process on the phone, uses
   2.4 GHz by default (5 GHz made Linux computers cut their transmit power),
   and computers connect by themselves to phones they've used.
