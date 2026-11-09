@@ -67,10 +67,12 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         ui.add_space(16.0);
         connect_panel(app, ui);
     }
-    ui.add_space(20.0);
-    devices_and_chats(app, ui);
+    // Recents (at most 12) above saved devices, which can run as long as
+    // they like without pushing recents out of sight.
     ui.add_space(20.0);
     recent_panel(app, ui);
+    ui.add_space(20.0);
+    devices_and_chats(app, ui);
 }
 
 /// Saved devices, and once a chat is open, Subspace chat beside them on a
