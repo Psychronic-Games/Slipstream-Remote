@@ -122,6 +122,7 @@ Recent releases:
 | Signed update installs; tampered, unsigned and foreign manifests and a swapped binary are refused | ✅ against a local station |
 | Windows build under Wine: host at 1440p/60 fps, GUI | ✅ |
 | Compact window (no usable GPU, e.g. Windows Server 2016): ID/password/status, being controlled | ✅ under Wine (forced); on real Server 2016 by the user |
+| Graphics drivers that crash, hang or fail (Windows): probed in a separate process, restart on the next API down to the compact window | ✅ under Wine with imitated crashes, hangs, panics and errors at every step, and Wine's real Direct3D 12 shader failure. ⚠️ To confirm on the Intel integrated-graphics machines that showed it |
 | Full window through the built-in software renderer (Mesa llvmpipe) | ✅ on real Windows Server 2016 (VMware VM), through the copy of the app beside Mesa (loading Mesa in-process found no adapter there). Idle CPU use cut by slower animations on llvmpipe (0.6.0); not re-measured |
 | Linux → Windows Server 2016 VM over the internet | ✅ direct path, 20–50 ms round trip. Earlier measurements: DXGI capture 1.8 ms/frame, encoding 23 ms/frame, about 34 fps. Current camera-mode encoding needs remeasurement there; Speed/Low bandwidth can reduce moving-picture resolution, while Balanced/Quality preserve resolution. |
 | File manager, chat, clipboard | ✅ end-to-end tests; real KDE clipboard; Windows host under Wine |

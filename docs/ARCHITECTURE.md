@@ -949,11 +949,37 @@ CPU renderer (Mesa llvmpipe, detected from the adapter) animations run at 8
 frames a second, 2 when unfocused; input and new video still redraw at
 once.
 
-**No usable GPU** (Windows Server 2016, VMs without a display driver):
-release builds embed Mesa's llvmpipe OpenGL driver (`gui/softgl.rs`). It's
-unpacked per user and loaded in-process, or, where that fails, a copy of
-the app runs from beside Mesa's DLLs. A start marker falls back to the
-native compact window (`gui/lite.rs`) after a crash. The
+**Graphics that don't work** (`gui/graphics.rs`, Windows): the full window
+is drawn with the first of Vulkan, Direct3D 12, the system's OpenGL, Mesa's
+llvmpipe (embedded in release builds, `gui/softgl.rs`: unpacked per user
+and loaded in-process, or, where that fails, from a copy of the app beside
+Mesa's DLLs) that works; if none does, the native compact window
+(`gui/lite.rs`) comes up instead. "Works" is established without trusting
+the drivers, because a broken one crashes or hangs whoever loads it (old
+Intel Vulkan drivers) instead of reporting an error:
+
+- Each of Vulkan, Direct3D 12 and OpenGL is first tried in a throwaway
+  copy of the app (`SLIPSTREAM_PROBE_GRAPHICS`), which makes a device as
+  the window would and has 10 s. A crash, hang or error there passes that
+  API over; a graphics card on any API is preferred to a processor
+  renderer (WARP).
+- The app then creates its wgpu instance for that one API only, so the
+  other drivers are never loaded into it.
+- Until the first frame has been shown, `%LOCALAPPDATA%\Slipstream\…\graphics\starting`
+  names the API in use. A crash in that time (an unhandled-exception
+  filter, which also notes the faulting module for the log), a main-thread
+  panic (wgpu's fatal errors) or an error from eframe starts the app again
+  with that API added to `graphics\failed`, and so on down to the compact
+  window. A marker merely left behind (a hang, power loss) counts the
+  second time in a row.
+- `failed` belongs to one build: an update tries everything again, as does
+  the compact window's **Full window** button.
+
+`slipstream.log` says which API was tried, why one was passed over and
+which one draws. The same summary is the **Slipstream window** row of the
+system report's Graphics section (`machine::set_app_graphics`, all
+platforms); the Windows service's host gets it from the user's app in the
+local pipe's hello. The
 host-side chat is a separate native window (an egui *deferred* viewport;
 immediate viewports don't map on KDE Wayland).
 

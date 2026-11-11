@@ -29,6 +29,10 @@ mod manage;
 mod scheme;
 #[cfg(windows)]
 mod softgl;
+#[cfg(any(windows, test))]
+mod graphics;
+#[cfg(windows)]
+pub use graphics::{ENV_PROBE as GRAPHICS_PROBE, probe as probe_graphics, start_failed as graphics_start_failed};
 mod settings;
 #[cfg(target_os = "linux")]
 mod screen_access;
@@ -140,17 +144,18 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     let sync_service = via_service && !opts.test_pattern && opts.screenshot.is_none()
         && !crate::service::update_in_progress() && crate::service::needs_app_update().unwrap_or(false);
 
-    // Graphics wgpu can't use (Windows Server 2016's Direct3D 12 can't run
-    // the shaders it needs, for one) get the built-in software renderer,
-    // and if even that can't draw, the compact native window: the computer
-    // can still be controlled.
+    // Whatever the graphics drivers do (missing, too old, crashing), a
+    // window comes up: see `graphics`. If nothing can draw the full one,
+    // it's the compact native window: the computer can still be controlled.
     #[cfg(windows)]
     {
-        let renderer = if std::env::var_os("SLIPSTREAM_LITE").is_some() { Renderer::Compact } else { pick_renderer(&rt) };
+        use graphics::Renderer;
+        let renderer = if std::env::var_os("SLIPSTREAM_LITE").is_some() { Renderer::Compact } else { graphics::pick(&rt) };
         match renderer {
             Renderer::Full => {}
             Renderer::Compact => {
                 tracing::warn!("no usable graphics: using the compact window");
+                graphics::report(if std::env::var_os("SLIPSTREAM_LITE").is_some() { "Compact window (asked for)" } else { "Compact window (no graphics driver could draw the full one)" });
                 return lite::run(rt, client, events, instance, opts.screenshot, via_service, sync_service);
             }
             Renderer::Relaunch(exe) => {
@@ -192,10 +197,17 @@ pub fn run(opts: GuiOptions) -> Result<()> {
         // (this saves a refresh interval, ~17 ms at 60 Hz).
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             surface: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY,
-            wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(eframe::egui_wgpu::WgpuSetupCreateNew {
-                native_adapter_selector: Some(Arc::new(video::pick_adapter)),
+            wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew({
                 // eframe fills in the display handle.
-                ..eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle()
+                let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+                setup.native_adapter_selector = Some(Arc::new(video::pick_adapter));
+                // Only the graphics API that was tried and works: a broken
+                // driver for another one is never loaded.
+                #[cfg(windows)]
+                if let Some(backends) = graphics::backends() {
+                    setup.instance_descriptor.backends = backends;
+                }
+                setup
             }),
             ..Default::default()
         },
@@ -205,10 +217,14 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     };
     let rt2 = rt.clone();
     let client2 = client.clone();
-    eframe::run_native(
+    let ran = eframe::run_native(
         "Slipstream Remote",
         options,
         Box::new(move |cc| {
+            #[cfg(windows)]
+            if let Some(e) = graphics::test_start_error() {
+                return Err(e.into());
+            }
             theme::install(&cc.egui_ctx);
             // SLIPSTREAM_TEST_ZOOM=2: a desktop window drawn like a phone's
             // (screenshots of the narrow layout).
@@ -220,6 +236,11 @@ pub fn run(opts: GuiOptions) -> Result<()> {
                 android::install(app.clone(), &cc.egui_ctx);
             }
             let render_state = cc.wgpu_render_state.clone().ok_or("the wgpu renderer is required")?;
+            let how = video::describe(&render_state.adapter.get_info());
+            #[cfg(windows)]
+            graphics::report(&how);
+            #[cfg(not(windows))]
+            slipstream_platform::machine::set_app_graphics(&how);
             video::install(&render_state);
             let mut app = App::new(cc.egui_ctx.clone(), rt2, client2, events, render_state);
             app.page = match opts.page.as_deref() {
@@ -274,7 +295,17 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             Ok(Box::new(app))
         }),
     )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    .map_err(|e| anyhow::anyhow!("{e}"));
+    // The graphics chosen couldn't start the window after all: the app is
+    // starting again with the next option.
+    #[cfg(windows)]
+    if let Err(e) = &ran
+        && graphics::start_failed(&format!("{e:#}"))
+    {
+        rt.block_on(client.shutdown());
+        return Ok(());
+    }
+    ran?;
     rt.block_on(client.shutdown());
     Ok(())
 }
@@ -1632,165 +1663,6 @@ impl App {
     }
 }
 
-#[cfg(windows)]
-enum Renderer {
-    Full,
-    Compact,
-    /// Run this copy of the app instead (see `softgl::prepare_beside`).
-    Relaunch(std::path::PathBuf),
-}
-
-/// Decides how the full window draws: Direct3D 12 or Vulkan if wgpu can use
-/// them, else the system's OpenGL (checked in a separate process, so its
-/// opengl32.dll never loads into this one), else the built-in software
-/// renderer: loaded here, or failing that from a copy of the app beside it.
-#[cfg(windows)]
-fn pick_renderer(rt: &tokio::runtime::Runtime) -> Renderer {
-    softgl::note_build();
-    if pick_hardware_or_software(rt) {
-        return Renderer::Full;
-    }
-    // The software renderer didn't draw from here: try the copy beside it
-    // (once: the copy itself goes to the compact window).
-    if softgl::running_beside() || softgl::problem().is_none() || softgl::failed_before() {
-        return Renderer::Compact;
-    }
-    match softgl::prepare_beside() {
-        Ok(exe) => {
-            softgl::retry();
-            Renderer::Relaunch(exe)
-        }
-        Err(e) => {
-            softgl::set_problem(format!("{e:#}"));
-            Renderer::Compact
-        }
-    }
-}
-
-#[cfg(windows)]
-fn pick_hardware_or_software(rt: &tokio::runtime::Runtime) -> bool {
-    use eframe::egui_wgpu::wgpu::Backends;
-    // SLIPSTREAM_SOFTWARE_RENDERER=1 goes straight to it (troubleshooting).
-    let forced = std::env::var_os("SLIPSTREAM_SOFTWARE_RENDERER").is_some();
-    if !forced && count_adapters(rt, Backends::DX12 | Backends::VULKAN) > 0 {
-        return true;
-    }
-    if !forced && system_gl_works() {
-        tracing::info!("using the system's OpenGL");
-        return true;
-    }
-    if let Err(e) = softgl::prepare() {
-        softgl::set_problem(format!("{e:#}"));
-        return false;
-    }
-    // SLIPSTREAM_TEST_BESIDE=1: fail here, to test the copy beside Mesa.
-    if std::env::var_os("SLIPSTREAM_TEST_BESIDE").is_some() && !softgl::running_beside() {
-        softgl::set_problem("test: not from here".into());
-        softgl::retry();
-        return false;
-    }
-    if !use_software_gl() {
-        softgl::retry();
-        return false;
-    }
-    if count_adapters(rt, Backends::GL) > 0 {
-        return true;
-    }
-    softgl::set_problem(gl_problem());
-    softgl::retry(); // couldn't even start: not a crash, try again next time
-    false
-}
-
-/// Why OpenGL (here: the software renderer) offers wgpu nothing, from the
-/// OpenGL backend itself.
-#[cfg(windows)]
-fn gl_problem() -> String {
-    use wgpu_hal::Instance as _;
-    let desc = wgpu_hal::InstanceDescriptor {
-        name: "slipstream",
-        flags: eframe::egui_wgpu::wgpu::InstanceFlags::empty(),
-        memory_budget_thresholds: Default::default(),
-        backend_options: Default::default(),
-        telemetry: None,
-        display: None,
-    };
-    // SAFETY: creating and dropping a throwaway OpenGL instance.
-    match unsafe { wgpu_hal::gles::Instance::init(&desc) } {
-        Err(e) => format!("the software renderer's OpenGL didn't start ({e})"),
-        Ok(instance) => match unsafe { instance.enumerate_adapters(None) }.len() {
-            0 => "the software renderer's OpenGL started but offered no usable adapter".into(),
-            n => format!("the software renderer has {n} OpenGL adapter(s), but they weren't listed"),
-        },
-    }
-}
-
-/// Runs `slipstream` again with SLIPSTREAM_PROBE_GL set ([`probe_gl`]) and
-/// waits up to 10 s for its verdict.
-#[cfg(windows)]
-fn system_gl_works() -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
-    let Ok(mut child) = std::process::Command::new(exe).env("SLIPSTREAM_PROBE_GL", "1").spawn() else { return false };
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
-            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
-            _ => {
-                let _ = child.kill();
-                return false;
-            }
-        }
-    }
-}
-
-/// The probe process: exit code 0 when the system's OpenGL is enough for
-/// wgpu (a real driver; the GDI one that ships with Windows isn't).
-#[cfg(windows)]
-pub fn probe_gl() -> i32 {
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread().build() else { return 1 };
-    if count_adapters(&rt, eframe::egui_wgpu::wgpu::Backends::GL) > 0 { 0 } else { 1 }
-}
-
-/// Makes Mesa's `opengl32.dll` (unpacked by `softgl::prepare`) the one this
-/// process uses, with its CPU renderer.
-#[cfg(windows)]
-fn use_software_gl() -> bool {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::System::LibraryLoader::{LoadLibraryW, SetDllDirectoryW};
-    let dir = softgl::dir();
-    let wide = |p: &std::path::Path| p.as_os_str().encode_wide().chain([0]).collect::<Vec<u16>>();
-    // SAFETY: NUL-terminated paths. Setting the variable is sound: nothing
-    // else reads the environment while the app starts up.
-    let loaded = unsafe {
-        std::env::set_var("GALLIUM_DRIVER", "llvmpipe");
-        // Mesa's opengl32.dll finds libgallium_wgl.dll through this folder.
-        SetDllDirectoryW(wide(&dir).as_ptr());
-        // Loaded by full path now, it's the opengl32.dll that wgpu's later
-        // by-name loads get (opengl32 is delay-loaded, see build.rs).
-        !LoadLibraryW(wide(&dir.join("opengl32.dll")).as_ptr()).is_null()
-    };
-    if !loaded {
-        let e = std::io::Error::last_os_error();
-        softgl::set_problem(format!("Windows wouldn't load the software renderer ({e})"));
-        return false;
-    }
-    tracing::info!(dir = %dir.display(), "using the built-in software renderer");
-    true
-}
-
-/// How many adapters wgpu finds on these backends.
-#[cfg(windows)]
-fn count_adapters(rt: &tokio::runtime::Runtime, backends: eframe::egui_wgpu::wgpu::Backends) -> usize {
-    use eframe::egui_wgpu::{WgpuSetupCreateNew, wgpu};
-    let instance = wgpu::Instance::new(WgpuSetupCreateNew::without_display_handle().instance_descriptor);
-    let adapters = rt.block_on(instance.enumerate_adapters(backends));
-    for a in &adapters {
-        let info = a.get_info();
-        tracing::info!(name = %info.name, backend = ?info.backend, kind = ?info.device_type, "graphics adapter found");
-    }
-    adapters.len()
-}
-
 /// "Slipstream Remote - Acme IT" (matches the station's download names).
 fn window_title(org: Option<&str>) -> String {
     match org.map(str::trim).filter(|o| !o.is_empty() && !o.eq_ignore_ascii_case("Slipstream Remote")) {
@@ -1958,8 +1830,7 @@ impl eframe::App for App {
             && let Some(rs) = frame.wgpu_render_state()
         {
             let info = rs.adapter.get_info();
-            let software = info.device_type == eframe::egui_wgpu::wgpu::DeviceType::Cpu
-                || ["llvmpipe", "softpipe", "swiftshader", "microsoft basic render"].iter().any(|n| info.name.to_lowercase().contains(n));
+            let software = video::draws_on_processor(&info);
             if software {
                 tracing::info!("{} draws on the processor: animations run slowly to spare it", info.name);
             }
@@ -2124,7 +1995,7 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         #[cfg(windows)]
-        softgl::started();
+        graphics::frame();
         let ctx = ui.ctx().clone();
         let workstation = if let Page::Remote(id) = self.page { self.tab(id).map(|t| t.lock().unwrap().info.host_name.clone()) } else { None };
         let body = theme::native_session_title_bar(ui, &window_title(self.org.as_deref()), workstation.as_deref());

@@ -10,6 +10,21 @@ use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, Re
 #[path = "machine_serial.rs"]
 mod serial;
 
+/// How the Slipstream app on this computer draws its window ("Direct3D 12 ·
+/// Intel HD Graphics 4600; passed over: Vulkan (crashed when tried)"), for
+/// the report's Graphics section. Set by the app itself, or handed to the
+/// Windows service's host by the signed-in user's app.
+static APP_GRAPHICS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn set_app_graphics(text: &str) {
+    let line: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).take(400).collect();
+    *APP_GRAPHICS.lock().unwrap() = Some(line.trim().to_string()).filter(|l| !l.is_empty());
+}
+
+pub fn app_graphics() -> Option<String> {
+    APP_GRAPHICS.lock().unwrap().clone()
+}
+
 pub fn collect() -> Vec<InfoSection> {
     let mut sys = System::new_with_specifics(
         RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()).with_memory(MemoryRefreshKind::everything()),
@@ -99,6 +114,7 @@ pub fn collect() -> Vec<InfoSection> {
     for (i, g) in gpus.iter().enumerate() {
         gpu.row(if gpus.len() > 1 { format!("Adapter {}", i + 1) } else { "Adapter".into() }, Some(g.clone()));
     }
+    gpu.row("Slipstream window", app_graphics());
     out.push(gpu.done());
 
     let mut storage = Section::new("Storage");
@@ -900,6 +916,14 @@ fn hardware() -> Hardware {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn app_graphics_is_one_capped_line() {
+        super::set_app_graphics(" Vulkan\n\u{7}NVIDIA ");
+        assert_eq!(super::app_graphics().as_deref(), Some("Vulkan  NVIDIA"));
+        super::set_app_graphics(&"x".repeat(1000));
+        assert_eq!(super::app_graphics().map(|l| l.len()), Some(400));
+    }
+
     #[test]
     fn station_summary_reports_hardware() {
         let summary = super::station_inventory(false);

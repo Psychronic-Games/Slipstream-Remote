@@ -255,10 +255,10 @@ enum ServiceCmd {
 }
 
 fn main() -> anyhow::Result<()> {
-    // A copy started to test the system's OpenGL (see gui::pick_renderer).
+    // A copy started to try one graphics driver (see gui::graphics).
     #[cfg(windows)]
-    if std::env::var_os("SLIPSTREAM_PROBE_GL").is_some() {
-        std::process::exit(gui::probe_gl());
+    if let Ok(which) = std::env::var(gui::GRAPHICS_PROBE) {
+        std::process::exit(gui::probe_graphics(&which));
     }
     #[cfg(windows)]
     attach_parent_console();
@@ -374,6 +374,15 @@ fn report_crashes() {
         let thread = std::thread::current().name().unwrap_or("?").to_string();
         tracing::error!(%thread, "panic: {info}");
         if thread == "main" {
+            // While the window is still starting, the graphics get the
+            // blame: the app starts again with the next way to draw it.
+            #[cfg(windows)]
+            if gui::graphics_start_failed(&info.to_string()) {
+                // SAFETY: ends this process; nothing runs after it.
+                unsafe {
+                    windows_sys::Win32::System::Threading::TerminateProcess(windows_sys::Win32::System::Threading::GetCurrentProcess(), 1);
+                }
+            }
             fatal(&format!("Slipstream Remote stopped unexpectedly:\n\n{info}"));
         }
         default(info);

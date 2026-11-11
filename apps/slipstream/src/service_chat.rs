@@ -96,6 +96,10 @@ struct Challenge {
     /// This window can answer link approvals.
     #[serde(default)]
     link_approvals: bool,
+    /// How this app draws its window, for the host's system report
+    /// (`machine::set_app_graphics`, which keeps it to one short line).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    graphics: Option<String>,
 }
 #[cfg(windows)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -543,6 +547,9 @@ mod native {
         let hello: Challenge = tokio::time::timeout(Duration::from_secs(3), read(&mut pipe)).await??;
         let signature = key.sign(&challenge_message(&hello.nonce, session)).to_bytes().to_vec();
         write(&mut pipe, &Proof { signature }).await?;
+        if let Some(graphics) = &hello.graphics {
+            slipstream_platform::machine::set_app_graphics(graphics);
+        }
         let _meeting_receiver = hello.meeting_calls.then(|| client.call_broker().receiver());
         let _link_receiver = hello.link_approvals.then(|| client.approvals().receiver());
         clients.fetch_add(1, Ordering::AcqRel);
@@ -638,6 +645,7 @@ mod native {
                                 nonce,
                                 meeting_calls: true,
                                 link_approvals: true,
+                                graphics: slipstream_platform::machine::app_graphics(),
                             },
                         )
                         .await?;

@@ -205,7 +205,7 @@ pub fn run(
         id: client.settings().host.last_device_id.map(|i| i.to_string()).unwrap_or_else(|| "--- --- ---".into()),
         status: "Contacting the station…".into(),
         note: match super::softgl::problem() {
-            _ if super::softgl::failed_before() => {
+            _ if super::graphics::failed_before() => {
                 "The full window didn't start on this computer last time, so this is the compact one. It can still be controlled as usual.".into()
             }
             Some(why) => format!("Compact window: {why}. The computer can still be controlled as usual."),
@@ -543,7 +543,7 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     };
     // In the update's slot (an update comes first): after the software
     // renderer failed to start, a way to give it another go.
-    let full = !update && super::softgl::failed_before();
+    let full = !update && super::graphics::failed_before();
     if !ui.shown.iter().any(|(i, t)| *i == ID_TITLE && *t == title) {
         // SAFETY: the live title control.
         unsafe { fit_title(control(ui, ID_TITLE), &title) };
@@ -956,7 +956,7 @@ fn link(ui: &Ui, url: &str) {
 /// Clears the software renderer's failed start and relaunches, so the app
 /// tries the full window again.
 fn retry_full_window(ui: &Ui) {
-    super::softgl::retry();
+    super::graphics::retry();
     if let Ok(exe) = std::env::current_exe() {
         ui.view.lock().unwrap().relaunch = Some(exe);
     }

@@ -362,6 +362,17 @@ CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER=wine \
   scripts/check.sh cargo xwin test --target x86_64-pc-windows-msvc -p slipstream-platform
 ```
 
+Broken graphics drivers can be imitated there too (`gui/graphics.rs`):
+`SLIPSTREAM_TEST_GRAPHICS` takes comma-separated `what:api` pairs, with
+`probe-crash`, `probe-hang`, `start-crash`, `start-panic` or `start-error`
+and `vulkan`, `dx12`, `gl`, `softgl` or `softgl-beside`. For example
+`probe-crash:vulkan,start-crash:gl` must still end with a window, and
+`slipstream.log` shows each step. Delete
+`AppData/Local/Slipstream/Slipstream/data/graphics` in the Wine prefix
+between runs (what failed is remembered per build). Wine's own Direct3D 12
+fails for real when the window's shaders are compiled, which exercises the
+restart without any hook.
+
 Real DXGI capture, SmartScreen and input on the secure desktop need a real
 Windows machine.
 

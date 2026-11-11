@@ -5,12 +5,9 @@
 //! (llvmpipe), gzipped; it's unpacked next to the settings when needed and
 //! loaded instead of System32's `opengl32.dll`. The files are checked
 //! against the checksums pinned in `packaging/windows/softgl.txt`.
+//! `graphics` decides when it's used.
 
-use std::{
-    io::Read,
-    path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use std::{io::Read, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
@@ -37,31 +34,14 @@ pub fn dir() -> PathBuf {
     base.join("softgl").join(version())
 }
 
-/// Left while the app starts on the software renderer and removed once the
-/// window has drawn (see [`started`]). Still there at the next start means
-/// the renderer crashed or hung, so that start uses the compact window.
-fn marker() -> PathBuf {
-    dir().join("starting")
+/// This build carries the renderer.
+pub fn available() -> bool {
+    EMBEDDED.is_some()
 }
 
-/// This build carries the renderer, but it failed to start last time: the
-/// compact window offers to try again.
-pub fn failed_before() -> bool {
-    EMBEDDED.is_some() && marker().exists()
-}
-
-/// Forgets a failed start, so the next start tries the renderer again.
-pub fn retry() {
-    let _ = std::fs::remove_file(marker());
-}
-
-/// Unpacks the renderer (once) and arms the start marker. Errors if this
-/// build doesn't carry it, or it failed to start last time.
+/// Unpacks the renderer (once). Errors if this build doesn't carry it.
 pub fn prepare() -> Result<()> {
     let Some(files) = EMBEDDED else { bail!("this build has no software renderer") };
-    if marker().exists() {
-        bail!("the software renderer didn't start last time");
-    }
     let dir = dir();
     std::fs::create_dir_all(&dir).context("creating the renderer folder")?;
     for (name, gz) in files {
@@ -79,8 +59,6 @@ pub fn prepare() -> Result<()> {
         std::fs::write(&part, &dll)?;
         std::fs::rename(&part, &path)?;
     }
-    std::fs::write(marker(), b"")?;
-    PENDING.store(true, Ordering::Relaxed);
     Ok(())
 }
 
@@ -137,18 +115,6 @@ pub fn prepare_beside() -> Result<PathBuf> {
         std::fs::write(dir().join("build.txt"), slipstream_core::BUILD_NUMBER.to_string())?;
     }
     Ok(dest)
-}
-
-/// Starting on the software renderer, first frame not drawn yet.
-static PENDING: AtomicBool = AtomicBool::new(false);
-
-/// Called every frame: the first one on the software renderer clears the
-/// start marker.
-pub fn started() {
-    if PENDING.swap(false, Ordering::Relaxed) {
-        let _ = std::fs::remove_file(marker());
-        tracing::info!("the software renderer is drawing");
-    }
 }
 
 #[cfg(test)]

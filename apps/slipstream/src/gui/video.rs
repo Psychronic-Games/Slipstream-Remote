@@ -92,6 +92,28 @@ pub fn pick_adapter(adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'
     }
 }
 
+/// A renderer that runs on the processor (Mesa llvmpipe, Windows' WARP).
+pub fn draws_on_processor(info: &wgpu::AdapterInfo) -> bool {
+    info.device_type == wgpu::DeviceType::Cpu
+        || ["llvmpipe", "softpipe", "swiftshader", "microsoft basic render"].iter().any(|n| info.name.to_lowercase().contains(n))
+}
+
+/// "Direct3D 12 · Intel(R) HD Graphics 4600 (driver 20.19.15.4531)": what
+/// draws the window, for the system report.
+pub fn describe(info: &wgpu::AdapterInfo) -> String {
+    let api = match info.backend {
+        wgpu::Backend::Vulkan => "Vulkan".to_string(),
+        wgpu::Backend::Dx12 => "Direct3D 12".to_string(),
+        wgpu::Backend::Gl => "OpenGL".to_string(),
+        wgpu::Backend::Metal => "Metal".to_string(),
+        other => format!("{other:?}"),
+    };
+    let driver = format!("{} {}", info.driver, info.driver_info);
+    let driver = if driver.trim().is_empty() { String::new() } else { format!(" (driver {})", driver.trim()) };
+    let processor = if draws_on_processor(info) { ", drawn on the processor" } else { "" };
+    format!("{api} · {}{driver}{processor}", info.name)
+}
+
 pub fn install(render_state: &egui_wgpu::RenderState) {
     let device = &render_state.device;
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
