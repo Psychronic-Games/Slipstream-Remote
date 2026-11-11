@@ -259,7 +259,10 @@ data folder alone can't reveal them. Setting a new password for a technician
 signs them out everywhere and clears the passwords they had saved, which
 can't be opened any more. *Sign out everywhere* ends every sign-in at once.
 
-The **Station devices** list is administered on the station. The **Groups** tab
+The **Station devices** list is administered on the station: its Devices
+page filters by status, group, system and what needs attention, exports the
+shown devices as CSV, and groups, assigns or removes several at once (see
+[Getting started](GETTING-STARTED.md#technicians-saved-devices-and-other-stations)). The **Groups** tab
 shows both station and personal technician groups and their recipients. Each
 group is visible in the apps of explicitly assigned technicians; unassigned
 station groups, including Ungrouped, are hidden by default. Personal groups

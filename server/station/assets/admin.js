@@ -349,24 +349,117 @@
       group: [...row.querySelectorAll('[data-device-groups] .group-chip')].map(chip => chip.textContent.trim()).sort(collator.compare).join('\n'),
       system: row.querySelector('[data-device-system]').dataset.deviceSystem,
       hardware: row.querySelector('[data-device-hardware]')?.dataset.deviceHardware || '',
+      status: row.dataset.deviceStatus,
+      os: row.dataset.deviceOs,
+      flags: row.dataset.deviceFlags.split(' ').filter(Boolean),
+      groups: [...row.querySelectorAll('[data-device-groups] .group-chip')].map(chip => chip.textContent.trim()),
       // Read only the device's metadata, never hidden dialogs/picker options:
       // otherwise every row would match every group and technician name.
       search: fold(row.dataset.deviceSearchText),
     }));
     let sortKey = sort.dataset.value;
     let descending = true;
+    // Status, group, system and needs-attention filters: '' is "any".
+    const filterMenus = new Map([...deviceControls.querySelectorAll('[data-device-filter]')].map(menu => [menu.dataset.deviceFilter, menu]));
+    const chosen = key => filterMenus.get(key)?.dataset.value || '';
+    const matches = {
+      status: (row, value) => row.status === value,
+      group: (row, value) => row.groups.includes(value),
+      os: (row, value) => row.os === value,
+      flag: (row, value) => value === 'attention' ? row.flags.length > 0 : row.flags.includes(value),
+    };
+    // The view lives in the address: it can be bookmarked or sent to a
+    // colleague, survives a reload, and the list's own forms post to it so
+    // saving a workstation comes back to the same devices.
+    const remember = () => {
+      const view = new URLSearchParams(location.search);
+      for (const key of ['q', 'sort', 'dir', ...filterMenus.keys()]) view.delete(key);
+      if (search.value.trim()) view.set('q', search.value.trim());
+      for (const key of filterMenus.keys()) if (chosen(key)) view.set(key, chosen(key));
+      if (sortKey !== 'recent') view.set('sort', sortKey);
+      if (descending !== (sortKey === 'recent')) view.set('dir', descending ? 'desc' : 'asc');
+      const address = `?${view}`;
+      if (address !== location.search) history.replaceState(null, '', address);
+      // setAttribute: each form has a field named "action", which hides form.action.
+      for (const form of [bulk, ...body.querySelectorAll('form[method=post]')]) form.setAttribute('action', address);
+    };
+    // Ticked devices and the actions for them.
+    const bulk = document.querySelector('[data-device-bulk]');
+    const selectAll = document.querySelector('[data-device-select-all]');
+    for (const row of rows) row.select = row.element.querySelector('[data-device-select]');
+    const selected = () => rows.filter(row => row.select.checked && !row.element.hidden);
+    const selection = () => {
+      const count = selected().length, shown = rows.filter(row => !row.element.hidden).length;
+      bulk.hidden = count === 0;
+      bulk.querySelector('[data-device-bulk-count]').textContent = `${count} selected`;
+      selectAll.checked = count > 0 && count === shown;
+      selectAll.indeterminate = count > 0 && count < shown;
+      for (const row of rows) row.element.classList.toggle('is-selected', row.select.checked);
+    };
+    body.addEventListener('change', event => { if (event.target.matches('[data-device-select]')) selection(); });
+    selectAll.addEventListener('change', () => {
+      for (const row of rows) row.select.checked = selectAll.checked && !row.element.hidden;
+      selection();
+    });
+    deviceControls.querySelector('[data-device-select-shown]').addEventListener('click', () => {
+      for (const row of rows) row.select.checked = !row.element.hidden;
+      selection();
+      bulk.scrollIntoView({block: 'nearest'});
+    });
+    bulk.querySelector('[data-device-select-none]').addEventListener('click', () => {
+      for (const row of rows) row.select.checked = false;
+      selection();
+    });
+    bulk.addEventListener('submit', event => {
+      const chosen = selected();
+      if (event.submitter?.value === 'remove' && !confirm(`Remove ${chosen.length === 1 ? `"${chosen[0].name}"` : `these ${chosen.length} devices`}? A device gets a new ID if it connects again.`)) {
+        event.preventDefault();
+        return;
+      }
+      for (const old of bulk.querySelectorAll('input[name="ids[]"]')) old.remove();
+      for (const row of chosen) {
+        const input = document.createElement('input');
+        input.type = 'hidden'; input.name = 'ids[]'; input.value = row.id;
+        bulk.append(input);
+      }
+    });
     const filter = () => {
       const query = fold(search.value).trim();
       const idQuery = /^[\d\s-]+$/.test(query) ? query.replace(/[\s-]/g, '') : null;
+      const active = [...filterMenus.keys()].filter(chosen);
       let visible = 0;
       for (const row of rows) {
-        row.element.hidden = !(row.search.includes(query) || (idQuery && String(row.id).includes(idQuery)));
+        row.element.hidden = !((row.search.includes(query) || (idQuery && String(row.id).includes(idQuery))) && active.every(key => matches[key](row, chosen(key))));
         if (!row.element.hidden) visible++;
       }
       deviceControls.querySelector('[data-device-count]').textContent = `${visible} of ${rows.length} devices`;
       document.querySelector('[data-device-empty]').hidden = visible !== 0;
-      clear.disabled = search.value.length === 0;
+      clear.disabled = search.value.length === 0 && active.length === 0;
+      // Never act on a device that isn't shown: hiding one unticks it.
+      for (const row of rows) if (row.element.hidden) row.select.checked = false;
+      selection();
+      for (const [key, menu] of filterMenus) menu.classList.toggle('is-filtering', chosen(key) !== '');
+      remember();
       closePicker();
+    };
+    const clearAll = () => {
+      search.value = '';
+      for (const menu of filterMenus.values()) choiceMenus.get(menu).setValue('');
+      filter();
+      search.focus();
+    };
+    // What is shown, as a spreadsheet. A leading quote keeps a spreadsheet
+    // from running a cell that starts like a formula.
+    const exportCsv = () => {
+      const shown = rows.filter(row => !row.element.hidden).map(row => JSON.parse(row.element.dataset.deviceExport));
+      if (!shown.length) return;
+      const cell = value => { const text = String(value ?? ''); return `"${(/^[=+\-@\t\r]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`; };
+      const lines = [Object.keys(shown[0]), ...shown.map(Object.values)].map(line => line.map(cell).join(','));
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob(['\ufeff' + lines.join('\r\n') + '\r\n'], {type: 'text/csv'}));
+      link.download = `slipstream-devices-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     };
     const order = () => {
       const labels = sortKey === 'recent' ? ['Oldest first', 'Newest first'] : sortKey === 'id' ? ['Lowest first', 'Highest first'] : ['A → Z', 'Z → A'];
@@ -406,7 +499,16 @@
     });
     search.addEventListener('input', filter);
     direction.addEventListener('click', () => { descending = !descending; order(); });
-    clear.addEventListener('click', () => { search.value = ''; filter(); search.focus(); });
+    clear.addEventListener('click', clearAll);
+    document.querySelector('[data-device-clear-empty]').addEventListener('click', clearAll);
+    deviceControls.querySelector('[data-device-export]').addEventListener('click', exportCsv);
+    for (const menu of filterMenus.values()) menu.addEventListener('choicechange', filter);
+    // Open on the view the address asks for (a Status page figure, a bookmark).
+    const asked = new URLSearchParams(location.search);
+    search.value = asked.get('q') || '';
+    for (const [key, menu] of filterMenus) choiceMenus.get(menu).setValue(asked.get(key) || '');
+    if (sortLabels.has(asked.get('sort'))) sortKey = asked.get('sort');
+    descending = asked.has('dir') ? asked.get('dir') === 'desc' : sortKey === 'recent';
     deviceControls.hidden = false;
     order();
   }

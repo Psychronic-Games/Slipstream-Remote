@@ -1221,6 +1221,50 @@ function slip_device_inventory(string $endpoint): array
     return is_array($d) ? $d : [];
 }
 
+/** How the app draws its window, from the report's Graphics section (apps that report it). */
+function slip_inventory_graphics(array $inventory): ?string
+{
+    foreach ($inventory['report'] ?? [] as $section) {
+        if (($section['title'] ?? '') !== 'Graphics') continue;
+        foreach ($section['rows'] ?? [] as $row) {
+            if (($row[0] ?? '') === 'Slipstream window' && is_string($row[1] ?? null)) return $row[1];
+        }
+    }
+    return null;
+}
+
+/** Days without contact after which a device counts as long unseen. */
+const SLIP_STALE_DAYS = 30;
+
+/**
+ * What the device list filters on, and the fleet summary counts:
+ * status (online, offline, or stale after SLIP_STALE_DAYS), OS family,
+ * and flags for what may need attention: `outdated` (an older app than this
+ * station serves), `graphics` (the app fell back from the graphics driver:
+ * software rendering, the compact window, or a driver passed over),
+ * `inventory` (private stations: no hardware report yet) and `ungrouped`.
+ */
+function slip_device_facts(array $device, array $inventory, array $groups, ?string $current, bool $private): array
+{
+    $seen = (int)($device['last_seen'] ?? 0);
+    $status = $seen >= time() - SLIP_ONLINE_WINDOW ? 'online' : ($seen && $seen < time() - SLIP_STALE_DAYS * 86400 ? 'stale' : 'offline');
+    $os = (string)($device['os'] ?? '');
+    $family = 'Other';
+    foreach (['Windows' => 'windows', 'macOS' => 'mac', 'Linux' => 'linux', 'Android' => 'android'] as $name => $needle) {
+        if (stripos($os, $needle) !== false) { $family = $name; break; }
+    }
+    $graphics = slip_inventory_graphics($inventory);
+    $version = (string)($device['app_version'] ?? '');
+    $flags = [];
+    if ($current !== null && preg_match('/^\d+(\.\d+)*/', $version, $m) && version_compare($m[0], $current, '<')) $flags[] = 'outdated';
+    if ($graphics !== null && preg_match('/passed over|compact window|drawn on the processor/i', $graphics)) $flags[] = 'graphics';
+    if ($private && !$inventory) $flags[] = 'inventory';
+    if (!$groups) $flags[] = 'ungrouped';
+    return ['status' => $status, 'os' => $family, 'flags' => $flags, 'graphics' => $graphics];
+}
+
+const SLIP_DEVICE_FLAGS = ['outdated' => 'Outdated app', 'graphics' => 'Graphics fallback', 'inventory' => 'Awaiting inventory', 'ungrouped' => 'Ungrouped'];
+
 // ── Relay supervisor ───────────────────────────────────────────────────────
 //
 // The relay is the slipstream-server program in bin/, run as this site's
@@ -1588,7 +1632,7 @@ function slip_client_builds(): array
 {
     $dir = realpath(SLIP_ROOT) . '/clients';
     $map = [
-        'windows' => ['file' => 'slipstream-windows-x86_64.exe', 'label' => 'Windows', 'note' => 'Windows 10 and 11'],
+        'windows' => ['file' => 'slipstream-windows-x86_64.exe', 'label' => 'Windows', 'note' => 'Windows 7 SP1 to 11'],
         'macos' => ['file' => 'slipstream-macos.zip', 'label' => 'macOS', 'note' => 'macOS 12 or newer'],
         'linux' => ['file' => 'slipstream-linux-x86_64', 'label' => 'Linux', 'note' => '64-bit, X11 or Wayland'],
         'android' => ['file' => 'slipstream-android.apk', 'label' => 'Android', 'note' => 'Android 8 or newer · controls computers (preview)'],

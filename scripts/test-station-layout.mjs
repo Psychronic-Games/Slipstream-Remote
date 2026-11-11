@@ -320,6 +320,43 @@ for (const width of widths) {
     assert.equal(ordered.length, 5, 'Clear search did not restore all devices');
     assert(ordered.every((row,index)=>!index || row.id<ordered[index-1].id), 'Clear search reset the chosen sort order');
     assert(await evaluate(`window.deviceListAudit==='same-document' && document.querySelector('[data-device-empty]').hidden`), 'Search/sort reloaded the page');
+    // Filters narrow the list together with the search, live in the address
+    // (with whatever else is there) and clear in one go.
+    const chooseFilter = (key, value) => evaluate(`[...document.querySelectorAll('[data-device-filter=${key}] [data-choice-option]')].find(o=>o.dataset.choiceOption===${JSON.stringify(value)}).click()`);
+    const asked = key => evaluate(`new URLSearchParams(location.search).get(${JSON.stringify(key)})`);
+    await chooseFilter('os', 'Windows');
+    assert.deepEqual((await visibleDevices()).map(row=>row.name), ['Bench 2'], 'System filter failed');
+    assert(await asked('os')==='Windows' && await asked('audit')!==null && await asked('tab')==='devices', 'The filter is not in the address, or other parameters were lost');
+    await chooseFilter('os', '');
+    await chooseFilter('group', 'Zone 10');
+    assert.deepEqual((await visibleDevices()).map(row=>row.name).sort(), ['Bench 10', 'Bench 2'], 'Group filter failed');
+    assert(await evaluate(`[...document.querySelectorAll('[data-device-rows] form[method=post]')].every(form=>new URLSearchParams(form.getAttribute('action')).get('group')==='Zone 10')`), 'Device forms do not return to the filtered view');
+    await searchDevices('bench 2');
+    assert.deepEqual((await visibleDevices()).map(row=>row.name), ['Bench 2'], 'Search and filter did not combine');
+    await searchDevices('');
+    await chooseFilter('flag', 'inventory');
+    assert.equal((await visibleDevices()).length, 2, 'Two filters did not combine');
+    await chooseFilter('group', '');
+    let flagged = await visibleDevices();
+    assert(flagged.length===4 && flagged.every(row=>row.id!==Number(device)), 'Awaiting-inventory filter failed');
+    assert(await evaluate(`!document.querySelector('[data-device-clear]').disabled && document.querySelector('[data-device-filter=flag]').classList.contains('is-filtering')`), 'An active filter is not shown as such');
+    assert(await evaluate(`JSON.parse(document.querySelector('[data-device-id="${device}"]').dataset.deviceExport).Serial==='12345670012'`), 'Export data is missing the inventory');
+    await evaluate(`document.querySelector('[data-device-clear]').click()`);
+    assert((await visibleDevices()).length===5 && await asked('flag')===null && await asked('audit')!==null, 'Clear did not reset the filters');
+    assert(await evaluate(`window.deviceListAudit==='same-document'`), 'Filtering reloaded the page');
+    // Ticked devices: the actions appear, cover only what is shown, and post the ticked IDs.
+    assert(await evaluate(`document.querySelector('[data-device-bulk]').hidden`), 'Bulk actions show with nothing selected');
+    await chooseFilter('group', 'Zone 10');
+    await evaluate(`document.querySelector('[data-device-select-shown]').click()`);
+    assert(await evaluate(`!document.querySelector('[data-device-bulk]').hidden && document.querySelector('[data-device-bulk-count]').textContent==='2 selected' && document.querySelector('[data-device-select-all]').checked`), 'Select shown did not select the filtered devices');
+    await searchDevices('bench 2');
+    assert(await evaluate(`document.querySelector('[data-device-bulk-count]').textContent==='1 selected' && [...document.querySelectorAll('[data-device-select]')].filter(box=>box.checked).length===1`), 'A device hidden by a filter stayed selected');
+    assert(await evaluate(`(()=>{const form=document.querySelector('[data-device-bulk]');let ids=null;form.addEventListener('submit',e=>{e.preventDefault();ids=[...form.querySelectorAll('input[name="ids[]"]')].map(i=>i.value);},{once:true});form.querySelector('[value=assign]').click();const row=[...document.querySelectorAll('[data-device-row]')].find(r=>!r.hidden);return ids&&ids.length===1&&ids[0]===row.dataset.deviceId;})()`), 'Bulk actions do not post exactly the selected devices');
+    const bulkBox = await evaluate(`(()=>{const r=document.querySelector('[data-device-bulk]').getBoundingClientRect();return {left:r.left,right:r.right,width:innerWidth};})()`);
+    assert(bulkBox.left>=0 && bulkBox.right<=bulkBox.width+1, 'Bulk actions overflow the page');
+    await evaluate(`document.querySelector('[data-device-select-none]').click()`);
+    assert(await evaluate(`document.querySelector('[data-device-bulk]').hidden`), 'Clear selection left the bulk actions up');
+    await evaluate(`document.querySelector('[data-device-clear]').click()`);
     if (width === 1680) {
       // Column controls share the menu's state and reverse on a second click.
       await evaluate(`document.querySelector('[data-device-column-sort=id]').click()`);
@@ -390,9 +427,13 @@ for (const width of widths) {
     await delay(30);
     const assignForm = `[...document.querySelectorAll('.device-assign-form')].find(f=>f.querySelector('input[name=id]').value==='${device}')`;
     const assignPicker = `(${assignForm}).querySelector('[data-picker]')`;
+    // Assigning lives in the workstation's dialog, not in every row.
+    assert(await evaluate(`document.querySelectorAll('[data-device-rows] > tr > td .device-assign-form').length===document.querySelectorAll('dialog .device-assign-form').length`), 'An assignment form is outside its dialog');
+    await evaluate(`document.querySelector('[data-dialog-open="edit-device-${device}"]').click()`);
     await openPicker(assignPicker);
     await choose(assignPicker, 'layout-tech');
     await evaluate(`(${assignPicker}).querySelector('[data-picker-done]').click()`);
+    await evaluate(`${dialog}.close()`);
     await sortDevices('name');
     assert(await evaluate(`new FormData(${assignForm}).getAll('usernames[]').includes('layout-tech')`), 'Assignment did not include the searched technician');
     assert(await evaluate(`(${assignForm}).querySelector('input[name=id]').value==='${device}'`), 'Sorting changed the assignment target');

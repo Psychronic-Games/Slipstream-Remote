@@ -32,7 +32,7 @@ class Browser:
     def request(self, path='/admin/?tab=techs', status=200, **form):
         if form:
             form = {'csrf': self.csrf, **form}
-        request = urllib.request.Request(self.address + path, data=urllib.parse.urlencode(form).encode() if form else None)
+        request = urllib.request.Request(self.address + path, data=urllib.parse.urlencode(form, doseq=True).encode() if form else None)
         try:
             response = self.opener.open(request, timeout=10)
         except urllib.error.HTTPError as error:
@@ -283,6 +283,33 @@ def main():
                 admin.login('admin', 'original-station-password')
                 print('Station admin: fresh setup, named login, role enforcement, CSRF, last-admin protection, demotion/reset/sign-out/deletion revocation passed', flush=True)
                 admin.request(action='tech_add', username='layout-tech', name='Technician with a longer display name', password='layout-tech-password', status=302)
+                bulk_ids = json.loads(cli("""
+$ids=[];
+foreach (['BULK-A','BULK-B','BULK-C'] as $name) {
+    $key=bin2hex(sodium_crypto_sign_publickey(sodium_crypto_sign_keypair()));
+    $ids[]=slip_store()->register($key,['name'=>$name,'os'=>'Linux','app_version'=>'fixture'],json_encode(['id'=>$key,'addrs'=>[]]));
+}
+echo json_encode($ids);
+"""))
+                def shared_groups():
+                    return {d['id']: d.get('groups', []) for d in json.loads((data / 'shared.json').read_text())['devices']}
+                bulk = lambda status=302, **form: admin.request('/admin/?tab=devices&group=Bulk+one', status=status, action='device_bulk', **form)
+                bulk(op='group_add', **{'ids[]': bulk_ids[:2], 'groups[]': ['Bulk one'], 'new_group': 'Bulk two'})
+                assert [shared_groups().get(i) for i in bulk_ids] == [['Bulk one', 'Bulk two'], ['Bulk one', 'Bulk two'], None], 'Bulk add to groups failed'
+                bulk(op='group_remove', **{'ids[]': bulk_ids, 'groups[]': ['Bulk two']})
+                assert [shared_groups().get(i) for i in bulk_ids[:2]] == [['Bulk one'], ['Bulk one']], 'Bulk take out of groups failed'
+                bulk(op='assign', **{'ids[]': bulk_ids[:2], 'usernames[]': ['layout-tech']})
+                assert {d['id'] for d in json.loads((data / 'accounts/layout-tech.json').read_text())['devices']} >= set(bulk_ids[:2]), 'Bulk assignment failed'
+                before = (data / 'shared.json').read_bytes()
+                bulk(op='remove')
+                bulk(op='remove', **{'ids[]': ['999999999']})
+                bulk(op='nonsense', **{'ids[]': bulk_ids})
+                bulk(status=400, csrf='invalid', op='remove', **{'ids[]': bulk_ids})
+                assert (data / 'shared.json').read_bytes() == before and len(json.loads(cli('echo json_encode(array_column(slip_store()->all(),"id"));'))) == 3, 'A rejected bulk action changed devices'
+                bulk(op='remove', **{'ids[]': bulk_ids[:2]})
+                assert json.loads(cli('echo json_encode(array_column(slip_store()->all(),"id"));')) == [bulk_ids[2]] and not set(bulk_ids[:2]) & set(shared_groups()), 'Bulk removal failed'
+                bulk(op='remove', **{'ids[]': bulk_ids[2:]})
+                print('Station devices: bulk groups, assignment and removal, with validation and CSRF, passed', flush=True)
                 if args.browser:
                     # A local TCP listener satisfies supervisor health without launching a relay.
                     cli(f"slip_station_save(['relay_port'=>{port}]);")

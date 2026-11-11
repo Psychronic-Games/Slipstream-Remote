@@ -60,7 +60,7 @@ Android uses **Connect this app** or a setup code:
   other web page can't take a computer away from its provider. Typing an
   address and code into **Link to my organisation** switches straight away.
 
-### Windows 10/11
+### Windows (7 SP1, 8.x, 10, 11)
 
 1. Download and open `Slipstream Remote - <your org>.exe`. It is a single
    file and doesn't need installing.
@@ -410,14 +410,44 @@ in my list** also works for shared devices: it saves a personal copy encrypted
 with your technician vault key. It never gives the password to other technicians.
 
 The station's **Devices** page shows each workstation's last reported model,
-serial number, OS, architecture, processor and RAM, with the report time.
-Click the device ID or **View full system report** to read its complete last
+serial number, OS, architecture, processor and RAM.
+Click the device ID or **System report** to read its complete last
 reported System information, including storage, graphics, networks and connected
 devices. Updated hosts send it at startup and every 15 minutes; the station shows
 the report time and retains it while the workstation is offline. A live support
 session provides current readings. Custom PCs can show a motherboard model and
 motherboard serial when system firmware has no usable model or serial.
 **Public stations** do not automatically share devices or collect these reports.
+
+**Finding devices.** Beside the search (name, group, ID, serial, version),
+the Devices page filters by:
+
+- **Status**: online, offline, or not seen for 30 days.
+- **Group** and **System** (Windows, macOS, Linux, Android).
+- **Needs attention**: an app older than the station serves (also marked
+  *outdated* in the row), a **graphics fallback** (the app on that computer
+  is drawing in software, in the compact window, or passed over a graphics
+  driver that crashed), no hardware inventory yet, or no group.
+
+Each choice shows how many devices it has, and filters combine with each
+other and the search. The view is part of the page's address: bookmark it or
+send it to a colleague. **Export CSV** downloads the devices shown, for a
+spreadsheet. The Status page's **Fleet** panel counts the same things, and
+each figure opens the matching devices.
+
+**Several devices at once.** Tick devices, or press **Select shown** to tick
+everything the filters show; then add them to groups, take them out of
+groups, assign them to technicians or remove them together. A device a
+filter hides is never part of the selection. To clear out computers that
+are gone, filter by *Not seen for 30 days*, select what's shown and remove
+(or use **Remove** on a single row). A removed device that connects again
+simply gets a new ID.
+
+**How a computer draws Slipstream.** A report's Graphics section has a
+**Slipstream window** row: the graphics API and adapter the app uses there
+("Direct3D 12 · Intel(R) HD Graphics 4600"), and any driver it had to pass
+over. A live session's System information shows the same row. With the
+Windows service it appears once the signed-in user's app has started.
 
 In the station web console, **Edit workstation → Groups** searches existing
 groups and can create another. A workstation can belong to several groups.
@@ -427,8 +457,9 @@ The notes editor has a themed bottom resize bar with mouse, touch and keyboard
 control. The Status page presents searchable relay events with wrapped details.
 
 To prepare a particular technician's personal list, open the station's
-**Devices** tab, use **Assign to technicians** to search and check accounts, then
-press **Assign**. They can be signed out and the device can be
+**Devices** tab and the workstation's **Edit workstation** dialog, use
+**Assign to technicians** to search and check accounts, then press **Assign**
+(or tick several workstations and assign them together). They can be signed out and the device can be
 offline. It appears when they next sign in or refresh their list, with the
 station's current name, group and notes. Assigning an existing entry preserves
 that technician's custom details and encrypted password; a new assignment
@@ -680,7 +711,8 @@ broken session.
 | **Ctrl+Alt+Del does nothing** | Windows only accepts it from a service: install the [Slipstream service](#windows-the-slipstream-service) on the remote computer. |
 | Service shows **Installed, not running** | Press **Start** (on the Bridge or in Config; no administrator prompt needed). If it won't start, Config shows Windows' own explanation with a *Copy* button, and *Config → Service log* opens the service's log (`C:\ProgramData\Slipstream Remote\public\slipstream.log`). |
 | **Two Slipstream processes** in Task Manager with the service installed | Expected. The service runs in the background where it can't see the screen, and starts a helper in the signed-in session that captures and controls it. The tray icon is a third, unless *Config → Tray icon* is off. |
-| A **small window** instead of the full app (Windows Server 2016, some VMs) | Slipstream draws the full window in software on machines without usable graphics, by itself. You get the small window only if that failed on this computer last time; press **Full window** in it to try again. The small window still lets others control the computer. |
+| The app **doesn't open on a Windows computer**, or opens a few seconds late | A graphics driver there is broken (seen with older Intel integrated graphics and Vulkan). Slipstream tries each driver in a separate process and starts with one that works; if the window still fails while starting, it starts again by itself with the next option. `slipstream.log` in the settings folder names what was tried and which driver crashed, and the computer's System information shows it under Graphics → **Slipstream window**. Updating the graphics driver usually cures it. |
+| A **small window** instead of the full app (Windows Server 2016, some VMs) | Slipstream draws the full window in software on machines without usable graphics, by itself. You get the small window only if nothing could draw the full one on this computer; press **Full window** in it to try everything again (an update does too). The small window still lets others control the computer. |
 | **Wrong password** | One-time passwords change after every session. Ask for the current one. |
 | **"Too many wrong passwords"** | After three wrong tries the computer waits before it checks another password, longer each time (up to 5 minutes). Wait the time shown, then try the right one. |
 | Update not offered, log says **"signature doesn't match"** | The station's apps were built with a different release key from yours. Download the app from the station page again. |

@@ -86,8 +86,9 @@ the same signature before installing anything.
   to several stations at once, other organisations' too. Private stations
   automatically add workstations to the shared list; passwords are still
   required to connect. Station admins sign in to the web console with their own
-  technician credentials, manage several groups per workstation and inspect
-  full last-reported System information, including motherboard identification.
+  technician credentials, filter and export the device list, group, assign or
+  remove several workstations at once and inspect full last-reported System
+  information, including motherboard identification.
 - **System information** — the remote computer's hardware, manufacturer serial
   number (when available), drives, temperatures and network, live, plus
   peripherals, printers/scanners and network drives.
@@ -142,7 +143,7 @@ See [status](docs/STATUS.md) for platform verification and limits.
 
 ## Quick start
 
-1. **Download and open the app** on both computers (Windows 10/11, macOS
+1. **Download and open the app** on both computers (Windows 7 SP1 to 11, macOS
    12+, Linux, Android 8+). No installer and no account are needed. On a
    Mac, move it to *Applications* and choose **Open Anyway** the first time
    (it isn't notarised by Apple yet). On Linux, browsers don't keep the

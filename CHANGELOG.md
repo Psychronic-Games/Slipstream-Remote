@@ -13,6 +13,51 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Windows: a broken graphics driver no longer stops the app opening.**
+  On some computers (seen with older Intel integrated graphics) the Vulkan
+  driver crashes whatever loads it, and Slipstream closed without a word
+  before it could fall back. Now each graphics API (Vulkan, Direct3D 12,
+  OpenGL) is tried in a separate throwaway process first, and the app loads
+  only one that works. If the window still fails while starting (a crash, a
+  driver error), the app starts again by itself with the next option: the
+  system's OpenGL, the built-in software renderer, and last the compact
+  window. What failed is remembered until the next update, so later starts
+  are direct, and `slipstream.log` names the driver that crashed.
+- **System information says how Slipstream draws its window:** a
+  **Slipstream window** row under Graphics, in a session's System
+  information and in the station's report, e.g. "Direct3D 12 · Intel(R) HD
+  Graphics 4600; passed over: Vulkan (crashed when tried, 0xC0000005)", or
+  that the computer is on the software renderer or the compact window.
+  With the Windows service it shows while the signed-in user's app is
+  running.
+- **Station: filter the device list.** Beside the search there are now
+  filters for status (online, offline, not seen for 30 days), group, system
+  (Windows, macOS, Linux, Android) and "needs attention": an app older than
+  the station serves, a graphics fallback (software rendering, the compact
+  window or a driver that was passed over), no hardware inventory yet, or
+  no group. Each choice shows how many devices it has; filters combine with
+  each other and the search. The view is kept in the page's address, so it
+  can be bookmarked, and saving a workstation returns to it.
+- **Station: act on several devices at once.** Tick devices in the list, or
+  press **Select shown** to tick everything the current filters show, then
+  add them to groups, take them out of groups, assign them to technicians
+  or remove them together. A device hidden by a filter is never part of
+  the selection. To clear out old devices, filter by "Not seen for 30
+  days", select what's shown and remove; each row keeps its own Remove too.
+- **Station: shorter device rows.** Assigning one workstation to
+  technicians moved from every row into its **Edit workstation** dialog,
+  and the hardware column is more compact (the report's date is the
+  link's tooltip), so about twice as many devices fit on a screen.
+- **Station: Export CSV** downloads the devices currently shown (ID, name,
+  groups, status, last seen, system, app version, model, processor, memory,
+  serials, graphics, notes) for a spreadsheet.
+- **Station: a Fleet panel on the Status page** counts offline and
+  long-unseen devices, each kind of "needs attention", systems and app
+  versions; each figure opens the matching devices. Outdated apps are
+  marked in the device list.
+- The station's download page says Windows 7 SP1 to 11 (it said 10 and 11;
+  the app has run on 7 and 8.x since 0.33).
+
 ## 0.34.3 — 2026-11-08
 
 - **Stations require HTTPS:** once a station has been reached over HTTPS,

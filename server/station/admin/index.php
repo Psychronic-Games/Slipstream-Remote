@@ -39,7 +39,10 @@ function flash(string $msg, bool $err = false): void
 }
 function back(string $tab = ''): void
 {
-    header('Location: ./' . ($tab ? "?tab=$tab" : ''));
+    // The device list posts to its own filtered address (admin.js): come
+    // back to the same view.
+    $view = $tab === 'devices' ? array_filter(array_intersect_key($_GET, array_flip(['q', 'status', 'group', 'os', 'flag', 'sort', 'dir'])), 'is_string') : [];
+    header('Location: ./' . ($tab ? '?' . http_build_query(['tab' => $tab] + $view) : ''));
     exit;
 }
 $form = fn() => '<input type="hidden" name="csrf" value="' . h($GLOBALS['csrf']) . '">';
@@ -189,6 +192,62 @@ switch ($action) {
         slip_store()->delete($id);
         slip_shared_update(fn(array $list) => array_filter($list, fn($x) => ($x['id'] ?? 0) !== $id));
         flash('Device removed. It will get a new ID if it connects again.');
+        back('devices');
+    case 'device_bulk':
+        // One action for the devices ticked in the list.
+        try {
+            $ids = is_array($_POST['ids'] ?? null) ? array_values(array_unique(array_map('intval', $_POST['ids']))) : [];
+            $known = array_column(slip_store()->all(), 'name', 'id');
+            $ids = array_values(array_filter($ids, fn($id) => isset($known[$id])));
+            if (!$ids) throw new InvalidArgumentException('Select at least one device.');
+            $count = count($ids) . (count($ids) === 1 ? ' device' : ' devices');
+            switch ((string)($_POST['op'] ?? '')) {
+                case 'remove':
+                    foreach ($ids as $id) slip_store()->delete($id);
+                    slip_shared_update(fn(array $list) => array_filter($list, fn($x) => !in_array($x['id'] ?? 0, $ids, true)));
+                    flash("$count removed. A device gets a new ID if it connects again.");
+                    break;
+                case 'group_add':
+                case 'group_remove':
+                    if (slip_access_key() === null) throw new InvalidArgumentException('Station groups need a private station.');
+                    $groups = $_POST['groups'] ?? [];
+                    if (!is_array($groups)) throw new InvalidArgumentException('Choose valid workstation groups.');
+                    if (($_POST['new_group'] ?? '') !== '') $groups[] = $_POST['new_group'];
+                    $groups = slip_clean_device_groups($groups);
+                    if (!$groups) throw new InvalidArgumentException('Choose at least one group.');
+                    $add = $_POST['op'] === 'group_add';
+                    slip_shared_update(function (array $list) use ($ids, $groups, $add, $known) {
+                        $listed = array_column($list, 'id');
+                        // A device the station list doesn't hold yet joins it when given a group.
+                        if ($add) foreach (array_diff($ids, $listed) as $id) {
+                            $list[] = ['id' => $id, 'name' => slip_clip(trim((string)$known[$id]), 64), 'notes' => '', 'added_by' => 'admin page', 'added' => time()];
+                        }
+                        foreach ($list as &$device) {
+                            if (!in_array($device['id'] ?? 0, $ids, true)) continue;
+                            $current = slip_device_groups($device);
+                            $device = slip_set_device_groups($device, slip_clean_device_groups($add ? array_merge($current, $groups) : array_values(array_diff($current, $groups))));
+                        }
+                        return $list;
+                    });
+                    flash("$count " . ($add ? 'added to ' : 'taken out of ') . implode(', ', $groups) . '.');
+                    break;
+                case 'assign':
+                    $usernames = $_POST['usernames'] ?? [];
+                    if (!is_array($usernames) || !$usernames) throw new InvalidArgumentException('Choose at least one technician.');
+                    $added = $existing = 0; $failed = [];
+                    foreach ($ids as $id) {
+                        $result = slip_assign_devices($usernames, $id);
+                        $added += count($result['added']); $existing += count($result['existing']);
+                        foreach ($result['failed'] as $username => $reason) $failed[$username] = $reason;
+                    }
+                    $message = "$count: $added added; $existing already assigned. Existing details and saved passwords were kept.";
+                    foreach ($failed as $username => $reason) $message .= " $username: $reason";
+                    flash($message . ' Technicians still need the device password to connect.', (bool)$failed);
+                    break;
+                default:
+                    throw new InvalidArgumentException('Choose what to do with the selected devices.');
+            }
+        } catch (InvalidArgumentException $e) { flash($e->getMessage(), true); }
         back('devices');
     case 'station_group_create':
     case 'station_group_rename':
@@ -413,6 +472,39 @@ slip_page_start('Station admin', '../', 'admin-console');
     <div><span class="k">Access</span><div class="big"><?= !empty($station['private']) ? 'PRIVATE' : 'OPEN' ?></div></div>
   </div>
 
+  <?php if ($store && $total):
+      $private = slip_access_key() !== null;
+      $sharedById = array_column(slip_shared(), null, 'id');
+      $current = slip_client_manifest()['version'] ?? null;
+      $fleet = ['status' => [], 'os' => [], 'flags' => [], 'versions' => []];
+      foreach ($store->all() as $d) {
+          $facts = slip_device_facts($d, $private ? slip_device_inventory($d['endpoint']) : [], slip_device_groups($sharedById[$d['id']] ?? []), $current, $private);
+          $fleet['status'][$facts['status']] = ($fleet['status'][$facts['status']] ?? 0) + 1;
+          $fleet['os'][$facts['os']] = ($fleet['os'][$facts['os']] ?? 0) + 1;
+          foreach ($facts['flags'] as $flag) $fleet['flags'][$flag] = ($fleet['flags'][$flag] ?? 0) + 1;
+          $version = ($d['app_version'] ?? '') ?: 'unknown';
+          $fleet['versions'][$version] = ($fleet['versions'][$version] ?? 0) + 1;
+      }
+      arsort($fleet['os']); uksort($fleet['versions'], fn($a, $b) => version_compare($b, $a));
+      $tile = fn(string $label, int $count, string $query, string $class = '') => '<a class="fleet-tile ' . $class . '" href="?tab=devices&amp;' . h($query) . '"><span class="k">' . h($label) . '</span><span class="big">' . $count . '</span></a>';
+  ?>
+  <h2 class="peach">Fleet</h2>
+  <div class="panel">
+    <p class="dim">Each figure opens the matching devices.</p>
+    <div class="fleet-tiles">
+      <?= $tile('Offline', $fleet['status']['offline'] ?? 0, 'status=offline') ?>
+      <?= $tile('Not seen for ' . SLIP_STALE_DAYS . ' days', $fleet['status']['stale'] ?? 0, 'status=stale', ($fleet['status']['stale'] ?? 0) ? 'attention' : '') ?>
+      <?php foreach (SLIP_DEVICE_FLAGS as $flag => $label): if ($flag === 'inventory' && !$private) continue; ?>
+        <?= $tile($label, $fleet['flags'][$flag] ?? 0, 'flag=' . $flag, ($fleet['flags'][$flag] ?? 0) ? 'attention' : '') ?>
+      <?php endforeach ?>
+      <?php foreach ($fleet['os'] as $os => $count): ?><?= $tile($os, $count, 'os=' . urlencode($os)) ?><?php endforeach ?>
+    </div>
+    <p><span class="k">Slipstream versions</span><br>
+      <?php foreach ($fleet['versions'] as $version => $count): ?><a class="group-chip" href="?tab=devices&amp;q=<?= h(urlencode('Slipstream ' . $version)) ?>"><?= h($version) ?> × <?= (int)$count ?></a> <?php endforeach ?>
+      <?php if ($current !== null): ?><span class="dim">This station serves <?= h($current) ?>.</span><?php endif ?></p>
+  </div>
+  <?php endif ?>
+
   <h2 class="blue">Share with your clients</h2>
   <div class="panel">
     <span class="k">Download page</span><div class="big"><a href="<?= h(slip_base_url()) ?>"><?= h(slip_base_url()) ?></a></div>
@@ -512,6 +604,29 @@ slip_page_start('Station admin', '../', 'admin-console');
     $technicianOptions = [];
     foreach ($technicians as $username => $technician) $technicianOptions[] = ['value' => (string)$username, 'label' => $technician['name'] ?? $username, 'detail' => (string)$username];
     usort($devices, fn($a, $b) => ($b['last_seen'] ?? 0) <=> ($a['last_seen'] ?? 0));
+    $currentVersion = slip_client_manifest()['version'] ?? null;
+    // Everything the list shows and filters on, worked out once per device.
+    $view = [];
+    $tally = ['status' => [], 'group' => [], 'os' => [], 'flag' => []];
+    foreach ($devices as $d) {
+        $inventory = $private ? slip_device_inventory($d['endpoint']) : [];
+        $groups = slip_device_groups($sharedById[$d['id']] ?? []);
+        $facts = slip_device_facts($d, $inventory, $groups, $currentVersion, $private);
+        $view[$d['id']] = ['inventory' => $inventory, 'facts' => $facts];
+        $tally['status'][$facts['status']] = ($tally['status'][$facts['status']] ?? 0) + 1;
+        $tally['os'][$facts['os']] = ($tally['os'][$facts['os']] ?? 0) + 1;
+        foreach ($groups ?: ['Ungrouped'] as $group) $tally['group'][$group] = ($tally['group'][$group] ?? 0) + 1;
+        foreach ($facts['flags'] as $flag) $tally['flag'][$flag] = ($tally['flag'][$flag] ?? 0) + 1;
+        if ($facts['flags']) $tally['flag']['attention'] = ($tally['flag']['attention'] ?? 0) + 1;
+    }
+    uksort($tally['group'], 'strnatcasecmp'); arsort($tally['os']);
+    $counted = fn(array $labels, array $counts) => array_map(fn($key, $label) => [(string)$key, $label . ' (' . ($counts[$key] ?? 0) . ')'], array_keys($labels), $labels);
+    $filters = [
+        'status' => ['Status', 'Any status', $counted(['online' => 'Online', 'offline' => 'Offline', 'stale' => 'Not seen for ' . SLIP_STALE_DAYS . ' days'], $tally['status'])],
+        'group' => ['Group', 'Any group', $counted(array_combine(array_keys($tally['group']), array_keys($tally['group'])), $tally['group'])],
+        'os' => ['System', 'Any system', $counted(array_combine(array_keys($tally['os']), array_keys($tally['os'])), $tally['os'])],
+        'flag' => ['Needs attention', 'Everything', $counted(['attention' => 'Anything flagged'] + array_diff_key(SLIP_DEVICE_FLAGS, $private ? [] : ['inventory' => 1]), $tally['flag'])],
+    ];
     $cut = time() - SLIP_ONLINE_WINDOW;
     $ago = function ($t) {
         if (!$t) return 'signed off';
@@ -569,12 +684,44 @@ slip_page_start('Station admin', '../', 'admin-console');
         </details>
       </div>
       <button type="button" class="small blue" data-device-direction>Newest first</button>
-      <button type="button" class="small lav" data-device-clear disabled>Clear search</button>
+      <div class="device-filters">
+      <?php foreach ($filters as $key => [$label, $any, $options]): ?>
+        <div class="device-sort-control"><span class="k" id="device-filter-<?= $key ?>-label"><?= h($label) ?></span>
+          <details class="device-sort-menu choice-menu" data-choice-menu data-device-filter="<?= $key ?>" data-value="">
+            <summary aria-labelledby="device-filter-<?= $key ?>-label device-filter-<?= $key ?>-current" aria-haspopup="menu" aria-controls="device-filter-<?= $key ?>-options" aria-expanded="false"><span id="device-filter-<?= $key ?>-current" data-choice-label><?= h($any) ?></span><span class="picker-chevron" aria-hidden="true"></span></summary>
+            <div class="device-sort-options choice-options" id="device-filter-<?= $key ?>-options" role="menu" aria-labelledby="device-filter-<?= $key ?>-label">
+              <?php foreach (array_merge([['', $any]], $options) as $i => [$value, $text]): ?>
+                <button type="button" role="menuitemradio" aria-checked="<?= $i ? 'false' : 'true' ?>" tabindex="<?= $i ? '-1' : '0' ?>" data-choice-option="<?= h($value) ?>"><span data-choice-option-label><?= h($text) ?></span><span class="sort-choice-mark" aria-hidden="true">✓</span></button>
+              <?php endforeach ?>
+            </div>
+          </details>
+        </div>
+      <?php endforeach ?>
+      </div>
+      <button type="button" class="small lav" data-device-clear disabled>Clear filters</button>
+      <button type="button" class="small blue" data-device-select-shown title="Tick every device shown below, to group, assign or remove them together">Select shown</button>
+      <button type="button" class="small gold" data-device-export title="Download the devices shown below as a spreadsheet (CSV)">Export CSV</button>
       <p class="dim" data-device-count role="status" aria-live="polite"><?= count($devices) ?> devices</p>
     </div>
+    <form method="post" class="device-bulk" data-device-bulk hidden><?= $form() ?><input type="hidden" name="action" value="device_bulk">
+      <p class="device-bulk-count" data-device-bulk-count role="status" aria-live="polite"></p>
+      <?php if ($private): ?><div class="device-bulk-part">
+        <?php slip_picker('groups', 'Groups', $groupOptions, [], ['create' => true, 'placeholder' => 'Choose groups']) ?>
+        <button class="small blue" name="op" value="group_add">Add to groups</button>
+        <button class="small lav" name="op" value="group_remove">Take out of groups</button>
+      </div><?php endif ?>
+      <?php if ($technicians): ?><div class="device-bulk-part">
+        <?php slip_picker('usernames', 'Assign to technicians', $technicianOptions, [], ['placeholder' => 'Choose technicians']) ?>
+        <button class="small blue" name="op" value="assign">Assign</button>
+      </div><?php endif ?>
+      <div class="device-bulk-part">
+        <button class="small red" name="op" value="remove">Remove devices</button>
+        <button type="button" class="small lav" data-device-select-none>Clear selection</button>
+      </div>
+    </form>
     <table class="devices-table">
       <thead><tr>
-        <th scope="col" aria-label="Status" class="device-status-heading"></th>
+        <th scope="col" class="device-status-heading"><input type="checkbox" data-device-select-all aria-label="Select all devices shown" title="Select all devices shown"></th>
         <th scope="col" data-device-sort-column="id"><button type="button" data-device-column-sort="id" disabled>ID <span data-sort-arrow aria-hidden="true">↕</span></button></th>
         <th scope="col" data-device-sort-column="name"><button type="button" data-device-column-sort="name" disabled>Name <span data-sort-arrow aria-hidden="true">↕</span></button></th>
         <th scope="col" data-device-sort-column="group"><button type="button" data-device-column-sort="group" disabled>Group <span data-sort-arrow aria-hidden="true">↕</span></button></th>
@@ -587,40 +734,53 @@ slip_page_start('Station admin', '../', 'admin-console');
       <?php foreach ($devices as $d):
           $on = ($d['last_seen'] ?? 0) >= $cut; $id = (string)$d['id'];
           $saved = $sharedById[$d['id']] ?? null;
-          $inventory = $private ? slip_device_inventory($d['endpoint']) : [];
+          ['inventory' => $inventory, 'facts' => $facts] = $view[$d['id']];
           $deviceName = $saved['name'] ?? $d['name'] ?? '';
           $deviceGroups = slip_device_groups($saved ?? []) ?: ['Ungrouped'];
+          $outdated = in_array('outdated', $facts['flags'], true);
+          $export = [
+              'ID' => $id, 'Name' => $deviceName, 'Computer' => $d['name'] ?? '', 'Groups' => implode('; ', $deviceGroups),
+              'Status' => $facts['status'], 'Last seen (UTC)' => !empty($d['last_seen']) ? gmdate('Y-m-d H:i', (int)$d['last_seen']) : '',
+              'System' => $inventory['os_version'] ?? $d['os'] ?? '', 'Architecture' => $inventory['architecture'] ?? '', 'Slipstream' => $d['app_version'] ?? '',
+              'Model' => $inventory['model'] ?? '', 'Processor' => $inventory['processor'] ?? '',
+              'RAM (GiB)' => !empty($inventory['memory_bytes']) ? (string)round($inventory['memory_bytes'] / 1073741824, 1) : '',
+              'Serial' => $inventory['serial_number'] ?? '', 'Motherboard serial' => $inventory['motherboard_serial'] ?? '',
+              'Slipstream window' => $facts['graphics'] ?? '', 'Needs attention' => implode('; ', array_map(fn($f) => SLIP_DEVICE_FLAGS[$f], $facts['flags'])),
+              'Notes' => $saved['notes'] ?? '',
+          ];
           $searchText = implode(' ', array_merge([$id, $deviceName, $d['name'] ?? ''], $deviceGroups,
-              array_values(array_intersect_key($d, array_flip(['os', 'app_version']))),
+              array_values(array_intersect_key($d, array_flip(['os', 'app_version']))), ['Slipstream ' . ($d['app_version'] ?? ''), (string)$facts['graphics']],
               array_values(array_filter(array_intersect_key($inventory, array_flip(['os_version', 'architecture', 'model', 'processor', 'serial_number', 'motherboard', 'motherboard_serial'])), 'is_scalar'))));
       ?>
-        <tr data-device-row data-device-id="<?= h($id) ?>" data-device-seen="<?= (int)($d['last_seen'] ?? 0) ?>" data-device-search-text="<?= h($searchText) ?>">
-          <td class="<?= $on ? 'ok' : 'dim' ?>">●</td>
+        <tr data-device-row data-device-id="<?= h($id) ?>" data-device-seen="<?= (int)($d['last_seen'] ?? 0) ?>" data-device-search-text="<?= h($searchText) ?>"
+            data-device-status="<?= h($facts['status']) ?>" data-device-os="<?= h($facts['os']) ?>" data-device-flags="<?= h(implode(' ', $facts['flags'])) ?>" data-device-export="<?= h(json_encode($export, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE)) ?>">
+          <td class="device-select-cell"><span class="<?= $on ? 'ok' : 'dim' ?>" aria-hidden="true">●</span><input type="checkbox" data-device-select value="<?= (int)$d['id'] ?>" aria-label="Select <?= h($deviceName ?: $id) ?>"></td>
           <td class="mono device-id"><?php if ($private): ?><a href="?tab=devices&amp;device=<?= (int)$d['id'] ?>" title="View full system report"><?php endif ?><?= h(substr($id, 0, 3) . ' ' . substr($id, 3, 3) . ' ' . substr($id, 6)) ?><?php if ($private): ?></a><?php endif ?></td>
           <td data-label="Name"><b data-device-name><?= h($deviceName) ?></b>
             <?php if ($saved && ($saved['name'] ?? '') !== ($d['name'] ?? '')): ?><div class="dim">Computer: <?= h($d['name'] ?? '') ?></div><?php endif ?>
           </td>
           <td data-label="Group"><div class="group-chips" data-device-groups><?php foreach ($deviceGroups as $group): ?><span class="group-chip"><?= h($group) ?></span><?php endforeach ?></div></td>
-          <td data-label="System" data-device-system="<?= h($inventory['os_version'] ?? $d['os'] ?? '') ?>"><?= h($inventory['os_version'] ?? $d['os'] ?? '') ?><?php if (!empty($inventory['architecture'])): ?><div class="dim"><?= h($inventory['architecture']) ?></div><?php endif ?><div class="dim">Slipstream <?= h($d['app_version'] ?? '') ?></div></td>
+          <td data-label="System" data-device-system="<?= h($inventory['os_version'] ?? $d['os'] ?? '') ?>"><?= h($inventory['os_version'] ?? $d['os'] ?? '') ?><?php if (!empty($inventory['architecture'])): ?><div class="dim"><?= h($inventory['architecture']) ?></div><?php endif ?><div class="<?= $outdated ? 'warn' : 'dim' ?>"<?= $outdated ? ' title="Older than the version this station serves (' . h($currentVersion) . ')"' : '' ?>>Slipstream <?= h($d['app_version'] ?? '') ?><?= $outdated ? ' · outdated' : '' ?></div></td>
           <?php if ($private): ?><td data-label="Hardware" data-device-hardware="<?= h($inventory['model'] ?? '') ?>">
             <?php if ($inventory): ?>
               <div><?= h($inventory['model'] ?? 'Model unavailable') ?></div>
-              <?php if (!empty($inventory['processor'])): ?><div class="dim"><?= h($inventory['processor']) ?></div><?php endif ?>
-              <?php if (!empty($inventory['memory_bytes'])): ?><div><?= h(round($inventory['memory_bytes'] / 1073741824, 1)) ?> GiB RAM</div><?php endif ?>
+              <?php $spec = array_filter([$inventory['processor'] ?? '', !empty($inventory['memory_bytes']) ? round($inventory['memory_bytes'] / 1073741824, 1) . ' GiB RAM' : '']); ?>
+              <?php if ($spec): ?><div class="dim"><?= h(implode(' · ', $spec)) ?></div><?php endif ?>
               <div class="mono"><?= !empty($inventory['serial_number']) ? 'Serial: ' . h($inventory['serial_number']) : 'Motherboard serial: ' . h($inventory['motherboard_serial'] ?? 'Unavailable') ?></div>
-              <a href="?tab=devices&amp;device=<?= (int)$d['id'] ?>">View full system report →</a>
-              <div class="dim">Reported <?= h(gmdate('Y-m-d H:i', $inventory['reported_at'])) ?> UTC</div>
+              <?php if ($facts['graphics'] !== null && in_array('graphics', $facts['flags'], true)): ?><div class="warn" title="<?= h($facts['graphics']) ?>">Graphics fallback</div><?php endif ?>
+              <a href="?tab=devices&amp;device=<?= (int)$d['id'] ?>" title="Reported <?= h(gmdate('Y-m-d H:i', $inventory['reported_at'])) ?> UTC">System report →</a>
             <?php else: ?><span class="dim">Awaiting host inventory</span><?php endif ?>
           </td><?php endif ?>
           <td data-label="Last seen" class="<?= $on ? 'ok' : 'dim' ?>"><?= $on ? 'online' : h($ago($d['last_seen'] ?? 0)) ?></td>
           <td class="device-actions">
             <div class="device-action-stack">
             <div class="device-management-actions">
-            <?php if ($private): ?>
-              <button type="button" class="small lav" data-dialog-open="edit-device-<?= (int)$d['id'] ?>">Edit workstation</button>
+            <?php if ($private || $technicians): ?>
+              <button type="button" class="small lav" data-dialog-open="edit-device-<?= (int)$d['id'] ?>"><?= $private ? 'Edit workstation' : 'Assign' ?></button>
               <dialog id="edit-device-<?= (int)$d['id'] ?>" class="device-dialog">
-                <div class="dialog-heading"><h3>Edit workstation</h3><button type="button" class="small lav" data-dialog-close aria-label="Close editor">Close</button></div>
-                <p class="dim mono"><?= h($id) ?></p>
+                <div class="dialog-heading"><h3><?= $private ? 'Edit workstation' : 'Assign to technicians' ?></h3><button type="button" class="small lav" data-dialog-close aria-label="Close editor">Close</button></div>
+                <p class="dim mono"><?= h($deviceName) ?> · <?= h($id) ?></p>
+                <?php if ($private): ?>
                 <form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_add"><input type="hidden" name="return_tab" value="devices"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>"><input type="hidden" name="groups_present" value="1">
                   <div class="device-form-grid">
                     <label><span class="k">Name</span><input type="text" name="name" maxlength="64" required value="<?= h($saved['name'] ?? $d['name'] ?? '') ?>"></label>
@@ -629,6 +789,16 @@ slip_page_start('Station admin', '../', 'admin-console');
                   </div>
                   <div class="dialog-actions"><button class="small blue">Save workstation</button><button type="button" class="small lav" data-dialog-close>Cancel</button></div>
                 </form>
+                <?php endif ?>
+                <div class="dialog-section">
+                <?php if ($technicians): ?>
+                  <form method="post" class="device-assign-form"><?= $form() ?><input type="hidden" name="action" value="device_assign"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                    <?php slip_picker('usernames', 'Assign to technicians', $technicianOptions, [], ['placeholder' => 'Choose technicians']) ?>
+                    <button class="small blue">Assign</button>
+                  </form>
+                  <p class="dim">Puts this workstation in those technicians' own lists. They still need the device password to connect.</p>
+                <?php else: ?><a href="?tab=techs">Add a technician to assign this workstation</a><?php endif ?>
+                </div>
               </dialog>
             <?php endif ?>
             <form class="device-remove" method="post" onsubmit="return confirm('Remove this device?')"><?= $form() ?>
@@ -636,19 +806,13 @@ slip_page_start('Station admin', '../', 'admin-console');
               <button class="small red">Remove</button>
             </form>
             </div>
-            <?php if ($technicians): ?>
-              <form method="post" class="device-assign-form"><?= $form() ?><input type="hidden" name="action" value="device_assign"><input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
-                <?php slip_picker('usernames', 'Assign to technicians', $technicianOptions, [], ['placeholder' => 'Choose technicians']) ?>
-                <button class="small blue">Assign</button>
-              </form>
-            <?php else: ?><a href="?tab=techs">Add a technician first</a><?php endif ?>
             </div>
           </td>
         </tr>
       <?php endforeach ?>
       </tbody>
     </table>
-    <p class="dim" data-device-empty hidden>No devices match this search.</p>
+    <p class="dim" data-device-empty hidden>No devices match. <button type="button" class="small lav" data-device-clear-empty>Clear filters</button></p>
     <?php endif ?>
   </div>
 
