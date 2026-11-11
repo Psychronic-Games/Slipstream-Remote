@@ -72,6 +72,10 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.35.0**: Windows starts whatever the graphics drivers do (each tried
+  in a separate process, restart on the next option), System information
+  says how the window is drawn; station device filters, bulk actions, CSV
+  export and a fleet summary.
 - **0.34.3**: stations redirect plain HTTP to HTTPS once HTTPS works
   (HSTS optional in `config.php`).
 - **0.34.2**: the Android app installs its own updates; Subspace Relay's

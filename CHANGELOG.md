@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.35.0 — 2026-11-10
+
 - **Windows: a broken graphics driver no longer stops the app opening.**
   On some computers (seen with older Intel integrated graphics) the Vulkan
   driver crashes whatever loads it, and Slipstream closed without a word
