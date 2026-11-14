@@ -472,6 +472,11 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
                         Some(slipstream_session::StationRef::Public) => app.select_public(true),
                         _ => { app.toast("Open + / New link to connect through this saved station", pal::GOLD); continue; }
                     }
+                    // Saved with its password: no need to ask for it again.
+                    if let Some((account, device)) = super::quick_connect::saved_with_password(app, r) {
+                        super::saved::connect(app, ui.ctx(), &account, &device, false);
+                        continue;
+                    }
                     app.connect_id = r.id.to_string();
                     app.connect_pw.clear();
                     app.recent_prompt = Some(RecentPrompt {

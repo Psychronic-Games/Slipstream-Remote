@@ -287,15 +287,9 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
                 return;
             };
             picker.via = route;
-            if let StationRef::Account(r) = &picker.via
-                && let Some(account) = settings.accounts.iter().find(|a| AccountRef::of(a) == *r)
-                && let Some(device) = account
-                    .devices
-                    .iter()
-                    .find(|d| d.id == recent.id && d.secret.is_some())
-            {
+            if let Some((r, device)) = saved_with_password(app, &recent) {
                 picker.open = false;
-                saved::connect(app, ctx, r, device, false);
+                saved::connect(app, ctx, &r, &device, false);
             }
         }
         Some(Choice::Connect) => {
@@ -323,6 +317,19 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
         picker.password.clear();
     }
     app.quick_connect = picker;
+}
+
+/// The recent link's device as saved, with its password, in a signed-in
+/// list on the same station (the link's own, or this app's when it names
+/// none): such a link connects straight away, like the saved device does.
+pub(super) fn saved_with_password(app: &App, recent: &RecentConnection) -> Option<(AccountRef, SavedDevice)> {
+    let station = recent.station.clone().or_else(|| app.client.station_settings().url)?;
+    app.client.with_settings(|s| {
+        s.accounts.iter().filter(|a| !a.signed_out && a.is_station(&station)).find_map(|a| {
+            let device = a.devices.iter().find(|d| d.id == recent.id && d.secret.is_some())?;
+            Some((AccountRef::of(a), device.clone()))
+        })
+    })
 }
 
 pub(super) fn recent_station(app: &App, recent: &RecentConnection) -> Option<StationRef> {

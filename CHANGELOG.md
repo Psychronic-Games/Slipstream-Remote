@@ -13,6 +13,13 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Recent links use a saved password.** Clicking a recent link on the
+  Bridge asked for the password even when the same device was in your
+  saved devices with its password remembered. It now connects straight
+  away, as the saved device does (also from **+ / New link** on your
+  main station, which only did so for other signed-in stations). If the
+  saved password no longer works you are asked for it as before.
+
 ## 0.35.0 — 2026-11-10
 
 - **Windows: a broken graphics driver no longer stops the app opening.**
