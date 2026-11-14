@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.36.0 — 2026-11-14
+
 - **Linux service: the login screen and locked sessions.** A Linux
   computer whose session had locked, or where nobody was logged in, showed
   a black picture: Wayland desktops keep those screens out of screen
