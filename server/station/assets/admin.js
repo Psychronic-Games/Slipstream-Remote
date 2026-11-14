@@ -576,7 +576,42 @@
     const words = event.target.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     const rows = [...document.querySelectorAll('[data-group-row]')];
     for (const row of rows) row.hidden = !words.every(word => row.dataset.groupSearchText.toLocaleLowerCase().includes(word));
-    document.querySelector('[data-group-empty]').hidden = rows.some(row => !row.hidden);
+    const shown = rows.filter(row => !row.hidden).length;
+    document.querySelector('[data-group-empty]').hidden = shown > 0;
+    const count = document.querySelector('[data-group-count]');
+    if (count) count.textContent = shown === rows.length ? `${rows.length} group${rows.length === 1 ? '' : 's'}` : `${shown} of ${rows.length} groups`;
     closePicker();
   });
+  // Any table's headers sort its rows: by the cell's data-sort-value, or
+  // its text. Numbers start largest first; a second press reverses.
+  const naturally = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+  for (const table of document.querySelectorAll('[data-sort-table]')) {
+    const body = table.tBodies[0];
+    const buttons = [...table.querySelectorAll('[data-sort-button]')];
+    let sorted = null, descending = false;
+    for (const button of buttons) {
+      const column = button.closest('th');
+      button.disabled = false;
+      button.setAttribute('aria-pressed', 'false');
+      button.addEventListener('click', () => {
+        descending = sorted === column ? !descending : column.dataset.sortFirst === 'desc';
+        sorted = column;
+        const index = column.cellIndex, numeric = column.dataset.sortType === 'number';
+        const value = row => row.cells[index].dataset.sortValue ?? row.cells[index].textContent.trim();
+        const compare = (a, b) => numeric ? Number(value(a)) - Number(value(b)) : naturally.compare(value(a), value(b));
+        // Equal rows keep the order they were in.
+        const rows = [...body.rows].map((row, position) => ({row, position}));
+        rows.sort((a, b) => (descending ? compare(b.row, a.row) : compare(a.row, b.row)) || a.position - b.position);
+        closePicker();
+        body.append(...rows.map(entry => entry.row));
+        for (const other of buttons) {
+          const active = other === button, heading = other.closest('th');
+          other.setAttribute('aria-pressed', String(active));
+          other.querySelector('[data-sort-arrow]').textContent = active ? descending ? '↓' : '↑' : '↕';
+          if (active) heading.setAttribute('aria-sort', descending ? 'descending' : 'ascending');
+          else heading.removeAttribute('aria-sort');
+        }
+      });
+    }
+  }
 })();

@@ -14,7 +14,7 @@ if (empty($_SESSION['csrf'])) {
 $csrf = $_SESSION['csrf'];
 $post = ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST';
 $action = $post ? (string)($_POST['action'] ?? '') : '';
-$inlineSave = $post && $action === 'group_visibility'
+$inlineSave = $post && in_array($action, ['group_visibility', 'group_members'], true)
     && str_contains(strtolower($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json');
 $logRequest = !$post && isset($_GET['relay_log']);
 if ($inlineSave || $logRequest) ini_set('display_errors', '0'); // Keep API failures valid JSON; PHP still logs them.
@@ -824,15 +824,26 @@ slip_page_start('Station admin', '../', 'admin-console');
     $technicianLabel = fn($u) => ($technicians[$u]['name'] ?? $u) . ' (' . $u . ')';
     ?>
   <h2>Groups &amp; technician access</h2>
-  <div class="panel group-toolbar">
-    <p>A workstation can belong to several groups. Choose the technicians who should see a group and press <b>Done</b> in that picker to save without leaving the page. Personal passwords stay private.</p>
-    <form method="post" class="inline-form"><?= $form() ?><input type="hidden" name="action" value="station_group_create"><label><span class="k">Create station group</span><input type="text" name="group" maxlength="64" required placeholder="New group name"></label><button class="small blue">Create group</button></form>
-  </div>
-  <div class="panel">
-    <div class="group-list-toolbar"><label class="search-control"><span class="k">Find a group</span><input type="search" data-group-search placeholder="Group or source…"></label><p class="dim">Station groups are hidden until assigned. Personal groups always remain visible to their owner.</p></div>
+  <div class="panel lcars-register">
+    <p class="dim">A workstation can belong to several groups. Choose a group's workstations and the technicians who should see it, then press <b>Done</b> in the picker: it saves without leaving the page. Station groups stay hidden from technicians until assigned; personal groups always remain visible to their owner. Personal passwords stay private.</p>
+    <div class="lcars-toolbar">
+      <label class="search-control"><span class="k">Find a group</span><input type="search" data-group-search placeholder="Group or source…"></label>
+      <form method="post" class="group-create"><?= $form() ?><input type="hidden" name="action" value="station_group_create">
+        <label class="search-control"><span class="k">Create station group</span><input type="text" name="group" maxlength="64" required placeholder="New group name"></label>
+        <button class="small blue">Create group</button>
+      </form>
+      <p class="dim" data-group-count role="status" aria-live="polite"><?= count($catalog) ?> group<?= count($catalog) === 1 ? '' : 's' ?></p>
+    </div>
     <?php if (!$catalog): ?><p class="dim">No groups yet.</p><?php else: ?>
-    <div class="table-scroll"><table class="group-access">
-      <tr><th>Group</th><th>Source</th><th>Workstations</th><th>Visible to</th><th>Manage</th></tr>
+    <div class="table-scroll"><table class="lcars-table group-access" data-sort-table>
+      <thead><tr>
+        <th scope="col" class="fill-orange"><button type="button" data-sort-button disabled>Group <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-peach"><button type="button" data-sort-button disabled>Source <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-blue" data-sort-type="number" data-sort-first="desc"><button type="button" data-sort-button disabled title="Sort by how many workstations are in the group">Workstations <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-lav" data-sort-type="number" data-sort-first="desc"><button type="button" data-sort-button disabled title="Sort by how many technicians see the group">Visible to <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-violet">Manage</th>
+      </tr></thead>
+      <tbody>
       <?php foreach ($catalog as $entry):
           $owner = $entry['owner']; $group = $entry['group']; $count = count($entry['devices']);
           $recipients = array_values(array_filter($entry['usernames'], fn($u) => isset($technicians[$u])));
@@ -841,32 +852,37 @@ slip_page_start('Station admin', '../', 'admin-console');
           foreach ($choices as $device) $workstationOptions[] = ['value' => (string)$device['id'], 'label' => ($device['name'] ?? '') ?: (string)$device['id'], 'detail' => (string)$device['id'], 'disabled' => $group === ''];
           $userOptions = [];
           foreach ($technicians as $username => $technician) $userOptions[] = ['value' => (string)$username, 'label' => $technician['name'] ?? $username, 'detail' => (string)$username . ((string)$username === $owner ? ' · owner' : ''), 'disabled' => (string)$username === $owner];
+          $groupName = $group === '' ? 'Ungrouped' : $group; $source = $owner === '' ? 'Station' : $technicianLabel($owner);
           ?>
-      <tr data-group-row data-group-search-text="<?= h(($group === '' ? 'Ungrouped' : $group) . ' ' . ($owner === '' ? 'Station' : $technicianLabel($owner))) ?>">
-        <td data-label="Group"><b><?= h($group === '' ? 'Ungrouped' : $group) ?></b><?php if ($group === ''): ?><div class="dim">Automatic: no named groups</div><?php endif ?></td>
-        <td data-label="Source"><?= $owner === '' ? 'Station' : h($technicianLabel($owner)) ?><div class="dim"><?= $owner === '' ? 'Managed by station admins' : 'Personal technician group' ?></div></td>
-        <td data-label="Workstations">
-          <?php if ($group !== ''): ?><form method="post"><?= $form() ?><input type="hidden" name="action" value="group_members"><input type="hidden" name="owner" value="<?= h($owner) ?>"><input type="hidden" name="group" value="<?= h($group) ?>"><?php endif ?>
+      <tr data-group-row data-group-search-text="<?= h($groupName . ' ' . $source) ?>">
+        <td data-label="Group" data-sort-value="<?= h($groupName) ?>"><b class="group-name"><?= h($groupName) ?></b><?php if ($group === ''): ?><div class="dim">Automatic: no named groups</div><?php endif ?></td>
+        <td data-label="Source" data-sort-value="<?= h(($owner === '' ? '0 ' : '1 ') . $source) ?>"><span class="group-source<?= $owner === '' ? '' : ' personal' ?>"><?= $owner === '' ? 'Station' : 'Personal' ?></span>
+          <div class="dim"><?= $owner === '' ? 'Managed by station admins' : h($source) ?></div></td>
+        <td data-label="Workstations" data-sort-value="<?= $count ?>">
+          <?php if ($group !== ''): ?><form method="post" data-picker-save><?= $form() ?><input type="hidden" name="action" value="group_members"><input type="hidden" name="owner" value="<?= h($owner) ?>"><input type="hidden" name="group" value="<?= h($group) ?>"><?php endif ?>
             <?php slip_picker('ids', 'Workstations', $workstationOptions, array_column($entry['devices'], 'id'), ['placeholder' => 'Choose workstations']) ?>
-            <?php if ($group !== ''): ?><button class="small blue">Save workstations</button></form><?php endif ?>
+            <?php if ($group !== ''): ?><p class="picker-save-status dim" data-picker-save-status role="status" aria-live="polite" hidden></p>
+            <noscript><button class="small blue">Save workstations</button></noscript></form><?php endif ?>
         </td>
-        <td data-label="Visible to">
+        <td data-label="Visible to" data-sort-value="<?= count($recipients) + ($owner !== '' && !in_array($owner, $recipients, true) ? 1 : 0) ?>">
           <form method="post" data-picker-save><?= $form() ?><input type="hidden" name="action" value="group_visibility"><input type="hidden" name="owner" value="<?= h($owner) ?>"><input type="hidden" name="group" value="<?= h($group) ?>">
             <?php slip_picker('usernames', 'Visible to these technicians', $userOptions, array_merge($recipients, $owner !== '' ? [$owner] : []), ['placeholder' => $owner === '' ? 'No technicians assigned' : 'Owner only']) ?>
             <p class="picker-save-status dim" data-picker-save-status role="status" aria-live="polite" hidden></p>
             <noscript><button class="small blue">Save visibility</button></noscript>
           </form>
         </td>
-        <td data-label="Manage">
+        <td data-label="Manage" class="group-manage">
         <?php if ($owner === '' && $group !== ''): ?>
           <details class="group-rename"><summary>Rename</summary><form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_rename"><input type="hidden" name="group" value="<?= h($group) ?>">
             <label class="k">New name</label><input type="text" name="new_name" maxlength="64" required value="<?= h($group) ?>"><button class="small blue">Rename group</button>
           </form></details>
           <?php if (!$count): ?><form method="post"><?= $form() ?><input type="hidden" name="action" value="station_group_delete"><input type="hidden" name="group" value="<?= h($group) ?>"><button class="small red">Remove empty group</button></form><?php endif ?>
+        <?php else: ?><span class="dim"><?= $group === '' ? 'Automatic' : 'Owned by its technician' ?></span>
         <?php endif ?>
         </td>
       </tr>
       <?php endforeach ?>
+      </tbody>
     </table></div><?php endif ?>
     <p class="dim" data-group-empty hidden>No matching groups.</p>
   </div>
@@ -878,7 +894,7 @@ slip_page_start('Station admin', '../', 'admin-console');
     $when = fn($t) => $t ? date('Y-m-d H:i', (int)$t) : '—';
     ?>
   <h2>Technicians</h2>
-  <div class="panel">
+  <div class="panel lcars-register">
     <p>Technicians sign in from the app under <b>Config → Stations</b> with this station's address
     (<span class="mono"><?= h(slip_server_address()) ?></span>), their username and password. They can then
     reach your devices and keep their own list of them, here, from any computer, even an app from another
@@ -886,18 +902,28 @@ slip_page_start('Station admin', '../', 'admin-console');
     with the same username and password. Devices they save a password for keep it encrypted with a key only their app can
     make from their password: this station can't read it.</p>
     <?php if (!$users): ?><p class="dim">No technicians yet.</p><?php else: ?>
-    <div class="table-scroll"><table class="technician-table">
-      <tr><th>Username</th><th>Name</th><th>Role</th><th>Personal / assigned groups</th><th>Devices</th><th>Signed in</th><th></th></tr>
-      <?php foreach ($users as $u => $a): $sessions = (array)($a['sessions'] ?? []); $last = $sessions ? max(array_column($sessions, 'used')) : 0; ?>
+    <div class="table-scroll"><table class="lcars-table technician-table" data-sort-table>
+      <thead><tr>
+        <th scope="col" class="fill-orange"><button type="button" data-sort-button disabled>Username <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-gold"><button type="button" data-sort-button disabled>Name <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-peach"><button type="button" data-sort-button disabled>Role <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-violet" data-sort-type="number" data-sort-first="desc"><button type="button" data-sort-button disabled title="Sort by how many groups the technician sees">Groups <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-blue" data-sort-type="number" data-sort-first="desc"><button type="button" data-sort-button disabled>Devices <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-peach" data-sort-type="number" data-sort-first="desc"><button type="button" data-sort-button disabled title="Sort by when the technician's apps last signed in">Signed in <span data-sort-arrow aria-hidden="true">↕</span></button></th>
+        <th scope="col" class="fill-violet">Actions</th>
+      </tr></thead>
+      <tbody>
+      <?php foreach ($users as $u => $a): $sessions = (array)($a['sessions'] ?? []); $last = $sessions ? max(array_column($sessions, 'used')) : 0;
+          $seen = array_values(array_filter($catalog, fn($entry) => $entry['owner'] === (string)$u || in_array((string)$u, $entry['usernames'], true))); ?>
         <tr>
           <td data-label="Username" class="mono"><?= h($u) ?></td>
           <td data-label="Name"><?= h($a['name'] ?? '') ?></td>
-          <td data-label="Role"><?= !empty($a['admin']) ? '<span class="ok">admin</span>' : 'technician' ?></td>
-          <td data-label="Groups"><?php foreach ($catalog as $entry): if ($entry['owner'] !== (string)$u && !in_array((string)$u, $entry['usernames'], true)) continue; ?>
+          <td data-label="Role" data-sort-value="<?= !empty($a['admin']) ? 'admin' : 'technician' ?>"><?= !empty($a['admin']) ? '<span class="ok">admin</span>' : 'technician' ?></td>
+          <td data-label="Groups" data-sort-value="<?= count($seen) ?>"><?php foreach ($seen as $entry): ?>
             <div><?= h($entry['group'] === '' ? 'Ungrouped' : $entry['group']) ?> <span class="dim">· <?= $entry['owner'] === (string)$u ? 'personal' : ($entry['owner'] === '' ? 'station' : h($entry['owner'])) ?></span></div>
           <?php endforeach ?><a href="?tab=groups">Manage group assignments</a></td>
-          <td data-label="Devices"><?= count($a['devices'] ?? []) ?></td>
-          <td data-label="Signed in" class="dim"><?= count($sessions) ?> app<?= count($sessions) === 1 ? '' : 's' ?><?= $last ? ' · ' . h($when($last)) : '' ?></td>
+          <td data-label="Devices" data-sort-value="<?= count($a['devices'] ?? []) ?>"><?= count($a['devices'] ?? []) ?></td>
+          <td data-label="Signed in" data-sort-value="<?= (int)$last ?>" class="dim"><?= count($sessions) ?> app<?= count($sessions) === 1 ? '' : 's' ?><?= $last ? ' · ' . h($when($last)) : '' ?></td>
           <td class="technician-actions">
             <form method="post" style="display:inline"><?= $form() ?><input type="hidden" name="action" value="tech_admin">
               <input type="hidden" name="username" value="<?= h($u) ?>"><input type="hidden" name="admin" value="<?= empty($a['admin']) ? '1' : '' ?>">
@@ -914,6 +940,7 @@ slip_page_start('Station admin', '../', 'admin-console');
           </td>
         </tr>
       <?php endforeach ?>
+      </tbody>
     </table></div>
     <?php endif ?>
   </div>

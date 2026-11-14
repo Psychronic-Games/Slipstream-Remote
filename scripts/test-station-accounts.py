@@ -373,7 +373,7 @@ file_put_contents($file,(time()-(int)$argv[4]).' '.$argv[3]);""",
                 page = admin('/admin/?tab=groups')
                 assert 'Groups &amp; technician access' in page and 'Save workstations' in page
                 assert 'Youthnet &lt;main&gt;' in page and 'Youthnet <main>' not in page
-                assert 'Owner (owner)' in page and 'Other (other)' in page and 'Personal technician group' in page
+                assert 'Owner (owner)' in page and 'Other (other)' in page and 'group-source personal' in page
                 assert 'No technicians assigned' in page and 'Visible to these technicians' in page
                 assert device['secret']['c'] not in page and device['secret']['n'] not in page, 'Group catalog exposed sealed credentials'
                 admin(status=400, csrf='invalid-csrf', action='group_visibility', owner='', group='Empty station', **{'usernames[]': ['other']})
@@ -473,7 +473,7 @@ file_put_contents($file,(time()-(int)$argv[4]).' '.$argv[3]);""",
                 assert 'Youthnet <main>' not in call('account', assigned_token)['shared_groups']
                 assert 'no longer exists' in admin(csrf=csrf, action='group_visibility', owner='', group='Missing group')
                 page = admin('/admin/?tab=techs')
-                assert 'Personal / assigned groups' in page and 'Manage group assignments' in page
+                assert 'data-label="Groups"' in page and 'Manage group assignments' in page
                 # Deleting an account also clears its source shares and received assignments.
                 admin(csrf=csrf, action='group_visibility', owner='other', group='Youthnet <main>', **{'usernames[]': ['assigned']})
                 admin(csrf=csrf, action='tech_delete', username='other')

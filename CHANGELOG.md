@@ -28,6 +28,15 @@ show in small print: `0.6.0 (build N · commit)`.
   While the service hosts, connect with the unattended password; one-time
   codes, chat on the host, clipboard, sound and meeting calls aren't
   bridged to the signed-in user yet. Needs systemd.
+- **Station console: Groups and Technicians match the device register.**
+  Both pages now use the same LCARS tables as Devices, and their column
+  headings sort the rows (press again to reverse; Workstations, Visible
+  to, Groups, Devices and Signed in sort by number or time). On Groups,
+  finding and creating a group share one toolbar with a count, each
+  picker is named by its column, and a group's workstations now save when
+  you press **Done**, as its technicians already did: the separate *Save
+  workstations* buttons are gone. On Devices, the select-all box sits
+  centred over the rows' boxes.
 - **Recent links use a saved password.** Clicking a recent link on the
   Bridge asked for the password even when the same device was in your
   saved devices with its password remembered. It now connects straight

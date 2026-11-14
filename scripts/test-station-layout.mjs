@@ -178,7 +178,8 @@ for (const width of widths) {
     await choose(membersPicker, 'SECOND-PC');
     assert(await evaluate(`new FormData(${groupForm('group_members')}).getAll('ids[]').length>=2`), 'Filtering lost an existing workstation selection');
     await evaluate(`(${membersPicker}).querySelector('[data-picker-done]').click()`);
-    await submit(groupForm('group_members'));
+    // Saved on Done; later viewports find it already selected, with nothing to save.
+    await waitFor(`['saved', '', undefined].includes((${groupForm('group_members')}).dataset.saveState) && !(${membersPicker}).open`);
     await navigate('groups', '.group-access');
     assert(await evaluate(`[...(${membersPicker}).querySelectorAll('[data-picker-option]')].find(e=>e.textContent.includes('SECOND-PC')).querySelector('input').checked`), 'Workstation membership did not persist');
     const visibilityForm = groupForm('group_visibility');
@@ -228,9 +229,46 @@ for (const width of widths) {
     await waitFor(`(${personalForm}).dataset.saveState==='saved' && !(${personalPicker}).open`);
     assert(await evaluate(`(() => {const e=[...(${personalPicker}).querySelectorAll('input[type=checkbox]')].find(e=>e.value==='admin');return e.checked && e.disabled;})()`), 'Saving re-enabled or removed the personal group owner');
     await checkLayout('groups');
+    // Headers sort the register in place, without losing pending edits or reloading.
+    const groupNames = `[...document.querySelectorAll('.group-access [data-group-row]')].map(row=>row.cells[0].dataset.sortValue+'|'+row.cells[1].dataset.sortValue)`;
+    const header = index => `document.querySelectorAll('.group-access [data-sort-button]')[${index}]`;
+    assert(await evaluate(`[...document.querySelectorAll('.group-access [data-sort-button]')].every(b=>!b.disabled && b.getAttribute('aria-pressed')==='false')`), 'Group headers are not sortable');
+    await evaluate(`window.groupSortAudit='same-document';${header(0)}.click()`);
+    let names = (await evaluate(groupNames)).map(text=>text.split('|')[0]);
+    assert(names.indexOf('Zone 2') < names.indexOf('Zone 10') && names.indexOf('Admin personal') < names.indexOf('Engineering'), `Group header did not sort naturally: ${names}`);
+    assert(await evaluate(`${header(0)}.getAttribute('aria-pressed')==='true' && ${header(0)}.closest('th').getAttribute('aria-sort')==='ascending' && ${header(0)}.querySelector('[data-sort-arrow]').textContent==='↑'`), 'Sorted group header is not marked');
+    await evaluate(`${header(0)}.click()`);
+    names = (await evaluate(groupNames)).map(text=>text.split('|')[0]);
+    assert(names.indexOf('Zone 10') < names.indexOf('Zone 2') && await evaluate(`${header(0)}.closest('th').getAttribute('aria-sort')==='descending'`), 'Second press did not reverse the groups');
+    await evaluate(`${header(2)}.click()`);
+    const counts = await evaluate(`[...document.querySelectorAll('.group-access [data-group-row]')].map(row=>Number(row.cells[2].dataset.sortValue))`);
+    assert(counts.every((count,index)=>!index || count<=counts[index-1]) && counts[0]>0, `Workstations header did not put the fullest groups first: ${counts}`);
+    assert(await evaluate(`!${header(0)}.closest('th').hasAttribute('aria-sort') && ${header(0)}.querySelector('[data-sort-arrow]').textContent==='↕' && window.groupSortAudit==='same-document'`), 'Sorting left the old header marked or reloaded the page');
+    await screenshot('groups-sorted');
+    if (width === 1680) {
+      const box = await evaluate(`(() => {const picker=document.querySelector('.group-access .picker-field .k').getBoundingClientRect();return picker.width<=1 && picker.height<=1;})()`);
+      assert(box, 'Picker labels still repeat the column headings');
+    }
+
+    await navigate('techs', '.technician-table');
+    const techHeader = index => `document.querySelectorAll('.technician-table [data-sort-button]')[${index}]`;
+    const usernames = `[...document.querySelectorAll('.technician-table tbody tr')].map(row=>row.cells[0].textContent.trim())`;
+    await evaluate(`${techHeader(0)}.click()`);
+    let users = await evaluate(usernames);
+    assert(users.length >= 2 && users.every((user,index)=>!index || user.localeCompare(users[index-1], undefined, {numeric:true,sensitivity:'base'})>=0), `Username header did not sort: ${users}`);
+    await evaluate(`${techHeader(0)}.click()`);
+    assert.deepEqual(await evaluate(usernames), [...users].reverse(), 'Second press did not reverse the technicians');
+    await evaluate(`${techHeader(4)}.click()`);
+    const owned = await evaluate(`[...document.querySelectorAll('.technician-table tbody tr')].map(row=>Number(row.cells[4].dataset.sortValue))`);
+    assert(owned.every((count,index)=>!index || count<=owned[index-1]), `Devices header did not sort by number: ${owned}`);
+    await checkLayout('technicians');
 
     await navigate('devices', '.devices-table');
     await waitFor(`!document.querySelector('[data-device-controls]').hidden`);
+    if (width > 1300) {
+      const centred = await evaluate(`(() => {const all=document.querySelector('[data-device-select-all]').getBoundingClientRect(),one=document.querySelector('[data-device-select]').getBoundingClientRect(),cell=document.querySelector('th.device-status-heading').getBoundingClientRect();return {offset:Math.abs((all.left+all.right)/2-(one.left+one.right)/2),inside:all.left>=cell.left+6 && all.right<=cell.right-6};})()`);
+      assert(centred.offset <= 1 && centred.inside, `Select-all box is not centred over the row boxes: ${JSON.stringify(centred)}`);
+    }
     const visibleDevices = () => evaluate(`[...document.querySelectorAll('[data-device-row]')].filter(row=>!row.hidden).map(row=>({id:Number(row.dataset.deviceId),name:row.querySelector('[data-device-name]').textContent,seen:Number(row.dataset.deviceSeen)}))`);
     const searchDevices = async text => {
       await evaluate(`(() => {const input=document.querySelector('[data-device-search]');input.value=${JSON.stringify(text)};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
