@@ -99,6 +99,9 @@ pub struct ClientOptions {
     pub test_pattern: bool,
     /// Accept incoming remote-control sessions.
     pub accept_sessions: bool,
+    /// Linux service: share whatever the displays show (login screen,
+    /// locked sessions) rather than one desktop session. Needs root.
+    pub system_screen: bool,
     /// Which clipboard to sync (the system one, or an in-memory one for tests).
     pub clipboard: slipstream_platform::clipboard::ClipboardSource,
     /// Where viewing sessions play sound (the speakers, or memory for tests).

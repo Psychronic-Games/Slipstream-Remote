@@ -344,6 +344,8 @@ fn own_device(app: &App, account: &StationAccount) -> Option<SavedDevice> {
             _ if !app.via_service => settings.host.public_device_id,
             _ => None,
         };
+        #[cfg(target_os = "linux")]
+        let id = if app.via_service { crate::service::hosted_id(true) } else { id };
         return own_device_entry(account, slipstream_core::config::PUBLIC_STATION_URL, id, &settings.device_name);
     }
     if app.via_service && !app.service_station_matches() { return None; }
@@ -353,6 +355,8 @@ fn own_device(app: &App, account: &StationAccount) -> Option<SavedDevice> {
     };
     #[cfg(windows)]
     let id = if app.via_service { crate::service::hosted_id() } else { id };
+    #[cfg(target_os = "linux")]
+    let id = if app.via_service { crate::service::hosted_id(false) } else { id };
     own_device_entry(account, app.client.station_settings().url.as_deref()?, id, &settings.device_name)
 }
 

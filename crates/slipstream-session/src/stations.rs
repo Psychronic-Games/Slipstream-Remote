@@ -658,6 +658,7 @@ mod tests {
         crate::ClientOptions {
             public_station: Some(public_station),
             accept_sessions: host,
+            system_screen: false,
             test_pattern: true,
             clipboard: slipstream_platform::clipboard::ClipboardSource::Memory(Default::default()),
             audio_out: crate::AudioOut::Memory(Default::default()),

@@ -578,6 +578,7 @@ existing active-console-session backend and require no portal approval.
 | | Capture | Input |
 |---|---|---|
 | Linux (Wayland) | xdg-desktop-portal ScreenCast + PipeWire, pointer embedded by the compositor | RemoteDesktop portal |
+| Linux (service) | The graphics card's framebuffers through KMS ioctls (`kms.rs`), linear layouts only; pointer not included | Kernel input devices (`uinput.rs`) |
 | Linux (X11) | MIT-SHM (GetImage fallback) via pure-Rust `x11rb`, RandR monitors, pointer composited from XFixes | XTest via `enigo` |
 | Windows | DXGI Desktop Duplication of our own (`win_dxgi.rs`, one copy per frame, created per session); under the service, DXGI on the normal desktop and a reusable GDI capturer (`win_gdi.rs`) on the login screen and UAC's secure desktop. Pointer composited by us (`win_cursor.rs`) | `SendInput` via `enigo` |
 | macOS | ScreenCaptureKit via `xcap` | CGEvent via `enigo` |
@@ -810,6 +811,55 @@ plus the tray app if it's on.
   under a fixed protected report directory, never a caller-selected output
   path. Successful `.old` leftovers can be cleaned on startup; failed-recovery
   backups are retained.
+
+## The Linux service
+
+`slipstream service run` (`apps/slipstream/src/service_linux.rs`) is one
+root process started by a systemd unit
+(`/etc/systemd/system/slipstream-remote.service`). Unlike Windows there is
+no session to follow into: the login screen is another user's graphical
+session, and Wayland keeps lock and login screens out of the portal. So the
+service works below the desktop, through `OpenOptions::system`
+(`ClientOptions::system_screen`) and `slipstream_platform::system`:
+
+* **Capture** (`kms.rs`): plain ioctls on `/dev/dri/card*`, no libdrm. Each
+  CRTC with a mode and a framebuffer is a display. Per frame it asks the
+  CRTC for its framebuffer, maps new ones (`MODE_GETFB2`, falling back to
+  `GETFB`; `MODE_MAP_DUMB`, falling back to a PRIME descriptor), copies the
+  CRTC's part and compares it with the last frame sent. Mappings are
+  dropped every two seconds, since framebuffer numbers are reused. Root is
+  needed for the handles (`CAP_SYS_ADMIN`). The card is opened with
+  `DROP_MASTER` straight away: the first opener of a card becomes its
+  master, which would keep a display manager from starting. Only linear
+  layouts are read (XRGB/XBGR 8888, 2-10-10-10 and RGB565); a tiling
+  modifier, or none stated on i915/xe/amdgpu/radeon/nouveau/nvidia, is
+  refused with a message. The pointer is on its own plane and isn't in the
+  picture (`cursor_in_video` is false; the viewer draws its own).
+* **Input** (`uinput.rs`): two kernel devices, a keyboard (evdev codes from
+  the same key table) and an absolute pointer with buttons and a
+  high-resolution wheel, as virtual machines' mice are. Positions are
+  scaled over the bounding box of all displays (`system::on_desktop`).
+  Real positions are known when CRTCs share a framebuffer (X11); otherwise
+  displays are taken to sit left to right.
+* **Blanked screens:** opening the backend with no lit display taps Shift
+  on the keyboard and waits up to four seconds.
+* **Profile:** `/var/lib/slipstream-remote` (0700), with the identity and
+  settings `install` copies from the user's profile; the program is root's
+  own copy in `/opt/slipstream-remote`, so the service never runs a file a
+  user can replace. The log is in `/var/log/slipstream-remote` and the IDs
+  it registered as in `/run/slipstream-remote` (`device-id.txt`,
+  `public-id.txt`), both world-readable.
+* **One host per computer**, as on Windows: with the unit installed the app
+  starts with `accept_sessions` off (a throwaway key) and shows the
+  service's state (`systemctl is-active`) and IDs. There is no bridge to
+  the user's session yet, so one-time codes, link approval, host chat,
+  clipboard, sound and meeting calls are unavailable while the service
+  hosts ([issue 20](issues/20-linux-service.md)).
+* **Updates:** the generic headless path (`Client::install_update`
+  replaces the running program, the host exits, systemd restarts it).
+
+`slipstream service check [--picture FILE]` prints each card's driver and
+framebuffers and whether they can be read.
 
 ## Stations, updates and the app
 

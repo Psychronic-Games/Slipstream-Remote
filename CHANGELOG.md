@@ -13,6 +13,21 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Linux service: the login screen and locked sessions.** A Linux
+  computer whose session had locked, or where nobody was logged in, showed
+  a black picture: Wayland desktops keep those screens out of screen
+  sharing. **Config → Linux service → Install** (or
+  `sudo slipstream service install`) now runs Slipstream as a system
+  service that shows and controls whatever is on the displays, from boot,
+  with no screen-sharing approval. It reads the picture the graphics card
+  sends to the display and types through kernel input devices, so it
+  works the same on Wayland, X11 and a text console. This first version
+  reads virtual machines' and simple server graphics; Intel, AMD and
+  NVIDIA cards that keep the picture in their own layout are reported, not
+  shown (`sudo slipstream service check` tells you which a computer has).
+  While the service hosts, connect with the unattended password; one-time
+  codes, chat on the host, clipboard, sound and meeting calls aren't
+  bridged to the signed-in user yet. Needs systemd.
 - **Recent links use a saved password.** Clicking a recent link on the
   Bridge asked for the password even when the same device was in your
   saved devices with its password remembered. It now connects straight

@@ -6,6 +6,7 @@
 //! |---|---|
 //! | Linux, Wayland session | xdg-desktop-portal RemoteDesktop + PipeWire ([`wayland`]) |
 //! | Linux X11, Windows, macOS | xcap capture + enigo input ([`generic`]) |
+//! | Linux, as the service | the graphics card's own picture + kernel input devices ([`system`]) |
 //! | anything (tests, demos) | synthetic test pattern ([`test_pattern`]) |
 
 #[cfg(target_os = "android")]
@@ -26,9 +27,15 @@ pub mod generic;
 #[cfg(target_os = "windows")]
 mod privacy;
 #[cfg(target_os = "linux")]
+pub mod kms;
+#[cfg(target_os = "linux")]
 mod pw;
 #[cfg(target_os = "linux")]
 mod portal_health;
+#[cfg(target_os = "linux")]
+pub mod system;
+#[cfg(target_os = "linux")]
+mod uinput;
 #[cfg(target_os = "linux")]
 mod x11;
 #[cfg(target_os = "linux")]
@@ -95,6 +102,10 @@ pub struct OpenOptions {
     pub test_pattern: bool,
     /// Wayland portal restore token from a previous session.
     pub restore_token: Option<String>,
+    /// Linux service: capture what the graphics card shows and type
+    /// through kernel input devices, whatever session has the screen
+    /// (needs root). Ignored elsewhere.
+    pub system: bool,
 }
 
 /// Opens the best backend for this system. On Wayland this shows the
@@ -104,6 +115,10 @@ pub struct OpenOptions {
 pub async fn open(opts: &OpenOptions) -> Result<Box<dyn Backend>> {
     if opts.test_pattern {
         return Ok(Box::new(test_pattern::TestPattern::new(1280, 720)));
+    }
+    #[cfg(target_os = "linux")]
+    if opts.system {
+        return Ok(Box::new(tokio::task::spawn_blocking(system::SystemBackend::open).await??));
     }
     #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {

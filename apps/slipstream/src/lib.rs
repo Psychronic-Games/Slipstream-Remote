@@ -8,6 +8,9 @@ pub mod logging;
 pub mod update;
 #[cfg(windows)]
 pub mod service;
+#[cfg(target_os = "linux")]
+#[path = "service_linux.rs"]
+pub mod service;
 #[cfg(any(windows, test))]
 pub mod service_chat;
 

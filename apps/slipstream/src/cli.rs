@@ -78,8 +78,8 @@ pub async fn info() -> Result<()> {
     Ok(())
 }
 
-/// Headless host. `service`: started by the Windows service, so it installs
-/// updates itself and exits for the service to restart it.
+/// Headless host. `service`: started by the Windows service (or as the
+/// Linux one), so it installs updates itself and exits to be restarted.
 pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -> Result<()> {
     let store = Store::open_default()?;
     if let Some(pw) = &password {
@@ -87,9 +87,9 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
         s.host.set_permanent_password(Some(pw));
         store.save_settings(&s)?;
     }
-    let (client, mut events) = Client::start(store, ClientOptions { test_pattern, accept_sessions: true, public_station: (!test_pattern).then(slipstream_core::config::ServerSettings::public_station), ..Default::default() }).await?;
+    let (client, mut events) = Client::start(store, ClientOptions { test_pattern, accept_sessions: true, system_screen: service && cfg!(target_os = "linux"), public_station: (!test_pattern).then(slipstream_core::config::ServerSettings::public_station), ..Default::default() }).await?;
     #[cfg(target_os = "linux")]
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() && client.settings().host.enabled {
+    if !service && std::env::var_os("WAYLAND_DISPLAY").is_some() && client.settings().host.enabled {
         let preparing = client.clone();
         tokio::spawn(async move {
             if let Err(e) = preparing.prepare_screen_access().await {
@@ -107,6 +107,11 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
                 let Some(ev) = ev else { break };
                 #[cfg(windows)]
                 if let Some(bridge)=&mut chat_bridge {bridge.observe(&ev);}
+                // Signed-in users' apps show the ID the service registered as.
+                #[cfg(target_os = "linux")]
+                if service && matches!(ev, ClientEvent::Directory(_) | ClientEvent::PublicDirectory(_)) {
+                    crate::service::publish_ids(&client.settings());
+                }
                 match ev {
                     ClientEvent::Directory(DirStatus::Online { id }) => println!("ID       {id}"),
                     ClientEvent::PublicDirectory(status) => println!("public   {status:?}"),

@@ -338,6 +338,7 @@ pub(crate) async fn screen_backend(inner: &Inner) -> Result<tokio::sync::MutexGu
         let opened = slipstream_platform::open(&OpenOptions {
             test_pattern: inner.opts.test_pattern,
             restore_token,
+            system: inner.opts.system_screen,
         }).await?;
         if let Some(token) = opened.restore_token() {
             set_restore_token(inner, token);

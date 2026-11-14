@@ -5,7 +5,7 @@
 
 use clap::{Parser, Subcommand};
 use slipstream::{cli, gui};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use slipstream::service;
 
 #[derive(Debug, Parser)]
@@ -167,6 +167,13 @@ enum Command {
         #[command(subcommand)]
         action: ServiceCmd,
     },
+    /// Linux: run as a system service, for unattended access including the
+    /// login screen and locked sessions.
+    #[cfg(target_os = "linux")]
+    Service {
+        #[command(subcommand)]
+        action: ServiceCmd,
+    },
     /// Subspace Relay: use an Android phone's mobile data for this whole
     /// computer, through the phone's Wi-Fi Direct network.
     Relay {
@@ -254,6 +261,44 @@ enum ServiceCmd {
     Host,
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Debug, Subcommand)]
+enum ServiceCmd {
+    /// Install and start the service (as root). Uses this computer's
+    /// station and unattended password.
+    Install {
+        /// Set this unattended password for the service.
+        #[arg(long)]
+        password: Option<String>,
+        /// Settings folder to copy from (default: that of whoever ran sudo).
+        #[arg(long)]
+        from: Option<std::path::PathBuf>,
+        /// File to write an error to (for the app, which can't see this
+        /// elevated process's output).
+        #[arg(long, hide = true)]
+        report: Option<std::path::PathBuf>,
+    },
+    /// Stop and remove the service (as root).
+    Uninstall {
+        #[arg(long, hide = true)]
+        report: Option<std::path::PathBuf>,
+    },
+    /// Start the installed service.
+    Start,
+    /// Show whether the service is installed and running.
+    Status,
+    /// Show what the service can capture and control on this computer
+    /// (as root), without installing it.
+    Check {
+        /// Save what each display shows to this PNG.
+        #[arg(long)]
+        picture: Option<std::path::PathBuf>,
+    },
+    /// Run as the service (started by systemd).
+    #[command(hide = true)]
+    Run,
+}
+
 fn main() -> anyhow::Result<()> {
     // A copy started to try one graphics driver (see gui::graphics).
     #[cfg(windows)]
@@ -272,9 +317,25 @@ fn main() -> anyhow::Result<()> {
             std::env::set_var("SLIPSTREAM_LOG_DIR", service::log_path().parent().expect("in a folder"));
         }
     }
+    #[cfg(target_os = "linux")]
+    if let Some(Command::Service { action: ServiceCmd::Run }) = &args.command {
+        // SAFETY: still single-threaded here.
+        unsafe {
+            std::env::set_var("SLIPSTREAM_HOME", service::machine_home());
+            std::env::set_var("SLIPSTREAM_LOG_DIR", service::log_path().parent().expect("in a folder"));
+        }
+    }
     slipstream::logging::init();
+    #[cfg(target_os = "linux")]
+    if let Some(Command::Service { action: ServiceCmd::Run }) = &args.command {
+        service::share_log();
+    }
     // Relay commands run as administrator/root: leave settings alone.
     let provision = !matches!(args.command, Some(Command::ExportIcon { .. } | Command::Relay { .. }));
+    // So do the service's: its machine profile is authoritative, and an
+    // install must not write settings into root's own home.
+    #[cfg(target_os = "linux")]
+    let provision = provision && !matches!(args.command, Some(Command::Service { .. }));
     #[cfg(windows)]
     // Machine profiles are authoritative; unsigned station trailers must
     // not reconfigure the SYSTEM host or privileged update helper.
@@ -306,6 +367,18 @@ fn main() -> anyhow::Result<()> {
                 slipstream_platform::windesk::set_follow_input_desktop(true);
                 rt.block_on(cli::host(false, None, true))
             }
+        },
+        #[cfg(target_os = "linux")]
+        Some(Command::Service { action }) => match action {
+            ServiceCmd::Install { password, from, report } => reported(report, service::install(password.as_deref(), from.as_deref())),
+            ServiceCmd::Uninstall { report } => reported(report, service::uninstall()),
+            ServiceCmd::Start => service::start(),
+            ServiceCmd::Status => {
+                println!("{}", service::status_text());
+                Ok(())
+            }
+            ServiceCmd::Check { picture } => service::check(picture.as_deref()),
+            ServiceCmd::Run => rt.block_on(cli::host(false, None, true)),
         },
         Some(Command::Connect { id, password, station, seconds, ls, put, to, get, forward }) => {
             rt.block_on(cli::connect(&id, password, station, seconds, cli::FileOps { ls, put, to, get }, forward))
@@ -434,7 +507,7 @@ fn attach_parent_console() {
 
 /// Logs a failed service install or removal, and writes it to `report` for
 /// the app that asked for it.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn reported(report: Option<std::path::PathBuf>, result: anyhow::Result<()>) -> anyhow::Result<()> {
     if let Err(e) = &result {
         tracing::error!("{e:#}");

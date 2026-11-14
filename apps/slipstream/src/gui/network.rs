@@ -887,7 +887,7 @@ mod tests {
                 test_pattern:host,accept_sessions:host,
                 clipboard:slipstream_platform::clipboard::ClipboardSource::Memory(Default::default()),
                 audio_out:AudioOut::Memory(Default::default()),
-                public_station: None,
+                public_station: None, system_screen: false,
             }).await.unwrap().0);
         }
         let (session,_)=clients[1].connect_direct(clients[0].endpoint_addr(),"scanner-test",|_|{}).await.unwrap();

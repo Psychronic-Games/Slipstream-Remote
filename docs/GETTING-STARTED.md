@@ -611,9 +611,57 @@ administrator command prompt: `slipstream service install [--password …]`,
 user) `slipstream service start`. The service's log is under *Config →
 Service log* (`C:\ProgramData\Slipstream Remote\public\slipstream.log`).
 
-For headless Linux machines, `slipstream host --password …` runs a host
-from the command line (it needs a logged-in graphical session to
-capture).
+### Linux: the Slipstream service
+
+Without the service, Slipstream runs inside your desktop session. When
+that session locks, or nobody is logged in, a Wayland desktop keeps the
+lock and login screens out of screen sharing and the remote picture is
+black. For servers and machines you look after unattended, install the
+service: **Config → Incoming access → Linux service → Install** (your
+desktop asks for an administrator password), or in a terminal
+`sudo slipstream service install`. It uses this computer's station and
+unattended password, and keeps the same ID.
+
+With the service:
+
+- you see and control whatever is on the computer's displays: the login
+  screen, a locked session, a Wayland or X11 desktop, a text console;
+- it runs from boot, before anyone logs in, and survives logging out;
+- it needs no screen-sharing approval;
+- it installs updates by itself;
+- the service is the computer's one host. The app on that computer stops
+  hosting but can still control others; its Bridge shows the ID and
+  whether the service is running.
+
+What it needs, and what it doesn't do yet:
+
+- **systemd**, and a graphics driver whose picture can be read as plain
+  memory. That covers virtual machines (VMware, VirtualBox, QEMU/KVM,
+  Hyper-V) and simple server graphics. Intel, AMD and NVIDIA cards usually
+  keep the picture in their own layout, which the service reports rather
+  than showing garbage. `sudo slipstream service check` says what it finds
+  on a computer without installing anything (`--picture screen.png` saves
+  what it captured).
+- A display that is on: a monitor, a dummy plug or a virtual machine's
+  display. A blanked screen is woken when you connect.
+- Connect with the **unattended password**. One-time codes, link approval,
+  chat on the host's screen, the clipboard, sound and incoming meeting
+  calls belong to a signed-in user's session, which the service doesn't
+  reach yet. Remove the service to get those back.
+- Files are read and written as root: the Files window starts in root's
+  home, and nothing on the computer is off limits (turn file transfer off
+  under Config → Permissions if you don't want that).
+- With several displays on Wayland, their arrangement isn't known to the
+  service: it takes them to sit left to right.
+
+The service keeps its own copy of the settings: after changing the
+unattended password or permissions, press **Apply settings** next to it.
+In a terminal: `sudo slipstream service install [--password …]`,
+`sudo slipstream service uninstall`, `slipstream service status`. Its log
+is `/var/log/slipstream-remote/slipstream.log` (*Config → Service log*).
+
+Without the service, `slipstream host --password …` runs a host from the
+command line (it needs a logged-in graphical session to capture).
 
 ---
 
@@ -708,6 +756,7 @@ broken session.
 | **"This is a private Slipstream station"** | The app wasn't downloaded from this station, or the access key was renewed. Download the app again from the station page. |
 | **Partner not found / offline** | The other computer's app isn't running, has *Accept connections* off, or has no internet. Its status light should say *Online*. |
 | Remote screen is **black** after the other person logs off, locks the computer or closes another remote tool | Windows is showing its lock screen, which normal apps can't see (the session bar says so). Install the [Slipstream service](#windows-the-slipstream-service) on that computer to reach the lock and login screens. |
+| Remote **Linux** screen is black once it locks, or before anyone logs in | A Wayland desktop hides its lock and login screens from screen sharing. Install the [Linux service](#linux-the-slipstream-service) on that computer. |
 | **Ctrl+Alt+Del does nothing** | Windows only accepts it from a service: install the [Slipstream service](#windows-the-slipstream-service) on the remote computer. |
 | Service shows **Installed, not running** | Press **Start** (on the Bridge or in Config; no administrator prompt needed). If it won't start, Config shows Windows' own explanation with a *Copy* button, and *Config → Service log* opens the service's log (`C:\ProgramData\Slipstream Remote\public\slipstream.log`). |
 | **Two Slipstream processes** in Task Manager with the service installed | Expected. The service runs in the background where it can't see the screen, and starts a helper in the signed-in session that captures and controls it. The tray icon is a third, unless *Config → Tray icon* is off. |

@@ -1,6 +1,6 @@
 # Project status
 
-*Updated 2026-11-08. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
+*Updated 2026-11-14. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
 changes: [CHANGELOG.md](../CHANGELOG.md).*
 
 ## Where things stand
@@ -72,6 +72,11 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.36.0**: the Linux service (the login screen and locked sessions,
+  through the graphics card's own picture and kernel input devices;
+  [issue 20](issues/20-linux-service.md)); recent links connect with a
+  saved password; the station's Groups and Technicians pages as LCARS
+  tables with sorting headers.
 - **0.35.0**: Windows starts whatever the graphics drivers do (each tried
   in a separate process, restart on the next option), System information
   says how the window is drawn; station device filters, bulk actions, CSV
@@ -155,6 +160,8 @@ Recent releases:
 | Meeting recording | ✅ native UI audit records MP4 and MKV, which ffprobe reads (H.264 and Opus frames); saved through the desktop's real save dialog (user, 2026-11-08) |
 | Android viewer and host | ✅ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; works on a real phone (user, 2026-11-08). Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
+
+| Linux service (0.36) | ✅ unit tests for pixel copying, formats and bounds, ioctl numbers against the kernel's, pointer mapping; display listing on real AMD and NVIDIA cards; the virtual keyboard and pointer created and used on a real kernel. ⚠️ Capture itself needs root and a readable framebuffer, so it is untried until run on a virtual machine ([issue 20](issues/20-linux-service.md)) |
 
 ## Known gaps and limits
 

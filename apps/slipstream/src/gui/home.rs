@@ -5,24 +5,29 @@ use slipstream_session::DirStatus;
 
 use super::{App, Page, files, theme, theme::pal};
 
-/// Whether the Windows service is running, and its state in words.
+/// Whether the Windows or Linux service is running, and its state in words.
 fn service_state() -> (bool, &'static str) {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         let s = crate::service::status_text();
         (s == "Running", s)
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     (true, "Running")
 }
 
-/// The ID the Windows service hosts this computer as, while it does.
-fn service_id(app: &App) -> Option<slipstream_core::directory::DeviceId> {
+/// The ID the service hosts this computer as, while it does (`public`: on
+/// Slipstream Public rather than the computer's own station).
+fn service_id(app: &App, public: bool) -> Option<slipstream_core::directory::DeviceId> {
     #[cfg(windows)]
-    if app.via_service {
+    if app.via_service && !public {
         return app.service_station_matches().then(crate::service::hosted_id).flatten();
     }
-    let _ = app;
+    #[cfg(target_os = "linux")]
+    if app.via_service {
+        return crate::service::hosted_id(public);
+    }
+    let _ = (app, public);
     None
 }
 
@@ -214,7 +219,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             _ => app.client.with_settings(|s| s.host.last_device_id),
         };
         // With the service hosting, partners need the ID it registered as.
-        let hosted = if public { None } else { service_id(app) };
+        let hosted = service_id(app, public);
         let id_text = hosted.or(own_id).map(|i| i.to_string()).unwrap_or_else(|| "--- --- ---".into());
 
         ui.label(RichText::new("YOUR ID").font(theme::display(15.0)).color(pal::LAVENDER));
@@ -230,11 +235,17 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         if app.via_service {
             if let DirStatus::Error(error) = &directory { ui.label(RichText::new(error).color(pal::GOLD)); }
             // The service owns both its one-time code and permanent password.
-            one_time_password(app, ui);
+            if cfg!(windows) {
+                one_time_password(app, ui);
+            }
             ui.label(RichText::new("REACHABLE THROUGH THE SLIPSTREAM SERVICE").font(theme::display(15.0)).color(pal::LAVENDER));
             ui.label(
-                RichText::new("Share the one-time code above, or use this computer's unattended password. Both work with the same ID. The service also reaches the login screen and administrator prompts.")
-                    .color(pal::DIM),
+                RichText::new(if cfg!(windows) {
+                    "Share the one-time code above, or use this computer's unattended password. Both work with the same ID. The service also reaches the login screen and administrator prompts."
+                } else {
+                    "Use this computer's unattended password with the ID above. The service shows whatever is on the screen, including the login screen and a locked session."
+                })
+                .color(pal::DIM),
             );
             if let (Some(h), Some(own)) = (hosted, own_id)
                 && h != own
@@ -255,7 +266,7 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
                 let text = if running { "SERVICE RUNNING · READY FOR LINK".to_string() } else { format!("SERVICE {} · NOT REACHABLE", state.to_uppercase()) };
                 ui.label(RichText::new(text).font(theme::display(17.0)).color(color));
             });
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             if !running {
                 ui.add_space(6.0);
                 if let Some(why) = crate::service::start_problem() {

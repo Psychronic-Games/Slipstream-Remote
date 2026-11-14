@@ -128,13 +128,16 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     if via_service {
         crate::service::keep_running();
     }
+    // Likewise with the Linux service (systemd keeps that one running).
+    #[cfg(target_os = "linux")]
+    let via_service = !opts.test_pattern && crate::service::installed();
     // The service starts the app hidden at every sign-in, for its tray
     // icon; this user turned that off.
     #[cfg(windows)]
     if via_service && opts.minimized && !opts.service_chat && store.load_settings().app.hide_tray_with_service {
         return Ok(());
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     let via_service = false;
     // Android registers a persistent host identity too; capture still
     // requires an explicit MediaProjection grant on the phone.
@@ -466,7 +469,7 @@ pub struct App {
     link_job: Option<(bool, bool, LinkReply)>,
     /// An outside link that would switch stations, waiting for Switch.
     station_switch: Option<(String, StationConfig)>,
-    /// The Windows service hosts this computer (see `crate::service`).
+    /// The Windows or Linux service hosts this computer (see `crate::service`).
     pub via_service: bool,
     #[cfg(windows)]
     pub service_chat: Option<crate::service_chat::Gui>,
@@ -518,7 +521,8 @@ impl App {
         #[cfg(target_os = "linux")]
         let screen_access = {
             let mut access = screen_access::ScreenAccess::default();
-            if std::env::var_os("WAYLAND_DISPLAY").is_some() && client.settings().host.enabled {
+            // Not when the Linux service hosts: it needs no approval.
+            if std::env::var_os("WAYLAND_DISPLAY").is_some() && client.settings().host.enabled && !crate::service::installed() {
                 access.start(&rt, &client, &ctx, false);
             }
             access
@@ -752,6 +756,17 @@ impl App {
     }
 
     pub fn selected_dir_status(&self) -> DirStatus {
+        // The Linux service is the host: its registration is what counts,
+        // not this app's own (which only looks others up).
+        #[cfg(target_os = "linux")]
+        if self.via_service {
+            let public = self.selected_public || !self.client.has_custom_station();
+            return match crate::service::hosted_id(public) {
+                _ if !crate::service::is_running() => DirStatus::Error("The Slipstream service isn't running: see Config → Linux service".into()),
+                Some(id) => DirStatus::Online { id },
+                None => DirStatus::Connecting,
+            };
+        }
         if self.selected_public {
             if self.via_service { self.service_public_status.clone().unwrap_or(DirStatus::Connecting) }
             else { self.public_status.clone() }
@@ -1022,7 +1037,67 @@ impl App {
         });
     }
 
-    #[cfg(windows)]
+    /// Installs (or removes) the Linux service, through the desktop's
+    /// administrator prompt; the app restarts afterwards so it stops (or
+    /// resumes) hosting. `start_first`: an installed, stopped service is
+    /// just started.
+    #[cfg(target_os = "linux")]
+    pub fn service_action(&mut self, ctx: &egui::Context, install: bool, start_first: bool) {
+        if self.update.as_ref().is_some_and(|update| update.installing) {
+            self.toast("Wait for the app update to finish before changing the service", pal::GOLD);
+            return;
+        }
+        if install && self.client.settings().host.permanent_password_secret.is_none() {
+            self.toast("Set and save an unattended password first: it is what lets you in at the login screen", pal::RED);
+            return;
+        }
+        let store = match Store::open_default() {
+            Ok(store) => store,
+            Err(e) => return self.toast(format!("{e:#}"), pal::RED),
+        };
+        // The elevated process writes what went wrong here.
+        let report = store.dir().join("service-report.txt");
+        let _ = std::fs::remove_file(&report);
+        let mut args = vec!["service".to_string(), if install { "install" } else { "uninstall" }.to_string()];
+        if install {
+            args.extend(["--from".to_string(), store.dir().display().to_string()]);
+        }
+        args.extend(["--report".to_string(), report.display().to_string()]);
+        let (tx, rx) = oneshot::channel();
+        let done = match (install, start_first) {
+            (true, true) => "The service is running",
+            (true, false) => "The service is installed and running",
+            (false, _) => "The service was removed",
+        };
+        // Adding or removing the service changes who hosts: restart then.
+        self.service_job = Some((!start_first && install != self.via_service, done, rx));
+        let wake = ctx.clone();
+        crate::service::set_busy(true);
+        std::thread::spawn(move || {
+            let result = if start_first {
+                crate::service::start().map_err(|e| format!("{e:#}"))
+            } else {
+                match crate::service::run_elevated(&args) {
+                    Ok(0) => Ok(()),
+                    Ok(code) => Err(match std::fs::read_to_string(&report) {
+                        Ok(why) if !why.trim().is_empty() => why.trim().to_string(),
+                        _ => format!("that didn't work (code {code})"),
+                    }),
+                    Err(e) => Err(format!("{e:#}")),
+                }
+            };
+            let _ = std::fs::remove_file(&report);
+            if let Err(e) = &result {
+                tracing::warn!("service {}: {e}", if install { "install" } else { "removal" });
+            }
+            crate::service::set_problem(result.as_ref().err().cloned());
+            crate::service::set_busy(false);
+            let _ = tx.send(result);
+            wake.request_repaint();
+        });
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
     pub fn service_busy(&self) -> bool {
         self.service_job.is_some()
     }
@@ -1907,7 +1982,7 @@ impl eframe::App for App {
         if ctx.input(|i| i.viewport().close_requested())
             && !self.quitting
             && self.tray.is_some()
-            && (app.run_in_tray || (self.via_service && !app.hide_tray_with_service))
+            && (app.run_in_tray || (cfg!(windows) && self.via_service && !app.hide_tray_with_service))
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if self.client.settings().app.tray_hint_shown {

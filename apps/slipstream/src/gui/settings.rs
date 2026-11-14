@@ -107,9 +107,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     let mut approve_screen = None;
     let mut link_now = false;
     let linking = app.linking();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let (via_service, service_busy) = (app.via_service, app.service_busy());
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let mut service_clicked: Option<(bool, bool)> = None;
     let network_help = match &app.org {
         Some(org) => format!(
@@ -211,7 +211,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             });
             #[cfg(target_os = "linux")]
             row(ui, "Screen permission", |ui| { ui.vertical(|ui| {
-                if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                if via_service {
+                    ui.label(RichText::new("Not needed: the Linux service shares the screen").color(pal::GREEN));
+                } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
                     let busy = app.screen_access.busy();
                     if busy && theme::pill(ui, "Cancel request", pal::PEACH).clicked() {
                         app.screen_access.cancel();
@@ -240,7 +242,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 }
             }); });
             #[cfg(target_os = "linux")]
-            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if via_service {
+                ui.label(RichText::new("The Linux service provides screen access, including the login screen and a locked session. No screen-sharing approval is needed.").small().color(pal::DIM));
+            } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
                 ui.label(RichText::new("Screen access is prepared when Slipstream starts and remains available in the tray. Your desktop decides whether approval survives a restart or reboot.").small().color(pal::DIM));
             }
             #[cfg(windows)]
@@ -293,7 +297,51 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                     }
                 }
             });
-            #[cfg(windows)]
+            #[cfg(target_os = "linux")]
+            row(ui, "Linux service", |ui| {
+                let tip = "Unattended access to whatever is on this computer's screen, including the login screen and a locked session. Needs administrator rights and an unattended password.";
+                ui.add_enabled_ui(!service_busy, |ui| {
+                    if service_busy {
+                        theme::pill(ui, "Working…", pal::BLUE);
+                    } else if crate::service::is_running() {
+                        if theme::pill(ui, "Apply settings", pal::BLUE).on_hover_text("Apply this app's saved station and unattended-access settings to the service").clicked() {
+                            service_clicked = Some((true, false));
+                        }
+                        if theme::pill(ui, "Remove", pal::RED).clicked() {
+                            service_clicked = Some((false, false));
+                        }
+                    } else if crate::service::installed() {
+                        if theme::pill(ui, "Start", pal::BLUE).on_hover_text("Start the service").clicked() {
+                            service_clicked = Some((true, true));
+                        }
+                        if theme::pill(ui, "Reinstall", pal::VIOLET).on_hover_text("Install this version of the service again and start it").clicked() {
+                            service_clicked = Some((true, false));
+                        }
+                        if theme::pill(ui, "Remove", pal::RED).clicked() {
+                            service_clicked = Some((false, false));
+                        }
+                    } else if theme::pill(ui, "Install", pal::BLUE).on_hover_text(tip).clicked() {
+                        service_clicked = Some((true, false));
+                    }
+                });
+                let status = crate::service::status_text();
+                ui.label(RichText::new(status).color(if status == "Running" { pal::GREEN } else { pal::DIM }));
+                if crate::service::installed() {
+                    let log = crate::service::log_to_show();
+                    if ui.link(RichText::new("Service log").small()).on_hover_text(log.display().to_string()).clicked() {
+                        let _ = std::process::Command::new("xdg-open").arg(log).spawn();
+                    }
+                }
+            });
+            #[cfg(target_os = "linux")]
+            if via_service {
+                ui.label(
+                    RichText::new("The service is this computer's host and keeps its own copy of these settings: after saving, press Apply settings to give it the new ones. While it hosts, the clipboard, sound, chat and meeting calls aren't shared with the person at this computer yet.")
+                        .small()
+                        .color(pal::DIM),
+                );
+            }
+            #[cfg(any(windows, target_os = "linux"))]
             if let Some(why) = crate::service::start_problem() {
                 // Windows' own explanation, to read or paste into a ticket.
                 ui.horizontal(|ui| {
@@ -319,7 +367,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         });
         ui.add_space(14.0);
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     if let Some((install, start_first)) = service_clicked {
         let ctx = ui.ctx().clone();
         app.service_action(&ctx, install, start_first);
