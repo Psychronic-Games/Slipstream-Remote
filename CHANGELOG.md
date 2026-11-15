@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.37.1 — 2026-11-15
+
 - **System information: values sit beside their labels.** One long label
   far down the list (a network adapter's name, say) pushed every value to
   the right edge, where model names and serial numbers wrapped over
