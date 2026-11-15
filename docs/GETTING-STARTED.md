@@ -629,9 +629,13 @@ With the service:
 - it runs from boot, before anyone logs in, and survives logging out;
 - it needs no screen-sharing approval;
 - it installs updates by itself;
-- the service is the computer's one host. The app on that computer stops
-  hosting but can still control others; its Bridge shows the ID and
-  whether the service is running.
+- the service is the computer's one host, with one ID. While someone is
+  signed in with Slipstream running, and their session is in front and
+  unlocked, links go through that desktop instead (its own screen
+  sharing, with the clipboard, sound and that person's folders), as
+  before the service was installed. The service takes over when the
+  session locks or ends, and an open link reconnects by itself across the
+  change. The Bridge shows the ID and which of the two is in use.
 
 What it needs, and what it doesn't do yet:
 
@@ -641,16 +645,24 @@ What it needs, and what it doesn't do yet:
   keep the picture in their own layout, which the service reports rather
   than showing garbage. `sudo slipstream service check` says what it finds
   on a computer without installing anything (`--picture screen.png` saves
-  what it captured).
+  what it captured). On a computer whose screen the service can't read,
+  the login screen and locked sessions can't be shown (the Bridge there
+  says so), but a signed-in desktop is still shared as above.
+- On **VMware**, the kernel's driver only hands the picture out from Linux
+  6.11: Debian 13 works, Debian 12 (Linux 6.1) doesn't unless it runs a
+  newer kernel, such as the one in `bookworm-backports`. The virtual
+  machine's 3D acceleration setting makes no difference.
 - A display that is on: a monitor, a dummy plug or a virtual machine's
   display. A blanked screen is woken when you connect.
 - Connect with the **unattended password**. One-time codes, link approval,
-  chat on the host's screen, the clipboard, sound and incoming meeting
-  calls belong to a signed-in user's session, which the service doesn't
-  reach yet. Remove the service to get those back.
-- Files are read and written as root: the Files window starts in root's
-  home, and nothing on the computer is off limits (turn file transfer off
-  under Config → Permissions if you don't want that).
+  chat on the host's screen and incoming meeting calls aren't available
+  under the service yet. Remove the service to get those back.
+- The clipboard and sound work while a signed-in desktop is shared, not at
+  the login screen or a locked session.
+- At the login screen or a locked session, files are read and written as
+  root: the Files window starts in root's home, and nothing on the
+  computer is off limits (turn file transfer off under Config →
+  Permissions if you don't want that).
 - With several displays on Wayland, their arrangement isn't known to the
   service: it takes them to sit left to right.
 

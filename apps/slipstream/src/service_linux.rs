@@ -166,6 +166,124 @@ pub fn publish_ids(settings: &slipstream_core::config::Settings) {
     }
 }
 
+fn screen_problem_file() -> PathBuf {
+    Path::new(PUBLIC_DIR).join("screen-problem.txt")
+}
+
+/// Who hosts now ("service" or "desktop"), written by the service.
+pub fn host_file() -> PathBuf {
+    Path::new(PUBLIC_DIR).join("host.txt")
+}
+
+static SCREEN_READABLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// In the service: whether it could read the screen when last checked
+/// (see [`watch_screen`]).
+pub fn screen_readable() -> bool {
+    SCREEN_READABLE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether a signed-in desktop is hosting in the running service's place
+/// (see `service_desktop`). Looked up at most every two seconds.
+pub fn hosted_from_desktop() -> bool {
+    static SEEN: std::sync::Mutex<Option<(Instant, bool)>> = std::sync::Mutex::new(None);
+    if !is_running() {
+        return false;
+    }
+    let mut seen = SEEN.lock().unwrap();
+    if let Some((at, desktop)) = *seen
+        && at.elapsed() < Duration::from_secs(2)
+    {
+        return desktop;
+    }
+    let desktop = std::fs::read_to_string(host_file()).is_ok_and(|s| s.trim() == "desktop");
+    *seen = Some((Instant::now(), desktop));
+    desktop
+}
+
+/// Run by the app in a desktop session while the service is installed:
+/// starts the helper that hosts from this desktop when the service lends
+/// it the place (`slipstream service desktop`). It ends with the app.
+pub fn spawn_desktop_host(profile: &Path) {
+    use std::os::unix::process::CommandExt;
+    let Ok(exe) = std::env::current_exe() else { return };
+    let mut command = Command::new(exe);
+    command
+        .args(["service", "desktop", "--from"])
+        .arg(profile)
+        // A profile of its own: two programs can't share a settings file.
+        .env("SLIPSTREAM_HOME", profile.join("desktop-host"))
+        .env_remove("SLIPSTREAM_LOG_DIR")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // SAFETY: one async-signal-safe call between fork and exec.
+    unsafe {
+        command.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
+    match command.spawn() {
+        Ok(mut child) => {
+            // Stays alive for the app's whole life: the "parent died"
+            // signal follows the thread that started the helper.
+            let _ = std::thread::Builder::new().name("desktop-host".into()).spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => tracing::warn!("desktop host not started: {e}"),
+    }
+}
+
+/// Run by the service: keeps telling signed-in users' apps whether it can
+/// show this computer's screen (the login screen and locked sessions
+/// depend on it).
+pub fn watch_screen() {
+    let watch = || {
+        // Let the login screen take the graphics card first.
+        std::thread::sleep(Duration::from_secs(15));
+        let mut said: Option<String> = None;
+        loop {
+            let problem = slipstream_platform::kms::unreadable_reason();
+            SCREEN_READABLE.store(problem.is_none(), std::sync::atomic::Ordering::Relaxed);
+            if problem != said {
+                match &problem {
+                    Some(why) => tracing::warn!("this computer's screen can't be shown: {why}"),
+                    None => tracing::info!("this computer's screen can be shown"),
+                }
+                let path = screen_problem_file();
+                if std::fs::write(&path, problem.as_deref().unwrap_or_default()).is_ok() {
+                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
+                }
+                said = problem;
+            }
+            std::thread::sleep(Duration::from_secs(60));
+        }
+    };
+    if let Err(e) = std::thread::Builder::new().name("screen-check".into()).spawn(watch) {
+        tracing::warn!("screen check not started: {e}");
+    }
+}
+
+/// Why the running service can't show this computer's screen, if it has
+/// said so. Looked up at most every two seconds.
+pub fn screen_problem() -> Option<String> {
+    static SEEN: std::sync::Mutex<Option<(Instant, Option<String>)>> = std::sync::Mutex::new(None);
+    if !is_running() {
+        return None;
+    }
+    let mut seen = SEEN.lock().unwrap();
+    if let Some((at, problem)) = &*seen
+        && at.elapsed() < Duration::from_secs(2)
+    {
+        return problem.clone();
+    }
+    let problem = std::fs::read_to_string(screen_problem_file()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    *seen = Some((Instant::now(), problem.clone()));
+    problem
+}
+
 /// Set while the app installs or removes the service.
 static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -269,6 +387,12 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     }
     if !Path::new("/run/systemd/system").exists() {
         bail!("the Slipstream service needs systemd, which this system doesn't run");
+    }
+    // Not a reason to refuse: while someone is signed in, their desktop
+    // hosts (see `service_desktop`). But say what won't be reachable.
+    if let Some(why) = slipstream_platform::kms::unreadable_reason() {
+        println!("Note: the service can't show this computer's login screen or a locked session: {why}.");
+        println!("It stays reachable while someone is signed in with Slipstream running, through the desktop's own screen sharing.");
     }
 
     // The machine profile, from this computer's settings.

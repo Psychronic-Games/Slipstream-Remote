@@ -259,13 +259,43 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             }
             ui.add_space(10.0);
             let (running, state) = service_state();
+            // Linux: this desktop hosts in the service's place while
+            // someone is signed in; and the service may be unable to read
+            // this computer's screen (login screen, locked session).
+            #[cfg(target_os = "linux")]
+            let (desktop, blind) = (crate::service::hosted_from_desktop(), crate::service::screen_problem());
+            #[cfg(not(target_os = "linux"))]
+            let (desktop, blind): (bool, Option<String>) = (false, None);
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
-                let color = if running { pal::GREEN } else { pal::RED };
+                let color = if !running {
+                    pal::RED
+                } else if blind.is_some() && !desktop {
+                    pal::GOLD
+                } else {
+                    pal::GREEN
+                };
                 theme::lamp(ui.painter(), rect.center(), color, t);
-                let text = if running { "SERVICE RUNNING · READY FOR LINK".to_string() } else { format!("SERVICE {} · NOT REACHABLE", state.to_uppercase()) };
+                let text = if !running {
+                    format!("SERVICE {} · NOT REACHABLE", state.to_uppercase())
+                } else if desktop {
+                    "SERVICE RUNNING · THIS DESKTOP IS SHARED · READY FOR LINK".to_string()
+                } else if blind.is_some() {
+                    "SERVICE RUNNING · CAN'T SHOW THIS SCREEN".to_string()
+                } else {
+                    "SERVICE RUNNING · READY FOR LINK".to_string()
+                };
                 ui.label(RichText::new(text).font(theme::display(17.0)).color(color));
             });
+            if desktop {
+                ui.add_space(6.0);
+                ui.label(RichText::new("While you are signed in, links use this desktop's own screen sharing, with the clipboard and sound. The service takes over when the session locks or ends.").color(pal::DIM));
+            }
+            if let Some(why) = &blind {
+                ui.add_space(6.0);
+                let what = if desktop { "The login screen and a locked session can't be shown on this computer" } else { "The screen can't be shown right now" };
+                ui.label(RichText::new(format!("{what}: {why}.")).color(pal::PEACH));
+            }
             #[cfg(any(windows, target_os = "linux"))]
             if !running {
                 ui.add_space(6.0);

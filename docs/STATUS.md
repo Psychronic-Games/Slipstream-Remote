@@ -161,7 +161,7 @@ Recent releases:
 | Android viewer and host | ✅ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; works on a real phone (user, 2026-11-08). Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
-| Linux service (0.36) | ✅ unit tests for pixel copying, formats and bounds, ioctl numbers against the kernel's, pointer mapping; display listing on real AMD and NVIDIA cards; the virtual keyboard and pointer created and used on a real kernel. ⚠️ Capture itself needs root and a readable framebuffer, so it is untried until run on a virtual machine ([issue 20](issues/20-linux-service.md)) |
+| Linux service (0.36) | ✅ unit tests for pixel copying, formats and bounds, ioctl numbers against the kernel's, pointer mapping; display listing on real AMD and NVIDIA cards; the virtual keyboard and pointer created and used on a real kernel. ⚠️ Works on Debian 13 VMware VMs; Debian 12's kernel (6.1) doesn't hand out VMware's framebuffer (`ENODEV`), which left one VM unreachable after installing. Unreleased: a signed-in desktop hosts in the service's place (screen on any card, clipboard, sound), so far tested by unit tests and a handshake run only ([issue 20](issues/20-linux-service.md)) |
 
 ## Known gaps and limits
 

@@ -24,11 +24,25 @@ what the graphics card shows (KMS) and types through kernel input devices
       slipstream service check --picture screen.png`, then a session at the
       login screen, a locked session, across log in and log out, and after
       a reboot. Check the blanked-screen wake and a resolution change.
-- [ ] vmwgfx with 3D acceleration on (surface-backed framebuffers): is the
-      mapped memory current?
-- [ ] Bridge to the signed-in user's app, as on Windows: one-time code,
-      link approval, host chat, clipboard, sound, meeting calls, and the
-      user's folders as the Files window's defaults.
+- [x] Say on the Bridge when the service can't read the screen (a Debian
+      12 VM became unreachable after installing, 2026-11-15: `GETFB`
+      answered `ENODEV`, the kernel's answer for a framebuffer whose
+      driver has no `create_handle`).
+- [x] The signed-in desktop hosts in the service's place while its
+      session is in front and unlocked (`service_desktop.rs`): screen on
+      any graphics card, clipboard, sound, the user's folders.
+- [ ] Try the handover on real machines: sign in, lock, unlock, switch
+      user, log out, an app update and a service update, each with a link
+      open (it should reconnect by itself); a second user's app (refused:
+      other identity); XFCE and others that don't set `LockedHint`.
+- [x] vmwgfx: surface framebuffers have no `create_handle` before Linux
+      6.11, and with screen targets every framebuffer is a surface (3D on,
+      or off: `vmw_create_bo_proxy` wraps the dumb buffer). So Debian 12
+      (6.1) can't be read, with 3D acceleration off too; Debian 13 (6.12)
+      works on the user's VMs (2026-11-15).
+- [ ] The rest of the bridge to the signed-in user's app, as on Windows:
+      one-time code, link approval, host chat, meeting calls, and a sign
+      that someone is connected.
 - [ ] Tiled framebuffers (Intel, AMD, NVIDIA): import the buffer through
       EGL/GBM and read it back, or VA-API for Intel/AMD.
 - [ ] Display arrangement on Wayland with several displays (positions are
@@ -39,6 +53,6 @@ what the graphics card shows (KMS) and types through kernel input devices
 ## Pointers
 
 - `crates/slipstream-platform/src/kms.rs`, `uinput.rs`, `system.rs`
-- `apps/slipstream/src/service_linux.rs`
+- `apps/slipstream/src/service_linux.rs`, `service_desktop.rs`
 - `apps/slipstream/src/gui/settings.rs` (the Config row),
   `gui/mod.rs` (`service_action`, `selected_dir_status`)

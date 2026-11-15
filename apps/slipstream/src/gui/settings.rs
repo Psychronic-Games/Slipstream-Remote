@@ -334,9 +334,13 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 }
             });
             #[cfg(target_os = "linux")]
+            if let Some(why) = crate::service::screen_problem() {
+                ui.label(RichText::new(format!("The service can't show this computer's login screen or a locked session: {why}. While someone is signed in with Slipstream running, their desktop is shared instead.")).small().color(pal::PEACH));
+            }
+            #[cfg(target_os = "linux")]
             if via_service {
                 ui.label(
-                    RichText::new("The service is this computer's host and keeps its own copy of these settings: after saving, press Apply settings to give it the new ones. While it hosts, the clipboard, sound, chat and meeting calls aren't shared with the person at this computer yet.")
+                    RichText::new("The service is this computer's host and keeps its own copy of these settings: after saving, press Apply settings to give it the new ones. While you are signed in, links go through this desktop, with the clipboard and sound; one-time codes, chat on this computer and meeting calls aren't available under the service yet.")
                         .small()
                         .color(pal::DIM),
                 );

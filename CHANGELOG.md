@@ -13,6 +13,30 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Linux service: your desktop is shared while you're signed in.** With
+  the service installed, copy and paste didn't work, there was no sound,
+  and on Intel, AMD and NVIDIA graphics cards (and VMware virtual machines
+  on kernels before 6.11, such as Debian 12) there was no picture at all:
+  "screen capture stopped: … keeps the screen in a layout the Slipstream
+  service can't read yet", or "No such device". The service reads the
+  screen below the desktop, which is what reaches the login screen, but
+  has none of the desktop's own abilities. Now, while someone is signed in
+  with Slipstream running and their session is in front and unlocked,
+  links go through that desktop exactly as they did before the service
+  was installed: its own screen sharing, the clipboard, sound, and the
+  signed-in user's folders in Files. When the session locks, is switched
+  away from or ends, the service takes over within a couple of seconds,
+  and back again after unlocking; an open link reconnects by itself
+  across the change. Same ID and unattended password throughout. The
+  Bridge says which of the two is being used. Needs this version of both
+  the app and the service; each updates itself.
+- **Linux service: says when it can't show the login screen.** Where the
+  system won't hand out the screen's picture, the Bridge and Config pages
+  on that computer now say that the login screen and locked sessions
+  can't be shown and why, and the error in the viewer names the graphics
+  driver and kernel instead of "No such device (os error 19)". For VMware
+  it says what helps: Linux 6.11 or later (Debian 13).
+
 ## 0.36.0 — 2026-11-14
 
 - **Linux service: the login screen and locked sessions.** A Linux

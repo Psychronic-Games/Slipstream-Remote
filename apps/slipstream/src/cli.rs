@@ -81,6 +81,21 @@ pub async fn info() -> Result<()> {
 /// Headless host. `service`: started by the Windows service (or as the
 /// Linux one), so it installs updates itself and exits to be restarted.
 pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -> Result<()> {
+    host_until(test_pattern, password, service, std::future::pending()).await.map(|_| ())
+}
+
+/// How [`host_until`] ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostEnd {
+    /// Asked to stop, or (the service) updated and to be restarted.
+    Stopped,
+    /// `yield_to` completed: another host takes this identity over.
+    Yielded,
+}
+
+/// [`host`], until `yield_to` completes. Links open then are told the
+/// host is restarting, so their viewers reconnect to whoever hosts next.
+pub async fn host_until(test_pattern: bool, password: Option<String>, service: bool, yield_to: impl Future<Output = ()>) -> Result<HostEnd> {
     let store = Store::open_default()?;
     if let Some(pw) = &password {
         let mut s = store.load_settings();
@@ -100,9 +115,16 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
     #[cfg(windows)]
     let mut chat_bridge=if service {match crate::service_chat::Server::start(client.clone()){Ok(bridge)=>Some(bridge),Err(e)=>{tracing::warn!("host chat unavailable: {e:#}");None}}} else {None};
     println!("hosting; endpoint {}", client.endpoint_id());
+    tokio::pin!(yield_to);
+    let mut end = HostEnd::Stopped;
     loop {
         tokio::select! {
             _ = shutdown_signal() => break,
+            _ = &mut yield_to => {
+                end = HostEnd::Yielded;
+                client.notify_restarting().await;
+                break;
+            }
             ev = events.recv() => {
                 let Some(ev) = ev else { break };
                 #[cfg(windows)]
@@ -149,11 +171,11 @@ pub async fn host(test_pattern: bool, password: Option<String>, service: bool) -
         }
     }
     client.shutdown().await;
-    Ok(())
+    Ok(end)
 }
 
 /// Ctrl+C, or SIGTERM (systemd stop) on Unix.
-async fn shutdown_signal() {
+pub(crate) async fn shutdown_signal() {
     #[cfg(unix)]
     {
         let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("signal handler");

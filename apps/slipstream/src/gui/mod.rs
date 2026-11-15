@@ -131,6 +131,13 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     // Likewise with the Linux service (systemd keeps that one running).
     #[cfg(target_os = "linux")]
     let via_service = !opts.test_pattern && crate::service::installed();
+    // While someone is signed in here, this desktop hosts in the
+    // service's place (screen sharing, clipboard, sound): a helper of the
+    // app's does it, so the app itself stays as it is.
+    #[cfg(target_os = "linux")]
+    if via_service && opts.screenshot.is_none() {
+        crate::service::spawn_desktop_host(store.dir());
+    }
     // The service starts the app hidden at every sign-in, for its tray
     // icon; this user turned that off.
     #[cfg(windows)]

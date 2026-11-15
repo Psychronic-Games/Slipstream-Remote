@@ -849,6 +849,30 @@ service works below the desktop, through `OpenOptions::system`
   user can replace. The log is in `/var/log/slipstream-remote` and the IDs
   it registered as in `/run/slipstream-remote` (`device-id.txt`,
   `public-id.txt`), both world-readable.
+* **The signed-in desktop hosts in the service's place**
+  (`apps/slipstream/src/service_desktop.rs`). Below the desktop there is no
+  clipboard or sound, and tiled framebuffers can't be read, so while a
+  graphical session is in front and unlocked the service lends its place
+  to a *desktop host*: `slipstream service desktop`, a helper the app
+  starts in that session with a profile of its own
+  (`<profile>/desktop-host`: the app's identity, station, password and
+  permissions, copied at each start; its own portal token and IDs). It is
+  an ordinary headless host, so capture, clipboard, sound and files are
+  the session's. The two talk in lines over
+  `/run/slipstream-remote/desktop.sock` (`hello`, `prove`/`proof`, `host`,
+  `wait`, `released`). The helper proves it holds the service's identity
+  key by signing a nonce, so nobody else can make the service step aside;
+  a helper with another identity is refused and the service keeps hosting.
+  The service decides once a second from logind (`loginctl show-session`:
+  the peer's own graphical session, `Active`, `LockedHint`): the desktop
+  hosts while active and unlocked, or active and locked if the service
+  can't read the screen itself. A choice must hold two seconds. Whoever
+  stops first tells its links the host is restarting (the existing Bye
+  reason), so viewers reconnect to the other; the two never host
+  together. A helper that disconnects gives the place back at once.
+  `host.txt` beside the IDs says which is hosting, for the Bridge. The
+  service's own host (and so its update check) doesn't run while a
+  desktop has the place.
 * **One host per computer**, as on Windows: with the unit installed the app
   starts with `accept_sessions` off (a throwaway key) and shows the
   service's state (`systemctl is-active`) and IDs. There is no bridge to

@@ -238,7 +238,13 @@ impl Card {
         }
         // Kernels before 5.7.
         let mut fb = FbCmd { fb_id: id, ..Default::default() };
-        ioctl(&self.file, GETFB, &mut fb).context("reading the framebuffer's description")?;
+        match ioctl(&self.file, GETFB, &mut fb) {
+            Ok(()) => {}
+            // The kernel's answer for a framebuffer whose driver has no
+            // way to hand its memory out.
+            Err(e) if e.raw_os_error() == Some(libc::ENODEV) => bail!("{}", sealed_message(&self.driver, &kernel_release())),
+            Err(e) => return Err(e).context("reading the framebuffer's description"),
+        }
         let format = match (fb.bpp, fb.depth) {
             (32, 30) => XR30,
             (32, _) => XR24,
@@ -291,6 +297,27 @@ impl Card {
         let fd = unsafe { OwnedFd::from_raw_fd(prime.fd) };
         Mapping::new(&fd, 0, len).with_context(|| format!("the graphics driver ({}) wouldn't let the screen's memory be read", self.driver))
     }
+}
+
+fn kernel_release() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_string()
+}
+
+/// Says that `driver` keeps the screen's memory to itself on this kernel
+/// (`release`, e.g. "6.1.0-18-amd64"), and what may change that.
+fn sealed_message(driver: &str, release: &str) -> String {
+    let driver = if driver.is_empty() { "unknown" } else { driver };
+    let mut numbers = release.split(|c: char| !c.is_ascii_digit()).map(|n| n.parse::<u32>().unwrap_or(0));
+    let version = (numbers.next().unwrap_or(0), numbers.next().unwrap_or(0));
+    // VMware's driver wraps the screen in a "surface" with or without 3D
+    // acceleration, and only hands those out from Linux 6.11.
+    let hint = match (driver, version) {
+        ("vmwgfx", (0, _)) => "",
+        ("vmwgfx", v) if v < (6, 11) => "; on VMware this needs Linux 6.11 or later (Debian 13, or Debian 12 with the backports kernel)",
+        _ => "",
+    };
+    let on = if release.is_empty() { String::new() } else { format!(" on Linux {release}") };
+    format!("this computer's graphics driver ({driver}{on}) doesn't let the screen's memory be read, so the Slipstream service can't show the screen{hint}")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -609,6 +636,29 @@ pub fn snapshot(screen: &Screen) -> Result<(u32, u32, Vec<u8>)> {
     Ok((width, height, data))
 }
 
+/// Why the service couldn't show this computer's screen: no lit display's
+/// picture can be read. `None` if one can, or if no display is on to try
+/// (a blanked screen is woken when someone connects). Needs root.
+pub fn unreadable_reason() -> Option<String> {
+    let screens = match screens() {
+        Ok(screens) => screens,
+        Err(e) => return Some(format!("{e:#}")),
+    };
+    let mut why = None;
+    let mut data = Vec::new();
+    for screen in &screens {
+        let grabbed = Card::open(&screen.card).and_then(|card| Grabber { card: &card, crtc: screen.crtc, mapped: Vec::new(), mapped_at: Instant::now() }.grab(&mut data));
+        match grabbed {
+            // Readable, or switched off since it was listed.
+            Ok(_) => return None,
+            Err(e) => {
+                why.get_or_insert(format!("{e:#}"));
+            }
+        }
+    }
+    why
+}
+
 /// What the capture would work with, for the log and for checking a
 /// machine: each card's driver and each lit output's framebuffer.
 pub fn describe() -> Vec<String> {
@@ -670,6 +720,16 @@ mod tests {
         assert_eq!(GETFB, 0xc01c_64ad);
         assert_eq!(MAP_DUMB, 0xc010_64b3);
         assert_eq!(GETFB2, 0xc068_64ce);
+    }
+
+    #[test]
+    fn explains_a_driver_that_keeps_its_framebuffer() {
+        let old = sealed_message("vmwgfx", "5.10.0-28-amd64");
+        assert!(old.contains("vmwgfx on Linux 5.10.0-28-amd64") && old.contains("needs Linux 6.11"), "{old}");
+        assert!(sealed_message("vmwgfx", "6.1.0-18-amd64").contains("needs Linux 6.11"));
+        assert!(!sealed_message("vmwgfx", "6.12.48+deb13-amd64").contains("VMware"));
+        assert!(!sealed_message("qxl", "4.19.0-27-amd64").contains("VMware"));
+        assert!(sealed_message("", "").contains("(unknown)"));
     }
 
     fn fb(width: u32, height: u32, pitch: u32, format: u32) -> Fb {

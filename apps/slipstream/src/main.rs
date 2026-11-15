@@ -297,6 +297,14 @@ enum ServiceCmd {
     /// Run as the service (started by systemd).
     #[command(hide = true)]
     Run,
+    /// Host from this desktop session when the service asks (started by
+    /// the app, with a profile of its own in SLIPSTREAM_HOME).
+    #[command(hide = true)]
+    Desktop {
+        /// The app's settings folder.
+        #[arg(long)]
+        from: std::path::PathBuf,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -378,7 +386,11 @@ fn main() -> anyhow::Result<()> {
                 Ok(())
             }
             ServiceCmd::Check { picture } => service::check(picture.as_deref()),
-            ServiceCmd::Run => rt.block_on(cli::host(false, None, true)),
+            ServiceCmd::Run => {
+                service::watch_screen();
+                rt.block_on(slipstream::service_desktop::run_service())
+            }
+            ServiceCmd::Desktop { from } => rt.block_on(slipstream::service_desktop::run_desktop(&from)),
         },
         Some(Command::Connect { id, password, station, seconds, ls, put, to, get, forward }) => {
             rt.block_on(cli::connect(&id, password, station, seconds, cli::FileOps { ls, put, to, get }, forward))
