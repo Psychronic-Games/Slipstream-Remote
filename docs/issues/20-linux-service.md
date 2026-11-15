@@ -31,10 +31,11 @@ what the graphics card shows (KMS) and types through kernel input devices
 - [x] The signed-in desktop hosts in the service's place while its
       session is in front and unlocked (`service_desktop.rs`): screen on
       any graphics card, clipboard, sound, the user's folders.
-- [ ] Try the handover on real machines: sign in, lock, unlock, switch
-      user, log out, an app update and a service update, each with a link
-      open (it should reconnect by itself); a second user's app (refused:
-      other identity); XFCE and others that don't set `LockedHint`.
+- [x] The handover on real machines: lock, unlock and log out with a
+      link open (user, 2026-11-15).
+- [ ] Finer handover checks: switching users, an app update and a service
+      update with a link open; a second user's app (refused: other
+      identity); XFCE and others that don't set `LockedHint`.
 - [x] vmwgfx: surface framebuffers have no `create_handle` before Linux
       6.11, and with screen targets every framebuffer is a surface (3D on,
       or off: `vmw_create_bo_proxy` wraps the dumb buffer). So Debian 12
