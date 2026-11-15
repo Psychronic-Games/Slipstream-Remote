@@ -72,6 +72,10 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.37.0**: with the Linux service installed, a signed-in desktop is
+  shared through its own screen sharing (any graphics card, clipboard,
+  sound) and the service takes over at the lock and login screens; clearer
+  errors where the service can't read the screen (VMware needs Linux 6.11).
 - **0.36.0**: the Linux service (the login screen and locked sessions,
   through the graphics card's own picture and kernel input devices;
   [issue 20](issues/20-linux-service.md)); recent links connect with a
@@ -161,7 +165,7 @@ Recent releases:
 | Android viewer and host | ✅ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; works on a real phone (user, 2026-11-08). Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 
-| Linux service (0.36) | ✅ unit tests for pixel copying, formats and bounds, ioctl numbers against the kernel's, pointer mapping; display listing on real AMD and NVIDIA cards; the virtual keyboard and pointer created and used on a real kernel. ⚠️ Works on Debian 13 VMware VMs; Debian 12's kernel (6.1) doesn't hand out VMware's framebuffer (`ENODEV`), which left one VM unreachable after installing. Unreleased: a signed-in desktop hosts in the service's place (screen on any card, clipboard, sound), so far tested by unit tests and a handshake run only ([issue 20](issues/20-linux-service.md)) |
+| Linux service (0.36) | ✅ unit tests for pixel copying, formats and bounds, ioctl numbers against the kernel's, pointer mapping; display listing on real AMD and NVIDIA cards; the virtual keyboard and pointer created and used on a real kernel. ⚠️ Works on Debian 13 VMware VMs; Debian 12's kernel (6.1) doesn't hand out VMware's framebuffer (`ENODEV`), which left one VM unreachable after installing. Since 0.37 a signed-in desktop hosts in the service's place (screen on any card, clipboard, sound): the handover and a session through it ran on a real NVIDIA KDE workstation (2026-11-15); lock/unlock and logout with a link open are still to try ([issue 20](issues/20-linux-service.md)) |
 
 ## Known gaps and limits
 

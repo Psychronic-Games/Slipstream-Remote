@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.37.0 — 2026-11-15
+
 - **Linux service: your desktop is shared while you're signed in.** With
   the service installed, copy and paste didn't work, there was no sound,
   and on Intel, AMD and NVIDIA graphics cards (and VMware virtual machines
