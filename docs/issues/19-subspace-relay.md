@@ -69,8 +69,9 @@ loopback QUIC link (TCP both ways, UDP datagrams, refusals, counters);
 `scripts/test-relay-tunnel.sh`, which runs the real Linux tunnel between two
 network namespaces (5 MB download and UDP through it, the app's helper mode,
 routes, DNS and adapter restored); strict Clippy for Linux, Windows, macOS
-and arm64 Android; a release APK with lint. Not yet run on a real phone, or
-on Windows or macOS computers.
+and arm64 Android; a release APK with lint. Used on several real phones with
+computers online through them (user, 2026-11-15); the item-by-item
+real-device checklist below isn't recorded.
 
 ## Tasks
 
