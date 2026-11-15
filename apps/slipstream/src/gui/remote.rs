@@ -1058,6 +1058,15 @@ impl RemoteTab {
 
     /// Privacy mode, port forwarding, system information.
     fn tools_menu(&mut self, ui: &mut Ui) {
+        if ui
+            .button("System information…")
+            .on_hover_text("Its processor, memory, graphics, drives, temperatures, network and Windows/macOS/Linux version")
+            .clicked()
+        {
+            self.show_sysinfo = true;
+            self.sysinfo_fetch = true;
+            ui.close();
+        }
         if ui.button("Support report…").clicked() {
             self.report.open = true;
             self.release_keyboard();
@@ -1089,15 +1098,6 @@ impl RemoteTab {
             .on_disabled_hover_text("Not allowed on that computer (its Config → Permissions → Port forwarding)");
         if r.clicked() {
             self.show_tunnels = true;
-            ui.close();
-        }
-        if ui
-            .button("System information…")
-            .on_hover_text("Its processor, memory, graphics, drives, temperatures, network and Windows/macOS/Linux version")
-            .clicked()
-        {
-            self.show_sysinfo = true;
-            self.sysinfo_fetch = true;
             ui.close();
         }
         ui.separator();
@@ -1312,19 +1312,38 @@ impl RemoteTab {
                             .show(
                             ui,
                             |ui| {
-                                // One grid for every section: the label column fits the
-                                // longest label anywhere, and nothing is cut short.
-                                egui::Grid::new(("sysinfo-grid", self.id)).num_columns(2).spacing([16.0, 5.0]).show(ui, |ui| {
-                                    for s in sections {
-                                        ui.label(RichText::new(s.title.to_uppercase()).font(theme::display(16.0)).color(pal::LAVENDER));
-                                        ui.end_row();
-                                        for (k, v) in &s.rows {
-                                            ui.add(egui::Label::new(RichText::new(k).color(pal::DIM)).extend());
-                                            ui.add(egui::Label::new(RichText::new(v).color(pal::TEXT)).wrap());
-                                            ui.end_row();
-                                        }
+                                // The label column fits the longest label, up to two
+                                // fifths of the width; longer labels wrap, and the values
+                                // start right beside it with the rest of the width.
+                                let width = ui.available_width();
+                                let gap = 16.0;
+                                let longest = sections
+                                    .iter()
+                                    .flat_map(|s| &s.rows)
+                                    .map(|(k, _)| {
+                                        egui::WidgetText::from(k.as_str())
+                                            .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+                                            .size()
+                                            .x
+                                    })
+                                    .fold(0.0f32, f32::max);
+                                let label_w = (longest + 2.0).min(width * 0.4).max(60.0);
+                                ui.spacing_mut().item_spacing.y = 5.0;
+                                for s in sections {
+                                    ui.label(RichText::new(s.title.to_uppercase()).font(theme::display(16.0)).color(pal::LAVENDER));
+                                    for (k, v) in &s.rows {
+                                        ui.horizontal_top(|ui| {
+                                            ui.spacing_mut().item_spacing.x = gap;
+                                            ui.allocate_ui_with_layout(vec2(label_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                                ui.set_width(label_w);
+                                                ui.add(egui::Label::new(RichText::new(k).color(pal::DIM)).wrap());
+                                            });
+                                            ui.allocate_ui_with_layout(vec2((width - label_w - gap).max(60.0), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(v).color(pal::TEXT)).wrap());
+                                            });
+                                        });
                                     }
-                                });
+                                }
                             },
                         );
                     }

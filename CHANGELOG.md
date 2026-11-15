@@ -13,6 +13,13 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **System information: values sit beside their labels.** One long label
+  far down the list (a network adapter's name, say) pushed every value to
+  the right edge, where model names and serial numbers wrapped over
+  several lines. The label column is now at most two fifths of the
+  window; longer labels wrap instead.
+- **Tools menu: System information is first.**
+
 ## 0.37.0 — 2026-11-15
 
 - **Linux service: your desktop is shared while you're signed in.** With
