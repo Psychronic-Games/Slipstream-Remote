@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.38.0 — 2026-11-18
+
 - **Several remote screens, each in a tab of its own.** A computer with two
   monitors now opens as two tabs, a small monitor with the screen's number
   beside its name. Drag a screen's tab out (or **Pop out**) to put each
