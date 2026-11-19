@@ -348,18 +348,36 @@ impl NvEncoder {
         }
     }
 
-    /// Constant bitrate with a one-frame buffer: each frame stays about the
-    /// size the link can carry in one frame interval.
+    /// Constant bitrate with a two-frame buffer, so a frame stays about the
+    /// size the link carries in a frame interval or two, held to a range of
+    /// quality. Left alone, NVENC's low-latency rate control lets screen text
+    /// blur (QP 40 and worse) and then spends the whole budget on every frame
+    /// without sharpening it: measured on a page of text at 720p60, 3.6 Mbps
+    /// at 27 dB PSNR, against 0.7 Mbps at 42 dB within these limits. The
+    /// floor (QP 18) stops it polishing a still screen; the ceiling rises
+    /// as the budget per pixel falls, so a slow link still gets smaller
+    /// frames when the bitrate is turned down.
     fn set_rate(&mut self, fps: f32, kbps: u32) {
         let bps = kbps.saturating_mul(1000).max(100_000);
-        let per_frame = (bps as f32 / fps.clamp(1.0, 240.0)) as u32;
+        let fps = fps.clamp(1.0, 240.0);
+        let per_frame = (bps as f32 / fps) as u32;
+        let ceiling = max_qp(bps, self.width * self.height, fps);
+        let qp = |q: u32| NV_ENC_QP { qpInterP: q, qpInterB: q, qpIntra: q };
         let rc = &mut self.config.rcParams;
         rc.rateControlMode = _NV_ENC_PARAMS_RC_MODE_NV_ENC_PARAMS_RC_CBR;
         rc.multiPass = _NV_ENC_MULTI_PASS_NV_ENC_MULTI_PASS_DISABLED;
         rc.averageBitRate = bps;
         rc.maxBitRate = bps;
-        rc.vbvBufferSize = per_frame;
-        rc.vbvInitialDelay = per_frame;
+        // One frame's worth was too tight: at low budgets the rate control
+        // fell back to spending it all on every frame of a still screen.
+        rc.vbvBufferSize = per_frame * 2;
+        rc.vbvInitialDelay = per_frame * 2;
+        rc.set_enableMinQP(1);
+        rc.minQP = qp(MIN_QP);
+        rc.set_enableMaxQP(1);
+        rc.maxQP = qp(ceiling);
+        rc.set_enableInitialRCQP(1);
+        rc.initialRCQP = qp((MIN_QP + 2).min(ceiling));
     }
 
     /// Changes the bitrate in place, without a keyframe.
@@ -488,4 +506,37 @@ impl Drop for NvEncoder {
 #[cfg(test)]
 pub fn available() -> Result<()> {
     Api::get().map(|_| ())
+}
+
+/// The sharpest an NVENC frame gets: finer costs bits nobody sees.
+const MIN_QP: u32 = 18;
+
+/// The blurriest an NVENC frame may get at this budget (bits per pixel per
+/// frame). The automatic bitrate gives about 0.07: text stays sharp. Tight
+/// budgets (a slow link, or the bitrate turned down when it's congested)
+/// may blur more, so the frames still shrink.
+fn max_qp(bps: u32, pixels: u32, fps: f32) -> u32 {
+    let per_pixel = bps as f32 / (pixels.max(1) as f32 * fps.max(1.0));
+    match per_pixel {
+        b if b >= 0.05 => 28,
+        b if b >= 0.03 => 30,
+        b if b >= 0.02 => 32,
+        b if b >= 0.012 => 36,
+        _ => 42,
+    }
+}
+
+#[cfg(test)]
+mod rate_tests {
+    use super::*;
+
+    #[test]
+    fn the_quality_ceiling_follows_the_budget() {
+        let p = 1920 * 1080;
+        let auto = crate::auto_bitrate_kbps(1920, 1080, 60.0) * 1000;
+        assert_eq!(max_qp(auto, p, 60.0), 28, "automatic bitrate keeps text sharp");
+        assert_eq!(max_qp(1_200_000, p, 20.0), 32, "Low bandwidth at 1080p");
+        assert_eq!(max_qp(1_200_000, p, 60.0), 42, "squeezed hard");
+        assert!(max_qp(500_000, p, 60.0) >= max_qp(5_000_000, p, 60.0));
+    }
 }

@@ -48,7 +48,9 @@ the same signature before installing anything.
   the processor otherwise, and drawn on the GPU; a frame-ack pacing loop
   keeps latency low instead of letting frames queue up.
 - **Full control** — mouse, wheel, keyboard (physical keys, works across
-  layouts), Ctrl+Alt+Del and other special keys, multi-monitor switching.
+  layouts), Ctrl+Alt+Del and other special keys. A computer's screens open
+  as tabs of their own: drag one out to put each remote screen on a
+  monitor of yours.
 - **Support tools** — connect to discovered TCP services through a workstation,
   export reviewed diagnostic reports, send LAN wake packets, compare DNS and
   gateway/station checks, and show the user a plain-language support status.

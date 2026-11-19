@@ -1,6 +1,7 @@
 //! Viewer side of a session.
 
 use std::{
+    collections::HashMap,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -16,9 +17,9 @@ use slipstream_core::{
     auth::ViewerAuth,
     config::ViewerSettings,
     directory::DeviceId,
-    framing::{MsgReader, expect_msg_max, read_msg, write_msg},
+    framing::{MsgReader, expect_msg_max, expect_msg_with_extras, read_msg, write_msg},
     proto::{
-        ALPN_REMOTE, Capabilities, ClipFile, ClipboardData, DisplayInfo, HelloExtras, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
+        ALPN_REMOTE, Capabilities, ClipFile, ClipboardData, DisplayInfo, HelloExtras, HostExtras, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
         StreamSettings, UploadTarget, VideoFrame, ViewerMsg,
     },
 };
@@ -32,7 +33,14 @@ use crate::files::RemoteFs;
 #[derive(Debug)]
 pub enum ViewerCmd {
     Input(InputEvent),
+    /// Input on one display: pointer positions are on that display (hosts
+    /// that stream one display at a time apply it to the one streaming).
+    InputOn(u32, InputEvent),
     SelectDisplay(u32),
+    /// Stream these displays at once (the ones on view). Hosts that stream
+    /// one display at a time switch to the first, if it isn't the one
+    /// streaming already.
+    ShowDisplays(Vec<u32>),
     Settings(StreamSettings),
     Chat(String),
     /// Push text to the remote clipboard now (e.g. right before a paste).
@@ -151,12 +159,23 @@ impl FrameShared {
     }
 }
 
+/// Each display's latest frame, for hosts that stream several at once.
+type ScreenFrames = Arc<Mutex<HashMap<u32, Arc<FrameShared>>>>;
+
+fn screen_frames(screens: &ScreenFrames, display: u32) -> Arc<FrameShared> {
+    screens.lock().unwrap().entry(display).or_default().clone()
+}
+
 /// A live remote-control session. Dropping it disconnects.
 pub struct ViewerSession {
     cmds: mpsc::UnboundedSender<ViewerCmd>,
     conn: Connection,
     fs: RemoteFs,
     frames: Arc<FrameShared>,
+    screens: ScreenFrames,
+    extras: HostExtras,
+    /// The display shown first.
+    display: u32,
     info: SessionInfo,
     peer: DeviceId,
     /// The frame rate this viewer asked for (Config → Max frame rate).
@@ -203,8 +222,27 @@ impl ViewerSession {
         self.max_fps
     }
 
+    /// The pictures of the display shown first (see [`Self::frames_for`]).
     pub fn frames(&self) -> Arc<FrameShared> {
-        self.frames.clone()
+        self.frames_for(self.display)
+    }
+
+    /// `display`'s pictures. A host that streams one display at a time has
+    /// one picture for all of them: whichever is streaming
+    /// ([`ViewerEvent::StreamStarted`] says which).
+    pub fn frames_for(&self, display: u32) -> Arc<FrameShared> {
+        if self.extras.multi_display { screen_frames(&self.screens, display) } else { self.frames.clone() }
+    }
+
+    /// The host streams several displays at once ([`ViewerCmd::ShowDisplays`]).
+    pub fn multi_display(&self) -> bool {
+        self.extras.multi_display
+    }
+
+    /// The host types characters ([`InputEvent::Text`]); otherwise text goes
+    /// as the keys of a US keyboard.
+    pub fn text_input(&self) -> bool {
+        self.extras.text_input
     }
 
     pub fn send(&self, cmd: ViewerCmd) {
@@ -213,6 +251,11 @@ impl ViewerSession {
 
     pub fn input(&self, ev: InputEvent) {
         self.send(ViewerCmd::Input(ev));
+    }
+
+    /// Input on `display` (pointer positions are on it).
+    pub fn input_on(&self, display: u32, ev: InputEvent) {
+        self.send(ViewerCmd::InputOn(display, ev));
     }
 
     /// The remote computer's files (browse, upload, download).
@@ -346,15 +389,15 @@ pub(crate) async fn connect(
     let (auth, pakes, confirms) = ViewerAuth::respond(password, &pakes, &host_id, &endpoint.id())?;
     write_msg(&mut send, &ViewerMsg::AuthResponse { pakes, confirms }).await?;
 
-    let info = loop {
-        match expect_msg_max::<HostMsg>(&mut recv, PRE_AUTH_MESSAGE).await? {
-            HostMsg::AuthOk { confirm, session } => {
+    let (info, extras) = loop {
+        match expect_msg_with_extras::<HostMsg, HostExtras>(&mut recv, PRE_AUTH_MESSAGE).await? {
+            (HostMsg::AuthOk { confirm, session }, extras) => {
                 auth.verify_host(&confirm).map_err(|e|AuthRejected(format!("Remote identity verification failed: {e:#}")))?;
-                break session;
+                break (session, extras);
             }
-            HostMsg::Notice(n) => on_progress(n),
-            HostMsg::AuthFailed { reason, retry_after_secs } => return Err(auth_error(reason, retry_after_secs)),
-            other => bail!("unexpected message from host: {other:?}"),
+            (HostMsg::Notice(n), _) => on_progress(n),
+            (HostMsg::AuthFailed { reason, retry_after_secs }, _) => return Err(auth_error(reason, retry_after_secs)),
+            (other, _) => bail!("unexpected message from host: {other:?}"),
         }
     };
     on_progress("Connected".into());
@@ -362,6 +405,7 @@ pub(crate) async fn connect(
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let (ev_tx, ev_rx) = mpsc::unbounded_channel();
     let frames = Arc::new(FrameShared::default());
+    let screens = ScreenFrames::default();
     let display = info.displays.iter().find(|d| d.primary).or(info.displays.first()).map(|d| d.index).unwrap_or(0);
     let stream_settings = StreamSettings {
         bitrate_kbps: settings.bitrate_kbps,
@@ -378,7 +422,7 @@ pub(crate) async fn connect(
         recv,
         cmd_rx,
         ev_tx,
-        frames.clone(),
+        Video { frames: frames.clone(), screens: screens.clone(), multi: extras.multi_display },
         display,
         stream_settings,
         clipboard,
@@ -387,7 +431,7 @@ pub(crate) async fn connect(
         mode == LinkMode::Full,
     ));
     let max_fps = stream_settings.max_fps;
-    Ok((ViewerSession { cmds: cmd_tx, conn: tunnel_conn, fs, frames, info, peer, max_fps }, ev_rx))
+    Ok((ViewerSession { cmds: cmd_tx, conn: tunnel_conn, fs, frames, screens, extras, display, info, peer, max_fps }, ev_rx))
 }
 
 /// Opens the speakers and asks the host for its sound. A speaker problem is
@@ -486,7 +530,7 @@ async fn run(
     recv: iroh::endpoint::RecvStream,
     mut cmds: mpsc::UnboundedReceiver<ViewerCmd>,
     events: mpsc::UnboundedSender<ViewerEvent>,
-    frames: Arc<FrameShared>,
+    video: Video,
     display: u32,
     stream_settings: StreamSettings,
     sync_clipboard: Option<ClipboardSource>,
@@ -495,7 +539,7 @@ async fn run(
     viewing: bool,
 ) {
     let mut recv = MsgReader::<HostMsg>::spawn(recv);
-    let ended = match session(&conn, &mut send, &mut recv, &mut cmds, &events, frames, display, stream_settings, sync_clipboard, audio, audio_out, viewing)
+    let ended = match session(&conn, &mut send, &mut recv, &mut cmds, &events, video, display, stream_settings, sync_clipboard, audio, audio_out, viewing)
         .await
     {
         Ok(r) => r,
@@ -507,10 +551,65 @@ async fn run(
     let _ = events.send(ViewerEvent::Disconnected { reason:ended.reason,retryable:ended.retryable });
 }
 
-/// Messages the decoder thread hands back to the async side.
+/// Where the pictures go: one picture (`frames`), or one per display when
+/// the host streams several at once (`multi`).
+struct Video {
+    frames: Arc<FrameShared>,
+    screens: ScreenFrames,
+    multi: bool,
+}
+
+/// Messages a decoder thread hands back to the async side, with the
+/// display it decodes when the host streams several.
 enum DecoderOut {
-    Ack(u64),
-    NeedKeyframe,
+    Ack(Option<u32>, u64),
+    NeedKeyframe(Option<u32>),
+}
+
+/// The figures every decoder adds to: bytes received, decoding time,
+/// frames decoded, the latest picture size.
+#[derive(Clone, Default)]
+struct VideoCounters {
+    bytes: Arc<AtomicU64>,
+    decode_us: Arc<AtomicU64>,
+    decoded: Arc<AtomicU64>,
+    dims: Arc<Mutex<(u32, u32)>>,
+    /// Decoders running: the frame rate shown is per picture.
+    live: Arc<AtomicU64>,
+}
+
+/// Starts a decoder thread for one stream's frames.
+fn spawn_decoder(
+    display: Option<u32>,
+    frames: Arc<FrameShared>,
+    out: mpsc::UnboundedSender<DecoderOut>,
+    counters: &VideoCounters,
+) -> Result<mpsc::Sender<VideoFrame>> {
+    let (tx, rx) = mpsc::channel::<VideoFrame>(2);
+    let counters = counters.clone();
+    thread::Builder::new()
+        .name("decoder".into())
+        .spawn(move || decode_loop(display, rx, out, frames, counters))?;
+    Ok(tx)
+}
+
+/// Several displays at once: each arrives on its own stream, which starts
+/// with the display's index.
+async fn receive_screens(conn: Connection, screens: ScreenFrames, out: mpsc::UnboundedSender<DecoderOut>, counters: VideoCounters) -> Result<()> {
+    loop {
+        let mut stream = conn.accept_uni().await?;
+        let (screens, out, counters) = (screens.clone(), out.clone(), counters.clone());
+        tokio::spawn(async move {
+            let Ok(Some(display)) = read_msg::<u32>(&mut stream).await else { return };
+            let Ok(tx) = spawn_decoder(Some(display), screen_frames(&screens, display), out, &counters) else { return };
+            while let Ok(Some(frame)) = read_msg::<VideoFrame>(&mut stream).await {
+                counters.bytes.fetch_add(frame.data.len() as u64 + 32, Ordering::Relaxed);
+                if tx.send(frame).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -520,7 +619,7 @@ async fn session(
     recv: &mut MsgReader<HostMsg>,
     cmds: &mut mpsc::UnboundedReceiver<ViewerCmd>,
     events: &mpsc::UnboundedSender<ViewerEvent>,
-    frames: Arc<FrameShared>,
+    video: Video,
     display: u32,
     settings: StreamSettings,
     sync_clipboard: Option<ClipboardSource>,
@@ -529,40 +628,37 @@ async fn session(
     mut viewing: bool,
 ) -> Result<SessionEnd> {
     let (mut display, mut settings) = (display, settings);
+    let multi = video.multi;
     // Sound: datagrams → decoder → player, while wanted.
     let mut _audio: Option<Abort<()>> = None;
     if viewing {
-        write_msg(send, &ViewerMsg::StartStream { display, settings }).await?;
+        write_msg(send, &start_message(multi, vec![display], settings)).await?;
         if play_audio {
             _audio = start_audio(conn, send, events, &audio_out).await?;
         }
     }
 
-    // Video: network → decoder thread.
-    let (frame_tx, frame_rx) = mpsc::channel::<VideoFrame>(2);
+    // Video: network → decoder thread(s).
     let (dec_tx, mut dec_rx) = mpsc::unbounded_channel::<DecoderOut>();
-    let bytes_rx = Arc::new(AtomicU64::new(0));
-    let decode_us = Arc::new(AtomicU64::new(0));
-    let decoded = Arc::new(AtomicU64::new(0));
-    let dims = Arc::new(Mutex::new((0u32, 0u32)));
-    {
-        let (decode_us, decoded, dims) = (decode_us.clone(), decoded.clone(), dims.clone());
-        thread::Builder::new()
-            .name("decoder".into())
-            .spawn(move || decode_loop(frame_rx, dec_tx, frames, decode_us, decoded, dims))?;
-    }
-    let video_conn = conn.clone();
-    let video_bytes = bytes_rx.clone();
-    let video_task = tokio::spawn(async move {
-        let mut stream = video_conn.accept_uni().await?;
-        while let Some(frame) = read_msg::<VideoFrame>(&mut stream).await? {
-            video_bytes.fetch_add(frame.data.len() as u64 + 32, Ordering::Relaxed);
-            if frame_tx.send(frame).await.is_err() {
-                break;
+    let counters = VideoCounters::default();
+    let (bytes_rx, decode_us, decoded, dims, live) =
+        (counters.bytes.clone(), counters.decode_us.clone(), counters.decoded.clone(), counters.dims.clone(), counters.live.clone());
+    let video_task = if multi {
+        tokio::spawn(receive_screens(conn.clone(), video.screens, dec_tx, counters))
+    } else {
+        let frame_tx = spawn_decoder(None, video.frames, dec_tx, &counters)?;
+        let video_conn = conn.clone();
+        tokio::spawn(async move {
+            let mut stream = video_conn.accept_uni().await?;
+            while let Some(frame) = read_msg::<VideoFrame>(&mut stream).await? {
+                counters.bytes.fetch_add(frame.data.len() as u64 + 32, Ordering::Relaxed);
+                if frame_tx.send(frame).await.is_err() {
+                    break;
+                }
             }
-        }
-        anyhow::Ok(())
-    });
+            anyhow::Ok(())
+        })
+    };
     let _video_guard = Abort(video_task);
 
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();
@@ -624,8 +720,10 @@ async fn session(
                 }
             }
             Some(out) = dec_rx.recv() => match out {
-                DecoderOut::Ack(seq) => write_msg(send, &ViewerMsg::FrameAck { seq }).await?,
-                DecoderOut::NeedKeyframe => write_msg(send, &ViewerMsg::RequestKeyframe).await?,
+                DecoderOut::Ack(None, seq) => write_msg(send, &ViewerMsg::FrameAck { seq }).await?,
+                DecoderOut::Ack(Some(display), seq) => write_msg(send, &ViewerMsg::FrameAckOn { display, seq }).await?,
+                DecoderOut::NeedKeyframe(None) => write_msg(send, &ViewerMsg::RequestKeyframe).await?,
+                DecoderOut::NeedKeyframe(Some(display)) => write_msg(send, &ViewerMsg::RequestKeyframeOn { display }).await?,
             },
             Some(clip) = clip_rx.recv() => {
                 // Local files go over on paste (`paste_files`), not on copy.
@@ -637,9 +735,23 @@ async fn session(
             }
             cmd = cmds.recv() => match cmd {
                 Some(ViewerCmd::Input(ev)) => write_msg(send, &ViewerMsg::Input(ev)).await?,
+                Some(ViewerCmd::InputOn(d, event)) => {
+                    let msg = if multi { ViewerMsg::InputOn { display: d, event } } else { ViewerMsg::Input(event) };
+                    write_msg(send, &msg).await?;
+                }
                 Some(ViewerCmd::SelectDisplay(d)) if viewing => {
                     display = d;
-                    write_msg(send, &ViewerMsg::StartStream { display: d, settings }).await?;
+                    write_msg(send, &start_message(multi, vec![d], settings)).await?;
+                }
+                // Nothing on view: a host streaming several displays pauses
+                // them all; one streaming a single display carries on.
+                Some(ViewerCmd::ShowDisplays(shown)) if viewing || shown.is_empty() => {
+                    if multi {
+                        write_msg(send, &ViewerMsg::ShowDisplays { displays: shown, settings }).await?;
+                    } else if let Some(&d) = shown.first() && !shown.contains(&display) {
+                        display = d;
+                        write_msg(send, &ViewerMsg::StartStream { display: d, settings }).await?;
+                    }
                 }
                 // Remembered, so switching displays keeps the chosen quality.
                 Some(ViewerCmd::Settings(s)) => {
@@ -652,10 +764,15 @@ async fn session(
                 }
                 Some(ViewerCmd::Privacy(on)) => write_msg(send, &ViewerMsg::SetPrivacy(on)).await?,
                 // Choosing a display on a chat-only link starts viewing it.
-                Some(cmd @ (ViewerCmd::StartViewing | ViewerCmd::SelectDisplay(_))) => if !viewing {
-                    if let ViewerCmd::SelectDisplay(d) = cmd { display = d; }
+                Some(cmd @ (ViewerCmd::StartViewing | ViewerCmd::SelectDisplay(_) | ViewerCmd::ShowDisplays(_))) => if !viewing {
+                    let shown = match cmd {
+                        ViewerCmd::SelectDisplay(d) => vec![d],
+                        ViewerCmd::ShowDisplays(shown) => shown,
+                        _ => vec![display],
+                    };
+                    if let Some(&d) = shown.first() { display = d; }
                     viewing = true;
-                    write_msg(send, &ViewerMsg::StartStream { display, settings }).await?;
+                    write_msg(send, &start_message(multi, shown, settings)).await?;
                     clipboard = sync_clipboard.as_ref().and_then(|source| Clipboard::start(clip_tx.clone(), source));
                     if play_audio && _audio.is_none() {
                         _audio = start_audio(conn, send, events, &audio_out).await?;
@@ -685,6 +802,9 @@ async fn session(
                 let frames = (f1 - f0).max(1);
                 let host = host_pace.lock().unwrap().clone();
                 let decode_ms = decode_us.swap(0, Ordering::Relaxed) as f32 / 1000.0 / frames as f32;
+                // Several screens at once: the rate of each picture (the
+                // bandwidth stays the total).
+                let pictures = live.load(Ordering::Relaxed).max(1) as f32;
                 let rtt_ms = rtt.as_secs_f32() * 1000.0;
                 if !viewing {
                     last_log = (Instant::now(), b1, f1);
@@ -692,7 +812,7 @@ async fn session(
                     let secs = last_log.0.elapsed().as_secs_f32();
                     tracing::info!(
                         "link: {width}x{height}, {:.1} fps, {:.0} kbps, round trip {rtt_ms:.0} ms {}, decode {decode_ms:.1} ms; host: {}",
-                        (f1 - last_log.2) as f32 / secs,
+                        (f1 - last_log.2) as f32 / secs / pictures,
                         (b1 - last_log.1) as f32 * 8.0 / 1000.0 / secs,
                         if relayed { "relayed" } else { "direct" },
                         if host.is_empty() { "no figures (older version)".to_string() } else { host_pace_text(&host) }
@@ -700,7 +820,7 @@ async fn session(
                     last_log = (Instant::now(), b1, f1);
                 }
                 let _ = events.send(ViewerEvent::Stats(ViewerStats {
-                    fps: (f1 - f0) as f32 / secs,
+                    fps: (f1 - f0) as f32 / secs / pictures,
                     kbps: (b1 - b0) as f32 * 8.0 / 1000.0 / secs,
                     rtt_ms,
                     relayed,
@@ -717,14 +837,32 @@ async fn session(
     }
 }
 
+/// What starts the picture: the displays to show at once, or the first of
+/// them on a host that streams one at a time.
+fn start_message(multi: bool, displays: Vec<u32>, settings: StreamSettings) -> ViewerMsg {
+    if multi {
+        ViewerMsg::ShowDisplays { displays, settings }
+    } else {
+        ViewerMsg::StartStream { display: displays.first().copied().unwrap_or(0), settings }
+    }
+}
+
 fn decode_loop(
+    display: Option<u32>,
     mut rx: mpsc::Receiver<VideoFrame>,
     out: mpsc::UnboundedSender<DecoderOut>,
     frames: Arc<FrameShared>,
-    decode_us: Arc<AtomicU64>,
-    decoded: Arc<AtomicU64>,
-    dims: Arc<Mutex<(u32, u32)>>,
+    counters: VideoCounters,
 ) {
+    let VideoCounters { decode_us, decoded, dims, live, .. } = counters;
+    live.fetch_add(1, Ordering::Relaxed);
+    struct Live(Arc<AtomicU64>);
+    impl Drop for Live {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+    let _live = Live(live);
     let mut decoder = match Decoder::new() {
         Ok(d) => d,
         Err(e) => {
@@ -736,7 +874,7 @@ fn decode_loop(
     while let Some(frame) = rx.blocking_recv() {
         let seq = frame.seq;
         if waiting_for_key && !frame.keyframe {
-            let _ = out.send(DecoderOut::Ack(seq));
+            let _ = out.send(DecoderOut::Ack(display, seq));
             continue;
         }
         let t = Instant::now();
@@ -752,13 +890,13 @@ fn decode_loop(
             Err(e) => {
                 debug!("decode error: {e:#}; requesting keyframe");
                 waiting_for_key = true;
-                let _ = out.send(DecoderOut::NeedKeyframe);
+                let _ = out.send(DecoderOut::NeedKeyframe(display));
                 if let Ok(d) = Decoder::new() {
                     decoder = d;
                 }
             }
         }
-        if out.send(DecoderOut::Ack(seq)).is_err() {
+        if out.send(DecoderOut::Ack(display, seq)).is_err() {
             return;
         }
     }

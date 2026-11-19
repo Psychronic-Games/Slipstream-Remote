@@ -42,11 +42,17 @@ ARCHITECTURE.md, "The Android app", and BUILDING.md, "Android").
 - [x] Touch in a session (`gui/touch.rs`): tap, long-press for right
       click, one-finger drag, pinch to zoom, two fingers to pan (or scroll
       when not zoomed). Tried with a scripted pinch on the emulator.
-- [ ] A trackpad mode (a pointer moved by dragging), for precise work on
-      small screens.
-- [ ] Keyboard in a session: the soft keyboard's text typed on the remote
-      computer (text to key presses), and a bar of special keys (Ctrl,
-      Alt, Win, Esc, Tab, arrows, F-keys, Ctrl+Alt+Del).
+- [x] A trackpad mode (a pointer moved by dragging), for precise work on
+      small screens: the default on phones since 0.38 (tap, tap-and-slide
+      to drag, two-finger tap or hold to right-click, two fingers scroll,
+      the zoomed view follows the pointer). Pinches start anywhere,
+      including the black bars around a portrait picture.
+- [x] Keyboard in a session: the soft keyboard's text typed on the remote
+      computer (`InputEvent::Text`, US key presses for older hosts), and a
+      bar of special keys (Ctrl, Alt, Shift, Win latched for the next key,
+      Esc, Tab, arrows, Delete, Home/End, Page Up/Down, F1–F12); 0.38.
+      To try on real phones: autocorrect and suggestion rewrites, and
+      keyboards that send Backspace on an empty field.
 - [x] Session toolbar sized for a phone (Console menu).
 - [ ] Landscape full screen without the system bars.
 - [x] Device name from manufacturer/model for default identities (0.17.0).

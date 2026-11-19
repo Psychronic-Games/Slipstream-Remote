@@ -465,6 +465,11 @@ pub enum ConsoleIcon {
     MicrophoneOff,
     ShareScreen,
     Record,
+    /// The remote computer's screens (a monitor).
+    Screens,
+    /// Phones: a trackpad-style pointer, or direct touch.
+    Trackpad,
+    Touch,
 }
 impl ConsoleIcon {
     pub fn label(self) -> &'static str {
@@ -489,6 +494,9 @@ impl ConsoleIcon {
             Self::MicrophoneOff => "Microphone off",
             Self::ShareScreen => "Share screen",
             Self::Record => "Record",
+            Self::Screens => "Screens",
+            Self::Trackpad => "Trackpad",
+            Self::Touch => "Touch",
         }
     }
 }
@@ -586,6 +594,19 @@ pub fn chat_body(ui: &Ui, area: Rect) -> Rect {
     Rect::from_min_max(pos2(x + elbow + 8.0, top + 10.0), area.max - vec2(10.0, 24.0))
 }
 
+/// A monitor, with `number` on its screen if given (screen tabs).
+pub fn monitor_glyph(p: &egui::Painter, rect: Rect, number: Option<u32>, ink: Color32) {
+    let at = |(x, y): (f32, f32)| rect.min + vec2(x * rect.width(), y * rect.height());
+    let stroke = Stroke::new(1.6, ink);
+    let screen = Rect::from_min_max(at((0.02, 0.06)), at((0.98, 0.74)));
+    p.rect_stroke(screen, 2.0, stroke, egui::StrokeKind::Inside);
+    p.add(Shape::line(vec![at((0.5, 0.74)), at((0.5, 0.88))], stroke));
+    p.add(Shape::line(vec![at((0.26, 0.92)), at((0.74, 0.92))], stroke));
+    if let Some(n) = number {
+        p.text(screen.center(), Align2::CENTER_CENTER, n.to_string(), display_bold(screen.height() * 0.95), ink);
+    }
+}
+
 pub fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color32, fill: Color32) {
     let at = |(x, y): (f32, f32)| rect.min + vec2(x * rect.width(), y * rect.height());
     let stroke = Stroke::new(1.5, ink);
@@ -607,6 +628,18 @@ pub fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color
         ConsoleIcon::Files => {
             line(&[(0.06, 0.82), (0.06, 0.22), (0.4, 0.22), (0.52, 0.35), (0.93, 0.35), (0.93, 0.82), (0.06, 0.82)]);
             line(&[(0.1, 0.43), (0.9, 0.43)]);
+        }
+        ConsoleIcon::Screens => monitor_glyph(p, rect, None, ink),
+        ConsoleIcon::Trackpad => {
+            p.rect_stroke(box_at((0.08, 0.14), (0.92, 0.86)), 3.0, stroke, egui::StrokeKind::Inside);
+            line(&[(0.08, 0.66), (0.92, 0.66)]);
+            line(&[(0.5, 0.66), (0.5, 0.86)]);
+            p.circle_filled(at((0.42, 0.38)), 1.8, ink);
+        }
+        ConsoleIcon::Touch => {
+            p.circle_filled(at((0.5, 0.42)), 2.2, ink);
+            p.circle_stroke(at((0.5, 0.42)), rect.width() * 0.22, stroke);
+            p.circle_stroke(at((0.5, 0.42)), rect.width() * 0.4, Stroke::new(1.0, ink.gamma_multiply(0.6)));
         }
         ConsoleIcon::Keys => {
             p.rect_stroke(box_at((0.04, 0.2), (0.96, 0.84)), 2.0, stroke, egui::StrokeKind::Inside);

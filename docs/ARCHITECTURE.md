@@ -211,6 +211,31 @@ portal prompt.
   `HostMsg::Capabilities`, a variant older viewers can't decode. Input
   before that is dropped. If the screen can't open, the viewer gets a
   notice, the chat carries on, and the next `StartStream` tries again.
+
+* **Host extras** (still protocol 6): the host writes `HostExtras` after
+  `HostMsg::AuthOk` in the same message, the way viewers write
+  `HelloExtras` after `Hello`. Older viewers stop reading after the
+  `AuthOk`; an older host's `AuthOk` reads as no extras. Viewers send the
+  messages below only to hosts that announce them.
+  * `text_input`: `InputEvent::Text` types characters whatever the host's
+    keyboard layout (enigo's Unicode input on Windows, macOS and X11,
+    keysyms through the Wayland portal; the Linux service's kernel
+    keyboard and Android hosts press the keys of a US keyboard). Phones
+    send their soft keyboard's text this way; older hosts get
+    `proto::us_keys_for_text` key presses.
+  * `multi_display` (every host but Android): `ViewerMsg::ShowDisplays`
+    streams exactly the listed displays at once, each with its own capture,
+    encoder, frame-ack flow (`FrameAckOn`, `RequestKeyframeOn`) and
+    uni-stream, which starts with the display's index (a `u32` message)
+    before its frames. Displays left out stop and their streams finish.
+    `InputOn` carries pointer input for a given display. The viewer
+    (`viewer::receive_screens`) decodes each stream on its own thread into
+    that display's `FrameShared` (`ViewerSession::frames_for`). The GUI
+    gives each of a computer's screens a tab (`gui::remote::RemoteTab`)
+    sharing one link (`gui::remote::Link`: control, chat, files, tools);
+    it asks for the screens drawn in the last two seconds, so hidden tabs
+    pause. With a host that streams one display at a time, the screen on
+    view is switched to with `StartStream`.
   Windows lock-screen notices wait until the link views.
 * **Restarts** (`StreamOpen::Power { action }`, appended; older hosts refuse
   the stream): the host checks Control permission, answers `Done`, then

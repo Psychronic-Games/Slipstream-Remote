@@ -330,6 +330,11 @@ fn gdi_until(producer: &FrameSlot, min_interval: Duration, origin: (i32, i32), s
     let mut failures = 0;
     let mut pace = crate::pace::Pace::new("screen capture (GDI)");
     let mut checked = Instant::now();
+    // The last picture sent: GDI hands over the screen whether it changed
+    // or not, and an unchanged one isn't sent again (as with DXGI), so a
+    // still screen costs no encoding or bandwidth. The encoder keeps the
+    // last frame for keyframes.
+    let mut previous: Vec<u8> = Vec::new();
     while !producer.is_closed() {
         let t = Instant::now();
         if crate::windesk::follow() {
@@ -351,7 +356,11 @@ fn gdi_until(producer: &FrameSlot, min_interval: Duration, origin: (i32, i32), s
             if let Some(p) = pointer_now() {
                 draw_pointer(&mut data, w, h, w * 4, origin, p, true);
             }
-            producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
+            if data != previous {
+                previous.clear();
+                previous.extend_from_slice(&data);
+                producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
+            }
             pace.add(t.elapsed());
         } else {
             // A desktop switch can fail a few captures; keep trying a while.
@@ -518,6 +527,8 @@ fn apply(enigo: &mut Enigo, d: &DisplayInfo, ev: InputEvent, wheel: &mut (f32, f
             }
         }
         InputEvent::ReleaseAll => {}
+        // Characters as such (Unicode input on Windows and macOS, keysyms on X11).
+        InputEvent::Text(text) => enigo.text(&text)?,
     }
     Ok(())
 }

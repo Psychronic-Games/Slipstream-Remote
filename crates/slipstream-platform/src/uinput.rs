@@ -216,6 +216,17 @@ impl Devices {
                 _ => Ok(()),
             },
             InputEvent::ReleaseAll => Ok(()),
+            // Kernel devices type keys, not characters: those of a US keyboard.
+            InputEvent::Text(text) => {
+                for key in slipstream_core::proto::us_keys_for_text(&text) {
+                    if let InputEvent::Key { code, down } = key
+                        && let Some(key) = keymap::lookup(&code).filter(|k| (1..=255).contains(&k.evdev))
+                    {
+                        self.keyboard.send(&[(EV_KEY, key.evdev, down as i32)])?;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 }

@@ -56,6 +56,19 @@ pub enum ViewerMsg {
     SetAudio(bool),
     /// Black out the host's own screen (privacy mode), or stop.
     SetPrivacy(bool),
+    // The rest only go to hosts whose `HostExtras::multi_display` is set
+    // (older hosts can't decode them).
+    /// Stream exactly these displays at once, each on its own uni-stream
+    /// that starts with the display's index (a `u32` message) before its
+    /// frames; the host finishes the streams of displays left out. Replaces
+    /// [`ViewerMsg::StartStream`] for such hosts.
+    ShowDisplays { displays: Vec<u32>, settings: StreamSettings },
+    /// [`ViewerMsg::FrameAck`] for one display's stream.
+    FrameAckOn { display: u32, seq: u64 },
+    /// [`ViewerMsg::RequestKeyframe`] for one display's stream.
+    RequestKeyframeOn { display: u32 },
+    /// [`ViewerMsg::Input`] with pointer positions on `display`.
+    InputOn { display: u32, event: InputEvent },
 }
 
 /// Messages sent by the host on the control stream.
@@ -79,6 +92,19 @@ pub enum HostMsg {
     /// are now known. Sent only to viewers that sent [`HelloExtras`] (older
     /// viewers can't decode it).
     Capabilities(Capabilities),
+}
+
+/// Optional additions to [`HostMsg::AuthOk`], written after it in the same
+/// message, the same way as [`HelloExtras`]: older viewers ignore them, and
+/// an `AuthOk` from an older host reads as the default (none of these).
+/// Only ever append fields.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HostExtras {
+    /// The host takes [`InputEvent::Text`].
+    pub text_input: bool,
+    /// The host takes [`ViewerMsg::ShowDisplays`] and the other per-display
+    /// messages, streaming several displays at once.
+    pub multi_display: bool,
 }
 
 /// Optional additions to [`ViewerMsg::Hello`], written after it in the same
@@ -187,6 +213,79 @@ pub enum InputEvent {
     Key { code: String, down: bool },
     /// Release every key and button the viewer may have held (focus lost).
     ReleaseAll,
+    /// Typed characters, whatever keys make them on the host's keyboard
+    /// layout (a phone's soft keyboard). Only sent to hosts whose
+    /// `HostExtras::text_input` is set; others get [`us_key_for_char`] keys.
+    Text(String),
+}
+
+/// The physical key (W3C code) that types `c` on a US keyboard, and whether
+/// Shift is needed: text for hosts that can't take [`InputEvent::Text`].
+pub fn us_key_for_char(c: char) -> Option<(&'static str, bool)> {
+    const LETTERS: [&str; 26] = [
+        "KeyA", "KeyB", "KeyC", "KeyD", "KeyE", "KeyF", "KeyG", "KeyH", "KeyI", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyN",
+        "KeyO", "KeyP", "KeyQ", "KeyR", "KeyS", "KeyT", "KeyU", "KeyV", "KeyW", "KeyX", "KeyY", "KeyZ",
+    ];
+    const DIGITS: [&str; 10] = ["Digit0", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"];
+    Some(match c {
+        'a'..='z' => (LETTERS[(c as u8 - b'a') as usize], false),
+        'A'..='Z' => (LETTERS[(c as u8 - b'A') as usize], true),
+        '0'..='9' => (DIGITS[(c as u8 - b'0') as usize], false),
+        ' ' => ("Space", false),
+        '\n' => ("Enter", false),
+        '\t' => ("Tab", false),
+        '!' => ("Digit1", true),
+        '@' => ("Digit2", true),
+        '#' => ("Digit3", true),
+        '$' => ("Digit4", true),
+        '%' => ("Digit5", true),
+        '^' => ("Digit6", true),
+        '&' => ("Digit7", true),
+        '*' => ("Digit8", true),
+        '(' => ("Digit9", true),
+        ')' => ("Digit0", true),
+        '-' => ("Minus", false),
+        '_' => ("Minus", true),
+        '=' => ("Equal", false),
+        '+' => ("Equal", true),
+        '[' => ("BracketLeft", false),
+        '{' => ("BracketLeft", true),
+        ']' => ("BracketRight", false),
+        '}' => ("BracketRight", true),
+        '\\' => ("Backslash", false),
+        '|' => ("Backslash", true),
+        ';' => ("Semicolon", false),
+        ':' => ("Semicolon", true),
+        '\'' => ("Quote", false),
+        '"' => ("Quote", true),
+        ',' => ("Comma", false),
+        '<' => ("Comma", true),
+        '.' => ("Period", false),
+        '>' => ("Period", true),
+        '/' => ("Slash", false),
+        '?' => ("Slash", true),
+        '`' => ("Backquote", false),
+        '~' => ("Backquote", true),
+        _ => return None,
+    })
+}
+
+/// Key presses that type `text` on a US keyboard (characters it can't type
+/// are skipped).
+pub fn us_keys_for_text(text: &str) -> Vec<InputEvent> {
+    let mut out = Vec::new();
+    for c in text.chars() {
+        let Some((code, shift)) = us_key_for_char(c) else { continue };
+        if shift {
+            out.push(InputEvent::Key { code: "ShiftLeft".into(), down: true });
+        }
+        out.push(InputEvent::Key { code: code.into(), down: true });
+        out.push(InputEvent::Key { code: code.into(), down: false });
+        if shift {
+            out.push(InputEvent::Key { code: "ShiftLeft".into(), down: false });
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

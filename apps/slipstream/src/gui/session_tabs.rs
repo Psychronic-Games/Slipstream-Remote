@@ -6,6 +6,24 @@ use eframe::egui::{self, Align2, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, vec2}
 
 use super::{SessionAction, remote::TabAction, theme::{self, pal}};
 
+/// A session tab in the strip: the computer's name, and which of its
+/// screens when it has several (a monitor with the number).
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Entry {
+    pub id: u64,
+    pub name: String,
+    pub screen: Option<u32>,
+}
+
+impl Entry {
+    fn label(&self) -> String {
+        match self.screen {
+            Some(n) => format!("{} · screen {n}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Tabs {
     targets: BTreeMap<egui::ViewportId, Target>,
@@ -101,7 +119,7 @@ impl Tabs {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     shared: &Arc<Mutex<Tabs>>, ui: &mut Ui, area: Rect,
-    entries: &[(u64, String)], active: Option<u64>, root: bool, visible: bool,
+    entries: &[Entry], active: Option<u64>, root: bool, visible: bool,
     meeting: Option<(&str, bool)>,
 ) -> (Rect, Vec<SessionAction>) {
     let ctx = ui.ctx().clone();
@@ -138,21 +156,35 @@ pub(super) fn show(
                         title.to_uppercase(), theme::display(17.0), pal::BG);
                     if response.clicked() { actions.push((0, TabAction::Meeting)); }
                 }
-                for (id, name) in entries {
+                for entry in entries {
+                    let (id, name) = (&entry.id, &entry.name);
                     let (rect, _) = ui.allocate_exact_size(vec2(180.0, 29.0), Sense::hover());
                     let close = rect.with_min_x(rect.right() - 27.0);
                     let body = rect.with_max_x(close.left());
                     let response = ui.interact(body, ui.scope_id().with(("session-tab", id)), Sense::click_and_drag())
                         .on_hover_cursor(egui::CursorIcon::Grab)
-                        .on_hover_text(format!("{name}\nDrag to reorder or move between tabs and windows"));
+                        .on_hover_text(format!("{}\nDrag to reorder or move between tabs and windows", entry.label()));
                     let color = if active == Some(*id) {pal::LAVENDER} else if response.hovered() {pal::BLUE} else {pal::VIOLET};
                     ui.painter().rect_filled(rect, 6.0, color);
-                    ui.painter().with_clip_rect(body.shrink(6.0)).text(body.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER,
+                    // Several screens: a monitor with the screen's number after the name.
+                    let text_end = match entry.screen {
+                        Some(n) => {
+                            let glyph = Rect::from_center_size(body.right_center() - vec2(17.0, 0.0), vec2(26.0, 22.0));
+                            theme::monitor_glyph(ui.painter(), glyph, Some(n), pal::BG);
+                            glyph.left() - 4.0
+                        }
+                        None => body.right(),
+                    };
+                    ui.painter().with_clip_rect(body.with_max_x(text_end).shrink(6.0)).text(body.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER,
                         name.to_uppercase(), theme::display(17.0), pal::BG);
                     if response.clicked() { actions.push((*id, TabAction::Activate)); }
                     response.context_menu(|ui| {
                         if !ui.ctx().embed_viewports() && ui.button(if root {"Open in separate window"} else {"Dock in main console"}).clicked() {
                             actions.push((*id, if root {TabAction::Detach} else {TabAction::Dock}));
+                            ui.close();
+                        }
+                        if entry.screen.is_some() && ui.button("Close this screen").clicked() {
+                            actions.push((*id, TabAction::CloseScreen));
                             ui.close();
                         }
                         if ui.button("End link").clicked() {
@@ -161,11 +193,12 @@ pub(super) fn show(
                         }
                     });
                     if response.drag_started() {
-                        started = Some(Drag { id: *id, source: viewport, label: name.clone(), screen_pos: None });
+                        started = Some(Drag { id: *id, source: viewport, label: entry.label(), screen_pos: None });
                     }
-                    let end = ui.interact(close, ui.scope_id().with(("close-session-tab", id)), Sense::click()).on_hover_text("End this link");
+                    let end = ui.interact(close, ui.scope_id().with(("close-session-tab", id)), Sense::click())
+                        .on_hover_text(if entry.screen.is_some() {"Close this screen (tick it again under Screens)"} else {"End this link"});
                     ui.painter().text(close.center(), Align2::CENTER_CENTER, "×", theme::body(21.0), if end.hovered() {pal::RED} else {pal::BG});
-                    if end.clicked() { actions.push((*id, TabAction::Close)); }
+                    if end.clicked() { actions.push((*id, TabAction::CloseScreen)); }
                     local_slots.push((*id, rect.intersect(ui.clip_rect())));
                     if let Some(rect) = screen_rect(rect.intersect(ui.clip_rect())) && rect.is_positive() { slots.push((*id, rect)); }
                 }
@@ -265,6 +298,10 @@ mod tests {
         tabs: Arc<Mutex<Tabs>>,
     }
 
+    fn entry(id: u64, name: &str) -> Entry {
+        Entry {id, name: name.into(), screen: None}
+    }
+
     impl Fixture {
         fn new() -> Self {
             let ctx = egui::Context::default();
@@ -275,16 +312,16 @@ mod tests {
 
         fn frame(&self, root: bool, origin: Pos2, scale: f32, events: Vec<Event>) -> Vec<SessionAction> {
             let viewport = if root {ViewportId::ROOT} else {ViewportId::from_hash_of("floating-test")};
-            let entries = if root {vec![(1, "First".into()), (2, "Second".into())]} else {vec![(3, "Third".into())]};
+            let entries = if root {vec![entry(1, "First"), entry(2, "Second")]} else {vec![entry(3, "Third")]};
             self.frame_in(viewport,root,origin,scale,events,&entries)
         }
-        fn frame_in(&self, viewport:ViewportId, root:bool, origin:Pos2, scale:f32, events:Vec<Event>, entries:&[(u64,String)])->Vec<SessionAction> {
+        fn frame_in(&self, viewport:ViewportId, root:bool, origin:Pos2, scale:f32, events:Vec<Event>, entries:&[Entry])->Vec<SessionAction> {
             let area = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
             let mut raw = RawInput {viewport_id: viewport, screen_rect: Some(area), events, ..Default::default()};
             raw.viewports.insert(viewport, ViewportInfo {inner_rect: Some(area.translate(origin.to_vec2())), native_pixels_per_point: Some(scale), ..Default::default()});
             let mut actions = Vec::new();
             let mut output = self.ctx.run_ui(raw, |ui| {
-                actions.extend(show(&self.tabs, ui, area, entries, entries.first().map(|(id,_)|*id), root, true, None).1);
+                actions.extend(show(&self.tabs, ui, area, entries, entries.first().map(|e|e.id), root, true, None).1);
             });
             output.textures_delta.clear();
             actions
@@ -351,18 +388,18 @@ mod tests {
         let first=ViewportId::from_hash_of("first-group");let second=ViewportId::from_hash_of("second-group");
         let origin=pos2(100.0,100.0);let destination=pos2(1100.0,100.0);
         for _ in 0..2 {
-            f.frame_in(first,false,origin,1.0,vec![],&[(3,"Third".into())]);
-            f.frame_in(second,false,destination,1.5,vec![],&[(4,"Fourth".into())]);
+            f.frame_in(first,false,origin,1.0,vec![],&[entry(3,"Third")]);
+            f.frame_in(second,false,destination,1.5,vec![],&[entry(4,"Fourth")]);
         }
         let drop=f.tabs.lock().unwrap().targets[&second].slots[0].1.left_center()+vec2(4.0,0.0)-origin.to_vec2();
         let start=pos2(60.0,15.0);
-        f.frame_in(first,false,origin,1.0,vec![Event::PointerMoved(start),button(start,true)],&[(3,"Third".into())]);
-        f.frame_in(first,false,origin,1.0,vec![Event::PointerMoved(drop)],&[(3,"Third".into())]);
-        let actions=f.frame_in(first,false,origin,1.0,vec![button(drop,false)],&[(3,"Third".into())]);
+        f.frame_in(first,false,origin,1.0,vec![Event::PointerMoved(start),button(start,true)],&[entry(3,"Third")]);
+        f.frame_in(first,false,origin,1.0,vec![Event::PointerMoved(drop)],&[entry(3,"Third")]);
+        let actions=f.frame_in(first,false,origin,1.0,vec![button(drop,false)],&[entry(3,"Third")]);
         assert!(actions.iter().any(|(id,a)|*id==3 && matches!(a,TabAction::PlaceTab(v,Some(4)) if *v==second)));
-        f.frame_in(first,false,origin,1.0,vec![Event::PointerMoved(start),button(start,true)],&[(3,"Third".into())]);
-        f.frame_in(first,false,origin,1.0,vec![Event::PointerMoved(pos2(850.0,350.0))],&[(3,"Third".into())]);
-        let actions=f.frame_in(first,false,origin,1.0,vec![button(pos2(850.0,350.0),false)],&[(3,"Third".into())]);
+        f.frame_in(first,false,origin,1.0,vec![Event::PointerMoved(start),button(start,true)],&[entry(3,"Third")]);
+        f.frame_in(first,false,origin,1.0,vec![Event::PointerMoved(pos2(850.0,350.0))],&[entry(3,"Third")]);
+        let actions=f.frame_in(first,false,origin,1.0,vec![button(pos2(850.0,350.0),false)],&[entry(3,"Third")]);
         assert!(actions.iter().any(|(id,a)|*id==3 && matches!(a,TabAction::FloatAt(_))));
         f.tabs.lock().unwrap().retain_targets(&[second]);
         assert_eq!(f.tabs.lock().unwrap().targets.len(),1);
@@ -389,7 +426,7 @@ mod tests {
                 let shared = Default::default();
                 let viewport=if root {ViewportId::ROOT} else {ViewportId::from_hash_of("plus-group")};
                 let area = Rect::from_min_size(Pos2::ZERO, vec2(800.0,360.0));
-                let entries: Vec<_> = (1..=count).map(|id| (id,format!("Workstation {id}"))).collect();
+                let entries: Vec<_> = (1..=count).map(|id| entry(id,&format!("Workstation {id}"))).collect();
                 let mut point = Pos2::ZERO;
                 let mut actions = Vec::new();
                 for frame in 0..4 {

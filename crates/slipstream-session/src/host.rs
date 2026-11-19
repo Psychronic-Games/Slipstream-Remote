@@ -2,6 +2,7 @@
 //! apply its input.
 
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -12,7 +13,7 @@ use slipstream_core::{
     auth::{HostAuth, password_secret},
     framing::{MsgReader, expect_msg_max, expect_msg_with_extras, write_msg},
     proto::{
-        Capabilities, ClipboardData, DisplayInfo, HelloExtras, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
+        Capabilities, ClipboardData, DisplayInfo, HelloExtras, HostExtras, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
         StreamSettings, VideoFrame, ViewerMsg,
     },
 };
@@ -195,7 +196,10 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
         displays: screen.displays.clone(),
         capabilities: capabilities.clone(),
     };
-    write_msg(&mut send, &HostMsg::AuthOk { confirm, session }).await?;
+    // Older viewers stop reading after the AuthOk; newer ones learn what
+    // this host can do beyond protocol 6.
+    let extras = HostExtras { text_input: true, multi_display: !cfg!(target_os = "android") };
+    write_msg(&mut send, &(HostMsg::AuthOk { confirm, session }, extras)).await?;
 
     let id = inner.next_session_id();
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -476,8 +480,12 @@ async fn session_loop(
     let (video_tx, mut video_rx) = mpsc::channel::<VideoFrame>(4);
     let video_conn = conn.clone();
     let writer = tokio::spawn(async move {
+        // Opened with the first frame: a viewer that streams several
+        // displays at once gets a stream per display instead.
+        let Some(first) = video_rx.recv().await else { return anyhow::Ok(()) };
         let mut stream = video_conn.open_uni().await?;
         stream.set_priority(slipstream_core::proto::PRIORITY_VIDEO).ok();
+        write_msg(&mut stream, &first).await?;
         let stopped = stream.stopped();
         tokio::pin!(stopped);
         loop {
@@ -518,6 +526,8 @@ async fn session_loop(
     let flow = Flow::new();
     let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();
     let mut pipeline: Option<Pipeline> = None;
+    // Viewers that stream several displays at once (`ShowDisplays`).
+    let mut shown: HashMap<u32, Shown> = HashMap::new();
     let mut display = screen.displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
     // The host's sound, while the viewer wants it (capture stops on drop).
     let mut _audio: Option<slipstream_audio::Capture> = None;
@@ -608,6 +618,25 @@ async fn session_loop(
                     }
                     ViewerMsg::SetSettings(s) => {
                         let s = sanitize_settings(s);
+                        let restart: Vec<u32> = shown.iter()
+                            .filter_map(|(&d, one)| (s.max_fps != one.pipeline.settings().max_fps).then_some(d))
+                            .collect();
+                        for one in shown.values() {
+                            one.pipeline.set_settings(s);
+                        }
+                        // Capture is paced at the frame rate it started with.
+                        for d in restart {
+                            let Some(Shown { pipeline, tx, .. }) = shown.remove(&d) else { continue };
+                            drop(pipeline); // stop the old capture first
+                            match open_capture(inner, d, s.max_fps).await? {
+                                Ok(c) => {
+                                    let flow = Flow::new();
+                                    let pipeline = Pipeline::start(c, flow.clone(), s, tx.clone(), err_tx.clone());
+                                    shown.insert(d, Shown { pipeline, flow, tx });
+                                }
+                                Err(e) => write_msg(&mut send, &HostMsg::Notice(format!("capture failed: {e:#}"))).await?,
+                            }
+                        }
                         let Some(p) = &pipeline else { continue };
                         if s.max_fps == p.settings().max_fps {
                             p.set_settings(s);
@@ -624,7 +653,55 @@ async fn session_loop(
                     ViewerMsg::RequestKeyframe => {
                         if let Some(p) = &pipeline { p.request_keyframe(); }
                     }
-                    ViewerMsg::Input(ev) => {
+                    ViewerMsg::ShowDisplays { displays: mut wanted, settings } => {
+                        wanted.dedup();
+                        wanted.truncate(16);
+                        if !wanted.is_empty() {
+                            viewing.note();
+                            if !screen.ensure_open(inner, &mut send, caps).await? {
+                                continue;
+                            }
+                        }
+                        let s = sanitize_settings(settings);
+                        // Stop what's no longer wanted first (one capture per display).
+                        shown.retain(|d, _| wanted.contains(d));
+                        for d in wanted {
+                            if shown.contains_key(&d) {
+                                continue;
+                            }
+                            let Some(info) = screen.displays.iter().find(|x| x.index == d).cloned() else {
+                                write_msg(&mut send, &HostMsg::Notice(format!("no display {d}"))).await?;
+                                continue;
+                            };
+                            match open_capture(inner, d, s.max_fps).await? {
+                                Ok(c) => {
+                                    let flow = Flow::new();
+                                    let (tx, rx) = mpsc::channel::<VideoFrame>(4);
+                                    tokio::spawn(display_writer(conn.clone(), d, rx));
+                                    let pipeline = Pipeline::start(c, flow.clone(), s, tx.clone(), err_tx.clone());
+                                    shown.insert(d, Shown { pipeline, flow, tx });
+                                    write_msg(&mut send, &HostMsg::StreamStarted { display: d, width: info.width, height: info.height }).await?;
+                                }
+                                Err(e) => write_msg(&mut send, &HostMsg::Notice(format!("capture failed: {e:#}"))).await?,
+                            }
+                        }
+                        // Input without a display goes to the first one shown.
+                        if let Some(&first) = shown.keys().min() && !shown.contains_key(&display) {
+                            display = first;
+                        }
+                    }
+                    ViewerMsg::FrameAckOn { display: d, seq } => {
+                        if let Some(one) = shown.get(&d) { one.flow.ack(seq); }
+                    }
+                    ViewerMsg::RequestKeyframeOn { display: d } => {
+                        if let Some(one) = shown.get(&d) { one.pipeline.request_keyframe(); }
+                    }
+                    msg @ (ViewerMsg::Input(_) | ViewerMsg::InputOn { .. }) => {
+                        let (display, ev) = match msg {
+                            ViewerMsg::InputOn { display, event } => (display, event),
+                            ViewerMsg::Input(ev) => (display, ev),
+                            _ => unreachable!(),
+                        };
                         // Nothing to control before the viewer has asked to see the screen.
                         if !screen.open { continue; }
                         if caps.input { viewing.note(); }
@@ -697,6 +774,7 @@ async fn session_loop(
             }},
             Some(err) = err_rx.recv() => {
                 drop(pipeline.take());
+                shown.clear();
                 // The portal session may have been revoked; reopen next time.
                 *inner.backend.lock().await = None;
                 write_msg(&mut send, &HostMsg::Bye { reason: format!("screen capture stopped: {err}") }).await.ok();
@@ -720,6 +798,30 @@ async fn session_loop(
             reason = conn.closed() => return Ok(crate::closed_reason(&reason, "they")),
         }
     }
+}
+
+/// A display streamed on its own uni-stream, for viewers that show several
+/// at once.
+struct Shown {
+    pipeline: Pipeline,
+    flow: Arc<Flow>,
+    tx: mpsc::Sender<VideoFrame>,
+}
+
+/// Writes one display's frames on a stream of its own, which starts with
+/// the display's index. Ends (finishing the stream) once its pipeline and
+/// [`Shown`] are gone.
+async fn display_writer(conn: Connection, display: u32, mut frames: mpsc::Receiver<VideoFrame>) -> Result<()> {
+    let Some(first) = frames.recv().await else { return Ok(()) };
+    let mut stream = conn.open_uni().await?;
+    stream.set_priority(slipstream_core::proto::PRIORITY_VIDEO).ok();
+    write_msg(&mut stream, &display).await?;
+    write_msg(&mut stream, &first).await?;
+    while let Some(frame) = frames.recv().await {
+        write_msg(&mut stream, &frame).await?;
+    }
+    stream.finish().ok();
+    Ok(())
 }
 
 fn sanitize_settings(mut s: StreamSettings) -> StreamSettings {

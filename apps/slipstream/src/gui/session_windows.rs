@@ -37,7 +37,7 @@ pub(super) fn show(
         active.lock().unwrap().window_active = true;
         let (host, position) = {
             let mut tab = active.lock().unwrap();
-            (tab.info.host_name.clone(), tab.window_position.take())
+            (tab.host_name(), tab.window_position.take())
         };
         let (rt, actions, tabs, app_title) = (
             rt.clone(),
@@ -73,10 +73,11 @@ pub(super) fn show(
                 return;
             }
             if ctx.input(|i| i.viewport().close_requested()) {
+                // Its screens close; links with screens elsewhere carry on.
                 for tab in &members {
                     let mut tab = tab.lock().unwrap();
-                    tab.end_link();
-                    let _ = actions.send((tab.id, TabAction::Close));
+                    tab.release_keyboard();
+                    let _ = actions.send((tab.id, TabAction::CloseScreen));
                 }
                 theme::dismiss_tool_viewport(&ctx, desktop);
                 return;
@@ -86,16 +87,10 @@ pub(super) fn show(
                 .find(|tab| tab.lock().unwrap().window_active)
                 .cloned()
                 .unwrap_or_else(|| members[0].clone());
-            let entries: Vec<_> = members
-                .iter()
-                .map(|tab| {
-                    let tab = tab.lock().unwrap();
-                    (tab.id, tab.info.host_name.clone())
-                })
-                .collect();
+            let entries: Vec<_> = members.iter().map(|tab| tab.lock().unwrap().strip_entry()).collect();
             let (id, host) = {
                 let tab = active.lock().unwrap();
-                (tab.id, tab.info.host_name.clone())
+                (tab.id, tab.host_name())
             };
             let body = theme::native_session_title_bar(ui, &app_title, Some(&host));
             let visible = ctx.input(|i| i.viewport().minimized != Some(true));

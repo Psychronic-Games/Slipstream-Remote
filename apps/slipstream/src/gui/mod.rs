@@ -440,7 +440,6 @@ pub struct App {
     quick_connect: quick_connect::QuickConnect,
     meetings: meetings::Meetings,
     link_approval: approval::LinkApproval,
-    next_tab: u64,
     next_window: u64,
     connect_destination: Option<egui::ViewportId>,
     pub incoming: Vec<IncomingSession>,
@@ -561,7 +560,6 @@ impl App {
             quick_connect: Default::default(),
             meetings: Default::default(),
             link_approval: Default::default(),
-            next_tab: 1,
             next_window: 1,
             connect_destination: None,
             incoming: Vec::new(),
@@ -870,21 +868,38 @@ impl App {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn open_link_tab(&mut self, ctx: &egui::Context, session: ViewerSession, events: tmpsc::UnboundedReceiver<ViewerEvent>,
         password: String, via: slipstream_session::StationRef, destination: Option<egui::ViewportId>, chat: Vec<(bool, String)>) {
-        let id = self.next_tab;
-        self.next_tab += 1;
         let play_audio = self.client.settings().viewer.play_audio;
-        let mut tab = remote::RemoteTab::new(id, session, events, password, ctx, play_audio);
-        tab.via = via;
-        tab.local_name = self.client.settings().device_name;
-        tab.adopt_chat(chat);
-        tab.files.lock().unwrap().open = self.open_files;
-        self.toast(format!("Link established with {}", tab.info.host_name), pal::GREEN);
-        self.tabs.push(Arc::new(Mutex::new(tab)));
+        // Phones start with the trackpad: fingers are too broad to click a
+        // shrunken desktop where they land.
+        let trackpad = remote::touch_ui();
+        let mut link = remote::Link::new(session, events, password, play_audio, trackpad);
+        link.via = via;
+        link.local_name = self.client.settings().device_name;
+        link.adopt_chat(chat);
+        link.files.lock().unwrap().open = self.open_files;
+        self.toast(format!("Link established with {}", link.info.host_name), pal::GREEN);
+        let main = link.info.displays.iter().find(|d| d.primary).map(|d| d.index);
+        let displays = link.wanted_displays();
+        let link = Arc::new(Mutex::new(link));
+        // A tab for each of its screens, the main one in front.
+        let mut ids = Vec::new();
+        for display in displays {
+            let tab = remote::RemoteTab::for_screen(&link, display, ctx);
+            ids.push((tab.id, display));
+            self.tabs.push(Arc::new(Mutex::new(tab)));
+        }
+        let id = ids.iter().find(|(_, d)| Some(*d) == main).or(ids.first()).map(|(id, _)| *id).unwrap_or_default();
         self.page = Page::Remote(id);
+        let destination = destination.or_else(|| (self.client.settings().viewer.separate_windows && !ctx.embed_viewports()).then(|| {
+            let viewport = egui::ViewportId::from_hash_of(("session-group", self.next_window));
+            self.next_window += 1;
+            viewport
+        }));
         if let Some(destination)=destination {
+            for (other, _) in ids.iter().filter(|(other, _)| *other != id) {
+                self.move_session_tab(ctx,*other,destination,None);
+            }
             self.move_session_tab(ctx,id,destination,None);
-        } else if self.client.settings().viewer.separate_windows && !ctx.embed_viewports() {
-            self.open_session_window(ctx, id);
         }
         self.settings_form.refresh_recent(&self.client.settings());
     }
@@ -1268,9 +1283,78 @@ impl App {
         }
     }
 
+    /// Ends the link the tab `id` shows a screen of, closing all its tabs.
     pub fn close_tab(&mut self, id: u64) {
+        let Some(tab) = self.tab(id) else { return };
+        let link = tab.lock().unwrap().link.clone();
+        link.lock().unwrap().end_link();
+        for other in self.link_tabs(&link) {
+            self.drop_tab(other);
+        }
+    }
+
+    /// The ids of a link's screen tabs, in strip order.
+    pub(super) fn link_tabs(&self, link: &Arc<Mutex<remote::Link>>) -> Vec<u64> {
+        self.tabs.iter().filter_map(|t| {
+            let t = t.lock().unwrap();
+            t.same_link(link).then_some(t.id)
+        }).collect()
+    }
+
+    /// A screen's tab closes; the link carries on with any others.
+    fn close_screen(&mut self, id: u64) {
+        let Some(tab) = self.tab(id) else { return };
+        let (link, display) = { let t = tab.lock().unwrap(); (t.link.clone(), t.display()) };
+        if self.link_tabs(&link).len() > 1 {
+            link.lock().unwrap().hide_display(display);
+            self.drop_tab(id);
+        } else {
+            self.close_tab(id);
+        }
+    }
+
+    /// Keeps each link's screen tabs in step with its screens: ticked under
+    /// Screens and plugged in. New ones join the window of the link's first
+    /// tab, after its last.
+    fn sync_screen_tabs(&mut self, ctx: &egui::Context, links: &[Arc<Mutex<remote::Link>>]) {
+        for link in links {
+            let wanted = link.lock().unwrap().wanted_displays();
+            let present: Vec<(u64, u32, egui::ViewportId, usize)> = self.tabs.iter().enumerate().filter_map(|(i, t)| {
+                let t = t.lock().unwrap();
+                t.same_link(link).then(|| (t.id, t.display(), t.viewport_id(), i))
+            }).collect();
+            for (id, display, ..) in &present {
+                if !wanted.contains(display) {
+                    self.drop_tab(*id);
+                }
+            }
+            let Some(&(_, _, viewport, _)) = present.first() else { continue };
+            for display in wanted {
+                if present.iter().any(|p| p.1 == display) {
+                    continue;
+                }
+                let mut tab = remote::RemoteTab::for_screen(link, display, ctx);
+                tab.detached = viewport != egui::ViewportId::ROOT;
+                tab.window_group = tab.detached.then_some(viewport);
+                tab.window_active = false;
+                tab.update_window_repaint(ctx);
+                // Beside its link's other screens, in display order.
+                let after = self.tabs.iter().rposition(|t| {
+                    let t = t.lock().unwrap();
+                    t.same_link(link) && t.display() < display
+                });
+                let index = after.map(|i| i + 1).unwrap_or_else(|| {
+                    self.tabs.iter().position(|t| t.lock().unwrap().same_link(link)).unwrap_or(self.tabs.len())
+                });
+                self.tabs.insert(index, Arc::new(Mutex::new(tab)));
+                ctx.request_repaint_of(viewport);
+            }
+        }
+    }
+
+    /// Removes a tab without ending its link.
+    fn drop_tab(&mut self, id: u64) {
         self.session_tabs.lock().unwrap().cancel(id);
-        if let Some(tab) = self.tab(id) { tab.lock().unwrap().end_link(); }
         self.tabs.retain(|t| t.lock().unwrap().id != id);
         let alive: Vec<u64> = self.tabs.iter().map(|t| t.lock().unwrap().id).collect();
         video::retain_streams(&self.render_state, |s| {
@@ -1329,7 +1413,11 @@ impl App {
             self.tabs.insert(index,tab);
         }
         if destination==egui::ViewportId::ROOT {self.page=Page::Remote(id);self.set_visible(ctx,true);}
-        else if self.page==Page::Remote(id) {self.page=Page::Links;}
+        else if self.page==Page::Remote(id) {
+            // Another screen of the same computer left in the console takes its place.
+            let link=tab.lock().unwrap().link.clone();
+            self.page=self.tabs.iter().find_map(|t| {let t=t.lock().unwrap();(t.same_link(&link)&&!t.detached).then_some(Page::Remote(t.id))}).unwrap_or(Page::Links);
+        }
         self.close_empty_session_window(ctx,old);
         ctx.send_viewport_cmd_to(destination,egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd_to(destination,egui::ViewportCommand::Focus);
@@ -1363,10 +1451,19 @@ impl App {
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
             },
-            remote::TabAction::Close => {
+            remote::TabAction::Close | remote::TabAction::CloseScreen => {
                 let old=self.tab(id).map(|t|t.lock().unwrap().viewport_id());
-                self.close_tab(id);
+                if matches!(action, remote::TabAction::Close) {self.close_tab(id);} else {self.close_screen(id);}
                 if let Some(old)=old {self.close_empty_session_window(ctx,old);}
+            },
+            remote::TabAction::Screen(display) => {
+                let Some(tab)=self.tab(id) else {return};
+                let link=tab.lock().unwrap().link.clone();
+                let other=self.tabs.iter().find_map(|t| {let t=t.lock().unwrap();(t.same_link(&link)&&t.display()==display).then(||(t.id,t.viewport_id()))});
+                if let Some((other,viewport))=other {
+                    self.session_action(ctx,other,remote::TabAction::Activate);
+                    if viewport!=egui::ViewportId::ROOT {ctx.send_viewport_cmd_to(viewport,egui::ViewportCommand::Focus);}
+                }
             },
             remote::TabAction::Detach => self.open_session_window(ctx, id),
             remote::TabAction::Activate => {
@@ -1873,10 +1970,14 @@ fn route_session_input(
         let tab = tab.lock().unwrap();
         tab.viewport_id() == viewport && ((tab.detached && tab.window_active) || (!tab.detached && page == Page::Remote(tab.id)))
     }).cloned();
+    // The keyboard belongs to the link: its other screens' tabs keep it.
+    let target_link = target.as_ref().map(|t| t.lock().unwrap().link.clone());
     for tab in tabs {
         let is_target = target.as_ref().is_some_and(|target| Arc::ptr_eq(tab, target));
-        if (focused && !is_target) || (!focused && is_target) {
-            tab.lock().unwrap().release_keyboard();
+        let mut tab = tab.lock().unwrap();
+        let same_link = target_link.as_ref().is_some_and(|link| tab.same_link(link));
+        if (focused && !same_link) || (!focused && is_target) {
+            tab.release_keyboard();
         }
     }
     target
@@ -1890,16 +1991,24 @@ impl eframe::App for App {
         self.screen_access.poll();
         while let Ok((id, action)) = self.session_actions.1.try_recv() { self.session_action(ctx, id, action); }
         let mut restored=Vec::new();
+        // Each link once, however many of its screens have tabs.
+        let mut links: Vec<Arc<Mutex<remote::Link>>> = Vec::new();
         for shared in &self.tabs {
-            let mut tab = shared.lock().unwrap();
-            tab.poll(ctx);
-            if tab.maintain_connection(ctx,&self.rt,&self.client) {restored.push(tab.id);}
+            let link = shared.lock().unwrap().link.clone();
+            if !links.iter().any(|l| Arc::ptr_eq(l, &link)) { links.push(link); }
+        }
+        for link in &links {
+            let mut link_state = link.lock().unwrap();
+            link_state.poll(ctx);
+            if link_state.maintain_connection(ctx,&self.rt,&self.client) {restored.push(link.clone());}
             // Drops and the receipt's Files action also work with the parent minimized.
             if ctx.viewport_id()==egui::ViewportId::ROOT && !ctx.embed_viewports() {
-                files::FileManager::show(&tab.files,ctx,&self.rt,tab.id);
-                tab.network_window(ctx, &self.rt);
+                files::FileManager::show(&link_state.files,ctx,&self.rt,link_state.id);
+                link_state.network_window(ctx, &self.rt);
             }
         }
+        self.sync_screen_tabs(ctx, &links);
+        let restored: Vec<u64> = restored.iter().flat_map(|link| self.link_tabs(link)).collect();
         if self.hidden || ctx.input(|i| i.raw.viewports.get(&egui::ViewportId::ROOT).is_some_and(|v| v.minimized == Some(true))) {
             self.session_tabs.lock().unwrap().hide_target();
         }
@@ -2014,6 +2123,8 @@ impl eframe::App for App {
         let target = route_session_input(&self.tabs, self.page, raw.viewport_id, focused_now);
         let dragging = self.session_tabs.lock().unwrap().dragging();
         let captured = !self.quick_connect.open && !dragging && focused_now && target.as_ref().is_some_and(|tab| tab.lock().unwrap().keyboard_captured());
+        // A phone's soft keyboard types text, not keys.
+        let wants_text = captured && target.as_ref().is_some_and(|tab| tab.lock().unwrap().wants_text());
         if !captured {
             // Ours: the usual clipboard shortcuts for egui's text fields.
             for ev in &mut raw.events {
@@ -2067,6 +2178,7 @@ impl eframe::App for App {
                     let k = physical_key.unwrap_or(key);
                     pending_keys.push(remote::CapturedKey::Key { key: k, pressed, repeat });
                 }
+                egui::Event::Text(text) if wants_text => pending_keys.push(remote::CapturedKey::Text(text)),
                 egui::Event::Text(_) | egui::Event::Ime(_) => {}
                 other => keep.push(other),
             }
@@ -2079,7 +2191,7 @@ impl eframe::App for App {
         #[cfg(windows)]
         graphics::frame();
         let ctx = ui.ctx().clone();
-        let workstation = if let Page::Remote(id) = self.page { self.tab(id).map(|t| t.lock().unwrap().info.host_name.clone()) } else { None };
+        let workstation = if let Page::Remote(id) = self.page { self.tab(id).map(|t| t.lock().unwrap().host_name()) } else { None };
         let body = theme::native_session_title_bar(ui, &window_title(self.org.as_deref()), workstation.as_deref());
         let ui = &mut ui.new_child(UiBuilder::new().max_rect(body));
         // Clear of the status and navigation bars, the camera cutout and
@@ -2091,18 +2203,23 @@ impl eframe::App for App {
         self.poll_link();
         self.poll_service(&ctx);
         saved::poll(self, &ctx);
-        for shared in &self.tabs {
-            let tab = shared.lock().unwrap();
-            // Native tools are registered in logic, including while hidden.
-            if ctx.embed_viewports() {
-                tab.network_window(&ctx, &self.rt);
-                files::FileManager::show(&tab.files,&ctx,&self.rt,tab.id);
+        // Native tools are registered in logic, including while hidden.
+        if ctx.embed_viewports() {
+            let mut links: Vec<Arc<Mutex<remote::Link>>> = Vec::new();
+            for shared in &self.tabs {
+                let link = shared.lock().unwrap().link.clone();
+                if links.iter().any(|l| Arc::ptr_eq(l, &link)) { continue; }
+                let link_state = link.lock().unwrap();
+                link_state.network_window(&ctx, &self.rt);
+                files::FileManager::show(&link_state.files,&ctx,&self.rt,link_state.id);
+                drop(link_state);
+                links.push(link);
             }
         }
 
         let entries: Vec<_> = self.tabs.iter().filter_map(|tab| {
             let tab = tab.lock().unwrap();
-            (!tab.detached).then(|| (tab.id, tab.info.host_name.clone()))
+            (!tab.detached).then(|| tab.strip_entry())
         }).collect();
         let mut content_ui = {
             let active = if let Page::Remote(id) = self.page {Some(id)} else {None};

@@ -137,11 +137,24 @@ an update.
 
 The Android app can control computers and share the phone's screen with a
 computer. It works on real phones; sound, clipboard and files from a phone
-and self-updates are still to come ([issue 09](issues/09-android.md)). In a viewer session, tap to click,
-long-press to right-click, drag with one finger, pinch to zoom and drag two
-fingers to look around (or to scroll, when not zoomed in). Everything else
-is under **Console**.
-Typing on the remote computer from the phone's keyboard is next.
+and self-updates are still to come ([issue 09](issues/09-android.md)).
+
+In a viewer session the phone works as a **trackpad**: a pointer of its own
+that you slide with one finger anywhere on the screen. Tap to click where
+the pointer is, tap and then slide to drag, and tap with two fingers (or
+hold one) to right-click. Two fingers scroll the remote screen, and a pinch
+zooms in; zoomed in, the view follows the pointer, and **FIT** puts the
+whole screen back. The pinch works anywhere, the black bars included. The
+button beside the keyboard switches to **direct touch** (tap exactly where
+you want to click, hold to right-click, drag to drag; two fingers then move
+a zoomed view) and back.
+
+The **keyboard** button types on the remote computer with the phone's
+keyboard, and adds a bar of keys a phone doesn't have: Ctrl, Alt, Shift and
+Win (tap one, then the key or letter it goes with, for shortcuts like
+Ctrl+C), Esc, Tab, arrows, Delete, Home/End, Page Up/Down and F1–F12.
+Hosts before 0.38 type what a US keyboard would. Screens, Files, Tools and
+the rest are under **Console**.
 
 1. Open the station's page on the phone and tap **Download** (the page
    picks Android by itself).
@@ -278,13 +291,13 @@ The toolbar along the top:
 | Button | What it does |
 |---|---|
 | **Bridge** (the delta pointing back) | Back to your home page. The session keeps running and is listed under *Links*. |
-| **SCREEN 1 2 3…** | Switch between the remote computer's screens (shown when it has several). |
+| **Screens ▾** | Shown when the remote computer has several screens. Each ticked screen has a **tab of its own** (a monitor with the screen's number), so a two-screen computer opens as two tabs. Untick a screen (or close its tab) to leave it out. Drag a screen's tab out, or use **Pop out**, to see it in a window of its own: one remote screen on each of your monitors. Only the screens on view stream; the others pause until you look at them again. A host before 0.38 shows one screen at a time: the other tab then offers to switch to it. |
 | **Full** | Full screen. Move the mouse to the top edge to bring the toolbar back; **Ctrl+Alt+Enter** leaves full screen too. |
 | **Keys** | Send keys your own computer would catch: Ctrl+Alt+Del, Alt+Tab, the Windows key, Alt+F4, Print Screen, Ctrl+Esc. |
 | **Chat** | Text chat with the person at the remote computer. On their side it opens in its own window. |
 | **Files** | The two-pane file manager: your computer on the left, theirs on the right. Select files or folders and send them either way, or make folders. |
 | **Sound** | Play the remote computer's sound here, or stop. The default is under *Config → Remote sound*. |
-| **Tools ▾** | **Privacy mode** blacks out the remote computer's own screen while you work (Windows 10 2004 and later). **Port forwarding…** opens tunnels, see below. **System information…** shows its hardware, manufacturer serial number, OS, drives, temperatures and network, updating live, with *Copy all* for tickets. |
+| **Tools ▾** | **Privacy mode** blacks out the remote computer's own screen while you work (Windows 10 2004 and later). **Port forwarding** opens tunnels, see below. **System information** shows its hardware, manufacturer serial number, OS, drives, temperatures and network, updating live, with *Copy all* for tickets. |
 | **Balanced ▾** | Quality preset: *Balanced*, *Speed* (lowest delay), *Quality* (sharpest picture) and *Low bandwidth* (slow connections). |
 | Stats | Frames per second, bandwidth (kbit/s below 1 Mbit/s), round-trip time, and **DIRECT** or **RELAY** (whether traffic goes peer-to-peer or through your station). Hover for decode time and, from 0.6.2 hosts, the remote computer's own figures: capture, encoding, and waiting for a new screen frame or for you. Every 30 s the same figures go to this app's log. The Speed preset can reduce moving-picture resolution on a slow host and sharpen it once motion stops. Balanced and Quality retain full picture resolution. |
 | **End link** | Disconnect. |
@@ -352,7 +365,7 @@ Desktop, or in *Downloads* if there is no Desktop folder.
 
 A tunnel makes a service on the remote computer, or on its network,
 reachable from yours: its Remote Desktop, a web admin page, a printer or
-router. In *Tools ▾ → Port forwarding…*, enter a local port (or leave it
+router. In *Tools ▾ → Port forwarding*, enter a local port (or leave it
 empty for any free one), the host as the remote computer sees it
 (`localhost` for the computer itself, or an address on its network) and
 the port. Then point your program at `127.0.0.1:<local port>`; for
@@ -837,7 +850,7 @@ whatever carries it, and some can detect it: check your plan first. Pings
 
 ## Scan the remote network
 
-During a session, open **Tools → Network scan…** (on a phone, **Console →
+During a session, open **Tools → Network scan** (on a phone, **Console →
 Tools**). The adapters come from the remote computer. Choose its connected
 IPv4 adapter; the app fills in its subnet and shows its subnet mask and
 gateway. Edit the subnet to narrow a large network, choose common TCP ports
@@ -867,7 +880,7 @@ encoded picture dimensions. Both computers need session protocol 6.
 
 ## Support tools
 
-Under a live session's **Tools → Support report…**, you can collect system
+Under a live session's **Tools → Support report**, you can collect system
 inventory/public IP, add technician notes, review the text and copy it or
 save a new local report folder. Pick an existing destination folder. Each
 export has its own folder and `report.txt`; the screenshot checkbox adds
@@ -891,7 +904,7 @@ Clearing or ending one message retains another session's status. Closing a
 service session clears its status. A message neither grants consent nor
 executes a change.
 
-In **Tools → Network scan…**, select a discovered device and expand
+In **Tools → Network scan**, select a discovered device and expand
 **Connect through / Wake-on-LAN / Diagnostics**:
 
 - **Connect from my computer** checks the selected TCP service, then creates

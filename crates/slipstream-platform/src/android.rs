@@ -210,6 +210,13 @@ impl Backend for AndroidBackend {
         if matches!(event, InputEvent::ReleaseAll) {
             return dispatch(5, 0.0, 0.0, "", false);
         }
+        // Typed text: the keys a US keyboard would press.
+        if let InputEvent::Text(text) = event {
+            for key in slipstream_core::proto::us_keys_for_text(&text) {
+                self.inject(_display, key)?;
+            }
+            return Ok(());
+        }
         if !input_allowed() {
             bail!(
                 "Enable Slipstream Remote in Android Accessibility settings and share the entire screen"

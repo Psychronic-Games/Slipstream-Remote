@@ -18,7 +18,7 @@ use slipstream_core::{
 use slipstream_session::{FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 use tokio::sync::mpsc;
 
-use super::{files::FileManager, home, keys, theme, theme::{pal,ConsoleIcon as Icon}, touch, video};
+use super::{files::FileManager, home, keys, session_tabs, theme, theme::{pal,ConsoleIcon as Icon}, touch, video};
 
 pub enum CapturedKey {
     Key {
@@ -33,6 +33,8 @@ pub enum CapturedKey {
     PasteFiles(Vec<std::path::PathBuf>),
     /// Ctrl+Alt+Enter: full screen on/off, never sent to the remote side.
     ToggleFullscreen,
+    /// Text from a phone's soft keyboard.
+    Text(String),
 }
 
 /// The System information window's answer: None while it's being fetched.
@@ -65,11 +67,27 @@ pub enum TabAction {
     Activate,
     PlaceTab(egui::ViewportId, Option<u64>),
     FloatAt(egui::Pos2),
+    /// Close this screen's tab (the link ends with its last one).
+    CloseScreen,
+    /// Show this link's tab for that display.
+    Screen(u32),
 }
 
 /// Picture quality presets. Balanced and Quality run at the viewer's own
 /// Config → Max frame rate (see `RemoteTab::preset_settings`); the others
 /// cap it at the rate listed here.
+/// Phones and tablets: the trackpad, key bar and touch buttons.
+/// SLIPSTREAM_TEST_TOUCH=1 shows them on a desktop (screenshots).
+pub fn touch_ui() -> bool {
+    cfg!(target_os = "android") || std::env::var_os("SLIPSTREAM_TEST_TOUCH").is_some()
+}
+
+const TRACKPAD_HINT: &str = "Trackpad: slide to move the pointer · tap to click · tap then slide to drag · two-finger tap to right-click · two fingers scroll · pinch to zoom";
+
+/// The phone's bar of special keys.
+const KEY_BAR_HEIGHT: f32 = 50.0;
+const F_KEYS: [&str; 12] = ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"];
+
 const PRESETS: [(&str, StreamSettings); 4] = [
     ("Balanced", StreamSettings { bitrate_kbps: 0, max_fps: 60, max_in_flight: 2, adaptive_resolution: false }),
     ("Speed", StreamSettings { bitrate_kbps: 0, max_fps: 30, max_in_flight: 1, adaptive_resolution: true }),
@@ -77,6 +95,17 @@ const PRESETS: [(&str, StreamSettings); 4] = [
     ("Low bandwidth", StreamSettings { bitrate_kbps: 1_200, max_fps: 20, max_in_flight: 1, adaptive_resolution: true }),
 ];
 
+/// Session tab and screen ids, from one sequence (they share the tab strip,
+/// `Page::Remote` and the video textures).
+static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+pub fn next_id() -> u64 {
+    NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A session tab: one of the remote computer's screens, wherever its tab
+/// is (the console or a window of its own). The link itself (control,
+/// chat, files, tools) is shared by all of that computer's screen tabs.
 pub struct RemoteTab {
     pub id: u64,
     pub detached: bool,
@@ -84,10 +113,39 @@ pub struct RemoteTab {
     pub window_active: bool,
     pub window_position: Option<egui::Pos2>,
     pub pending_keys: Vec<CapturedKey>,
+    pub link: Arc<Mutex<Link>>,
+    screen: Screen,
+}
+
+/// What one screen tab shows of its display.
+struct Screen {
+    display: u32,
+    /// The tab is in a window of its own (copied from its tab each frame).
+    detached: bool,
+    /// The link's generation this screen's pictures come from (a restored
+    /// link has new ones).
+    generation: u64,
+    frames: Arc<FrameShared>,
+    fullscreen: bool,
+    /// Full screen: when the pointer last brought the toolbar up.
+    toolbar_seen: Option<Instant>,
+    video_rect: Option<Rect>,
+    /// The whole picture fitted into the video area (the view zooms from it).
+    video_fit: Option<Rect>,
+    view: touch::View,
+    touch: touch::Touch,
+    /// Phones: the soft keyboard and the bar of special keys are up.
+    keyboard: bool,
+    /// Ctrl, Alt, Shift and Win latched on the key bar for the next key.
+    latched: Vec<&'static str>,
+}
+
+/// One link to a remote computer: what all its screen tabs share.
+pub struct Link {
+    pub id: u64,
     session: ViewerSession,
     cmds: mpsc::UnboundedSender<ViewerCmd>,
     events: mpsc::UnboundedReceiver<ViewerEvent>,
-    frames: Arc<FrameShared>,
     pub info: SessionInfo,
     pub peer: DeviceId,
     password: String,
@@ -97,7 +155,18 @@ pub struct RemoteTab {
     pub closed: Option<String>,
     reconnect_requested:bool,
     reconnect:Option<Reconnecting>,
-    display: u32,
+    /// Bumped when the link is restored after a reconnect.
+    generation: u64,
+    /// The display streaming, for hosts that stream one at a time.
+    streaming: u32,
+    /// Displays whose tabs were closed (unticked under Screens).
+    hidden: std::collections::BTreeSet<u32>,
+    /// What the host was last asked to stream, and the screens drawn
+    /// lately (screens out of sight for a while are paused).
+    shown_sent: Option<Vec<u32>>,
+    drawn: std::collections::HashMap<u32, Instant>,
+    /// Phones: a trackpad-style pointer rather than direct touch.
+    trackpad: bool,
     preset: usize,
     chat: Vec<(bool, String)>,
     chat_input: String,
@@ -106,15 +175,7 @@ pub struct RemoteTab {
     pub local_name: String,
     unread: bool,
     captured: bool,
-    fullscreen: bool,
-    /// Full screen: when the pointer last brought the toolbar up.
-    toolbar_seen: Option<Instant>,
-    video_rect: Option<Rect>,
-    /// The whole picture fitted into the video area (the view zooms from it).
-    video_fit: Option<Rect>,
-    view: touch::View,
-    touch: touch::Touch,
-    last_pointer: Option<(f32, f32)>,
+    last_pointer: Option<(u32, f32, f32)>,
     held_buttons: HashSet<usize>,
     held_keys: HashSet<&'static str>,
     forward_repeats: bool,
@@ -154,7 +215,7 @@ pub struct RemoteTab {
     report: super::support_report::Report,
 }
 
-impl Drop for RemoteTab {
+impl Drop for Link {
     fn drop(&mut self) {
         self.reconnect=None;
         let mut files=self.files.lock().unwrap();files.disconnect();files.open=false;files.progress_open=false;
@@ -171,15 +232,115 @@ impl RemoteTab {
         if self.detached { self.window_group.unwrap_or_else(||Self::window_id(self.id)) } else { egui::ViewportId::ROOT }
     }
 
-    pub fn update_window_repaint(&self,ctx:&egui::Context) {
-        let (wake,viewport)=(ctx.clone(),self.viewport_id());
-        self.frames.set_repaint(move || {wake.request_repaint_of(egui::ViewportId::ROOT);theme::repaint_existing_viewport(&wake,viewport);});
+    /// A tab for `display` of the link.
+    pub fn for_screen(link: &Arc<Mutex<Link>>, display: u32, ctx: &egui::Context) -> Self {
+        let l = link.lock().unwrap();
+        let tab = Self {
+            id: next_id(),
+            detached: false,
+            window_group: None,
+            window_active: true,
+            window_position: None,
+            pending_keys: Vec::new(),
+            link: link.clone(),
+            screen: Screen {
+                display,
+                detached: false,
+                generation: l.generation,
+                frames: l.session.frames_for(display),
+                fullscreen: false,
+                toolbar_seen: None,
+                video_rect: None,
+                video_fit: None,
+                view: touch::View::default(),
+                touch: touch::Touch::default(),
+                keyboard: false,
+                latched: Vec::new(),
+            },
+        };
+        drop(l);
+        tab.update_window_repaint(ctx);
+        tab
     }
 
+    /// Which of the remote computer's displays this tab shows.
+    pub fn display(&self) -> u32 {
+        self.screen.display
+    }
+
+    pub fn host_name(&self) -> String {
+        self.link.lock().unwrap().info.host_name.clone()
+    }
+
+    /// Its tab in the strip: id, the computer's name, and the screen's
+    /// number when the computer has several screen tabs.
+    pub(super) fn strip_entry(&self) -> session_tabs::Entry {
+        let link = self.link.lock().unwrap();
+        session_tabs::Entry {
+            id: self.id,
+            name: link.info.host_name.clone(),
+            screen: link.several_screens().then_some(self.screen.display + 1),
+        }
+    }
+
+    /// The phone's soft keyboard is up for this screen: its text goes over.
+    pub fn wants_text(&self) -> bool {
+        self.screen.keyboard
+    }
+
+    /// Whether this tab and `other` show screens of the same link.
+    pub fn same_link(&self, other: &Arc<Mutex<Link>>) -> bool {
+        Arc::ptr_eq(&self.link, other)
+    }
+
+    pub fn update_window_repaint(&self,ctx:&egui::Context) {
+        let (wake,viewport)=(ctx.clone(),self.viewport_id());
+        self.screen.frames.set_repaint(move || {wake.request_repaint_of(egui::ViewportId::ROOT);theme::repaint_existing_viewport(&wake,viewport);});
+    }
+
+    pub fn keyboard_captured(&self) -> bool {
+        self.link.lock().unwrap().keyboard_captured()
+    }
+
+    pub fn release_keyboard(&mut self) {
+        self.pending_keys.clear();
+        self.link.lock().unwrap().release_keyboard();
+    }
+
+    /// Leaving the session's page: don't strand the window in full screen.
+    pub fn leave_fullscreen(&mut self, ctx: &egui::Context) {
+        if self.screen.fullscreen {
+            toggle_fullscreen(&mut self.screen, ctx);
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut Ui, full: Rect, t: f64, rt: &tokio::runtime::Runtime) -> TabAction {
+        let keys = std::mem::take(&mut self.pending_keys);
+        let link = self.link.clone();
+        let mut link = link.lock().unwrap();
+        if self.screen.generation != link.generation {
+            // Restored after a reconnect: its pictures come from the new session.
+            self.screen.generation = link.generation;
+            self.screen.frames = link.session.frames_for(self.screen.display);
+            self.screen.touch = touch::Touch::default();
+            self.update_window_repaint(ui.ctx());
+        }
+        self.screen.detached = self.detached;
+        link.forward_keys(keys, &mut self.screen, rt, ui.ctx());
+        link.ui(ui, &mut self.screen, self.id, full, t, rt)
+    }
+}
+
+fn toggle_fullscreen(sc: &mut Screen, ctx: &egui::Context) -> Option<String> {
+    sc.fullscreen = !sc.fullscreen;
+    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(sc.fullscreen));
+    sc.fullscreen.then(|| "Full screen: point at the top edge for the bar, or press Ctrl+Alt+Enter to leave".to_string())
+}
+
+impl Link {
     pub fn end_link(&mut self) {
         self.release_keyboard();
         self.reconnect = None;
-        self.detached = false;
         self.send(ViewerCmd::Disconnect);
     }
 
@@ -192,36 +353,24 @@ impl RemoteTab {
     }
 
     pub fn new(
-        id: u64,
         session: ViewerSession,
         events: mpsc::UnboundedReceiver<ViewerEvent>,
         password: String,
-        ctx: &egui::Context,
         play_audio: bool,
+        trackpad: bool,
     ) -> Self {
-        let frames = session.frames();
-        let wake = ctx.clone();
-        frames.set_repaint(move || {
-            wake.request_repaint_of(egui::ViewportId::ROOT);
-            theme::repaint_existing_viewport(&wake, Self::window_id(id));
-        });
         let info = session.info().clone();
         let files = Arc::new(Mutex::new(FileManager::new(session.fs(), info.host_name.clone())));
         let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(session.fs(), info.capabilities.input, info.capabilities.tunnels)));
         // Wayland apps repeat held keys themselves; Windows/macOS need repeats sent.
         let forward_repeats = info.os != "Linux";
-        let display = info.displays.iter().find(|d| d.primary).map(|d| d.index).unwrap_or(0);
+        let streaming = info.displays.iter().find(|d| d.primary).or(info.displays.first()).map(|d| d.index).unwrap_or(0);
         let audio = play_audio && info.capabilities.audio;
+        let notice = trackpad.then(|| (TRACKPAD_HINT.to_string(), Instant::now()));
         Self {
-            id,
-            detached: false,
-            window_group: None,
-            window_active: true,
-            window_position: None,
-            pending_keys: Vec::new(),
+            id: next_id(),
             cmds: session.command_sender(),
             peer: session.peer_id(),
-            frames,
             info,
             session,
             events,
@@ -230,7 +379,12 @@ impl RemoteTab {
             stats: ViewerStats::default(),
             closed: None,
             reconnect_requested:false,reconnect:None,
-            display,
+            generation: 0,
+            streaming,
+            hidden: Default::default(),
+            shown_sent: None,
+            drawn: Default::default(),
+            trackpad,
             preset: 0,
             chat: Vec::new(),
             chat_input: String::new(),
@@ -238,17 +392,11 @@ impl RemoteTab {
             local_name: String::new(),
             unread: false,
             captured: false,
-            fullscreen: false,
-            toolbar_seen: None,
-            video_rect: None,
-            video_fit: None,
-            view: touch::View::default(),
-            touch: touch::Touch::default(),
             last_pointer: None,
             held_buttons: HashSet::new(),
             held_keys: HashSet::new(),
             forward_repeats,
-            notice: None,
+            notice,
             power_confirm: None,
             power_reply: None,
             restart_expected: None,
@@ -273,6 +421,61 @@ impl RemoteTab {
         }
     }
 
+    /// The displays that get a tab: all of them but those closed.
+    pub fn wanted_displays(&self) -> Vec<u32> {
+        let mut displays: Vec<u32> = self.info.displays.iter().map(|d| d.index).filter(|d| !self.hidden.contains(d)).collect();
+        if displays.is_empty() {
+            // A chat-only link before its screen opened, or every one closed.
+            displays.push(self.info.displays.iter().map(|d| d.index).find(|d| !self.hidden.contains(d)).unwrap_or(self.streaming));
+        }
+        displays
+    }
+
+    /// Whether the link has more than one screen tab.
+    pub fn several_screens(&self) -> bool {
+        self.wanted_displays().len() > 1
+    }
+
+    /// Closes `display`'s tab (the link carries on with the others).
+    pub fn hide_display(&mut self, display: u32) {
+        self.hidden.insert(display);
+        self.drawn.remove(&display);
+    }
+
+    /// Asks the host for the screens drawn in the last moments: hidden
+    /// tabs pause after a couple of seconds out of sight.
+    pub fn stream_visible(&mut self) {
+        if self.closed.is_some() { return; }
+        // Several at once: pause a screen once out of sight for a couple of
+        // seconds. One at a time: switch as soon as another is the one on view.
+        let multi = self.session.multi_display();
+        let recent = std::time::Duration::from_millis(if multi { 2000 } else { 400 });
+        let mut shown: Vec<(Instant, u32)> = self.drawn.iter()
+            .filter(|(d, at)| at.elapsed() < recent && !self.hidden.contains(d))
+            .map(|(&d, &at)| (at, d)).collect();
+        // The one looked at most recently first (a host streaming one
+        // display at a time switches to it).
+        shown.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let mut shown: Vec<u32> = shown.into_iter().map(|(_, d)| d).collect();
+        let mut sorted = shown.clone();
+        sorted.sort_unstable();
+        if self.shown_sent.as_ref() == Some(&sorted) { return; }
+        // Nothing on view yet (a new link): leave the host's first picture.
+        if shown.is_empty() && self.shown_sent.is_none() { return; }
+        if !multi {
+            // One display at a time: keep the one streaming if it's on view.
+            if shown.contains(&self.streaming) { shown.retain(|&d| d == self.streaming); }
+            shown.truncate(1);
+        }
+        self.shown_sent = Some(sorted);
+        self.send(ViewerCmd::ShowDisplays(shown));
+    }
+
+    /// The host shows one display at a time and this one isn't it.
+    fn other_display_streaming(&self, display: u32) -> bool {
+        !self.session.multi_display() && self.streaming != display
+    }
+
     fn send(&self, cmd: ViewerCmd) {
         let _ = self.cmds.send(cmd);
     }
@@ -283,12 +486,32 @@ impl RemoteTab {
         }
     }
 
+    /// Pointer input on one display.
+    fn input_on(&self, display: u32, ev: InputEvent) {
+        if self.closed.is_none() && self.info.capabilities.input {
+            self.session.input_on(display, ev);
+        }
+    }
+
+    /// Typed text: as characters where the host takes them, otherwise as
+    /// the keys of a US keyboard.
+    fn type_text(&self, text: &str) {
+        if self.session.text_input() {
+            self.input(InputEvent::Text(text.into()));
+        } else {
+            for ev in slipstream_core::proto::us_keys_for_text(text) {
+                self.input(ev);
+            }
+        }
+    }
+
     pub fn poll(&mut self, ctx: &egui::Context) {
         self.poll_paste(ctx);
+        self.stream_visible();
         while let Ok(ev) = self.events.try_recv() {
             match ev {
                 ViewerEvent::Stats(s) => self.stats = s,
-                ViewerEvent::StreamStarted { display, .. } => self.display = display,
+                ViewerEvent::StreamStarted { display, .. } => self.streaming = display,
                 ViewerEvent::Displays(d) => self.info.displays = d,
                 ViewerEvent::Capabilities(c) => {
                     self.network.lock().unwrap().set_permissions(c.input, c.tunnels);
@@ -356,21 +579,16 @@ impl RemoteTab {
     fn restore(&mut self,session:ViewerSession,events:mpsc::UnboundedReceiver<ViewerEvent>,ctx:&egui::Context,default_audio:bool) {
         tracing::info!(peer=%self.peer,"viewer link restored");
         self.info=session.info().clone();
-        self.cmds=session.command_sender();self.frames=session.frames();
-        let (wake, viewport) = (ctx.clone(), self.viewport_id());
-        self.frames.set_repaint(move || {
-            wake.request_repaint_of(egui::ViewportId::ROOT);
-            theme::repaint_existing_viewport(&wake, viewport);
-        });
+        self.cmds=session.command_sender();
         self.events=events;self.session=session;
         self.forward_repeats=self.info.os!="Linux";
-        if !self.info.displays.iter().any(|d|d.index==self.display) {
-            self.display=self.info.displays.iter().find(|d|d.primary).or(self.info.displays.first()).map(|d|d.index).unwrap_or(0);
-        }
+        self.streaming=self.info.displays.iter().find(|d|d.primary).or(self.info.displays.first()).map(|d|d.index).unwrap_or(0);
+        // The screen tabs pick up the new pictures, and the host is asked
+        // for the ones on view again.
+        self.generation+=1;self.shown_sent=None;
         self.closed=None;self.captured=false;self.last_pointer=None;
-        self.held_keys.clear();self.held_buttons.clear();self.touch=touch::Touch::default();
+        self.held_keys.clear();self.held_buttons.clear();
         self.privacy=false;self.audio &= self.info.capabilities.audio;
-        self.send(ViewerCmd::SelectDisplay(self.display));
         self.send(ViewerCmd::Settings(self.preset_settings(self.preset)));
         if self.audio!=default_audio {self.send(ViewerCmd::Audio(self.audio));}
         self.files.lock().unwrap().reconnect(self.session.fs(),self.info.host_name.clone());
@@ -388,7 +606,6 @@ impl RemoteTab {
     }
 
     pub fn release_keyboard(&mut self) {
-        self.pending_keys.clear();
         if self.captured || !self.held_keys.is_empty() || !self.held_buttons.is_empty() {
             self.input(InputEvent::ReleaseAll);
         }
@@ -457,22 +674,13 @@ impl RemoteTab {
         }
     }
 
-    fn toggle_fullscreen(&mut self, ctx: &egui::Context) {
-        self.fullscreen = !self.fullscreen;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
-        if self.fullscreen {
-            self.notice = Some(("Full screen: point at the top edge for the bar, or press Ctrl+Alt+Enter to leave".into(), Instant::now()));
+    fn toggle_fullscreen(&mut self, sc: &mut Screen, ctx: &egui::Context) {
+        if let Some(notice) = toggle_fullscreen(sc, ctx) {
+            self.notice = Some((notice, Instant::now()));
         }
     }
 
-    /// Leaving the session's page: don't strand the window in full screen.
-    pub fn leave_fullscreen(&mut self, ctx: &egui::Context) {
-        if self.fullscreen {
-            self.toggle_fullscreen(ctx);
-        }
-    }
-
-    pub fn forward_keys(&mut self, keys: Vec<CapturedKey>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
+    fn forward_keys(&mut self, keys: Vec<CapturedKey>, sc: &mut Screen, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
         for k in keys {
             match k {
                 CapturedKey::Key { key, pressed, repeat } => {
@@ -498,8 +706,9 @@ impl RemoteTab {
                 CapturedKey::ToggleFullscreen => {
                     // Ctrl and Alt went over already: let them go there.
                     self.release_keyboard();
-                    self.toggle_fullscreen(ctx);
+                    self.toggle_fullscreen(sc, ctx);
                 }
+                CapturedKey::Text(text) => self.type_latched(sc, &text),
             }
         }
     }
@@ -517,9 +726,7 @@ impl RemoteTab {
         super::network::NetworkScanner::show(&self.network, ctx, rt, self.id, &self.info.host_name);
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, full: Rect, t: f64, rt: &tokio::runtime::Runtime) -> TabAction {
-        let keys = std::mem::take(&mut self.pending_keys);
-        self.forward_keys(keys, rt, ui.ctx());
+    fn ui(&mut self, ui: &mut Ui, sc: &mut Screen, tab: u64, full: Rect, t: f64, rt: &tokio::runtime::Runtime) -> TabAction {
         let mut action = TabAction::None;
         let ctx = ui.ctx().clone();
         self.power_ui(&ctx, rt);
@@ -528,36 +735,43 @@ impl RemoteTab {
         let pointer = ctx.input(|i| i.pointer.hover_pos());
         let toolbar_h = 36.0;
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::ALT, egui::Key::Enter)) {
-            self.toggle_fullscreen(&ctx);
+            self.toggle_fullscreen(sc, &ctx);
         }
         // Full screen: the bar comes down at the top edge and stays while one
         // of its menus is open (the pointer is then below it) or briefly after.
         if pointer.is_some_and(|p| p.y < full.top() + toolbar_h + 4.0) || egui::Popup::is_any_open(&ctx) {
-            self.toolbar_seen = Some(Instant::now());
+            sc.toolbar_seen = Some(Instant::now());
         }
-        let lingering = self.toolbar_seen.is_some_and(|t| t.elapsed().as_millis() < 700);
-        if self.fullscreen && lingering {
+        let lingering = sc.toolbar_seen.is_some_and(|t| t.elapsed().as_millis() < 700);
+        if sc.fullscreen && lingering {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
-        let show_toolbar = !self.fullscreen || lingering || self.closed.is_some();
-        let framed = !self.fullscreen && !cfg!(target_os = "android");
+        let show_toolbar = !sc.fullscreen || lingering || self.closed.is_some();
+        let framed = !sc.fullscreen && !touch_ui();
         let body = if framed {
             theme::session_body(full, toolbar_h)
         } else {
-            full.with_min_y(full.top() + if self.fullscreen { 0.0 } else { toolbar_h })
+            full.with_min_y(full.top() + if sc.fullscreen { 0.0 } else { toolbar_h })
         };
-        // Chat goes beside the picture, or under it on a phone.
+        // Chat goes beside the picture, or under it on a phone; the key bar
+        // under the picture, just above the soft keyboard.
         let narrow = full.width() < super::NARROW;
         let chat_w = if self.show_chat && !narrow { 330.0 } else { 0.0 };
         let chat_h = if self.show_chat && narrow { (body.height() * 0.42).max(220.0) } else { 0.0 };
+        let keybar_h = if sc.keyboard { KEY_BAR_HEIGHT } else { 0.0 };
         let video_area = Rect::from_min_max(
             body.min,
-            pos2(body.right() - chat_w, body.bottom() - chat_h),
+            pos2(body.right() - chat_w, body.bottom() - chat_h - keybar_h),
         );
 
-        self.draw_video(ui, video_area, t);
+        self.drawn.insert(sc.display, Instant::now());
+        self.draw_video(ui, sc, tab, video_area, t);
         let rail_width = framed.then(|| theme::session_rails(ui.painter(), full, body));
-        self.handle_pointer(ui, video_area);
+        self.handle_pointer(ui, sc, video_area);
+        if sc.keyboard {
+            let bar = Rect::from_min_max(pos2(video_area.left(), video_area.bottom()), pos2(video_area.right(), video_area.bottom() + keybar_h));
+            self.key_bar(ui, sc, bar);
+        }
 
         if self.show_chat {
             let chat_rect = if narrow {
@@ -579,7 +793,7 @@ impl RemoteTab {
 
         if show_toolbar {
             let bar = Rect::from_min_size(full.min, vec2(full.width(), toolbar_h));
-            action = self.toolbar(ui, bar, t, rail_width);
+            action = self.toolbar(ui, sc, bar, t, rail_width);
         }
 
         self.tunnels_window(&ctx, rt);
@@ -590,10 +804,10 @@ impl RemoteTab {
             drop(scanner);
             self.report.show(&ctx, rt, super::support_report::Source {
                 id:self.id,host:&self.info.host_name,connected:self.closed.is_none(),can_control:self.info.capabilities.input,
-                fs:self.session.fs(),stats:&self.stats,network,frame:self.frames.latest().1,
+                fs:self.session.fs(),stats:&self.stats,network,frame:sc.frames.latest().1,
             });
         }
-        self.handle_drops(ui, &ctx, video_area, rt);
+        self.handle_drops(ui, sc, &ctx, video_area, rt);
 
         if let Some(reason) = self.closed.clone() {
             action = self.closed_overlay(ui, video_area, &reason).unwrap_or(action);
@@ -602,8 +816,8 @@ impl RemoteTab {
             if at.elapsed().as_secs() < 6 {
                 let p = ui.painter();
                 let pos = pos2(video_area.center().x, video_area.bottom() - 40.0);
-                let g = p.layout_no_wrap(n.clone(), theme::body(17.0), pal::TEXT);
-                let r = Rect::from_center_size(pos, g.size() + vec2(32.0, 14.0));
+                let g = p.layout(n.clone(), theme::body(17.0), pal::TEXT, (video_area.width() - 56.0).max(120.0));
+                let r = Rect::from_center_size(pos - vec2(0.0, (g.size().y - 20.0).max(0.0) / 2.0), g.size() + vec2(32.0, 14.0));
                 p.rect_filled(r, 14.0, pal::PANEL.gamma_multiply(0.95));
                 p.rect_stroke(r, 14.0, egui::Stroke::new(1.0, pal::GOLD), egui::StrokeKind::Inside);
                 p.galley(r.min + vec2(16.0, 7.0), g, pal::TEXT);
@@ -612,13 +826,14 @@ impl RemoteTab {
                 self.notice = None;
             }
         }
+        self.stream_visible();
         action
     }
 
     /// Files dragged in from the desktop: onto the file window's remote pane
     /// → that folder; onto the remote screen → the remote folder under the
     /// drop point (or its Desktop).
-    fn handle_drops(&mut self, ui: &mut Ui, ctx: &egui::Context, video_area: Rect, rt: &tokio::runtime::Runtime) {
+    fn handle_drops(&mut self, ui: &mut Ui, sc: &Screen, ctx: &egui::Context, video_area: Rect, rt: &tokio::runtime::Runtime) {
         if self.closed.is_some() { return; }
         let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
         let dropped: Vec<std::path::PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
@@ -631,7 +846,7 @@ impl RemoteTab {
         let pos = ctx.input(|i| i.pointer.hover_pos());
         let pane_target = pos.and_then(|p| self.files.lock().unwrap().remote_drop_target(p, ctx));
         let screen_pos = pos.filter(|p| video_area.contains(*p)
-            && self.video_rect.is_some_and(|r| r.contains(*p))
+            && sc.video_rect.is_some_and(|r| r.contains(*p))
             && ctx.layer_id_at(*p).is_none_or(|layer| layer == ui.layer_id()));
         if hovering && pane_target.is_none() && screen_pos.is_some() {
             let p = ui.painter();
@@ -644,8 +859,8 @@ impl RemoteTab {
         let n = dropped.len();
         if let Some(target) = pane_target {
             self.files.lock().unwrap().upload(dropped, target, rt, ctx);
-        } else if let (Some(p), Some(r), Some(display)) = (screen_pos, self.video_rect,
-            self.info.displays.iter().find(|d| d.index == self.display)) {
+        } else if let (Some(p), Some(r), Some(display)) = (screen_pos, sc.video_rect,
+            self.info.displays.iter().find(|d| d.index == sc.display)) {
             // Resolve a physical point on the host, independent of keyboard
             // capture or the asynchronously injected remote mouse position.
             let x = display.x + (((p.x-r.left())/r.width()).clamp(0.0,1.0) * display.width.saturating_sub(1) as f32).round() as i32;
@@ -658,28 +873,46 @@ impl RemoteTab {
         self.notice = Some((format!("Sending {n} item{} — transfer panel opened", if n == 1 { "" } else { "s" }), Instant::now()));
     }
 
-    fn draw_video(&mut self, ui: &mut Ui, area: Rect, t: f64) {
+    fn draw_video(&mut self, ui: &mut Ui, sc: &mut Screen, tab: u64, area: Rect, t: f64) {
         let painter = ui.painter();
-        let (serial, frame) = self.frames.latest();
-        match frame {
+        let (serial, frame) = sc.frames.latest();
+        // A host that streams one display at a time is showing another.
+        let elsewhere = self.other_display_streaming(sc.display);
+        match frame.filter(|_| !elsewhere) {
             Some(frame) => {
                 let fit = video::fit_rect(area, (frame.width, frame.height));
-                let rect = self.view.rect(fit, area);
-                self.video_fit = Some(fit);
-                self.video_rect = Some(rect);
+                let rect = sc.view.rect(fit, area);
+                sc.video_fit = Some(fit);
+                sc.video_rect = Some(rect);
                 // Zoomed in, the picture runs past the area.
                 painter.with_clip_rect(area).add(egui_wgpu::Callback::new_paint_callback(
                     rect,
-                    video::VideoCallback { stream: self.id, serial, frame },
+                    video::VideoCallback { stream: tab, serial, frame },
                 ));
-                if self.captured && !self.fullscreen {
+                if self.captured && !sc.fullscreen && !touch_ui() {
                     theme::brackets(painter, rect.intersect(area).shrink(4.0), pal::ORANGE.gamma_multiply(0.8), 22.0);
                 }
             }
             None => {
-                self.video_rect = None;
-                self.video_fit = None;
+                sc.video_rect = None;
+                sc.video_fit = None;
                 theme::backdrop(painter, area, t);
+                if elsewhere {
+                    painter.text(area.center() - vec2(0.0, 18.0), Align2::CENTER_CENTER, format!("SCREEN {}", sc.display + 1),
+                        theme::display_bold(30.0), pal::ORANGE);
+                    painter.text(area.center() + vec2(0.0, 18.0), Align2::CENTER_CENTER,
+                        "That computer shows one screen at a time · click to show this one, or update Slipstream there to see them together",
+                        theme::body(15.0), pal::TAN);
+                    let clicked = ui.ctx().input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|p| area.contains(p)));
+                    if clicked && self.closed.is_none() {
+                        self.streaming = sc.display;
+                        self.shown_sent = Some(vec![sc.display]);
+                        self.send(ViewerCmd::SelectDisplay(sc.display));
+                    }
+                    // Keep counting as on view, so the host switches to it.
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                    return;
+                }
                 theme::spinner(painter, area.center() - vec2(0.0, 40.0), 26.0, pal::CYAN, t);
                 painter.text(
                     area.center() + vec2(0.0, 10.0),
@@ -693,20 +926,21 @@ impl RemoteTab {
         }
     }
 
-    fn handle_pointer(&mut self, ui: &mut Ui, area: Rect) {
+    fn handle_pointer(&mut self, ui: &mut Ui, sc: &mut Screen, area: Rect) {
         let ctx = ui.ctx().clone();
         // Claim the area so egui widgets underneath don't react.
-        let resp = ui.interact(area, ui.scope_id().with(("video", self.id)), Sense::click_and_drag());
-        let Some(rect) = self.video_rect else { return };
+        let resp = ui.interact(area, ui.scope_id().with(("video", sc.display)), Sense::click_and_drag());
+        let Some(rect) = sc.video_rect else { return };
         if self.closed.is_some() || !ctx.input(|i|i.focused) {
             return;
         }
+        let display = sc.display;
         let hovered = resp.hovered() && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l == ui.layer_id()));
         // Hide our pointer only when the host's video shows its own.
         if hovered && self.captured && self.info.capabilities.cursor_in_video {
             ctx.set_cursor_icon(egui::CursorIcon::None);
         }
-        if hovered && !self.captured {
+        if hovered && !self.captured && !touch_ui() {
             let p = ui.painter();
             let label = "CLICK TO TAKE CONTROL";
             let pos = pos2(rect.center().x, rect.top() + 28.0);
@@ -722,33 +956,42 @@ impl RemoteTab {
         // Only the part of the screen not covered by our own windows (file
         // transfer, chat…) belongs to the remote computer.
         let my_layer = ui.layer_id();
-        let on_video = |pos: egui::Pos2| rect.contains(pos) && area.contains(pos) && ctx.layer_id_at(pos).is_none_or(|l| l == my_layer);
+        let ours = |pos: egui::Pos2| area.contains(pos) && ctx.layer_id_at(pos).is_none_or(|l| l == my_layer);
+        let on_video = |pos: egui::Pos2| rect.contains(pos) && ours(pos);
         let events = ctx.input(|i| i.events.clone());
 
         // Fingers: see touch.rs. While they're down, the pointer events egui
         // makes from the first one are ignored.
-        let fit = self.video_fit.unwrap_or(rect);
+        let fit = sc.video_fit.unwrap_or(rect);
         let gesture = ctx.input(|i| i.multi_touch()).map(|m| touch::Gesture::from_egui(&m));
-        let view_before = self.view;
-        let (actions, touching) = self.touch.handle(&events, gesture, Instant::now(), on_video, &mut self.view, (fit, area));
-        if self.view != view_before {
+        let view_before = sc.view;
+        let mode = if self.trackpad { touch::Mode::Trackpad } else { touch::Mode::Direct };
+        let (actions, touching) = sc.touch.handle(&events, gesture, Instant::now(), mode, ours, &mut sc.view, (fit, area));
+        if sc.view != view_before {
             ctx.request_repaint();
         }
-        if self.touch.waiting() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        if sc.touch.waiting() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(30));
         }
+        // The picture may have moved under the fingers (zoom, or the view
+        // following the trackpad pointer).
+        let rect = sc.view.rect(fit, area);
+        let normalize_now = |pos: egui::Pos2| {
+            (((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0), ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0))
+        };
         for action in actions {
             self.captured = true;
             match action {
                 touch::Action::Move(pos) => {
-                    let n = normalize(pos);
-                    self.last_pointer = Some(n);
-                    self.input(InputEvent::MouseMove { x: n.0, y: n.1 });
+                    let n = normalize_now(pos);
+                    self.last_pointer = Some((display, n.0, n.1));
+                    self.input_on(display, InputEvent::MouseMove { x: n.0, y: n.1 });
                 }
-                touch::Action::Button(button, down) => self.input(InputEvent::MouseButton { button, down }),
-                touch::Action::Scroll(points) => self.input(InputEvent::Wheel { dx: points.x / 40.0, dy: points.y / 40.0 }),
+                touch::Action::Button(button, down) => self.input_on(display, InputEvent::MouseButton { button, down }),
+                touch::Action::Scroll(points) => self.input_on(display, InputEvent::Wheel { dx: points.x / 40.0, dy: points.y / 40.0 }),
             }
         }
+        self.draw_touch_feedback(ui, sc, area, rect);
 
         for ev in events {
             match ev {
@@ -756,17 +999,17 @@ impl RemoteTab {
                 egui::Event::PointerMoved(pos) => {
                     if (on_video(pos) || !self.held_buttons.is_empty()) && self.captured {
                         let n = normalize(pos);
-                        if self.last_pointer != Some(n) {
-                            self.last_pointer = Some(n);
-                            self.input(InputEvent::MouseMove { x: n.0, y: n.1 });
+                        if self.last_pointer != Some((display, n.0, n.1)) {
+                            self.last_pointer = Some((display, n.0, n.1));
+                            self.input_on(display, InputEvent::MouseMove { x: n.0, y: n.1 });
                         }
                     }
                 }
                 egui::Event::PointerButton { pos, button, pressed, .. } => {
                     let inside = on_video(pos);
                     if pressed && !inside {
-                        if self.captured && area.contains(pos) {
-                            // Letterbox click: keep control, ignore.
+                        if self.captured && (area.contains(pos) || sc.keyboard) {
+                            // Letterbox click, or the phone's key bar: keep control.
                             continue;
                         }
                         if self.captured {
@@ -780,19 +1023,19 @@ impl RemoteTab {
                             // First click only takes control.
                             self.captured = true;
                             let n = normalize(pos);
-                            self.last_pointer = Some(n);
-                            self.input(InputEvent::MouseMove { x: n.0, y: n.1 });
+                            self.last_pointer = Some((display, n.0, n.1));
+                            self.input_on(display, InputEvent::MouseMove { x: n.0, y: n.1 });
                             continue;
                         }
                         let n = normalize(pos);
-                        if self.last_pointer != Some(n) {
-                            self.last_pointer = Some(n);
-                            self.input(InputEvent::MouseMove { x: n.0, y: n.1 });
+                        if self.last_pointer != Some((display, n.0, n.1)) {
+                            self.last_pointer = Some((display, n.0, n.1));
+                            self.input_on(display, InputEvent::MouseMove { x: n.0, y: n.1 });
                         }
                         self.held_buttons.insert(button as usize);
-                        self.input(InputEvent::MouseButton { button: b, down: true });
+                        self.input_on(display, InputEvent::MouseButton { button: b, down: true });
                     } else if self.held_buttons.remove(&(button as usize)) {
-                        self.input(InputEvent::MouseButton { button: b, down: false });
+                        self.input_on(display, InputEvent::MouseButton { button: b, down: false });
                     }
                 }
                 egui::Event::MouseWheel { unit, delta, .. } if hovered && self.captured => {
@@ -801,14 +1044,120 @@ impl RemoteTab {
                         egui::MouseWheelUnit::Point => delta / 40.0,
                         egui::MouseWheelUnit::Page => delta * 8.0,
                     };
-                    self.input(InputEvent::Wheel { dx: lines.x, dy: lines.y });
+                    self.input_on(display, InputEvent::Wheel { dx: lines.x, dy: lines.y });
                 }
                 _ => {}
             }
         }
     }
 
-    fn toolbar(&mut self, ui: &mut Ui, bar: Rect, t: f64, rail_width:Option<f32>) -> TabAction {
+    /// Touch feedback on the picture: the trackpad pointer, a ring filling
+    /// up towards a long press, and Fit when zoomed in.
+    fn draw_touch_feedback(&mut self, ui: &mut Ui, sc: &mut Screen, area: Rect, rect: Rect) {
+        let p = ui.painter().with_clip_rect(area);
+        if self.trackpad && sc.touch.used() {
+            let at = sc.touch.pointer_pos(rect);
+            // An arrow, outlined so it shows on light and dark screens.
+            let pts = [at, at + vec2(0.0, 17.0), at + vec2(4.5, 13.0), at + vec2(8.0, 20.0), at + vec2(11.0, 18.5), at + vec2(7.5, 11.5), at + vec2(13.0, 11.5)];
+            p.add(egui::Shape::convex_polygon(vec![pts[0], pts[1], pts[2], pts[5], pts[6]], Color32::WHITE, egui::Stroke::new(1.5, Color32::BLACK)));
+            p.add(egui::Shape::convex_polygon(vec![pts[2], pts[3], pts[4], pts[5]], Color32::WHITE, egui::Stroke::new(1.5, Color32::BLACK)));
+        }
+        if let Some((at, progress)) = sc.touch.pressing(Instant::now()) {
+            let r = 26.0;
+            p.circle_stroke(at, r, egui::Stroke::new(3.0, pal::DIM.gamma_multiply(0.6)));
+            let steps = 32;
+            let end = (progress.clamp(0.0, 1.0) * steps as f32) as usize;
+            let arc: Vec<_> = (0..=end).map(|i| {
+                let a = -std::f32::consts::FRAC_PI_2 + i as f32 / steps as f32 * std::f32::consts::TAU;
+                at + vec2(a.cos(), a.sin()) * r
+            }).collect();
+            if arc.len() > 1 {
+                p.add(egui::Shape::line(arc, egui::Stroke::new(4.0, pal::GOLD)));
+            }
+        }
+        if touch_ui() && sc.view.zoomed() {
+            let chip = Rect::from_min_size(pos2(area.right() - 76.0, area.top() + 10.0), vec2(64.0, 30.0));
+            let resp = ui.interact(chip, ui.scope_id().with(("fit", sc.display)), Sense::click());
+            p.rect_filled(chip, 15.0, pal::PANEL.gamma_multiply(0.9));
+            p.rect_stroke(chip, 15.0, egui::Stroke::new(1.0, pal::BLUE), egui::StrokeKind::Inside);
+            p.text(chip.center(), Align2::CENTER_CENTER, "FIT", theme::display(16.0), pal::BLUE);
+            if resp.clicked() {
+                sc.view = touch::View::default();
+            }
+        }
+    }
+
+    /// Phones: special keys above the soft keyboard. Ctrl, Alt, Shift and
+    /// Win latch for the next key or typed letter.
+    fn key_bar(&mut self, ui: &mut Ui, sc: &mut Screen, bar: Rect) {
+        ui.painter().rect_filled(bar, 0.0, pal::PANEL);
+        let mut child = ui.new_child(UiBuilder::new().max_rect(bar.shrink2(vec2(6.0, 4.0))).layout(Layout::left_to_right(Align::Center)));
+        // A field to keep the soft keyboard up; what's typed goes straight
+        // to the remote computer (see `raw_input_hook`), so it stays empty.
+        let mut sink = String::new();
+        let field = child.add_sized(vec2(1.0, 30.0), egui::TextEdit::singleline(&mut sink).frame(egui::Frame::NONE));
+        if !field.has_focus() {
+            field.request_focus();
+        }
+        if !sink.is_empty() {
+            // Typed while the link wasn't taking keys.
+            self.type_latched(sc, &sink);
+        }
+        // A thin scroll rail that floats over the keys rather than below them.
+        child.spacing_mut().scroll = egui::style::ScrollStyle::floating();
+        egui::ScrollArea::horizontal().id_salt(("key-bar", sc.display)).show(&mut child, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let modifiers = [("Ctrl", "ControlLeft"), ("Alt", "AltLeft"), ("Shift", "ShiftLeft"), ("Win", "MetaLeft")];
+                for (label, code) in modifiers {
+                    let on = sc.latched.contains(&code);
+                    if theme::pill_sized(ui, label, if on { pal::GOLD } else { pal::VIOLET }, vec2(54.0, 32.0)).clicked() {
+                        if on { sc.latched.retain(|c| *c != code); } else { sc.latched.push(code); }
+                        self.captured = true;
+                    }
+                }
+                for (label, code) in [("Esc", "Escape"), ("Tab", "Tab"), ("←", "ArrowLeft"), ("↑", "ArrowUp"), ("↓", "ArrowDown"), ("→", "ArrowRight"),
+                    ("Del", "Delete"), ("⌫", "Backspace"), ("Enter", "Enter"), ("Home", "Home"), ("End", "End"), ("PgUp", "PageUp"), ("PgDn", "PageDown")] {
+                    if theme::pill_sized(ui, label, pal::BLUE, vec2(if label.chars().count() > 2 { 58.0 } else { 40.0 }, 32.0)).clicked() {
+                        self.press_latched(sc, code);
+                    }
+                }
+                for n in 1..=12 {
+                    if theme::pill_sized(ui, &format!("F{n}"), pal::LAVENDER, vec2(44.0, 32.0)).clicked() {
+                        self.press_latched(sc, F_KEYS[n - 1]);
+                    }
+                }
+            });
+        });
+    }
+
+    /// Presses `code` with the latched modifiers, then lets them go.
+    fn press_latched(&mut self, sc: &mut Screen, code: &'static str) {
+        self.captured = true;
+        let mut combo: Vec<&str> = std::mem::take(&mut sc.latched);
+        combo.push(code);
+        self.send_combo(&combo);
+    }
+
+    /// Text from the soft keyboard: with a modifier latched, each character
+    /// is a shortcut (Ctrl+C); otherwise it's typed as it is.
+    fn type_latched(&mut self, sc: &mut Screen, text: &str) {
+        if sc.latched.is_empty() {
+            self.type_text(text);
+            return;
+        }
+        let latched = std::mem::take(&mut sc.latched);
+        for c in text.chars() {
+            let Some((code, shift)) = slipstream_core::proto::us_key_for_char(c.to_ascii_lowercase()) else { continue };
+            let mut combo = latched.clone();
+            if shift && !combo.contains(&"ShiftLeft") { combo.push("ShiftLeft"); }
+            combo.push(code);
+            self.send_combo(&combo);
+        }
+    }
+
+
+    fn toolbar(&mut self, ui: &mut Ui, sc: &mut Screen, bar: Rect, t: f64, rail_width:Option<f32>) -> TabAction {
         let mut action = TabAction::None;
         let painter = ui.painter().clone();
         painter.rect_filled(bar, 0.0, pal::BG);
@@ -824,7 +1173,7 @@ impl RemoteTab {
         let start=rail.max(36.0)+36.0;
         let inner = bar.with_min_x(bar.left()+start);
         let w = inner.width();
-        if w < 780.0 { return self.toolbar_narrow(ui,inner,&ctx,t); }
+        if w < 780.0 { return self.toolbar_narrow(ui,sc,inner,&ctx,t); }
         let compact_stats = w < 1440.0;
         let tight = w < 1050.0;
 
@@ -849,8 +1198,8 @@ impl RemoteTab {
         ui.spacing_mut().item_spacing.x = 4.0;
         // Measure the actual labels after reserving quality/stats/End. Long
         // presets, several screens and active transfers must not clip tools.
-        let mut nav = vec![("Bridge", false), (if self.fullscreen {"Window"} else {"Full"}, false)];
-        if !ctx.embed_viewports() { nav.push((if self.detached {"Dock"} else {"Pop out"}, false)); }
+        let mut nav = vec![("Bridge", false), (if sc.fullscreen {"Window"} else {"Full"}, false)];
+        if !ctx.embed_viewports() { nav.push((if sc.detached {"Dock"} else {"Pop out"}, false)); }
         if self.info.displays.len() > 1 { nav.push(("Screens", true)); }
         let mut tools = vec![("Keys", true), (if self.unread {"Chat ◆"} else {"Chat"}, false), (if self.audio {"Sound"} else {"Muted"}, false), ("Tools", true)];
         if self.info.capabilities.file_transfer { tools.push(("Files", false)); }
@@ -871,38 +1220,23 @@ impl RemoteTab {
             action = TabAction::Bridge;
         }
 
-        if !ctx.embed_viewports() && theme::console_button(ui, if tight {""} else if self.detached {"Dock"} else {"Pop out"}, pal::BLUE, Icon::Window, false)
-            .on_hover_text(if self.detached {"Move this link into the main console"} else {"Open this workstation in its own window"}).clicked() {
+        if !ctx.embed_viewports() && theme::console_button(ui, if tight {""} else if sc.detached {"Dock"} else {"Pop out"}, pal::BLUE, Icon::Window, false)
+            .on_hover_text(if sc.detached {"Move this screen into the main console"} else {"Open this screen in its own window"}).clicked() {
             self.release_keyboard();
-            action = if self.detached {TabAction::Dock} else {TabAction::Detach};
+            action = if sc.detached {TabAction::Dock} else {TabAction::Detach};
         }
 
         if self.info.displays.len() > 1 {
-            let tip = |d: &slipstream_core::proto::DisplayInfo| {
-                format!("Screen {}: {} · {}×{}{}", d.index + 1, d.name, d.width, d.height, if d.primary { " (main)" } else { "" })
-            };
-            let mut pick = None;
-            let screens=theme::console_button(ui,if tight {""} else {"Screens"},pal::VIOLET,Icon::Window,true);
-            theme::console_menu(&screens).show(|ui| {
-                for d in &self.info.displays {
-                    if ui.selectable_label(d.index == self.display, tip(d)).clicked() {
-                        pick = Some(d.index);
-                        ui.close();
-                    }
-                }
-            });
-            screens.on_hover_text("The remote computer's screens: pick one to view");
-            if let Some(i) = pick.filter(|&i| i != self.display) {
-                self.display = i;
-                self.send(ViewerCmd::SelectDisplay(i));
-            }
+            let screens=theme::console_button(ui,if tight {""} else {"Screens"},pal::VIOLET,Icon::Screens,true);
+            theme::console_menu(&screens).show(|ui| self.screens_menu(ui));
+            screens.on_hover_text("The remote computer's screens: each ticked one has a tab of its own");
         }
 
-        if theme::console_button(ui, if tight {""} else if self.fullscreen { "Window" } else { "Full" }, pal::BLUE,if self.fullscreen{Icon::Window}else{Icon::Fullscreen},false)
+        if theme::console_button(ui, if tight {""} else if sc.fullscreen { "Window" } else { "Full" }, pal::BLUE,if sc.fullscreen{Icon::Window}else{Icon::Fullscreen},false)
             .on_hover_text("Full screen on/off (Ctrl+Alt+Enter)")
             .clicked()
         {
-            self.toggle_fullscreen(&ctx);
+            self.toggle_fullscreen(sc, &ctx);
         }
 
         let keys=theme::console_button(ui,if tool_labels {"Keys"} else {""},pal::LAVENDER,Icon::Keys,true);
@@ -936,7 +1270,7 @@ impl RemoteTab {
         let tools=theme::console_button(ui,if tool_labels {"Tools"} else {""},tools_color,Icon::Tools,true);
         theme::console_menu(&tools).show(|ui|self.tools_menu(ui));
 
-        if self.fullscreen || cfg!(target_os="android") {
+        if sc.fullscreen || touch_ui() {
             let gap = Rect::from_min_max(pos2(ui.min_rect().right()+4.0,bar.top()),pos2(right_left-4.0,bar.bottom()));
             theme::session_rail_label(&painter, gap, &self.info.host_name.to_uppercase());
         }
@@ -945,7 +1279,7 @@ impl RemoteTab {
 
     /// The bar on a phone: back, a Console menu with everything else, the
     /// link's figures and End.
-    fn toolbar_narrow(&mut self, ui: &mut Ui, inner: Rect, ctx: &egui::Context, t: f64) -> TabAction {
+    fn toolbar_narrow(&mut self, ui: &mut Ui, sc: &mut Screen, inner: Rect, ctx: &egui::Context, t: f64) -> TabAction {
         let mut action = TabAction::None;
         let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
         right.spacing_mut().item_spacing.x = 4.0;
@@ -954,8 +1288,8 @@ impl RemoteTab {
             action = TabAction::Close;
         }
         theme::session_stats_frame()
-            .show(&mut right,|ui|{ui.set_min_height(34.0);self.stats_readout(ui,if cfg!(target_os="android") {Detail::Fps} else {Detail::Compact},t)});
-        if !cfg!(target_os="android") {
+            .show(&mut right,|ui|{ui.set_min_height(34.0);self.stats_readout(ui,if touch_ui() {Detail::Fps} else {Detail::Compact},t)});
+        if !touch_ui() {
             let quality = theme::console_button(&mut right, "", pal::BLUE, Icon::Performance, true)
                 .on_hover_text(format!("Picture quality · {}", PRESETS[self.preset].0));
             theme::console_menu(&quality).show(|ui| self.quality_menu(ui));
@@ -968,41 +1302,45 @@ impl RemoteTab {
             self.release_keyboard();
             action = TabAction::Bridge;
         }
-        let console = theme::console_button(&mut left,if left_rect.width()<180.0 {""} else {"Console"},if self.unread {pal::GOLD}else{pal::LAVENDER},Icon::Console,true);
+        let console = theme::console_button(&mut left,if left_rect.width()<300.0 {""} else {"Console"},if self.unread {pal::GOLD}else{pal::LAVENDER},Icon::Console,true);
         theme::console_menu(&console).show(|ui| {
             ui.set_min_width(230.0);
-            if self.fullscreen || cfg!(target_os="android") {
+            if sc.fullscreen || touch_ui() {
                 ui.label(RichText::new(self.info.host_name.to_uppercase()).font(theme::display_bold(18.0)).color(pal::TAN));
                 ui.separator();
             }
-            if !ctx.embed_viewports() && ui.button(if self.detached {"Dock in main console"} else {"Open in separate window"}).clicked() {
+            if !ctx.embed_viewports() && ui.button(if sc.detached {"Dock in main console"} else {"Open in separate window"}).clicked() {
                 self.release_keyboard();
-                action = if self.detached {TabAction::Dock} else {TabAction::Detach};
+                action = if sc.detached {TabAction::Dock} else {TabAction::Detach};
                 ui.close();
             }
             if self.info.displays.len() > 1 {
                 ui.label(RichText::new("SCREEN").font(theme::display(15.0)).color(pal::LAVENDER));
-                let mut pick = None;
-                ui.horizontal(|ui| {
-                    for d in &self.info.displays {
-                        let color = if d.index == self.display { pal::GOLD } else { pal::VIOLET };
-                        if theme::pill(ui, &format!("{}", d.index + 1), color).clicked() {
-                            pick = Some(d.index);
+                ui.horizontal_wrapped(|ui| {
+                    for d in self.wanted_displays() {
+                        let color = if d == sc.display { pal::GOLD } else { pal::VIOLET };
+                        if theme::pill(ui, &format!("{}", d + 1), color).clicked() {
+                            action = TabAction::Screen(d);
+                            ui.close();
                         }
                     }
                 });
-                if let Some(i) = pick.filter(|&i| i != self.display) {
-                    self.display = i;
-                    self.send(ViewerCmd::SelectDisplay(i));
-                }
+                ui.menu_button("Screens to show", |ui| self.screens_menu(ui));
                 ui.separator();
             }
-            if self.view.zoomed() && ui.button("Fit to screen").clicked() {
-                self.view = touch::View::default();
+            if sc.view.zoomed() && ui.button("Fit to screen").clicked() {
+                sc.view = touch::View::default();
                 ui.close();
             }
-            if ui.button(if self.fullscreen { "Leave full screen" } else { "Full screen" }).clicked() {
-                self.toggle_fullscreen(ctx);
+            if ui.button(if self.trackpad { "Control: trackpad · switch to touch" } else { "Control: touch · switch to trackpad" })
+                .on_hover_text("Trackpad: slide a finger to move the pointer, tap to click. Touch: tap exactly where you want to click.")
+                .clicked()
+            {
+                self.toggle_trackpad();
+                ui.close();
+            }
+            if ui.button(if sc.fullscreen { "Leave full screen" } else { "Full screen" }).clicked() {
+                self.toggle_fullscreen(sc, ctx);
                 ui.close();
             }
             ui.menu_button("Keys", |ui| self.keys_menu(ui));
@@ -1024,11 +1362,54 @@ impl RemoteTab {
             ui.menu_button("Tools", |ui| self.tools_menu(ui));
             ui.menu_button(format!("Quality: {}", PRESETS[self.preset].0), |ui| self.quality_menu(ui));
         });
-        if self.fullscreen || cfg!(target_os="android") {
+        // Touch screens: the keyboard and the way fingers control the pointer, a tap away.
+        if touch_ui() || ctx.input(|i| i.any_touches()) {
+            if theme::console_button(&mut left, "", if sc.keyboard { pal::GOLD } else { pal::LAVENDER }, Icon::Keys, false)
+                .on_hover_text("Keyboard: type on the remote computer, with Ctrl, Alt, arrows and F-keys").clicked()
+            {
+                sc.keyboard = !sc.keyboard;
+                sc.latched.clear();
+                self.captured |= sc.keyboard;
+            }
+            let (icon, tip) = if self.trackpad {
+                (Icon::Trackpad, "Trackpad: slide to move the pointer, tap to click, two-finger tap to right-click. Tap for direct touch.")
+            } else {
+                (Icon::Touch, "Touch: tap where you want to click, hold to right-click. Tap for trackpad.")
+            };
+            if theme::console_button(&mut left, "", pal::BLUE, icon, false).on_hover_text(tip).clicked() {
+                self.toggle_trackpad();
+            }
+        }
+        if sc.fullscreen || touch_ui() {
             let gap = Rect::from_min_max(pos2(left.min_rect().right()+4.0,inner.top()),pos2(right.min_rect().left()-4.0,inner.bottom()));
             theme::session_rail_label(ui.painter(), gap, &self.info.host_name.to_uppercase());
         }
         action
+    }
+
+    /// Switches between trackpad and direct touch, and says what it means.
+    fn toggle_trackpad(&mut self) {
+        self.trackpad = !self.trackpad;
+        self.notice = Some((if self.trackpad {
+            TRACKPAD_HINT.into()
+        } else {
+            "Touch: tap to click · hold to right-click · drag to drag · two fingers scroll · pinch to zoom".into()
+        }, Instant::now()));
+    }
+
+    /// The remote computer's screens, ticked when they have a tab. The
+    /// last one ticked can't be unticked (End link ends it all).
+    fn screens_menu(&mut self, ui: &mut Ui) {
+        let displays = self.info.displays.clone();
+        let ticked = displays.iter().filter(|d| !self.hidden.contains(&d.index)).count();
+        for d in &displays {
+            let mut on = !self.hidden.contains(&d.index);
+            let label = format!("Screen {} · {} · {}×{}{}", d.index + 1, d.name, d.width, d.height, if d.primary { " (main)" } else { "" });
+            if ui.add_enabled(!(on && ticked == 1), egui::Checkbox::new(&mut on, label)).changed() {
+                if on { self.hidden.remove(&d.index); } else { self.hide_display(d.index); }
+            }
+        }
+        ui.label(RichText::new("Each ticked screen has a tab: drag one out to see it in a window of its own").small().color(pal::DIM));
     }
 
     /// Key combinations to send.
@@ -1059,7 +1440,7 @@ impl RemoteTab {
     /// Privacy mode, port forwarding, system information.
     fn tools_menu(&mut self, ui: &mut Ui) {
         if ui
-            .button("System information…")
+            .button("System information")
             .on_hover_text("Its processor, memory, graphics, drives, temperatures, network and Windows/macOS/Linux version")
             .clicked()
         {
@@ -1067,12 +1448,12 @@ impl RemoteTab {
             self.sysinfo_fetch = true;
             ui.close();
         }
-        if ui.button("Support report…").clicked() {
+        if ui.button("Support report").clicked() {
             self.report.open = true;
             self.release_keyboard();
             ui.close();
         }
-        if ui.add_enabled(self.info.capabilities.network_scan, egui::Button::new("Network scan…"))
+        if ui.add_enabled(self.info.capabilities.network_scan, egui::Button::new("Network scan"))
             .on_hover_text("Discover devices and open TCP ports on the remote computer's network")
             .on_disabled_hover_text("Not allowed on that computer (Config → Permissions → Network scan)")
             .clicked() {
@@ -1093,7 +1474,7 @@ impl RemoteTab {
             ui.close();
         }
         let r = ui
-            .add_enabled(tunnels_ok, egui::Button::new("Port forwarding…"))
+            .add_enabled(tunnels_ok, egui::Button::new("Port forwarding"))
             .on_hover_text("Reach a service on the remote computer or its network, e.g. its Remote Desktop")
             .on_disabled_hover_text("Not allowed on that computer (its Config → Permissions → Port forwarding)");
         if r.clicked() {
@@ -1108,7 +1489,7 @@ impl RemoteTab {
             (PowerAction::RestartSafeMode, "Windows with the Slipstream service: start once in Safe Mode with Networking (the next restart is normal), then reconnect"),
             (PowerAction::RestartToFirmware, "UEFI computers: restart into the BIOS/firmware setup. You'll only see it through a management controller (Manage on the Bridge)"),
         ] {
-            if ui.add_enabled(control && self.power_reply.is_none(), egui::Button::new(format!("{}…", action.label())))
+            if ui.add_enabled(control && self.power_reply.is_none(), egui::Button::new(action.label()))
                 .on_hover_text(hover)
                 .on_disabled_hover_text("Needs Control permission on that computer")
                 .clicked()
@@ -1637,47 +2018,67 @@ mod window_tests {
         }
         let ctx = egui::Context::default();
         let mut tabs = Vec::new();
-        for (index, host) in clients[..2].iter().enumerate() {
+        let mut links = Vec::new();
+        for host in &clients[..2] {
             let (session, events) = clients[2].connect_direct(host.endpoint_addr(), "window-test-password", |_| {}).await.unwrap();
-            let mut tab = RemoteTab::new(index as u64 + 1, session, events, "window-test-password".into(), &ctx, false);
+            let link = Arc::new(Mutex::new(Link::new(session, events, "window-test-password".into(), false, false)));
+            let mut tab = RemoteTab::for_screen(&link, 0, &ctx);
             tab.detached = true;
-            tab.captured = true;
-            tab.held_keys.insert("ControlLeft");
+            {
+                let mut link = link.lock().unwrap();
+                link.captured = true;
+                link.held_keys.insert("ControlLeft");
+            }
             tab.pending_keys.push(CapturedKey::ToggleFullscreen);
             tabs.push(Arc::new(Mutex::new(tab)));
+            links.push(link);
         }
+        let ids: Vec<u64> = tabs.iter().map(|t| t.lock().unwrap().id).collect();
         let route = |viewport, focused| super::super::route_session_input(&tabs, super::super::Page::Links, viewport, focused);
-        assert!(Arc::ptr_eq(&route(RemoteTab::window_id(1), true).unwrap(), &tabs[0]));
+        assert!(Arc::ptr_eq(&route(RemoteTab::window_id(ids[0]), true).unwrap(), &tabs[0]));
         assert!(tabs[0].lock().unwrap().keyboard_captured());
         assert!(!tabs[1].lock().unwrap().keyboard_captured());
         assert!(tabs[1].lock().unwrap().pending_keys.is_empty());
-        assert!(tabs[1].lock().unwrap().held_keys.is_empty());
+        assert!(links[1].lock().unwrap().held_keys.is_empty());
         let tool = egui::ViewportId::from_hash_of("background-tool");
         assert!(route(tool, false).is_none());
         assert!(tabs[0].lock().unwrap().keyboard_captured());
         assert!(route(tool, true).is_none());
         assert!(!tabs[0].lock().unwrap().keyboard_captured());
         {
-            let mut second = tabs[1].lock().unwrap();
-            second.captured = true;
-            second.pending_keys.push(CapturedKey::ToggleFullscreen);
+            links[1].lock().unwrap().captured = true;
+            tabs[1].lock().unwrap().pending_keys.push(CapturedKey::ToggleFullscreen);
         }
-        route(RemoteTab::window_id(2), false);
+        route(RemoteTab::window_id(ids[1]), false);
         assert!(!tabs[1].lock().unwrap().keyboard_captured());
         assert!(tabs[1].lock().unwrap().pending_keys.is_empty());
         // Only the selected member of a floating group receives input.
-        let group=RemoteTab::window_id(2);
+        let group=RemoteTab::window_id(ids[1]);
         {let mut first=tabs[0].lock().unwrap();first.window_group=Some(group);first.window_active=false;}
         assert!(Arc::ptr_eq(&route(group,true).unwrap(),&tabs[1]));
         {tabs[0].lock().unwrap().window_active=true;tabs[1].lock().unwrap().window_active=false;}
         assert!(Arc::ptr_eq(&route(group,true).unwrap(),&tabs[0]));
         tabs[0].lock().unwrap().detached = false;
         assert!(route(egui::ViewportId::ROOT, true).is_none());
-        let docked = super::super::route_session_input(&tabs, super::super::Page::Remote(1), egui::ViewportId::ROOT, true).unwrap();
+        let docked = super::super::route_session_input(&tabs, super::super::Page::Remote(ids[0]), egui::ViewportId::ROOT, true).unwrap();
         assert!(Arc::ptr_eq(&docked, &tabs[0]));
         drop(docked);
-        for tab in &tabs { tab.lock().unwrap().end_link(); }
+        // A second screen of the same link, in a window of its own: typing
+        // there keeps the link's keyboard (the first screen isn't released).
+        let mut second = RemoteTab::for_screen(&links[0], 1, &ctx);
+        second.detached = true;
+        let second_id = second.id;
+        tabs.push(Arc::new(Mutex::new(second)));
+        links[0].lock().unwrap().captured = true;
+        tabs[0].lock().unwrap().pending_keys.push(CapturedKey::ToggleFullscreen);
+        let routed = super::super::route_session_input(&tabs, super::super::Page::Links, RemoteTab::window_id(second_id), true).unwrap();
+        assert!(Arc::ptr_eq(&routed, &tabs[2]));
+        assert!(links[0].lock().unwrap().keyboard_captured());
+        assert!(!tabs[0].lock().unwrap().pending_keys.is_empty(), "a screen of the same link keeps its keys");
+        drop(routed);
+        for link in &links { link.lock().unwrap().end_link(); }
         drop(tabs);
+        drop(links);
         for client in &clients { client.shutdown().await; }
     }
 }

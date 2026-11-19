@@ -182,6 +182,18 @@ impl Backend for WaylandBackend {
     }
 }
 
+/// The X keysym that types `c`: Latin-1 as itself, the rest as Unicode.
+fn keysym(c: char) -> Option<i32> {
+    Some(match c {
+        '\n' | '\r' => 0xff0d, // Return
+        '\t' => 0xff09,        // Tab
+        '\u{8}' => 0xff08,     // BackSpace
+        c if c.is_control() => return None,
+        ' '..='~' | '\u{a0}'..='\u{ff}' => c as i32,
+        c => 0x0100_0000 + c as i32,
+    })
+}
+
 // Linux input-event-codes.h
 const BTN_LEFT: i32 = 0x110;
 const BTN_RIGHT: i32 = 0x111;
@@ -279,5 +291,15 @@ async fn apply(
             rd.notify_keyboard_keycode(session, k.evdev as i32, state, Default::default()).await
         }
         InputEvent::ReleaseAll => Ok(()),
+        // Characters by keysym, so the desktop's own layout doesn't matter.
+        InputEvent::Text(text) => {
+            for c in text.chars() {
+                let Some(sym) = keysym(c) else { continue };
+                for state in [KeyState::Pressed, KeyState::Released] {
+                    rd.notify_keyboard_keysym(session, sym, state, Default::default()).await?;
+                }
+            }
+            Ok(())
+        }
     }
 }

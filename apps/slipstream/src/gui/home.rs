@@ -827,13 +827,16 @@ pub fn links_ui(app: &mut App, ui: &mut Ui) {
         let mut close = None;
         for shared in &app.tabs {
             let tab = shared.lock().unwrap();
+            let entry = tab.strip_entry();
+            let link = tab.link.lock().unwrap();
             ui.horizontal(|ui| {
-                let status = match &tab.closed {
+                let status = match &link.closed {
                     Some(r) => (format!("TERMINATED — {r}"), pal::RED),
-                    None => (format!("{:.0} FPS · {:.1} MBPS", tab.stats.fps, tab.stats.kbps / 1000.0), pal::GREEN),
+                    None => (format!("{:.0} FPS · {:.1} MBPS", link.stats.fps, link.stats.kbps / 1000.0), pal::GREEN),
                 };
-                ui.label(RichText::new(tab.info.host_name.to_uppercase()).font(theme::display(22.0)).color(pal::TAN));
-                ui.label(RichText::new(tab.peer.to_string()).font(theme::mono(16.0)).color(pal::BLUE));
+                let name = match entry.screen { Some(n) => format!("{} · SCREEN {n}", entry.name.to_uppercase()), None => entry.name.to_uppercase() };
+                ui.label(RichText::new(name).font(theme::display(22.0)).color(pal::TAN));
+                ui.label(RichText::new(link.peer.to_string()).font(theme::mono(16.0)).color(pal::BLUE));
                 ui.label(RichText::new(status.0).font(theme::display(16.0)).color(status.1));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::pill(ui, "End", pal::RED).clicked() {

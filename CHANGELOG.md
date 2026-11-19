@@ -13,6 +13,41 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Several remote screens, each in a tab of its own.** A computer with two
+  monitors now opens as two tabs, a small monitor with the screen's number
+  beside its name. Drag a screen's tab out (or **Pop out**) to put each
+  remote screen on a monitor of yours, both live. **Screens ▾** has a tick
+  box per screen: untick one, or close its tab, to leave it out. Only the
+  screens on view stream; a tab out of sight pauses after a couple of
+  seconds and picks up again when you look at it. Needs this version on
+  both sides; with an older host the tabs show one screen at a time and
+  offer to switch.
+- **Phones: a trackpad for controlling computers.** Slide a finger to move
+  a pointer of its own, tap to click where it is, tap then slide to drag,
+  tap with two fingers or hold to right-click, two fingers to scroll.
+  Zoomed in, the view follows the pointer and **FIT** shows the whole
+  screen again. Pinching works anywhere: before, a pinch starting on the
+  black bars around the picture (most of a phone held upright) did
+  nothing. A button switches to direct touch, which now also scrolls with
+  two fingers and right-clicks with a two-finger tap. A ring fills up
+  under a held finger before it right-clicks.
+- **Phones: typing on the remote computer.** The keyboard button opens the
+  phone's keyboard, typing into the remote computer whatever its keyboard
+  layout, with a bar of keys phones lack: Ctrl, Alt, Shift and Win for
+  shortcuts, Esc, Tab, arrows, Delete, Home/End, Page Up/Down and F1–F12.
+- **NVIDIA hardware encoding: sharper and lighter on screen content.** On
+  text the NVIDIA encoder blurred the picture and still used the whole
+  bitrate, every frame: a page of text took 3.6 Mbit/s at 27 dB. It now
+  keeps to a range of quality, taking 0.7 Mbit/s for the same page at
+  42 dB, and scrolling stays sharp (39 dB, was 24). Smaller frames also
+  keep the frame rate steadier over slow links. On tight bandwidth it
+  still gives way, so frames shrink as before.
+- **Windows: no frames for an unchanged screen with GDI capture.** Where
+  Windows can't duplicate the screen (some drivers, older systems), a
+  screen that hasn't changed is no longer captured and sent again and
+  again.
+- **The Tools menu's entries lost their "…".**
+
 ## 0.37.1 — 2026-11-15
 
 - **System information: values sit beside their labels.** One long label

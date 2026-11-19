@@ -1552,6 +1552,76 @@ mod tests {
         drop(capture);client.shutdown().await;let _=std::fs::remove_dir_all(dir);
     }
 
+    /// A newer viewer streams several screens at once, each to its own
+    /// picture; input goes to the screen it's for, typed text as text, and
+    /// screens it stops showing pause.
+    #[tokio::test(flavor="multi_thread")]
+    async fn several_screens_stream_at_once_and_pause_when_hidden() {
+        use slipstream_platform::{Backend,FrameStream,test_pattern::TestPattern};
+        type Log=Arc<Mutex<Vec<(u32,InputEvent)>>>;
+        struct TwoScreens(Log);
+        impl Backend for TwoScreens {
+            fn name(&self)->&'static str {"two-screens"}
+            fn displays(&self)->Vec<slipstream_core::proto::DisplayInfo> {
+                [(0,320,180),(1,160,96)].into_iter().map(|(index,width,height)|slipstream_core::proto::DisplayInfo {
+                    index,name:format!("Screen {index}"),width,height,x:index as i32*320,y:0,primary:index==0}).collect()
+            }
+            fn capture(&mut self,index:u32,fps:u32)->anyhow::Result<FrameStream> {
+                let (w,h)=if index==0 {(320,180)} else {(160,96)};
+                TestPattern::new(w,h).capture(0,fps)
+            }
+            fn inject(&mut self,index:u32,event:InputEvent)->anyhow::Result<()> {self.0.lock().unwrap().push((index,event));Ok(())}
+        }
+        async fn picture(frames:&viewer::FrameShared,width:u32)->bool {
+            for _ in 0..200 {
+                if frames.latest().1.is_some_and(|f|f.width==width) {return true;}
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            false
+        }
+        let (host,_hev,hdir)=client("screens-host",true).await;
+        let (viewer,_vev,vdir)=client("screens-viewer",false).await;
+        let log=Log::default();
+        *host.inner.backend.lock().await=Some(Box::new(TwoScreens(log.clone())));
+        let (session,mut events)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
+        assert!(session.multi_display() && session.text_input());
+        assert!(wait_for(&mut events,|e|matches!(e,ViewerEvent::StreamStarted {display:0,..})).await);
+        session.send(ViewerCmd::ShowDisplays(vec![0,1]));
+        assert!(wait_for(&mut events,|e|matches!(e,ViewerEvent::StreamStarted {display:1,..})).await);
+        let (first,second)=(session.frames_for(0),session.frames_for(1));
+        assert!(picture(&first,320).await,"screen 1's picture");
+        assert!(picture(&second,160).await,"screen 2's picture, at the same time");
+
+        session.input_on(1,InputEvent::MouseMove {x:0.5,y:0.5});
+        session.input_on(0,InputEvent::MouseMove {x:0.25,y:0.25});
+        session.input(InputEvent::Text("héllo".into()));
+        let deadline=tokio::time::Instant::now()+Duration::from_secs(3);
+        while !log.lock().unwrap().iter().any(|(_,e)|matches!(e,InputEvent::Text(_))) {
+            assert!(tokio::time::Instant::now()<deadline,"text arrived");tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        {
+            let log=log.lock().unwrap();
+            assert!(log.contains(&(1,InputEvent::MouseMove {x:0.5,y:0.5})),"{log:?}");
+            assert!(log.contains(&(0,InputEvent::MouseMove {x:0.25,y:0.25})),"{log:?}");
+            assert!(log.iter().any(|(_,e)|*e==InputEvent::Text("héllo".into())),"{log:?}");
+        }
+
+        // Only screen 2 on view: screen 1's picture stops, screen 2's goes on.
+        session.send(ViewerCmd::ShowDisplays(vec![1]));
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let (paused,going)=(first.latest().0,second.latest().0);
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(first.latest().0,paused,"a hidden screen keeps streaming");
+        assert!(second.latest().0>going,"the shown screen stopped");
+        // And back again.
+        session.send(ViewerCmd::ShowDisplays(vec![0,1]));
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        assert!(first.latest().0>paused,"screen 1 resumed");
+
+        drop(session);viewer.shutdown().await;host.shutdown().await;
+        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+    }
+
     #[tokio::test(flavor="multi_thread")]
     async fn abrupt_disconnect_releases_input_and_sparse_display_ids_work() {
         use slipstream_platform::{Backend,FrameStream,test_pattern::TestPattern};
