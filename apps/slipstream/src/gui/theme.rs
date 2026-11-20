@@ -1108,9 +1108,15 @@ pub struct WindowChrome {
 }
 
 /// A [`window`]'s header band: the title on the window's colour, and a
-/// Close segment at its end.
+/// Close segment at its end, red (peach on a red window) so it stands
+/// apart from the frame.
 pub fn window_header(ui: &mut Ui, title: &str, color: Color32) -> WindowChrome {
-    window_header_with_close(ui, title, color, color.gamma_multiply(0.8))
+    window_header_with_close(ui, title, color, close_color(color))
+}
+
+/// The Close segment's colour on a frame of `color`.
+pub fn close_color(color: Color32) -> Color32 {
+    if color == pal::RED { pal::PEACH } else { pal::RED }
 }
 
 /// A console header with a distinct Close colour when that action needs
@@ -1142,6 +1148,10 @@ pub fn window_header_with_close(ui: &mut Ui, title: &str, color: Color32, close_
 impl WindowChrome {
     /// The footer band, and the rail and elbows joining it to the header.
     /// Call it last, below the window's contents.
+    ///
+    /// Everything is drawn in the frame's own opaque colour: a translucent
+    /// shade showed every overlap between the pieces (a lighter notch in
+    /// the lower elbow) and made that elbow look darker than the rest.
     pub fn footer(&self, ui: &mut Ui) {
         ui.add_space(4.0);
         let (row, _) = ui.allocate_exact_size(vec2(ui.available_width().min(self.right - self.left).max(1.0), FOOT), Sense::hover());
@@ -1152,22 +1162,22 @@ impl WindowChrome {
         // Rail, in two segments with a break, like the main frame's.
         let split = head_bottom + (foot_top - head_bottom) * 0.62;
         p.rect_filled(Rect::from_min_max(pos2(x0, head_bottom - 1.0), pos2(rail_r, split - 2.0)), 0.0, c);
-        p.rect_filled(Rect::from_min_max(pos2(x0, split + 2.0), pos2(rail_r, foot_top + 1.0)), 0.0, c.gamma_multiply(0.7));
+        p.rect_filled(Rect::from_min_max(pos2(x0, split + 2.0), pos2(rail_r, foot_top + 1.0)), 0.0, c);
         // Footer band, broken near its end.
         let foot = Rect::from_min_max(pos2(x0, foot_top), pos2(self.right, row.bottom()));
         let brk = foot.left() + foot.width() * 0.78;
-        p.rect_filled(Rect::from_min_max(foot.min, pos2(brk - 2.0, foot.bottom())), CornerRadius { sw: 14, ..Default::default() }, c.gamma_multiply(0.7));
+        p.rect_filled(Rect::from_min_max(foot.min, pos2(brk - 2.0, foot.bottom())), 0.0, c);
         p.rect_filled(Rect::from_min_max(pos2(brk + 2.0, foot.top()), foot.max), CornerRadius { ne: 6, se: 6, ..Default::default() }, c);
-        rail_outer_corner(&p,foot.left_bottom(),22.0,c.gamma_multiply(0.7),pal::PANEL);
+        rail_outer_corner(&p, foot.left_bottom(), 22.0, c, pal::PANEL);
         // The elbows' inner corners curve in.
-        for (fill, corner, center) in [
-            (c, Rect::from_min_size(pos2(rail_r, head_bottom), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, head_bottom + ELBOW)),
-            (c.gamma_multiply(0.7), Rect::from_min_size(pos2(rail_r, foot_top - ELBOW), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, foot_top - ELBOW)),
+        for (corner, center) in [
+            (Rect::from_min_size(pos2(rail_r, head_bottom), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, head_bottom + ELBOW)),
+            (Rect::from_min_size(pos2(rail_r, foot_top - ELBOW), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, foot_top - ELBOW)),
         ] {
             // Carve only this elbow: the rest of the circle can reach into
             // the content and erase a button's lower-left corner.
             let p = p.with_clip_rect(corner.intersect(p.clip_rect()));
-            p.rect_filled(corner, 0.0, fill);
+            p.rect_filled(corner, 0.0, c);
             p.circle_filled(center, ELBOW, pal::PANEL);
         }
     }

@@ -77,7 +77,7 @@ pub(super) fn poll(active: &mut Active, state: &State, app: &mut App, ctx: &egui
         let (mut open, mut go) = (true, false);
         theme::modal("meeting-recording", pal::RED).show(ctx, |ui| {
             ui.set_width(theme::dialog_width(ctx, 460.0));
-            if theme::window_header_with_close(ui, "Record meeting", pal::RED, pal::PEACH).close {
+            if theme::window_header(ui, "Record meeting", pal::RED).close {
                 open = false;
             }
             ui.label("Records the large picture (the speaker, a pinned or spotlighted person, or a shared screen) and everyone's voices.");

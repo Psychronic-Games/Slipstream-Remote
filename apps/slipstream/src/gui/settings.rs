@@ -68,11 +68,13 @@ impl SettingsForm {
     pub fn refresh_recent(&mut self, _s: &Settings) {}
 }
 
-fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
+pub(super) fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
     // On a phone the label goes above what it labels.
     if ui.available_width() < 480.0 {
         ui.add_space(2.0);
-        ui.label(RichText::new(label.to_uppercase()).font(theme::display(16.0)).color(pal::LAVENDER));
+        if !label.is_empty() {
+            ui.label(RichText::new(label.to_uppercase()).font(theme::display(16.0)).color(pal::LAVENDER));
+        }
         ui.vertical(add);
         ui.add_space(4.0);
         return;
@@ -150,7 +152,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 let r = text_field_sized(ui, &mut app.link_code, "from the station's download page (fills in the key)", false, width);
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let label = if linking { "Connecting…" } else { "Connect" };
-                link_now = ui.add_enabled_ui(!linking, |ui| theme::pill(ui, label, pal::BLUE)).inner.clicked() || enter;
+                link_now = ui.add_enabled(!linking, |ui: &mut egui::Ui| theme::pill(ui, label, pal::BLUE)).clicked() || enter;
             });
         });
         row(ui, "Public backup relay", |ui| {
@@ -528,7 +530,7 @@ pub fn about_ui(app: &mut App, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let checking = app.checking_update();
             let label = if checking { "Checking…" } else { "Check for updates" };
-            if ui.add_enabled_ui(!checking, |ui| theme::pill(ui, label, pal::GREEN)).inner.clicked() {
+            if ui.add_enabled(!checking, |ui: &mut egui::Ui| theme::pill(ui, label, pal::GREEN)).clicked() {
                 app.check_update_now(ui.ctx());
             }
             ui.label(RichText::new("Updates come from your station.").small().color(pal::DIM));

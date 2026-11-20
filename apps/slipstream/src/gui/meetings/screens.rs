@@ -118,7 +118,7 @@ pub(super) fn ui(meetings: &mut Meetings, app: &App, ctx: &egui::Context) {
     let mut chosen = None;
     theme::modal("meeting-screen-picker", pal::BLUE).show(ctx, |ui| {
         ui.set_width(theme::dialog_width(ctx, 540.0));
-        if theme::window_header_with_close(ui, "Choose a screen", pal::BLUE, pal::PEACH).close {
+        if theme::window_header(ui, "Choose a screen", pal::BLUE).close {
             close = true;
         }
         ui.label("Thumbnails are visible only to you. Choose a screen, then confirm to share it.");

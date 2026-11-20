@@ -500,7 +500,7 @@ fn incoming(meetings: &mut Meetings, app: &mut App, ctx: &egui::Context) {
     };
     let mut accepted = None;
     theme::modal("incoming-meeting-call",pal::GREEN).show(ctx,|ui|{
-        ui.set_width(theme::dialog_width(ctx,440.0));if theme::window_header_with_close(ui,"Incoming transmission",pal::GREEN,pal::PEACH).close{accepted=Some(false);}
+        ui.set_width(theme::dialog_width(ctx,440.0));if theme::window_header(ui,"Incoming transmission",pal::GREEN).close{accepted=Some(false);}
         ui.label(RichText::new(&call.name).font(theme::display(24.0)).color(pal::TAN));
         ui.label(format!("Inviting you to {}",call.invitation.title));
         ui.label("Answer with your microphone muted. You can unmute or share your camera in the meeting.");
@@ -794,7 +794,7 @@ pub(super) fn ui(app: &mut App, ui: &mut Ui) {
     if meetings.confirm_end {
         theme::modal("end-meeting-confirm",pal::RED).show(&ctx,|ui| {
             ui.set_width(theme::dialog_width(&ctx,430.0));
-            if theme::window_header_with_close(ui,"End meeting for everyone?",pal::RED,pal::PEACH).close {meetings.confirm_end=false;}
+            if theme::window_header(ui,"End meeting for everyone?",pal::RED).close {meetings.confirm_end=false;}
             ui.label("Everyone will be disconnected from this meeting. Remote support links stay connected.");
             ui.horizontal_wrapped(|ui| {
                 if theme::pill(ui,"End for everyone",pal::RED).clicked(){meetings.confirm_end=false;leave=true;}
@@ -805,7 +805,7 @@ pub(super) fn ui(app: &mut App, ui: &mut Ui) {
     if let Some((id, name)) = meetings.confirm_remove.clone() {
         theme::modal("remove-meeting-participant", pal::PEACH).show(&ctx, |ui| {
             ui.set_width(theme::dialog_width(&ctx, 400.0));
-            if theme::window_header_with_close(ui, "Remove participant?", pal::PEACH, pal::BLUE)
+            if theme::window_header(ui, "Remove participant?", pal::PEACH)
                 .close
             {
                 meetings.confirm_remove = None;
@@ -848,36 +848,41 @@ pub(super) fn ui(app: &mut App, ui: &mut Ui) {
 }
 fn setup(meetings: &mut Meetings, app: &App, ui: &mut Ui) {
     theme::panel(ui, "Start a meeting", pal::GREEN, |ui| {
-        ui.label("Talk, share a screen, or show your camera. Everyone joins muted with their camera off.");
-        ui.label("Your name");
-        ui.text_edit_singleline(&mut meetings.name);
-        ui.label("Meeting title");
-        ui.text_edit_singleline(&mut meetings.title);
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Participant limit");
+        ui.label(
+            RichText::new("Talk, share a screen, or show your camera. Everyone joins muted with their camera off.")
+                .color(pal::DIM),
+        );
+        ui.add_space(4.0);
+        // Labelled rows like Config: the console's own inputs, sized for
+        // a name, not the whole panel.
+        let field = |ui: &mut Ui, value: &mut String| {
+            ui.add(theme::text_input(value).desired_width(ui.available_width().min(360.0)));
+        };
+        super::settings::row(ui, "Your name", |ui| field(ui, &mut meetings.name));
+        super::settings::row(ui, "Meeting title", |ui| field(ui, &mut meetings.title));
+        super::settings::row(ui, "Participant limit", |ui| {
             ui.add(egui::DragValue::new(&mut meetings.capacity).range(2..=32));
         });
-        if theme::pill(ui, "Create meeting", pal::GREEN).clicked() {
-            meetings.host(&app.client, &app.rt, ui.ctx());
-        }
-        ui.add_space(10.0);
-        ui.label(format!(
-            "Microphone: {}",
-            meetings
-                .devices
-                .microphone_name(meetings.microphone_device.as_deref())
-        ));
-        ui.label(format!(
-            "Camera: {}",
-            meetings.devices.camera_name(meetings.camera_index)
-        ));
-        if theme::pill(ui, "Choose devices", pal::BLUE).clicked() {
-            meetings.setup_devices = true;
-        }
+        let microphone = meetings.devices.microphone_name(meetings.microphone_device.as_deref());
+        let camera = meetings.devices.camera_name(meetings.camera_index);
+        let device = |ui: &mut Ui, name: String| {
+            ui.add(egui::Label::new(RichText::new(&name).color(pal::TEXT)).truncate()).on_hover_text(name);
+        };
+        super::settings::row(ui, "Microphone", |ui| device(ui, microphone));
+        super::settings::row(ui, "Camera", |ui| device(ui, camera));
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            if theme::pill(ui, "Create meeting", pal::GREEN).clicked() {
+                meetings.host(&app.client, &app.rt, ui.ctx());
+            }
+            if theme::pill(ui, "Choose devices", pal::BLUE).clicked() {
+                meetings.setup_devices = true;
+            }
+        });
     });
     ui.add_space(10.0);
     theme::panel(ui, "Join a meeting", pal::BLUE, |ui| {
-        ui.label("Paste the invitation your organizer shared with you.");
+        ui.label(RichText::new("Paste the invitation your organizer shared with you.").color(pal::DIM));
         ui.add(
             theme::text_area(&mut meetings.join_text)
                 .desired_rows(2)
@@ -893,7 +898,7 @@ fn setup(meetings: &mut Meetings, app: &App, ui: &mut Ui) {
     });
     ui.add_space(10.0);
     theme::panel(ui, "Call a system", pal::LAVENDER, |ui| {
-        ui.label("Ring someone by their Slipstream ID, or use Meeting beside a saved system.");
+        ui.label(RichText::new("Ring someone by their Slipstream ID, or use Meeting beside a saved system.").color(pal::DIM));
         call_form(meetings, app, ui, true);
         let mut allowed = !app.client.settings().app.block_meeting_calls;
         if ui

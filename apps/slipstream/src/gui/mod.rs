@@ -1193,7 +1193,7 @@ impl App {
         let (mut switch, mut keep) = (false, false);
         theme::modal("station-switch", pal::GOLD).show(ctx, |ui| {
             ui.set_width(theme::dialog_width(ctx, 460.0));
-            keep = theme::window_header_with_close(ui, "Switch station?", pal::GOLD, pal::BLUE).close;
+            keep = theme::window_header(ui, "Switch station?", pal::GOLD).close;
             let new = cfg.org.as_deref().map(|org| format!("{org} ({})", cfg.server)).unwrap_or_else(|| cfg.server.clone());
             ui.label(format!("A link asks this computer to move from {current} to {new}."));
             ui.label(egui::RichText::new("Support from your current provider stops reaching this computer. Only switch if your support provider sent you this link.").color(pal::DIM));

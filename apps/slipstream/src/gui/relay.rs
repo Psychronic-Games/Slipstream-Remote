@@ -134,7 +134,7 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
                 *field = p.clone();
                 app.client.update_settings(move |s| s.app.relay_password = p);
             }
-            if ui.add_enabled_ui(editable, |ui| theme::pill(ui, "New", pal::BLUE)).inner.clicked() {
+            if ui.add_enabled(editable, |ui: &mut egui::Ui| theme::pill(ui, "New", pal::BLUE)).clicked() {
                 let p = new_password();
                 app.relay.phone.password = p.clone();
                 app.client.update_settings(move |s| s.app.relay_password = p);
@@ -156,7 +156,7 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
                 for (value, label) in [("", "Automatic"), ("2.4", "2.4 GHz"), ("5", "5 GHz")] {
                     let chosen = band == value || (value.is_empty() && band == "auto");
                     let color = if chosen { pal::GREEN } else { pal::DIM };
-                    if ui.add_enabled_ui(editable, |ui| theme::pill(ui, label, color)).inner.clicked() {
+                    if ui.add_enabled(editable, |ui: &mut egui::Ui| theme::pill(ui, label, color)).clicked() {
                         let v = value.to_string();
                         app.client.update_settings(move |s| s.app.relay_band = v);
                     }
@@ -170,7 +170,7 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
         match &group {
             RelayGroup::Off | RelayGroup::Failed(_) => {
                 let ready = !name.is_empty() && password_ok(&password);
-                if ui.add_enabled_ui(ready, |ui| theme::pill(ui, "Start relay", pal::GREEN)).inner.clicked()
+                if ui.add_enabled(ready, |ui: &mut egui::Ui| theme::pill(ui, "Start relay", pal::GREEN)).clicked()
                     && let Err(e) = phone::relay_start(&name, &password, &band)
                 {
                     app.toast(format!("Subspace Relay: {e:#}"), pal::RED);

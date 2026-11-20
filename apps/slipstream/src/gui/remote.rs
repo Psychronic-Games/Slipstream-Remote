@@ -1259,7 +1259,7 @@ impl Link {
             (true, true) => ("Sound", pal::GOLD, "Playing the remote computer's sound. Click to mute"),
             (true, false) => ("Muted", pal::LAVENDER.gamma_multiply(0.6), "Click to hear the remote computer's sound"),
         };
-        let sound = ui.add_enabled_ui(can_hear, |ui| theme::console_button(ui,if tool_labels {label} else {""},color,if self.audio{Icon::Sound}else{Icon::Muted},false)).inner.on_hover_text(tip).on_disabled_hover_text(tip);
+        let sound = ui.add_enabled(can_hear, |ui: &mut egui::Ui| theme::console_button(ui,if tool_labels {label} else {""},color,if self.audio{Icon::Sound}else{Icon::Muted},false)).on_hover_text(tip).on_disabled_hover_text(tip);
         if sound.clicked() {
             self.audio = !self.audio;
             self.send(ViewerCmd::Audio(self.audio));
@@ -1643,7 +1643,7 @@ impl Link {
             .default_width(680.0)
             .default_height((ctx.content_rect().height() - 150.0).clamp(300.0, 700.0))
             .show(ctx, |ui| {
-                let chrome = theme::window_header_with_close(ui, &title, pal::GOLD, pal::RED);
+                let chrome = theme::window_header(ui, &title, pal::GOLD);
                 if chrome.close {
                     open = false;
                 }

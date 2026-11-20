@@ -1635,7 +1635,7 @@ function slip_client_builds(): array
         'windows' => ['file' => 'slipstream-windows-x86_64.exe', 'label' => 'Windows', 'note' => 'Windows 7 SP1 to 11'],
         'macos' => ['file' => 'slipstream-macos.zip', 'label' => 'macOS', 'note' => 'macOS 12 or newer'],
         'linux' => ['file' => 'slipstream-linux-x86_64', 'label' => 'Linux', 'note' => '64-bit, X11 or Wayland'],
-        'android' => ['file' => 'slipstream-android.apk', 'label' => 'Android', 'note' => 'Android 8 or newer · controls computers (preview)'],
+        'android' => ['file' => 'slipstream-android.apk', 'label' => 'Android', 'note' => 'Android 8 or newer'],
     ];
     $manifest = slip_client_manifest()['platforms'] ?? [];
     foreach ($map as $os => &$b) {

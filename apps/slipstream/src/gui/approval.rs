@@ -41,7 +41,7 @@ pub(super) fn poll(app: &mut App, ctx: &egui::Context) {
     let mut answer = None;
     theme::modal("link-approval", pal::RED).show(ctx, |ui| {
         ui.set_width(theme::dialog_width(ctx, 480.0));
-        if theme::window_header_with_close(ui, "Allow remote control?", pal::RED, pal::PEACH).close {
+        if theme::window_header(ui, "Allow remote control?", pal::RED).close {
             answer = Some(false);
         }
         ui.label(RichText::new(&request.peer).font(theme::display(24.0)).color(pal::TAN));

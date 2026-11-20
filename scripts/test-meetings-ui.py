@@ -209,7 +209,9 @@ def main():
             profile.mkdir()
             profiles.append(profile)
             (profile / 'settings.toml').write_text(f'device_name = {json.dumps(name)}\n[server]\nurl = "http://127.0.0.1:{port}"\nkey = "fixture-meeting-access"\nuse_public_relays = false\n')
-            local = env | {'SLIPSTREAM_HOME': str(profile), 'SLIPSTREAM_TEST_SCREENS':'2', 'SLIPSTREAM_TEST_RECORD_TO': str(base/'recording.mp4')}
+            local = env | {'SLIPSTREAM_HOME': str(profile), # One screen for the tab audit: since 0.38 each remote screen is a tab of
+            # its own, and its steps place one tab per link.
+            'SLIPSTREAM_TEST_SCREENS':'1' if args.tabs else '2', 'SLIPSTREAM_TEST_RECORD_TO': str(base/'recording.mp4')}
             if args.tabs:
                 subprocess.run([str(args.client.resolve()),'set-password','fixture-tab-password'],env=local,check=True,capture_output=True)
             process = launch([str(args.client.resolve()), '--test-pattern', '--page', 'meetings', '--window-size', '1140x1100'], f'client-{index}', local)
@@ -251,7 +253,7 @@ def main():
             words(floating,'group-one-before-plus')
             local_click(floating,204,56)
             click_text(root_window,'LINK BY ID','new-link-manual')
-            station=wait(lambda:locate(root_window,'This station','new-link-fields'),'manual station selector')
+            station=wait(lambda:locate(root_window,'My station','new-link-fields'),'manual station selector')
             local_click(root_window,station[0],station[1]+40)
             xdo('type','--clearmodifiers','--delay','60',str(target));time.sleep(.5)
             local_click(root_window,station[0]+225,station[1]+40)
@@ -292,8 +294,10 @@ def main():
         click(host,'Start or join','host-back-to-setup')
         click(host, 'Create meeting', 'host-create')
         click(host,'People 1','host-people')
-        # The ID field's faint hint defeats OCR: People column, 1140x1100 fixture.
-        click_point(host,960,293,'host-room')
+        # The ID field's faint hint defeats OCR: it sits just below Copy
+        # invitation, which moves down when a long microphone name wraps.
+        copy=wait(lambda:locate(host,'Copy invitation','host-room',controls=True),'Copy invitation')
+        click_point(host,copy[0]+108,copy[1]+34,'host-room')
         xdo('type', '--clearmodifiers', '--delay', '0', str(target))
         click(host, 'Call system', 'host-calling-first')
         wait(lambda:locate(guest,'Answer','guest-ringing',controls=True),'incoming call prompt')

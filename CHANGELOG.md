@@ -13,6 +13,36 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Android: the keyboard opens for passwords.** Tapping the password
+  field in *Connect to …* (a saved device without a saved password, or a
+  recent link) didn't bring up the keyboard, so there was no way to type
+  it. The prompt asked for the field's focus again on every frame, which
+  closed and reopened the keyboard each time; it now asks once.
+- **Phones: a saved device's buttons wrap.** Connect, Chat, Meeting,
+  Manage and Edit ran off the right edge of the screen (Edit couldn't be
+  reached). They now continue on a second line when they don't fit; the
+  same applies to other button rows that can be greyed out.
+- **Dialogs: one colour, and a red Close.** The lower-left corner of
+  dialogs such as *New link* and *Connect to …* was a darker shade with a
+  lighter notch in it (a see-through colour overlapping itself). The frame
+  is now one solid colour, and Close is red (peach on red dialogs) so it
+  stands apart from the frame.
+- **Config → Stations: a tidier sign-in.** Station, username and password
+  are labelled rows like the rest of Config, sized for what goes in them,
+  with *Sign in* underneath instead of off at the far right.
+- **Meetings: Start a meeting matches the rest of the app.** Labelled
+  rows, the console's own text fields, and the microphone and camera in
+  rows of their own (a long device name is shortened, in full on hover).
+- **Station pages:**
+  - Admin sign-in is a compact card instead of a page-wide panel, and the
+    note for stations upgraded from a single password reads as one.
+  - Download page: the four apps in one row on wide screens, the
+    visitor's own system first and marked *For this device*, and the
+    opening instructions split per system. Android is no longer described
+    as a preview that only controls computers.
+  - System reports: the section cards line up.
+  - Technicians → Station devices: every field the same width.
+
 ## 0.38.0 — 2026-11-18
 
 - **Several remote screens, each in a tab of its own.** A computer with two

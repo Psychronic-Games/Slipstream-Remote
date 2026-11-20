@@ -403,7 +403,7 @@ fn link_fields(app: &mut App, ui: &mut Ui) {
         let c = field(ui, &mut app.link_code, "SETUP CODE", 110.0);
         go = (a.lost_focus() || c.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let label = if app.linking() { "Connecting…" } else { "Connect" };
-        go |= ui.add_enabled_ui(!app.linking(), |ui| theme::pill(ui, label, pal::ORANGE)).inner.clicked();
+        go |= ui.add_enabled(!app.linking(), |ui: &mut egui::Ui| theme::pill(ui, label, pal::ORANGE)).clicked();
     });
     if go && !app.linking() {
         let code = slipstream_core::provision::normalize_code(&app.link_code);
@@ -450,7 +450,7 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
         ui.add_space(8.0);
         ui.allocate_ui_with_layout(vec2(ui.available_width(), if cfg!(target_os="android") {42.0} else {36.0}), Layout::right_to_left(Align::Center), |ui| {
             let busy = app.attempt.is_some();
-            let engage = ui.add_enabled_ui(!busy, |ui| theme::pill_sized(ui, "Engage", pal::ORANGE, vec2(120.0, 34.0))).inner;
+            let engage = ui.add_enabled(!busy, |ui: &mut egui::Ui| theme::pill_sized(ui, "Engage", pal::ORANGE, vec2(120.0, 34.0)));
             if (engage.clicked() || (enter && !app.connect_pw.is_empty())) && !busy {
                 app.start_connect(&ctx);
             }
@@ -525,6 +525,7 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
                         name: if r.name.is_empty() { r.id.to_string() } else { r.name.clone() },
                         via: route.unwrap_or_default(),
                         password: String::new(),
+                        focused: false,
                     });
                 }
             }
@@ -538,6 +539,9 @@ pub struct RecentPrompt {
     name: String,
     via: slipstream_session::StationRef,
     password: String,
+    /// The password field has been given focus once, when the prompt
+    /// opened. Asking again every frame would close Android's keyboard.
+    focused: bool,
 }
 
 pub(super) fn recent_prompt(app: &mut App, ctx: &egui::Context) {
@@ -555,7 +559,9 @@ pub(super) fn recent_prompt(app: &mut App, ctx: &egui::Context) {
             open = !chrome.close;
             ui.label(RichText::new(format!("{} · its one-time or unattended password", p.id)).color(pal::DIM));
             let field = ui.add(theme::text_input(&mut p.password).hint_text("password").password(true).desired_width(300.0f32.min(ui.available_width())));
-            field.request_focus();
+            if !std::mem::replace(&mut p.focused, true) {
+                field.request_focus();
+            }
             go = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.add_space(6.0);
             ui.horizontal(|ui| {

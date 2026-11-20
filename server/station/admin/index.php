@@ -130,15 +130,17 @@ if (!$admin || empty($admin['admin'])) {
     }
     slip_page_start('Station admin', '../');
     ?>
+    <div class="signin">
     <h2>Station admin</h2>
     <div class="panel">
       <?php if ($err): ?><div class="flash err"><?= h($err) ?></div><?php endif ?>
       <form method="post"><?= $form() ?><input type="hidden" name="action" value="login">
         <p>Sign in with a technician account that has Station admin permission.</p>
-        <p class="dim">For the first sign-in after upgrading, use the previous station password with <b class="mono"><?= h($bootstrapUsername) ?></b>.</p>
         <label class="k">Username</label><input type="text" name="username" value="<?= h($_POST['username'] ?? '') ?>" autocomplete="username" required autofocus>
         <label class="k">Password</label><input type="password" name="password" autocomplete="current-password" required>
-        <br><button>Sign in</button></form>
+        <button>Sign in</button>
+        <p class="dim note">Upgraded from a station with a single password? Sign in once as <b class="mono"><?= h($bootstrapUsername) ?></b> with that password.</p></form>
+    </div>
     </div>
     <?php
     slip_page_end();
@@ -970,7 +972,7 @@ slip_page_start('Station admin', '../', 'admin-console');
       <?php endforeach ?>
     </table>
     <?php endif ?>
-    <form method="post"><?= $form() ?><input type="hidden" name="action" value="shared_add">
+    <form method="post" class="stack-form"><?= $form() ?><input type="hidden" name="action" value="shared_add">
       <label class="k">Device ID</label><input type="text" name="id" required placeholder="482 913 077">
       <label class="k">Name</label><input type="text" name="name" placeholder="Front desk PC">
       <input type="hidden" name="groups_present" value="1">

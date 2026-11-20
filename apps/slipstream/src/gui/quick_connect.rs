@@ -39,7 +39,7 @@ pub(super) fn window(app: &mut App, ctx: &egui::Context) {
     let mut refresh = false;
     let result = theme::modal("new-link-picker", pal::GREEN).show(ctx, |ui| {
         ui.set_width(theme::dialog_width(ctx, 550.0));
-        let chrome = theme::window_header_with_close(ui, "New link", pal::GREEN, pal::PEACH);
+        let chrome = theme::window_header(ui, "New link", pal::GREEN);
         if chrome.close {
             picker.open = false;
         }
@@ -474,12 +474,7 @@ mod tests {
                         bounds = theme::modal("layout-regression", pal::GREEN)
                             .show(&ctx, |ui| {
                                 ui.set_width(theme::dialog_width(&ctx, 550.0));
-                                let chrome = theme::window_header_with_close(
-                                    ui,
-                                    "New link",
-                                    pal::GREEN,
-                                    pal::PEACH,
-                                );
+                                let chrome = theme::window_header(ui, "New link", pal::GREEN);
                                 ui.label("Grouped systems");
                                 chrome.footer(ui);
                             })
@@ -495,7 +490,7 @@ mod tests {
                 let mut bands = 0;
                 for shape in output.shapes {
                     if let egui::Shape::Rect(rect) = shape.shape
-                        && [pal::GREEN, pal::PEACH].contains(&rect.fill)
+                        && [pal::GREEN, pal::RED].contains(&rect.fill)
                     {
                         bands += 1;
                         assert!(

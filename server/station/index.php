@@ -69,9 +69,15 @@ They can only connect while the app is open and you've shared your password.</p>
   <div class="panel">No app builds have been added to this station yet.</div>
 <?php else: ?>
   <h2>Download</h2>
-  <div class="grid">
-    <?php foreach ($builds as $os => $b): ?>
+  <div class="grid downloads">
+    <?php
+    // The visitor's own system first.
+    if ($guess !== null && isset($builds[$guess])) {
+        $builds = [$guess => $builds[$guess]] + $builds;
+    }
+    foreach ($builds as $os => $b): ?>
       <div class="card <?= $os === $guess ? 'primary' : '' ?>">
+        <?php if ($os === $guess && $b['path']): ?><span class="badge">For this device</span><?php endif ?>
         <h3><?= h($b['label']) ?></h3>
         <div class="dim"><?= h($b['note']) ?><?= $b['path'] ? ' · ' . $fmt($b['size']) : '' ?></div>
         <?php if ($b['path']): ?>
@@ -87,14 +93,17 @@ They can only connect while the app is open and you've shared your password.</p>
   <div class="panel">
     <ol class="steps">
       <li>Download the app for your computer or phone above.</li>
-      <li><b>Windows:</b> open the downloaded file (if SmartScreen appears, choose <i>More info → Run anyway</i>).
-        <b>Mac:</b> open the zip and move <i>Slipstream</i> to Applications, then open it. If macOS says it can't
-        check the app, go to <i>System Settings → Privacy &amp; Security</i> and choose <i>Open Anyway</i>; allow
-        <i>Screen Recording</i> and <i>Accessibility</i> when asked.
-        <b>Linux:</b> make it executable (right-click → Properties → <i>Allow executing</i>, or <code>chmod +x "Slipstream Remote"*</code>) and run it.
-        <b>Android:</b> open the downloaded file. The first time, Android asks to let your browser install apps:
-        choose <i>Settings</i>, turn on <i>Allow from this source</i>, go back and choose <i>Install</i>.
-        Then come back to this page for the next step.</li>
+      <li>Open it:
+        <ul class="os-steps">
+          <li><b>Windows:</b> open the downloaded file (if SmartScreen appears, choose <i>More info → Run anyway</i>).</li>
+          <li><b>Mac:</b> open the zip and move <i>Slipstream</i> to Applications, then open it. If macOS says it can't
+            check the app, go to <i>System Settings → Privacy &amp; Security</i> and choose <i>Open Anyway</i>; allow
+            <i>Screen Recording</i> and <i>Accessibility</i> when asked.</li>
+          <li><b>Linux:</b> make it executable (right-click → Properties → <i>Allow executing</i>, or <code>chmod +x "Slipstream Remote"*</code>) and run it.</li>
+          <li><b>Android:</b> open the downloaded file. The first time, Android asks to let your browser install apps:
+            choose <i>Settings</i>, turn on <i>Allow from this source</i>, go back and choose <i>Install</i>.
+            Then come back to this page for the next step.</li>
+        </ul></li>
       <li>The app connects to <?= h($org) ?> by itself (on a Mac, press the button below once). If it shows only
         <i>Slipstream Public</i> or asks for your station instead, press
         <a class="btn small" href="<?= h(slip_link_url()) ?>">Connect this app</a>

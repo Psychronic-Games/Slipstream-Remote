@@ -101,6 +101,8 @@ header h1 { font-size: 24px; } footer span { display: none; } }
 .admin-console main { max-width: 1800px; padding: 12px 24px 32px; min-width: 0; }
 .admin-console .panel { padding: 24px 28px; min-width: 0; }
 .admin-console .panel + .panel { margin-top: 20px; }
+/* Report sections sit side by side in a grid, which spaces them itself. */
+.admin-console .report-sections > .panel + .panel { margin-top: 0; }
 .admin-console header h1 { max-width: 65vw; overflow: hidden; text-overflow: ellipsis; }
 .admin-console td, .admin-console th { overflow-wrap: anywhere; }
 .admin-console .signed-in { margin-left: auto; align-self: center; }
@@ -471,3 +473,28 @@ h2.peach { color: var(--peach); }
   .group-create { flex-wrap: wrap; }
   .lcars-toolbar > p { margin-left: 0; }
 }
+
+/* Sign-in: a compact card rather than a page-wide panel. */
+.signin { max-width: 460px; margin: 6vh auto 0; }
+.signin h2 { margin-top: 0; }
+.signin input[type=text], .signin input[type=password] { max-width: none; }
+.signin button { margin-top: 18px; width: 100%; }
+.signin .note { margin: 18px 0 0; font-size: 15px; }
+
+/* Downloads: one row of four on wide screens, two on tablets, one on phones. */
+.grid.downloads { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1000px) { .grid.downloads { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .grid.downloads { grid-template-columns: minmax(0, 1fr); } }
+.card { display: flex; flex-direction: column; }
+.card .btn { align-self: flex-start; margin-top: auto; }
+.card .dim { margin-bottom: 14px; }
+.card .badge { align-self: flex-start; margin: 0 0 8px; padding: 1px 10px; border-radius: 10px; background: var(--orange); color: #000;
+  font: 13px/20px var(--display); text-transform: uppercase; letter-spacing: .06em; }
+.os-steps { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.os-steps li { margin: 0; padding: 0; counter-increment: none; }
+.os-steps li::before { content: none; }
+.os-steps b { color: var(--gold); }
+
+/* Single-column forms: every field the same width as the text inputs. */
+.stack-form .picker-field, .stack-form .notes-editor { max-width: 480px; }
+.stack-form .picker-field { margin-top: 12px; }

@@ -1,6 +1,6 @@
 # Project status
 
-*Updated 2026-11-15. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
+*Updated 2026-11-19. Releases: [GitHub](https://github.com/Psychronic-Games/Slipstream-Remote/releases);
 changes: [CHANGELOG.md](../CHANGELOG.md).*
 
 ## Where things stand
@@ -72,6 +72,9 @@ and 390 pixels pass. Full inventory and motherboard fields require 0.32 clients.
 
 Recent releases:
 
+- **0.38.0**: a computer's screens each in a tab of their own (drag one
+  out to put it on another monitor); a trackpad mode and typing with a key
+  bar on phones; NVIDIA encoding sharper and lighter on text.
 - **0.37.0**: with the Linux service installed, a signed-in desktop is
   shared through its own screen sharing (any graphics card, clipboard,
   sound) and the service takes over at the lock and login screens; clearer
@@ -165,9 +168,9 @@ Recent releases:
 | Android viewer and host | ✅ Android 16 emulator: persistent ID, consent/foreground capture, PC control, rotation and revocation tested; works on a real phone (user, 2026-11-08). Software host encoding; audio/clipboard/files pending. |
 | Setup codes and download-origin linking | ✅ against a local station (origin attribute on Linux, `slipstream://` handed to a running app, bad codes and rate limit) |
 | Linux service (0.36) | ✅ unit tests for pixel copying, formats and bounds, ioctl numbers against the kernel's, pointer mapping; display listing on real AMD and NVIDIA cards; the virtual keyboard and pointer created and used on a real kernel. ⚠️ Works on Debian 13 VMware VMs; Debian 12's kernel (6.1) doesn't hand out VMware's framebuffer (`ENODEV`), which left one VM unreachable after installing. Since 0.37 a signed-in desktop hosts in the service's place (screen on any card, clipboard, sound): the handover, sessions through it, and lock/unlock and logout with a link open work on real machines (user, 2026-11-15) ([issue 20](issues/20-linux-service.md)) |
-| Several screens at once, as tabs (unreleased) | ✅ end-to-end test: two screens streaming together into separate pictures, pointer input reaching the screen it's for, typed text, a hidden screen pausing and resuming; protocol compatibility both ways with older apps (unit tests). The GUI with a two-screen test host under Xvfb: a tab per screen, the Screens tick boxes, a screen popped out into its own window while the other stays in the console, both live. Real multi-monitor computers next |
-| Phone trackpad, touch and keyboard (unreleased) | ✅ gesture unit tests (trackpad slide/tap/drag, two-finger tap and scroll, pinches starting on the black bars, the view following the pointer); the phone session bar, Console menu and key bar rendered at phone width; Android build and Clippy. Next on real phones |
-| NVIDIA encoding quality range (unreleased) | ✅ measured on an RTX 5070 against a page of text at 720p60: still or typing 0.7 Mbit/s at 42 dB PSNR (was 3.6 Mbit/s at 27 dB), scrolling 3.1 Mbit/s at 39 dB (was 3.7 at 24); at a 1.2 Mbit/s budget 0.7 and 1.9 Mbit/s. VA-API on AMD measured too and left as it was (44 dB at 1.1 Mbit/s still) |
+| Several screens at once, as tabs (0.38) | ✅ end-to-end test: two screens streaming together into separate pictures, pointer input reaching the screen it's for, typed text, a hidden screen pausing and resuming; protocol compatibility both ways with older apps (unit tests). The GUI with a two-screen test host under Xvfb: a tab per screen, the Screens tick boxes, a screen popped out into its own window while the other stays in the console, both live. Real multi-monitor computers next |
+| Phone trackpad, touch and keyboard (0.38) | ✅ gesture unit tests (trackpad slide/tap/drag, two-finger tap and scroll, pinches starting on the black bars, the view following the pointer); the phone session bar, Console menu and key bar rendered at phone width; Android build and Clippy. Next on real phones |
+| NVIDIA encoding quality range (0.38) | ✅ measured on an RTX 5070 against a page of text at 720p60: still or typing 0.7 Mbit/s at 42 dB PSNR (was 3.6 Mbit/s at 27 dB), scrolling 3.1 Mbit/s at 39 dB (was 3.7 at 24); at a 1.2 Mbit/s budget 0.7 and 1.9 Mbit/s. VA-API on AMD measured too and left as it was (44 dB at 1.1 Mbit/s still) |
 
 ## Known gaps and limits
 

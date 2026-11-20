@@ -143,6 +143,10 @@ struct Prompt {
     purpose: Purpose,
     /// Why it's asking (a refused password).
     note: Option<String>,
+    /// The password field has been given focus once, when the prompt
+    /// opened. Asking again every frame would close Android's keyboard
+    /// (each request restarts the input method).
+    focused: bool,
 }
 
 /// What a password prompt leads to.
@@ -157,6 +161,8 @@ pub(super) const REFUSED: &str = "That password was refused. Enter the current o
 /// Widest a device row grows: Connect, Chat, Meeting and Edit stay beside
 /// the name in a wide window instead of drifting to the far edge.
 const ROW_MAX_WIDTH: f32 = 860.0;
+/// The station sign-in fields: room for an address, no more.
+const SIGN_IN_WIDTH: f32 = 360.0;
 
 fn accounts(app: &App) -> Vec<StationAccount> {
     app.client.settings().accounts
@@ -309,7 +315,7 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
                     }
                     if !a.signed_out {
                         let own = own_device(app, a);
-                        let button = ui.add_enabled_ui(own.is_some(), |ui| theme::pill(ui, "This device", pal::BLUE)).inner
+                        let button = ui.add_enabled(own.is_some(), |ui: &mut egui::Ui| theme::pill(ui, "This device", pal::BLUE))
                             .on_hover_text("Fill in this computer's ID and name; choose a group before saving")
                             .on_disabled_hover_text("This device needs an ID on this station. Its ID is shown in This device above.");
                         if button.clicked() && let Some(device) = own {
@@ -474,7 +480,7 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
             buttons.reverse();
         }
         for (label, color, enabled, which) in buttons {
-            let response = ui.add_enabled_ui(enabled, |ui| theme::pill_sized(ui, label, color, vec2(0.0, 28.0))).inner;
+            let response = ui.add_enabled(enabled, |ui: &mut egui::Ui| theme::pill_sized(ui, label, color, vec2(0.0, 28.0)));
             let response = match which {
                 RowAction::Chat => response.on_hover_text("Message the person at this computer without showing its screen"),
                 RowAction::Manage => response.on_hover_text("Restart, wake, and its management controller (BIOS-level console and power)"),
@@ -566,6 +572,7 @@ pub(super) fn ask_password(app: &mut App, r: &AccountRef, id: DeviceId, name: &s
         remember: saved,
         purpose,
         note,
+        focused: false,
     });
 }
 
@@ -754,12 +761,12 @@ fn group_window(app: &mut App, ctx: &egui::Context) {
     let mut save=false;
     theme::window("new-device-group",pal::BLUE).collapsible(false).resizable(false)
         .default_width(330.0).anchor(egui::Align2::CENTER_CENTER,vec2(0.0,0.0)).show(ctx,|ui| {
-            let chrome=theme::window_header_with_close(ui,"New group",pal::BLUE,pal::PEACH);
+            let chrome=theme::window_header(ui,"New group",pal::BLUE);
             if chrome.close {open=false;}
             ui.label(RichText::new("Saved on your technician account, available on your other computers.").small().color(pal::DIM));
             let input=field(ui,&mut editor.name,"Group name",false,280.0);
             let valid=!editor.name.trim().is_empty() && app.saved.job.is_none();
-            save=ui.add_enabled_ui(valid,|ui|theme::pill(ui,"Create group",pal::GREEN)).inner.clicked()
+            save=ui.add_enabled(valid, |ui: &mut egui::Ui| theme::pill(ui,"Create group",pal::GREEN)).clicked()
                 || (valid && input.lost_focus() && ui.input(|i|i.key_pressed(egui::Key::Enter)));
             chrome.footer(ui);
         });
@@ -785,7 +792,7 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
         .default_width(460.0)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
         .show(ctx, |ui| {
-            let chrome = theme::window_header_with_close(ui, title, pal::VIOLET, pal::PEACH);
+            let chrome = theme::window_header(ui, title, pal::VIOLET);
             if chrome.close {
                 open = false;
             }
@@ -969,7 +976,9 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
             }
             ui.label(RichText::new(format!("{} · its one-time or unattended password", p.id)).color(pal::DIM));
             let r = field(ui, &mut p.password, "password", true, 300.0);
-            r.request_focus();
+            if !std::mem::replace(&mut p.focused, true) {
+                r.request_focus();
+            }
             go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.checkbox(&mut p.remember, "Remember unattended password in my list");
             if p.purpose == Purpose::Chat {
@@ -1053,28 +1062,16 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
         let own=app.client.station_settings().url.unwrap_or_default();
         let hint=if own.is_empty() {"support.example.com"} else {own.as_str()};
         let mut go=false;
-        let width=ui.available_width();
+        // Labelled rows like the rest of Config, fields no wider than an
+        // address needs, and Sign in under them where the eye ends up.
         let pressed_enter=ui.input(|i|i.key_pressed(egui::Key::Enter));
-        let enter=|response: &egui::Response|response.lost_focus() && pressed_enter;
-        if width<480.0 {
-            let a=field(ui,&mut app.saved.station,hint,false,width-28.0);
-            let b=field(ui,&mut app.saved.username,"Username",false,width-28.0);
-            let c=field(ui,&mut app.saved.password,"Password",true,width-28.0);
-            go=enter(&a) || enter(&b) || enter(&c);
-            go|=ui.add_enabled_ui(!busy,|ui|theme::pill(ui,label,pal::VIOLET)).inner.clicked();
-        } else {
-            let a=field(ui,&mut app.saved.station,hint,false,width-28.0);
-            go|=enter(&a);
-            ui.horizontal(|ui| {ui.with_layout(Layout::right_to_left(Align::Center),|ui| {
-                go|=ui.add_enabled_ui(!busy,|ui|theme::pill_sized(ui,label,pal::VIOLET,vec2(0.0,34.0))).inner.clicked();
-                let field_width=(ui.available_width()-6.0)/2.0-28.0;
-                ui.with_layout(Layout::left_to_right(Align::Center),|ui| {
-                    let b=field(ui,&mut app.saved.username,"Username",false,field_width);
-                    let c=field(ui,&mut app.saved.password,"Password",true,field_width);
-                    go|=(b.lost_focus() || c.lost_focus()) && ui.input(|i|i.key_pressed(egui::Key::Enter));
-                });
-            });});
-        }
+        let mut enter=|response: egui::Response| go|=response.lost_focus() && pressed_enter;
+        super::settings::row(ui, "Station", |ui| enter(field(ui,&mut app.saved.station,hint,false,SIGN_IN_WIDTH)));
+        super::settings::row(ui, "Username", |ui| enter(field(ui,&mut app.saved.username,"username",false,SIGN_IN_WIDTH)));
+        super::settings::row(ui, "Password", |ui| enter(field(ui,&mut app.saved.password,"password",true,SIGN_IN_WIDTH)));
+        super::settings::row(ui, "", |ui| {
+            go|=ui.add_enabled(!busy, |ui: &mut egui::Ui| theme::pill_sized(ui,label,pal::VIOLET,vec2(110.0,30.0))).clicked();
+        });
         if go {
             // An empty address means this app's own station.
             let station = Some(app.saved.station.trim().to_string())
