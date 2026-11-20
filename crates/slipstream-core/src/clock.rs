@@ -56,9 +56,35 @@ pub fn offset() -> i64 {
     OFFSET.load(Ordering::Relaxed)
 }
 
-/// Records a trusted server's idea of the current time.
-pub fn learn_server_time(server_unix: i64) {
+/// Each server's own correction, by host name: its certificate is checked
+/// against the time it gives. With one correction for all, a station with a
+/// wrong clock (another organisation's, say) moved the time every other
+/// station's and relay's certificates were checked against.
+static HOST_OFFSETS: std::sync::Mutex<Vec<(String, i64)>> = std::sync::Mutex::new(Vec::new());
+
+/// Corrected current time for checking `host`'s certificate.
+fn now_for(host: &str) -> i64 {
+    let host = host.to_ascii_lowercase();
+    let off = HOST_OFFSETS.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(h, _)| *h == host).map(|(_, o)| *o);
+    match off {
+        Some(off) => (system_now() + off).max(BUILD_UNIX),
+        None => now(),
+    }
+}
+
+/// Records a trusted server's idea of the current time: for checking its own
+/// certificates (if `host` is given), and as the clock for everything else.
+pub fn learn_server_time(host: Option<&str>, server_unix: i64) {
     let off = server_unix - system_now();
+    if let Some(host) = host {
+        let host = host.to_ascii_lowercase();
+        let mut hosts = HOST_OFFSETS.lock().unwrap_or_else(|e| e.into_inner());
+        hosts.retain(|(h, _)| *h != host);
+        hosts.push((host, off));
+        if hosts.len() > 32 {
+            hosts.remove(0);
+        }
+    }
     let old = OFFSET.swap(off, Ordering::Relaxed);
     if off.abs() > 120 && (off - old).abs() > 60 {
         tracing::warn!("this computer's clock is off by {} — compensating", human(off));
@@ -100,7 +126,11 @@ impl ServerCertVerifier for ClockedVerifier {
         ocsp_response: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        let now = UnixTime::since_unix_epoch(Duration::from_secs(now().max(0) as u64));
+        let when = match server_name {
+            ServerName::DnsName(name) => now_for(name.as_ref()),
+            _ => now(),
+        };
+        let now = UnixTime::since_unix_epoch(Duration::from_secs(when.max(0) as u64));
         self.inner.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
     }
 
@@ -205,7 +235,7 @@ pub async fn sync_from(url: &reqwest::Url) -> Result<()> {
         .context("server sent no Date header")?;
     let when = httpdate::parse_http_date(date).context("unreadable Date header")?;
     let unix = when.duration_since(std::time::UNIX_EPOCH)?.as_secs() as i64;
-    learn_server_time(unix);
+    learn_server_time(url.host_str(), unix);
     Ok(())
 }
 
@@ -239,6 +269,16 @@ mod tests {
             "invalid peer certificate: certificate not valid for name \"relay.example\"; certificate is only valid for DnsName(\"attacker.example\")"
         ));
         assert!(!is_time_error("invalid peer certificate: NotValidForName"));
+    }
+
+    #[test]
+    fn each_server_certificate_uses_its_own_clock() {
+        let real = system_now();
+        learn_server_time(Some("Skewed.Example"), real + 30 * 86_400);
+        learn_server_time(Some("good.example"), real);
+        assert!((now_for("skewed.example") - real - 30 * 86_400).abs() < 5, "its own time for its own certificate");
+        assert!((now_for("good.example") - real).abs() < 5, "not moved by the other one");
+        assert!((now_for("unknown.example") - now()).abs() < 5, "others use the latest");
     }
 
     #[test]

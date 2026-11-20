@@ -266,7 +266,7 @@ impl DirectoryClient {
             .and_then(|d| httpdate::parse_http_date(d).ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         {
-            crate::clock::learn_server_time(t.as_secs() as i64);
+            crate::clock::learn_server_time(self.base.host_str(), t.as_secs() as i64);
         }
         let status = resp.status();
         // Stations are only trusted so far: cap what one answer may hold.
@@ -302,7 +302,7 @@ impl DirectoryClient {
             bail!("server speaks directory v{}, this app v{DIRECTORY_VERSION} — please update", h.version);
         }
         self.clock_offset = h.time - now();
-        crate::clock::learn_server_time(h.time);
+        crate::clock::learn_server_time(self.base.host_str(), h.time);
         Ok(h)
     }
 

@@ -372,9 +372,12 @@ unsafe extern "C" fn on_process(data: *mut c_void) {
 }
 
 unsafe fn take_frame(st: &mut State, buf: *mut PwBuffer) {
-    // Allow 20% early: frames arrive with jitter, and a strict check would
-    // drop every other frame at the monitor's refresh rate.
-    if st.last.elapsed() < st.min_interval.mul_f32(0.8) {
+    // Up to twice the frame rate is copied (the slot keeps the newest, the
+    // encoder takes them at its pace). Portal streams send a frame only when
+    // something changed, so a dropped one can be the last of a burst (the
+    // final keystroke) and stay missing until the next change: dropping
+    // anything 20% early lost those often, half an interval rarely.
+    if st.last.elapsed() < st.min_interval.mul_f32(0.5) {
         return;
     }
     // SAFETY: see on_process.

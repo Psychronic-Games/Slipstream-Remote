@@ -647,8 +647,12 @@ impl VaEncoder {
                 buffers.push(self.misc(VAEncMiscParameterType_VAEncMiscParameterTypeRateControl, &rate)?);
                 // SAFETY: as above.
                 let mut hrd: VAEncMiscParameterHRD = unsafe { std::mem::zeroed() };
-                hrd.buffer_size = bps / 2;
-                hrd.initial_buffer_fullness = bps / 4;
+                // About two frames of buffer, like NVENC's: half a second
+                // let a single frame grow to half a second of the link (a
+                // stall on a slow one). Never under a tenth of a second.
+                let frame_bits = (bps as f32 / self.fps.max(1.0)) as u32;
+                hrd.buffer_size = (frame_bits * 2).max(bps / 10);
+                hrd.initial_buffer_fullness = hrd.buffer_size / 2;
                 buffers.push(self.misc(VAEncMiscParameterType_VAEncMiscParameterTypeHRD, &hrd)?);
                 // SAFETY: as above.
                 let mut rate_of_frames: VAEncMiscParameterFrameRate = unsafe { std::mem::zeroed() };

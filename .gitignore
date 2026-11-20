@@ -7,3 +7,5 @@
 a.o
 # Local development notes and handoffs (not published)
 /notes
+# The station remembers its data folder here when run from a checkout
+/server/station/lib/.data-dir

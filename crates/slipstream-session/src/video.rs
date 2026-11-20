@@ -244,6 +244,8 @@ fn limit(s: &FlowState, base: u32, frame_interval: Duration) -> u64 {
 pub struct Pipeline {
     stop: Arc<AtomicBool>,
     keyframe: Arc<AtomicBool>,
+    /// Keyframes the viewer asked for, so far.
+    requests: Arc<std::sync::atomic::AtomicU32>,
     settings: Arc<Mutex<StreamSettings>>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -274,19 +276,25 @@ impl Pipeline {
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let keyframe = Arc::new(AtomicBool::new(true));
+        let requests = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let settings = Arc::new(Mutex::new(settings));
         let thread = {
-            let (stop, keyframe, settings) = (stop.clone(), keyframe.clone(), settings.clone());
+            let (stop, keyframe, settings, requests) =
+                (stop.clone(), keyframe.clone(), settings.clone(), requests.clone());
             thread::Builder::new()
                 .name("encoder".into())
-                .spawn(move || encode_loop(capture, flow, settings, keyframe, stop, out, errors, slow_encode_ms))
+                .spawn(move || {
+                    encode_loop(capture, flow, settings, keyframe, requests, stop, out, errors, slow_encode_ms)
+                })
                 .expect("spawn encoder thread")
         };
-        Self { stop, keyframe, settings, thread: Some(thread) }
+        Self { stop, keyframe, requests, settings, thread: Some(thread) }
     }
 
+    /// The viewer asks for a keyframe (it lost its place, or can't decode).
     pub fn request_keyframe(&self) {
         self.keyframe.store(true, Ordering::Relaxed);
+        self.requests.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn set_settings(&self, s: StreamSettings) {
@@ -316,11 +324,15 @@ struct RateControl {
     backed_off: bool,
     /// Since when the bitrate has been near the target (a fast link).
     full_since: Option<Instant>,
+    /// Still finding out how fast the link is (no backing off yet): the
+    /// bitrate doubles every second while frames don't queue up.
+    probing: bool,
 }
 
-/// Automatic bitrate starts here at most and climbs within seconds on a
-/// fast link: starting at the full target sent a first keyframe a slow
-/// link took seconds to carry.
+/// Automatic bitrate starts here on a link of unknown speed, and doubles
+/// while it keeps up: OpenH264 sizes the first keyframe by the bitrate, and
+/// at the full target (or even 1.5 Mbit/s) a slow link took seconds to
+/// show the first picture. A fast one reaches 4 Mbit/s in three seconds.
 const START_KBPS: u32 = 1_500;
 /// The lowest automatic bitrate: a picture still gets through on a link of
 /// a couple of hundred kbit/s.
@@ -330,11 +342,11 @@ impl RateControl {
     /// `base` is the link's round trip if known, and `last` the bitrate a
     /// previous pipeline on this link ended at.
     fn new(target: u32, base: Option<Duration>, last: Option<u32>) -> Self {
-        let start = match (last, base) {
-            (Some(last), _) => last,
+        let (start, probing) = match (last, base) {
+            (Some(last), _) => (last, false),
             // A local network: the full target straight away.
-            (None, Some(rtt)) if rtt < Duration::from_millis(20) => target,
-            _ => START_KBPS,
+            (None, Some(rtt)) if rtt < Duration::from_millis(20) => (target, false),
+            _ => (START_KBPS, true),
         };
         let current = start.clamp(FLOOR_KBPS, target.max(FLOOR_KBPS));
         let mut rc = Self {
@@ -343,6 +355,7 @@ impl RateControl {
             last_change: Instant::now(),
             backed_off: current < target,
             full_since: None,
+            probing,
         };
         rc.note_level();
         rc
@@ -387,8 +400,10 @@ impl RateControl {
             }
             self.current_kbps = next.max(FLOOR_KBPS);
             self.backed_off = true;
+            self.probing = false;
         } else if !queueing && since > Duration::from_secs(1) && self.current_kbps < self.target_kbps {
-            let step = (self.target_kbps / 20).max(self.current_kbps / 4);
+            let step =
+                if self.probing { self.current_kbps } else { (self.target_kbps / 20).max(self.current_kbps / 4) };
             self.current_kbps = (self.current_kbps + step).min(self.target_kbps);
             if self.current_kbps == self.target_kbps {
                 self.backed_off = false;
@@ -456,10 +471,12 @@ impl Speed {
         }
     }
 
-    /// Reduced-size frames went out and the picture has been still since:
-    /// time for a full-size one.
-    fn wants_sharp(&mut self) -> bool {
-        if self.last_small.is_some_and(|t| t.elapsed() >= Duration::from_millis(300)) {
+    /// Reduced-size frames went out and the picture has been still for
+    /// `after`: time for a full-size one. Each change of size is a keyframe,
+    /// so not after every short pause (typing paused every 300 ms or so,
+    /// two keyframes each time).
+    fn wants_sharp(&mut self, after: Duration) -> bool {
+        if self.last_small.is_some_and(|t| t.elapsed() >= after) {
             self.last_small = None;
             return true;
         }
@@ -473,11 +490,15 @@ fn encode_loop(
     flow: Arc<Flow>,
     settings: Arc<Mutex<StreamSettings>>,
     keyframe: Arc<AtomicBool>,
+    requests: Arc<std::sync::atomic::AtomicU32>,
     stop: Arc<AtomicBool>,
     out: mpsc::Sender<VideoFrame>,
     errors: mpsc::UnboundedSender<String>,
     slow_encode_ms: Option<f32>,
 ) {
+    // When the viewer last asked for keyframes (see below).
+    let mut asked: VecDeque<Instant> = VecDeque::new();
+    let mut requests_seen = 0;
     let start = Instant::now();
     let mut applied = *settings.lock().unwrap();
     let encoder_settings = EncoderSettings { bitrate_kbps: applied.bitrate_kbps, max_fps: applied.max_fps as f32 };
@@ -542,8 +563,12 @@ fn encode_loop(
                     && let Some(f) = last_frame.clone()
                 {
                     f
-                } else if speed.wants_sharp()
-                    && let Some(f) = last_frame.clone()
+                } else if speed.wants_sharp(if applied.bitrate_kbps != 0 && applied.bitrate_kbps <= 2_000 {
+                    // A low fixed bitrate (Low bandwidth): keyframes cost most.
+                    Duration::from_secs(2)
+                } else {
+                    Duration::from_secs(1)
+                }) && let Some(f) = last_frame.clone()
                 {
                     sharp = true;
                     f
@@ -591,6 +616,21 @@ fn encode_loop(
         };
         encoder.set_screen_content(screen_content);
 
+        // Three keyframe requests within 10 s: the viewer can't decode what
+        // the graphics card makes (it asks again after each failure, and the
+        // picture never came). The processor takes over for a while.
+        let total = requests.load(Ordering::Relaxed);
+        for _ in requests_seen..total {
+            asked.push_back(Instant::now());
+        }
+        requests_seen = total;
+        while asked.front().is_some_and(|t| t.elapsed() > Duration::from_secs(10)) {
+            asked.pop_front();
+        }
+        if asked.len() >= 3 && encoder.distrust_hardware() {
+            asked.clear();
+            keyframe.store(true, Ordering::Relaxed);
+        }
         let force = keyframe.swap(false, Ordering::Relaxed);
         let scale = if applied.adaptive_resolution && !sharp { speed.scale } else { 1.0 };
         encoder.set_scale(scale);

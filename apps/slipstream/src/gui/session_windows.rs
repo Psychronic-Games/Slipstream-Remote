@@ -100,11 +100,10 @@ pub(super) fn show(
                 let _ = actions.send((id, action));
                 ctx.request_repaint_of(egui::ViewportId::ROOT);
             }
-            ctx.request_repaint_after(std::time::Duration::from_millis(if ctx.input(|i| i.focused) {
-                16
-            } else {
-                100
-            }));
+            // New frames and input redraw at once; this only keeps the console
+            // around the picture ticking (redrawing the whole window 60 times a
+            // second on top of the video only competed with decoding).
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         });
     }
 }

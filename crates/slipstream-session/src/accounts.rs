@@ -40,6 +40,16 @@ pub enum Presence {
     Unknown,
 }
 
+/// The station's own word for its address replaces the one signed in with,
+/// except one that would drop HTTPS: behind a proxy that doesn't tell the
+/// station it's served over HTTPS, it reports http://, and the sign-in token
+/// then went out unencrypted.
+fn adopt_address(current: &str, reported: String) -> String {
+    let downgrade = current.starts_with("https://") && reported.starts_with("http://")
+        || !current.contains("://") && reported.starts_with("http://");
+    if reported.trim().is_empty() || downgrade { current.to_string() } else { reported }
+}
+
 impl Client {
     pub(crate) fn account(&self, r: &AccountRef) -> Result<StationAccount> {
         self.inner
@@ -65,10 +75,10 @@ impl Client {
         });
     }
 
-    /// Takes in what the station says about the account.
+    /// Takes in what the station says about the account (and its address).
     fn apply_state(&self, r: &AccountRef, state: AccountState) {
         self.update_account(r, |a| {
-            a.server = state.station.server;
+            a.server = adopt_address(&a.server, state.station.server);
             a.key = state.station.key;
             a.org = state.station.org;
             a.user = state.user;
@@ -306,5 +316,25 @@ impl Client {
         on_progress(format!("Locating {id} on {}…", a.label()));
         let found = Self::station_client(&a)?.lookup(id).await?;
         self.connect_found(id, found, &password, mode, on_progress, Some(a.server)).await
+    }
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::adopt_address;
+
+    #[test]
+    fn a_station_can_tidy_its_address_but_never_drop_https() {
+        assert_eq!(
+            adopt_address("support.example.com", "https://support.example.com".into()),
+            "https://support.example.com"
+        );
+        assert_eq!(
+            adopt_address("https://support.example.com", "http://support.example.com".into()),
+            "https://support.example.com"
+        );
+        assert_eq!(adopt_address("support.example.com", "http://support.example.com".into()), "support.example.com");
+        assert_eq!(adopt_address("http://10.0.0.5", "http://10.0.0.5".into()), "http://10.0.0.5");
+        assert_eq!(adopt_address("https://a.example", "".into()), "https://a.example");
     }
 }

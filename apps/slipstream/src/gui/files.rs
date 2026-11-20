@@ -392,7 +392,26 @@ impl FileManager {
                 j.total.store(files.iter().map(|f| f.2).sum(), Ordering::Relaxed);
                 anyhow::ensure!(j.begin(), "Transfer was cancelled before sending files");
                 let mut last = String::new();
-                for (path, rel, _) in &files {
+                // A folder sent again (after a dropped link, say) skips the
+                // files already there at the same size: before, every one
+                // came over again as "name (1)".
+                let mut there: std::collections::HashMap<String, std::collections::HashMap<String, u64>> =
+                    Default::default();
+                let mut skipped = 0;
+                for (path, rel, size) in &files {
+                    if let (UploadTarget::Folder(base), Some((dir, name))) = (&target, rel.rsplit_once('/')) {
+                        let dir = format!("{}/{dir}", base.trim_end_matches(['/', '\\']));
+                        if !there.contains_key(&dir) {
+                            let names = fs.list(Some(dir.clone())).await.map(|l| l.entries).unwrap_or_default();
+                            let names = names.into_iter().filter(|e| !e.is_dir).map(|e| (e.name, e.size)).collect();
+                            there.insert(dir.clone(), names);
+                        }
+                        if there[&dir].get(name) == Some(size) {
+                            j.done.fetch_add(*size, Ordering::Relaxed);
+                            skipped += 1;
+                            continue;
+                        }
+                    }
                     last = fs
                         .upload(path, target.clone(), rel.clone(), |n| {
                             j.done.fetch_add(n, Ordering::Relaxed);
@@ -404,10 +423,11 @@ impl FileManager {
                         })
                         .await?;
                 }
-                Ok(match files.len() {
-                    0 => format!("{folders} folders sent"),
-                    1 => format!("saved to {last}"),
-                    n => format!("{n} files sent"),
+                Ok(match (files.len() - skipped, skipped) {
+                    (0, 0) => format!("{folders} folders sent"),
+                    (1, 0) => format!("saved to {last}"),
+                    (n, 0) => format!("{n} files sent"),
+                    (n, k) => format!("{n} files sent, {k} already there"),
                 })
             }
             .await;
@@ -455,13 +475,21 @@ impl FileManager {
             let result: anyhow::Result<String> = async {
                 let mut files = Vec::new();
                 for (path, is_dir, name, size) in picks {
-                    files.extend(fs.walk(path, is_dir, name, size).await?);
+                    // Folders only: a file in a folder fetched again is skipped
+                    // when already here at the same size.
+                    files.extend(fs.walk(path, is_dir, name, size).await?.into_iter().map(|f| (f, is_dir)));
                 }
-                j.total.store(files.iter().map(|f| f.2).sum(), Ordering::Relaxed);
+                j.total.store(files.iter().map(|f| f.0.2).sum(), Ordering::Relaxed);
                 anyhow::ensure!(j.begin(), "Transfer was cancelled before sending files");
                 let mut last = PathBuf::new();
-                for (remote, rel, _) in &files {
+                let mut skipped = 0;
+                for ((remote, rel, size), in_folder) in &files {
                     let dest = dest_dir.join(fsops::safe_relative(rel)?);
+                    if *in_folder && std::fs::metadata(&dest).is_ok_and(|m| m.is_file() && m.len() == *size) {
+                        j.done.fetch_add(*size, Ordering::Relaxed);
+                        skipped += 1;
+                        continue;
+                    }
                     last = fs
                         .download(remote.clone(), &dest, |n| {
                             j.done.fetch_add(n, Ordering::Relaxed);
@@ -473,9 +501,10 @@ impl FileManager {
                         })
                         .await?;
                 }
-                Ok(match files.len() {
-                    1 => format!("saved to {}", last.display()),
-                    n => format!("{n} files received"),
+                Ok(match (files.len() - skipped, skipped) {
+                    (1, 0) => format!("saved to {}", last.display()),
+                    (n, 0) => format!("{n} files received"),
+                    (n, k) => format!("{n} files received, {k} already here"),
                 })
             }
             .await;

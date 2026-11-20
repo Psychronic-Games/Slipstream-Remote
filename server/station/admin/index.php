@@ -614,6 +614,10 @@ slip_page_start('Station admin', '../', 'admin-console');
         $inventory = $private ? slip_device_inventory($d['endpoint']) : [];
         $groups = slip_device_groups($sharedById[$d['id']] ?? []);
         $facts = slip_device_facts($d, $inventory, $groups, $currentVersion, $private);
+        // The list shows the summary; the full report (up to a megabyte a
+        // device) is read on the device's own page. Kept for every device,
+        // a few hundred of them ran past PHP's memory limit.
+        unset($inventory['report']);
         $view[$d['id']] = ['inventory' => $inventory, 'facts' => $facts];
         $tally['status'][$facts['status']] = ($tally['status'][$facts['status']] ?? 0) + 1;
         $tally['os'][$facts['os']] = ($tally['os'][$facts['os']] ?? 0) + 1;

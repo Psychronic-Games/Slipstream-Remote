@@ -57,7 +57,44 @@ show in small print: `0.6.0 (build N · commit)`.
   - Linux: the window no longer waits on `systemctl`.
   - Less work every frame on the Bridge; GDI capture and the frame pool
     reuse their buffers.
+- **Smoother everywhere:**
+  - The window redraws a remote screen as its frames arrive, instead of at
+    the display's full rate on top of them (up to 144 times a second), and
+    the console's animations at up to 60 fps.
+  - Decoded pictures reuse their memory; Windows reads each captured
+    picture once, and only for frames that are sent.
+  - Automatic bitrate no longer costs a keyframe (a stall on a slow link)
+    each time it climbs back; it doubles every second until it finds the
+    link's limit.
+  - Pointer moves held up by a slow link go as one, so the pointer jumps
+    to where it is instead of replaying its path late.
+  - A minimized or hidden viewer stops the picture being sent.
+  - Graphics cards: one that failed is tried again later, and one whose
+    pictures can't be decoded hands over to the processor. AMD and Intel
+    (VA-API) frames stay small, like NVIDIA's.
+- **Sound:** nothing is sent while the computer is silent, 64 kbit/s
+  otherwise; no stale sound after a stall; fewer dropouts on a jittery link.
+- **More fixes:**
+  - Keys and buttons held when the link goes silent are let go within
+    5 seconds, not half a minute.
+  - Linux (X11): a screen that changes size (a virtual machine following
+    its window, xrandr) is followed instead of ending the link.
+  - Sending a folder again skips files already there; port forwards come
+    back after a reconnect.
+  - Files named like Windows devices (`con.txt`) get an underscore instead
+    of failing a whole folder.
+  - With several screens on view, one whose stream failed starts again.
+  - A long file paste leaves the files on the remote clipboard rather than
+    pressing Ctrl+V minutes later; pasted text is always there before the
+    keystroke.
 - **Stations:**
+  - Stations remember their data folder, and never switch to an empty one.
+  - `base_url` in `config.php` for proxies that serve HTTPS without telling
+    the station; apps never move a station from HTTPS to HTTP.
+  - Each server's certificate is checked against its own clock.
+  - The relay is identified, not just found listening, and moves port if
+    another program takes it.
+  - The Devices tab no longer loads every device's full report.
   - A forged `X-Forwarded-Proto` header can no longer make an HTTP-only
     station redirect everything to HTTPS.
   - Account, device and station files are never replaced by a cut-off copy

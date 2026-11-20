@@ -15,9 +15,13 @@ $org = ($station['org'] ?? '') !== '' ? $station['org'] : 'Slipstream Remote';
 $builds = slip_client_builds();
 $any = array_filter($builds, fn($b) => $b['path']);
 
-// Optional download password.
-slip_session_start('slipstream_dl');
-$needPassword = !empty($station['download_password_hash']) && empty($_SESSION['dl_ok']);
+// Optional download password. A session only when there is one: every
+// visitor otherwise left a session file behind.
+$needPassword = false;
+if (!empty($station['download_password_hash'])) {
+    slip_session_start('slipstream_dl');
+    $needPassword = empty($_SESSION['dl_ok']);
+}
 $error = null;
 if ($needPassword && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     if (!slip_rate_ok('dlpass', 10)) {

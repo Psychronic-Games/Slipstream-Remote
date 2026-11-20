@@ -2112,6 +2112,13 @@ impl App {
     }
 }
 
+/// Whether this `logic` call is part of an egui pass: eframe runs one while
+/// any of the app's windows can be seen (the main one or one of its own),
+/// and otherwise only ticks `logic`.
+fn logic_draws(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.raw.viewports.is_empty() || i.raw.viewports.values().any(|v| v.visible() != Some(false)))
+}
+
 /// "Slipstream Remote - Acme IT" (matches the station's download names).
 fn window_title(org: Option<&str>) -> String {
     match org.map(str::trim).filter(|o| !o.is_empty() && !o.eq_ignore_ascii_case("Slipstream Remote")) {
@@ -2353,11 +2360,16 @@ impl eframe::App for App {
         }
         self.update_tray();
         home::incoming_windows(self, ctx);
-        saved::windows(self, ctx);
-        manage::windows(self, ctx);
-        self.station_switch_window(ctx);
-        home::recent_prompt(self, ctx);
-        quick_connect::window(self, ctx);
+        // Windows inside the main one only when it's drawn: with nothing on
+        // view, eframe runs `logic` without an egui pass, and what they
+        // painted piled up until the window was shown again.
+        if logic_draws(ctx) {
+            saved::windows(self, ctx);
+            manage::windows(self, ctx);
+            self.station_switch_window(ctx);
+            home::recent_prompt(self, ctx);
+            quick_connect::window(self, ctx);
+        }
         if self.start_hidden {
             self.start_hidden = false;
             self.set_visible(ctx, false);
@@ -2607,11 +2619,13 @@ impl eframe::App for App {
             }
         }
 
-        // Animate at the display's refresh rate whenever the window can be
-        // seen (vsync paces it; compositors pause windows that are covered),
-        // or a few times a second when the processor draws (input and new
-        // video still redraw at once). Hidden or minimized, a slow tick
-        // keeps the state fresh.
+        // Input and new video redraw at once. Beyond that: a remote screen
+        // on view redraws as its frames arrive (redrawing at the display's
+        // rate in between, 144 times a second on some, only competed with
+        // decoding); elsewhere the console animates at up to 60 fps (30 when
+        // the window isn't focused), or a few times a second when the
+        // processor draws. Hidden or minimized, a slow tick keeps the state
+        // fresh.
         if self.hidden || ctx.input(|i| i.viewport().minimized == Some(true)) {
             ctx.request_repaint_after(Duration::from_secs(1));
         } else if self.software == Some(true) {
@@ -2620,10 +2634,12 @@ impl eframe::App for App {
             } else {
                 Duration::from_millis(500)
             });
+        } else if matches!(self.page, Page::Remote(_)) {
+            ctx.request_repaint_after(Duration::from_millis(250));
         } else if self.window_focused {
-            ctx.request_repaint();
-        } else {
             ctx.request_repaint_after(Duration::from_millis(16));
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(33));
         }
 
         self.draw_tray_hint(&ctx);

@@ -34,7 +34,6 @@ function slip_config(): array
         return $config;
     }
     $defaults = [
-        'data_dir' => slip_default_data_dir(),
         'db' => null,
         // Connection lookups and batched online-status polls have separate
         // per-IP budgets. Signed host traffic is counted per device key.
@@ -52,6 +51,10 @@ function slip_config(): array
     $file = SLIP_ROOT . '/config.php';
     $user = is_file($file) ? (include $file) : [];
     $config = array_merge($defaults, is_array($user) ? $user : []);
+    // Worked out (and remembered) only when config.php doesn't say.
+    if (empty($config['data_dir'])) {
+        $config['data_dir'] = slip_default_data_dir();
+    }
     return $config;
 }
 
@@ -62,14 +65,36 @@ function slip_config(): array
  */
 function slip_default_data_dir(): string
 {
-    $docRoot = realpath($_SERVER['DOCUMENT_ROOT'] ?? '') ?: realpath(SLIP_ROOT);
-    if ($docRoot) {
-        $outside = dirname($docRoot) . '/slipstream-data';
-        if (is_dir($outside) || (is_writable(dirname($docRoot)) && @mkdir($outside, 0750))) {
-            return $outside;
+    // The folder chosen before, remembered beside the code (lib/ is closed to
+    // web visitors): the command-line updater has no document root, and
+    // whether the parent folder can be written may change. Worked out anew
+    // each time, a station could switch to an empty folder and look
+    // unconfigured (its admin page then offering setup to anyone).
+    $remembered = SLIP_ROOT . '/lib/.data-dir';
+    $remember = function (string $dir) use ($remembered): string {
+        if (@file_get_contents($remembered) !== $dir) {
+            @file_put_contents($remembered, $dir, LOCK_EX);
+        }
+        return $dir;
+    };
+    $inside = realpath(SLIP_ROOT) . '/data';
+    $root = (string)($_SERVER['DOCUMENT_ROOT'] ?? '');
+    $docRoot = ($root !== '' ? realpath($root) : false) ?: realpath(SLIP_ROOT);
+    $outside = $docRoot ? dirname($docRoot) . '/slipstream-data' : null;
+    // A folder that already holds a station wins.
+    foreach ([$outside, $inside] as $dir) {
+        if ($dir !== null && is_file("$dir/station.json")) {
+            return $remember($dir);
         }
     }
-    return realpath(SLIP_ROOT) . '/data';
+    $saved = trim((string)@file_get_contents($remembered));
+    if ($saved !== '' && is_dir($saved)) {
+        return $saved;
+    }
+    if ($outside !== null && (is_dir($outside) || (is_writable(dirname($docRoot)) && @mkdir($outside, 0750)))) {
+        return $remember($outside);
+    }
+    return $remember($inside);
 }
 
 function slip_data_dir(): string
@@ -1287,16 +1312,30 @@ function slip_can_exec(): bool
 
 function slip_relay_running(): bool
 {
+    return slip_relay_probe() === 'ours';
+}
+
+/**
+ * What answers on the relay's port: 'ours', 'none', or 'other'. Asked, not
+ * just connected to: after a reboot another program (another site's, on
+ * shared hosting) can take the port first, and the station then sent its
+ * relay traffic, access key and all, to it.
+ */
+function slip_relay_probe(): string
+{
     $port = (int)(slip_station()['relay_port'] ?? 0);
     if (!$port) {
-        return false;
+        return 'none';
     }
     $s = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.3);
-    if ($s) {
-        fclose($s);
-        return true;
+    if (!$s) {
+        return 'none';
     }
-    return false;
+    stream_set_timeout($s, 1);
+    @fwrite($s, "GET / HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    $answer = (string)@stream_get_contents($s, 8192);
+    fclose($s);
+    return str_contains($answer, 'Slipstream Remote server') ? 'ours' : 'other';
 }
 
 /** relay.log size at which it moves to relay.log.1 (the previous one goes). */
@@ -1337,6 +1376,15 @@ function slip_relay_ensure(bool $force = false, string $reason = 'automatic_reco
         return true;
     }
     $bin = slip_relay_binary();
+    // Someone else holds our port: move to a free one.
+    if (slip_relay_probe() === 'other') {
+        $taken = (int)(slip_station()['relay_port'] ?? 0);
+        slip_station_save(['relay_port' => slip_pick_port()]);
+        slip_write_htaccess(); // /relay goes to the new port
+        slip_relay_note('WARN', 'relay_port_taken', 'Another program holds the relay port: moving the relay', [
+            'listen_port' => $taken, 'new_port' => (int)slip_station()['relay_port'],
+        ]);
+    }
     $port = (int)(slip_station()['relay_port'] ?? 0);
     if (!$bin || !$port || !slip_can_exec()) {
         slip_relay_note('ERROR', 'relay_start_failed', 'Relay cannot start', [
@@ -1500,7 +1548,9 @@ function slip_rate_ok(string $kind, int $perMinute, ?string $identity = null, in
     $file = $dir . '/' . sha1($kind . '|' . ($identity ?? slip_client_ip()));
     $fh = @fopen($file, 'c+');
     if (!$fh) {
-        return true;
+        // Can't count (a full disk, no inodes left): guesses at passwords
+        // and codes aren't let through unlimited; everything else is.
+        return !preg_match('/^(login|applogin|adminlogin|link|dlpass|badkey)/', $kind);
     }
     flock($fh, LOCK_EX);
     $parts = explode(' ', trim((string)stream_get_contents($fh)) ?: '0 0');
@@ -1515,7 +1565,11 @@ function slip_rate_ok(string $kind, int $perMinute, ?string $identity = null, in
     fwrite($fh, "$start $count");
     flock($fh, LOCK_UN);
     fclose($fh);
-    if (random_int(1, 200) === 1) {
+    // Old counters are swept once a minute at most: the folder holds one per
+    // device and address, and a sweep now and then at random stat'ed them
+    // all far too often on a big station.
+    $swept = "$dir/.swept";
+    if (time() - (int)@filemtime($swept) >= 60 && @touch($swept)) {
         foreach (glob("$dir/*") ?: [] as $f) {
             if (filemtime($f) < time() - 120) {
                 @unlink($f);
@@ -1558,6 +1612,12 @@ function slip_host(): string
 /** The station's public root URL, e.g. https://relay.example.com/ */
 function slip_base_url(): string
 {
+    // config.php can say outright (a proxy that serves HTTPS but doesn't
+    // tell PHP so, which would hand apps an http:// address).
+    $base = trim((string)(slip_config()['base_url'] ?? ''));
+    if (preg_match('#^https?://[^/\s]+#i', $base)) {
+        return rtrim($base, '/') . '/';
+    }
     return slip_scheme() . '://' . slip_host() . '/';
 }
 
@@ -1565,10 +1625,9 @@ function slip_base_url(): string
 function slip_server_address(): string
 {
     $url = slip_base_url();
-    return slip_scheme() === 'https' ? rtrim(substr($url, 8), '/') : rtrim($url, '/');
+    return str_starts_with($url, 'https://') ? rtrim(substr($url, 8), '/') : rtrim($url, '/');
 }
 
-/** Relays to advertise: ours (with the access key) if it's running. */
 /** Restarts the relay if it isn't running, checked at most once a minute. */
 function slip_relay_check_now_and_then(): void
 {
@@ -1584,6 +1643,7 @@ function slip_relay_check_now_and_then(): void
     slip_relay_ensure();
 }
 
+/** Relays to advertise: ours (with the access key) if it's running. */
 function slip_relays(): array
 {
     if (!slip_relay_ensure()) {

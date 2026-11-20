@@ -53,10 +53,12 @@ impl RateLimiter {
         let mut b = self.buckets.lock().unwrap();
         if b.len() > 50_000 {
             b.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(60));
-            // Still that many live buckets (a flood of keys): start afresh
-            // rather than scanning them all on every request.
+            // Still that many live buckets: drop the per-device ones rather
+            // than scanning them all on every request. The per-address ones
+            // (lookups, bad keys) stay: emptying those too let anyone reset
+            // every limit with a flood of new device keys.
             if b.len() > 50_000 {
-                b.clear();
+                b.retain(|(subject, _), _| !subject.starts_with("device:"));
             }
         }
         let e = b.entry((subject, kind)).or_insert((Instant::now(), 0));
@@ -213,6 +215,16 @@ pub async fn handle(
             if !fresh_timestamp(p.time, now()) {
                 return err(StatusCode::FORBIDDEN, "request expired — check this computer's clock");
             }
+            // Heartbeats count per device key, which anyone can make anew:
+            // first registrations are limited per address, before a device
+            // gets a bucket of its own (so new keys can't crowd the table).
+            let known = app.db.describe_endpoint(&p.endpoint).ok().flatten().is_some();
+            if op == "unregister" && !known {
+                return Json(json!({ "ok": true })).into_response();
+            }
+            if !known && !app.limits.allow(ip, "new_device", NEW_DEVICES_PER_MIN) {
+                return err(StatusCode::TOO_MANY_REQUESTS, "too many new devices from this network — wait a minute");
+            }
             if !app.limits.allow_device(&p.endpoint, "register", REGISTERS_PER_MIN) {
                 return err(StatusCode::TOO_MANY_REQUESTS, "too many heartbeats for this device — wait a minute");
             }
@@ -221,13 +233,6 @@ pub async fn handle(
                 return Json(json!({ "ok": true })).into_response();
             }
             let Some(addr) = p.addr else { return err(StatusCode::BAD_REQUEST, "missing addr") };
-            // Heartbeats count per device key, which anyone can make anew:
-            // first registrations are also limited per address.
-            if app.db.describe_endpoint(&p.endpoint).ok().flatten().is_none()
-                && !app.limits.allow(ip, "new_device", NEW_DEVICES_PER_MIN)
-            {
-                return err(StatusCode::TOO_MANY_REQUESTS, "too many new devices from this network — wait a minute");
-            }
             let mut info = p.info.unwrap_or_default();
             info = DeviceInfo {
                 name: info.name.chars().take(64).collect(),

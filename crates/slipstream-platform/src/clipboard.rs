@@ -98,16 +98,19 @@ fn open(source: &ClipboardSource) -> Option<Box<dyn Backend>> {
 }
 
 /// Handle to a background clipboard worker.
+/// What to put on the clipboard, and whom to tell once it's there.
+type SetRequest = (Clip, Option<tokio::sync::oneshot::Sender<()>>);
+
 #[derive(Clone)]
 pub struct Clipboard {
-    tx: mpsc::Sender<Clip>,
+    tx: mpsc::Sender<SetRequest>,
 }
 
 impl Clipboard {
     /// Starts watching the clipboard. Local changes are sent to
     /// `on_change`. Returns `None` if there is no clipboard access.
     pub fn start(on_change: UnboundedSender<Clip>, source: &ClipboardSource) -> Option<Self> {
-        let (tx, rx) = mpsc::channel::<Clip>();
+        let (tx, rx) = mpsc::channel::<SetRequest>();
         let (ready_tx, ready_rx) = mpsc::channel();
         let source = source.clone();
         thread::Builder::new()
@@ -127,25 +130,37 @@ impl Clipboard {
 
     /// Replaces the local clipboard text (from the remote side).
     pub fn set_text(&self, text: String) {
-        let _ = self.tx.send(Clip::Text(text));
+        let _ = self.tx.send((Clip::Text(text), None));
+    }
+
+    /// [`set_text`](Self::set_text), returning once it's on the clipboard (or
+    /// `wait` passed): a paste keystroke right behind it must find it there.
+    pub async fn set_text_then(&self, text: String, wait: Duration) {
+        let (done, set) = tokio::sync::oneshot::channel();
+        if self.tx.send((Clip::Text(text), Some(done))).is_ok() {
+            let _ = tokio::time::timeout(wait, set).await;
+        }
     }
 
     /// Puts files on the local clipboard, ready to paste.
     pub fn set_files(&self, files: Vec<PathBuf>) {
-        let _ = self.tx.send(Clip::Files(files));
+        let _ = self.tx.send((Clip::Files(files), None));
     }
 }
 
-fn worker(mut cb: Box<dyn Backend>, rx: mpsc::Receiver<Clip>, on_change: UnboundedSender<Clip>) {
+fn worker(mut cb: Box<dyn Backend>, rx: mpsc::Receiver<SetRequest>, on_change: UnboundedSender<Clip>) {
     // Whatever is on the clipboard at start is not "new", and neither is
     // what we put there ourselves (no echo back to the remote side).
     let mut last = cb.get();
     loop {
         match rx.recv_timeout(Duration::from_millis(400)) {
-            Ok(clip) => {
+            Ok((clip, done)) => {
                 if last.as_ref() != Some(&clip) {
                     cb.set(clip.clone());
                     last = Some(clip);
+                }
+                if let Some(done) = done {
+                    let _ = done.send(());
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {

@@ -33,6 +33,18 @@ fn connect() -> Result<(RustConnection, Window)> {
 
 pub fn list_displays() -> Result<Vec<DisplayInfo>> {
     let (conn, root) = connect()?;
+    Ok(displays_on(&conn, root))
+}
+
+/// Bumped whenever capture finds a screen's size or place changed, so input
+/// mapping lists the displays again (see `generic`).
+static GEOMETRY_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn geometry_epoch() -> u64 {
+    GEOMETRY_EPOCH.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn displays_on(conn: &RustConnection, root: Window) -> Vec<DisplayInfo> {
     let mut out = Vec::new();
     if let Ok(Ok(reply)) = conn.randr_get_monitors(root, true).map(|c| c.reply()) {
         {
@@ -70,7 +82,19 @@ pub fn list_displays() -> Result<Vec<DisplayInfo>> {
     if !out.iter().any(|d| d.primary) {
         out[0].primary = true;
     }
-    Ok(out)
+    // Monitors as they lie on the screen as it is now: RandR can report a
+    // monitor bigger than the root window right after the screen shrinks,
+    // and asking X for pixels outside it fails.
+    if let Ok(Ok(root)) = conn.get_geometry(root).map(|c| c.reply()) {
+        let (rw, rh) = (root.width as i32, root.height as i32);
+        for d in &mut out {
+            d.x = d.x.clamp(0, (rw - 2).max(0));
+            d.y = d.y.clamp(0, (rh - 2).max(0));
+            d.width = d.width.min((rw - d.x) as u32);
+            d.height = d.height.min((rh - d.y) as u32);
+        }
+    }
+    out
 }
 
 /// A shared-memory segment the X server writes screenshots into.
@@ -136,9 +160,11 @@ pub fn capture(display: DisplayInfo, max_fps: u32) -> Result<FrameStream> {
 
 fn capture_loop(d: &DisplayInfo, interval: Duration, slot: &FrameSlot) -> Result<()> {
     let (conn, root) = connect()?;
-    let (w, h) = (d.width as u16, d.height as u16);
-    let len = w as usize * h as usize * 4;
-    let shm = Shm::new(&conn, len).map_err(|e| tracing::info!("X11: {e}; using GetImage")).ok();
+    let mut d = d.clone();
+    let (mut w, mut h) = (d.width as u16, d.height as u16);
+    let mut len = w as usize * h as usize * 4;
+    let mut shm = Shm::new(&conn, len).map_err(|e| tracing::info!("X11: {e}; using GetImage")).ok();
+    let use_shm = shm.is_some();
     let cursor = conn.xfixes_query_version(5, 0).ok().and_then(|c| c.reply().ok()).is_some();
     let mut next = Instant::now();
     // X11 has no "picture changed" signal without XDamage, so compare with
@@ -146,33 +172,73 @@ fn capture_loop(d: &DisplayInfo, interval: Duration, slot: &FrameSlot) -> Result
     // not an encode.
     let mut prev: Vec<u8> = Vec::new();
     let mut prev_cursor = None;
+    // The screen can change size or place under us (a virtual machine
+    // following its window, xrandr): checked now and then, and at once when
+    // a grab fails (one outside the screen does), rather than ending the
+    // session or showing part of the screen.
+    let mut checked = Instant::now();
+    let mut failures = 0;
     while !slot.is_closed() {
+        if failures > 0 || checked.elapsed() >= Duration::from_secs(2) {
+            checked = Instant::now();
+            let now = displays_on(&conn, root);
+            let fresh = now.iter().find(|x| x.index == d.index).or_else(|| now.iter().find(|x| x.primary)).cloned();
+            if let Some(fresh) = fresh
+                && (fresh.x, fresh.y, fresh.width, fresh.height) != (d.x, d.y, d.width, d.height)
+            {
+                tracing::info!(from = ?(d.width, d.height), to = ?(fresh.width, fresh.height), "X11: the screen changed size or place");
+                d = fresh;
+                (w, h) = (d.width as u16, d.height as u16);
+                len = w as usize * h as usize * 4;
+                if use_shm {
+                    shm = Some(Shm::new(&conn, len)?);
+                }
+                prev.clear();
+                prev_cursor = None;
+                GEOMETRY_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         let pointer = if cursor { conn.xfixes_get_cursor_image()?.reply().ok() } else { None };
         let pointer_at = pointer.as_ref().map(|c| (c.x, c.y, c.cursor_serial));
-        let data = match &shm {
-            Some(shm) => {
-                let reply = conn
-                    .shm_get_image(root, d.x as i16, d.y as i16, w, h, !0, ImageFormat::Z_PIXMAP.into(), shm.seg, 0)?
-                    .reply()?;
-                if reply.depth < 24 {
-                    bail!("unsupported colour depth {}", reply.depth);
-                }
-                // A still screen is compared in place, not copied first.
-                let fresh = &shm.bytes()[..len];
-                if pointer_at == prev_cursor && fresh == prev.as_slice() {
-                    None
-                } else {
-                    let mut data = slot.buffer(len);
-                    data.extend_from_slice(fresh);
-                    Some(data)
-                }
-            }
+        let grabbed = match &shm {
+            Some(shm) => conn
+                .shm_get_image(root, d.x as i16, d.y as i16, w, h, !0, ImageFormat::Z_PIXMAP.into(), shm.seg, 0)?
+                .reply()
+                .map(|reply| {
+                    if reply.depth < 24 {
+                        return Err(anyhow!("unsupported colour depth {}", reply.depth));
+                    }
+                    // A still screen is compared in place, not copied first.
+                    let fresh = &shm.bytes()[..len];
+                    Ok(if pointer_at == prev_cursor && fresh == prev.as_slice() {
+                        None
+                    } else {
+                        let mut data = slot.buffer(len);
+                        data.extend_from_slice(fresh);
+                        Some(data)
+                    })
+                }),
             None => {
-                let reply = conn.get_image(ImageFormat::Z_PIXMAP, root, d.x as i16, d.y as i16, w, h, !0)?.reply()?;
-                if reply.depth < 24 || reply.data.len() < len {
-                    bail!("unsupported image format (depth {})", reply.depth);
+                conn.get_image(ImageFormat::Z_PIXMAP, root, d.x as i16, d.y as i16, w, h, !0)?.reply().map(|reply| {
+                    if reply.depth < 24 || reply.data.len() < len {
+                        return Err(anyhow!("unsupported image format (depth {})", reply.depth));
+                    }
+                    Ok(Some(reply.data))
+                })
+            }
+        };
+        let data = match grabbed {
+            Ok(result) => {
+                failures = 0;
+                result?
+            }
+            Err(e) => {
+                failures += 1;
+                if failures > 10 {
+                    bail!("screen grab failed: {e}");
                 }
-                Some(reply.data)
+                thread::sleep(Duration::from_millis(100));
+                continue;
             }
         };
         match data {

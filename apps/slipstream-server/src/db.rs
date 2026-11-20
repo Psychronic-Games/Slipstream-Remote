@@ -26,7 +26,11 @@ impl Db {
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(
+            // NORMAL with WAL: no disk sync on every heartbeat (with the
+            // connection locked meanwhile); a power cut can lose the last
+            // moments, which heartbeats send again within half a minute.
             "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
              CREATE TABLE IF NOT EXISTS devices (
                  endpoint    TEXT PRIMARY KEY,
                  device_id   INTEGER NOT NULL UNIQUE,
@@ -36,7 +40,8 @@ impl Db {
                  addr        TEXT,
                  created     INTEGER NOT NULL,
                  last_seen   INTEGER NOT NULL
-             );",
+             );
+             CREATE INDEX IF NOT EXISTS devices_last_seen ON devices (last_seen);",
         )?;
         Ok(Self { conn: Mutex::new(conn) })
     }

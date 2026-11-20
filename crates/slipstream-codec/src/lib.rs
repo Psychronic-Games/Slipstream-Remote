@@ -6,7 +6,7 @@
 //! Other hardware encoders (Media Foundation, VA-API, VideoToolbox) plug in
 //! the same way.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use openh264::{
@@ -186,6 +186,12 @@ pub struct Encoder {
     hw: Option<hardware::Hardware>,
     /// Hardware encoders that failed here (each is tried once).
     hw_failed: Vec<hardware::Kind>,
+    /// Hardware encoders that worked and then failed while encoding (a
+    /// driver reset, a desktop switch, another program taking the last
+    /// session): tried again after a while, rather than leaving a big screen
+    /// on a slow processor for the rest of the stream. When, and how long to
+    /// wait next.
+    hw_retry: Vec<(hardware::Kind, Instant, Duration)>,
     /// Hardware is off: not wanted, or none could be used.
     hw_off: bool,
     /// OpenH264 in its screen-content mode (see [`Encoder::set_screen_content`]).
@@ -214,6 +220,7 @@ impl Encoder {
             scale: 1.0,
             hw: None,
             hw_failed: Vec::new(),
+            hw_retry: Vec::new(),
             hw_off: !hardware,
             screen: false,
         }
@@ -239,6 +246,20 @@ impl Encoder {
             // Frees the graphics card's encoder; reopened once it's off.
             self.hw = None;
         }
+    }
+
+    /// The viewer keeps asking for keyframes (it can't decode what the
+    /// graphics card makes): encode on the processor, and try the card again
+    /// later (see `hw_retry`). True if a hardware encoder was in use.
+    pub fn distrust_hardware(&mut self) -> bool {
+        let Some(kind) = self.hw.take().map(|hw| hw.kind()) else { return false };
+        tracing::warn!(?kind, "the viewer can't decode this hardware encoder's pictures: using the processor");
+        let wait = match self.hw_retry.iter().position(|(k, ..)| *k == kind) {
+            Some(i) => (self.hw_retry.remove(i).2 * 2).min(Duration::from_secs(600)),
+            None => Duration::from_secs(60),
+        };
+        self.hw_retry.push((kind, Instant::now(), wait));
+        true
     }
 
     /// What is encoding right now, for the viewer's statistics.
@@ -303,10 +324,18 @@ impl Encoder {
     fn set_bitrate(&mut self) -> bool {
         let kbps = self.kbps(self.planes.width, self.planes.height);
         let Some(enc) = self.inner.as_mut() else { return false };
-        let mut info = openh264_sys2::SBitrateInfo {
-            iLayer: openh264_sys2::SPATIAL_LAYER_ALL,
-            iBitrate: (kbps as i32).saturating_mul(1000),
-        };
+        let bps = (kbps as i32).saturating_mul(1000);
+        // The ceiling first: OpenH264 refuses a bitrate above the one the
+        // encoder was made with, and the encoder was then made again, at
+        // the cost of a keyframe (seconds on a slow link) every time the
+        // automatic bitrate climbed past where it started.
+        for layer in [openh264_sys2::SPATIAL_LAYER_ALL, openh264_sys2::SPATIAL_LAYER_0] {
+            let mut max = openh264_sys2::SBitrateInfo { iLayer: layer, iBitrate: bps };
+            // SAFETY: a valid encoder handle and a live SBitrateInfo, which is
+            // what ENCODER_OPTION_MAX_BITRATE expects.
+            unsafe { enc.raw_api().set_option(openh264_sys2::ENCODER_OPTION_MAX_BITRATE, (&raw mut max).cast()) };
+        }
+        let mut info = openh264_sys2::SBitrateInfo { iLayer: openh264_sys2::SPATIAL_LAYER_ALL, iBitrate: bps };
         // SAFETY: a valid encoder handle and a live SBitrateInfo, which is
         // what ENCODER_OPTION_BITRATE expects.
         let rc = unsafe { enc.raw_api().set_option(openh264_sys2::ENCODER_OPTION_BITRATE, (&raw mut info).cast()) };
@@ -387,10 +416,14 @@ impl Encoder {
         }
         self.hw = None;
         let kbps = self.kbps(w as usize, h as usize);
+        let mut tried = false;
         for kind in hardware::Kind::all() {
-            if self.hw_failed.contains(&kind) {
+            if self.hw_failed.contains(&kind)
+                || self.hw_retry.iter().any(|(k, at, wait)| *k == kind && at.elapsed() < *wait)
+            {
                 continue;
             }
+            tried = true;
             match hardware::Hardware::open(kind, w, h, self.settings.max_fps, kbps, format) {
                 Ok(hw) => {
                     tracing::debug!(?kind, device = hw.device(), w, h, "hardware encoder opened");
@@ -399,12 +432,23 @@ impl Encoder {
                 }
                 Err(e) => {
                     tracing::info!(?kind, "hardware video encoder unavailable: {e:#}");
-                    self.hw_failed.push(kind);
+                    // One that worked earlier waits longer; others are out.
+                    match self.hw_retry.iter_mut().find(|(k, ..)| *k == kind) {
+                        Some((_, at, wait)) => {
+                            *at = Instant::now();
+                            *wait = (*wait * 2).min(Duration::from_secs(600));
+                        }
+                        None => self.hw_failed.push(kind),
+                    }
                 }
             }
         }
+        if !tried {
+            return false; // all waiting to be tried again
+        }
         tracing::info!("no hardware video encoder: using the processor");
-        self.hw_off = true;
+        // Off for good only if nothing is waiting to be tried again.
+        self.hw_off = self.hw_retry.is_empty();
         false
     }
 
@@ -438,7 +482,13 @@ impl Encoder {
                     // tries any other hardware encoder.
                     let kind = self.hw.take().map(|hw| hw.kind());
                     tracing::warn!(?kind, "hardware video encoding failed: {e:#}");
-                    self.hw_failed.extend(kind);
+                    if let Some(kind) = kind {
+                        let wait = match self.hw_retry.iter().position(|(k, ..)| *k == kind) {
+                            Some(i) => (self.hw_retry.remove(i).2 * 2).min(Duration::from_secs(600)),
+                            None => Duration::from_secs(30),
+                        };
+                        self.hw_retry.push((kind, Instant::now(), wait));
+                    }
                     force_keyframe = true;
                 }
             }
@@ -627,19 +677,34 @@ impl Decoder {
 
     /// Decodes one access unit. `Ok(None)` means the decoder needs more data.
     pub fn decode(&mut self, data: &[u8]) -> Result<Option<YuvFrame>> {
+        self.decode_reusing(data, None)
+    }
+
+    /// [`decode`](Self::decode), into `spare`'s buffers when given (a frame
+    /// that's been shown): no new picture-sized allocation every frame
+    /// (12 MB a frame at 4K, fresh zeroed pages each time on Windows).
+    pub fn decode_reusing(&mut self, data: &[u8], spare: Option<YuvFrame>) -> Result<Option<YuvFrame>> {
         let Some(img) = self.inner.decode(data).context("H.264 decode")? else { return Ok(None) };
         let (w, h) = img.dimensions();
         let (ys, us, _vs) = img.strides();
         let ch = h.div_ceil(2);
-        Ok(Some(YuvFrame {
-            width: w as u32,
-            height: h as u32,
-            y: img.y()[..ys * h].to_vec(),
-            u: img.u()[..us * ch].to_vec(),
-            v: img.v()[..us * ch].to_vec(),
-            y_stride: ys as u32,
-            uv_stride: us as u32,
-        }))
+        let mut out = spare.unwrap_or(YuvFrame {
+            width: 0,
+            height: 0,
+            y: Vec::new(),
+            u: Vec::new(),
+            v: Vec::new(),
+            y_stride: 0,
+            uv_stride: 0,
+        });
+        for (plane, src) in
+            [(&mut out.y, &img.y()[..ys * h]), (&mut out.u, &img.u()[..us * ch]), (&mut out.v, &img.v()[..us * ch])]
+        {
+            plane.clear();
+            plane.extend_from_slice(src);
+        }
+        (out.width, out.height, out.y_stride, out.uv_stride) = (w as u32, h as u32, ys as u32, us as u32);
+        Ok(Some(out))
     }
 }
 
@@ -792,6 +857,11 @@ mod tests {
         }
         enc.set_settings(EncoderSettings { bitrate_kbps: 4000, max_fps: 30.0 });
         assert!(!enc.dirty, "bitrate change rebuilt the encoder");
+        // Above where it started too (automatic bitrate climbing back).
+        enc.set_settings(EncoderSettings { bitrate_kbps: 12000, max_fps: 30.0 });
+        assert!(!enc.dirty, "raising the bitrate past its start rebuilt the encoder");
+        enc.set_settings(EncoderSettings { bitrate_kbps: 4000, max_fps: 30.0 });
+        assert!(!enc.dirty);
         for f in frames {
             if let Some(e) = enc.encode(&f, false).unwrap() {
                 assert!(!e.keyframe, "bitrate change produced a keyframe");

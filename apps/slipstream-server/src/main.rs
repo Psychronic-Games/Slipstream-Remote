@@ -252,7 +252,20 @@ fn router(app: Arc<App>, relay_only: bool) -> Router {
 }
 
 async fn status(State(app): State<Arc<App>>) -> Html<String> {
-    let (total, online) = app.db.counts().unwrap_or_default();
+    // Anyone may load this page: the counts are worked out at most every
+    // 10 s, not on every request (they lock the device database).
+    static COUNTS: std::sync::Mutex<Option<(std::time::Instant, (i64, i64))>> = std::sync::Mutex::new(None);
+    let (total, online) = {
+        let mut cached = COUNTS.lock().unwrap_or_else(|e| e.into_inner());
+        match *cached {
+            Some((at, counts)) if at.elapsed() < std::time::Duration::from_secs(10) => counts,
+            _ => {
+                let counts = app.db.counts().unwrap_or_default();
+                *cached = Some((std::time::Instant::now(), counts));
+                counts
+            }
+        }
+    };
     Html(format!(
         r#"<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Slipstream server</title>

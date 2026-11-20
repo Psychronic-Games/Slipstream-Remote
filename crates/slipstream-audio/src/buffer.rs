@@ -7,8 +7,14 @@ use crate::opus::SAMPLE_RATE;
 
 /// Play once this much is buffered (absorbs network jitter)…
 const START_MS: usize = 60;
-/// …and drop the oldest audio beyond this, so delay can't build up.
-const MAX_MS: usize = 200;
+/// …and drop the oldest audio beyond this much more, so delay can't build up.
+const HEADROOM_MS: usize = 140;
+/// The cushion grows by this after the sound runs dry while playing (a link
+/// that jitters more than it covers), up to `MOST_MS`, and shrinks back by
+/// it after `SETTLE` without running dry.
+const STEP_MS: usize = 20;
+const MOST_MS: usize = 200;
+const SETTLE: std::time::Duration = std::time::Duration::from_secs(10);
 
 const fn samples(ms: usize) -> usize {
     ms * SAMPLE_RATE as usize / 1000 * 2
@@ -26,6 +32,19 @@ pub struct Jitter {
 struct JitterState {
     samples: VecDeque<i16>,
     playing: bool,
+    /// Extra cushion over `START_MS` this link has needed lately.
+    extra_ms: usize,
+    /// When the sound last ran dry while playing, or the cushion last shrank.
+    changed: Option<std::time::Instant>,
+    /// The last audio that arrived wasn't silence: running dry now is the
+    /// link's doing (a sound that ends sends a silent tail first).
+    loud: bool,
+}
+
+impl JitterState {
+    fn start_ms(&self) -> usize {
+        START_MS + self.extra_ms
+    }
 }
 
 impl Jitter {
@@ -38,9 +57,16 @@ impl Jitter {
     pub fn push(&self, pcm: &[i16]) {
         let mut s = self.state.lock().unwrap();
         s.samples.extend(pcm);
-        if s.samples.len() > samples(if self.low_latency { 80 } else { MAX_MS }) {
-            let excess = s.samples.len() - samples(if self.low_latency { 20 } else { START_MS });
+        s.loud = pcm.iter().any(|v| v.unsigned_abs() > 2);
+        let (start, most) = if self.low_latency { (20, 80) } else { (s.start_ms(), s.start_ms() + HEADROOM_MS) };
+        if s.samples.len() > samples(most) {
+            let excess = s.samples.len() - samples(start);
             s.samples.drain(..excess);
+        }
+        // Steady for a while: give back some of the cushion (less delay).
+        if s.extra_ms > 0 && s.changed.is_none_or(|t| t.elapsed() >= SETTLE) {
+            s.extra_ms -= STEP_MS;
+            s.changed = Some(std::time::Instant::now());
         }
     }
 
@@ -48,7 +74,7 @@ impl Jitter {
     /// (re)filling.
     pub fn pull(&self, out: &mut [i16]) {
         let mut s = self.state.lock().unwrap();
-        if !s.playing && s.samples.len() >= samples(if self.low_latency { 20 } else { START_MS }) {
+        if !s.playing && s.samples.len() >= samples(if self.low_latency { 20 } else { s.start_ms() }) {
             s.playing = true;
         }
         let n = if s.playing { out.len().min(s.samples.len()) } else { 0 };
@@ -58,6 +84,11 @@ impl Jitter {
         out[n..].fill(0);
         if s.playing && s.samples.is_empty() {
             s.playing = false; // ran dry: build up a cushion again
+            // Mid-sound (the next packet already late), keep a bigger one.
+            if !self.low_latency && s.loud {
+                s.extra_ms = (s.extra_ms + STEP_MS).min(MOST_MS - START_MS);
+                s.changed = Some(std::time::Instant::now());
+            }
         }
         drop(s);
         if let Some(tap) = self.render_tap.lock().unwrap().as_mut() {
@@ -131,6 +162,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_cushion_grows_after_running_dry_mid_sound_but_not_at_its_end() {
+        let j = Jitter::default();
+        let loud = [1000i16; 1920];
+        let mut out = [0i16; 960];
+        // Enough to start, then pulled dry while the sound goes on.
+        for _ in 0..4 {
+            j.push(&loud);
+        }
+        for _ in 0..20 {
+            j.pull(&mut out);
+        }
+        assert_eq!(j.state.lock().unwrap().extra_ms, STEP_MS, "a late packet mid-sound");
+        // A sound that ends with silence and stops isn't the link's fault.
+        let j = Jitter::default();
+        for _ in 0..3 {
+            j.push(&loud);
+        }
+        j.push(&[0i16; 1920]);
+        for _ in 0..20 {
+            j.pull(&mut out);
+        }
+        assert_eq!(j.state.lock().unwrap().extra_ms, 0);
+    }
+
+    #[test]
     fn jitter_buffers_then_plays_and_caps_delay() {
         let j = Jitter::default();
         let mut out = vec![1i16; 960];
@@ -141,7 +197,7 @@ mod tests {
         j.pull(&mut out);
         assert!(out.iter().all(|&v| v == 5), "plays once 60 ms are in");
         j.push(&vec![7; samples(500)]);
-        assert!(j.state.lock().unwrap().samples.len() <= samples(MAX_MS), "delay capped");
+        assert!(j.state.lock().unwrap().samples.len() <= samples(START_MS + HEADROOM_MS), "delay capped");
     }
 
     #[test]

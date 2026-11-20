@@ -35,7 +35,9 @@ pub struct Source<'a> {
     pub can_control: bool,
     pub fs: RemoteFs,
     pub stats: &'a ViewerStats,
-    pub network: String,
+    /// The network results, made only when the report is (they were made
+    /// every frame while the window was open).
+    pub network: &'a dyn Fn() -> String,
     pub frame: Option<Arc<YuvFrame>>,
 }
 
@@ -269,7 +271,7 @@ impl Report {
             s.kbps,
             s.decode_ms,
             self.inventory.as_deref().unwrap_or("Inventory not collected"),
-            source.network,
+            (source.network)(),
             self.screenshot
         )
     }

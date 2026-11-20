@@ -80,10 +80,13 @@ impl Duplication {
     }
 
     /// Waits up to `timeout_ms` for the picture to change and copies it into
-    /// `out` (BGRA rows of width × 4 bytes). `Ok(Some(size))` for a new
+    /// the staging texture, on the graphics card. `Ok(Some(size))` for a new
     /// picture, `Ok(None)` if nothing changed (or only the pointer moved),
     /// and an error once duplication ended (a desktop switch, a mode change).
-    pub fn next(&mut self, timeout_ms: u32, out: &mut Vec<u8>) -> Result<Option<(u32, u32)>> {
+    /// [`read`](Self::read) then takes it to memory, only for the frames
+    /// sent: before, every new picture was read out, including those the
+    /// frame rate then skipped, and copied once more to send.
+    pub fn next(&mut self, timeout_ms: u32) -> Result<Option<(u32, u32)>> {
         let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
         let mut resource: Option<IDXGIResource> = None;
         // SAFETY: the duplication and the frame it hands out are live until
@@ -94,27 +97,23 @@ impl Duplication {
                 Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => return Ok(None),
                 Err(e) => bail!("duplication ended: {e}"),
             }
-            let t = std::time::Instant::now();
-            let result = self.copy_out(&info, resource, out);
-            self.last_copy = t.elapsed();
+            let result = self.copy_to_staging(&info, resource);
             let _ = self.dup.ReleaseFrame();
             result
         }
     }
 
-    /// The frame's picture (if it has a new one) into `out`.
-    unsafe fn copy_out(
+    /// The new picture (if there is one) into the staging texture.
+    unsafe fn copy_to_staging(
         &mut self,
         info: &DXGI_OUTDUPL_FRAME_INFO,
         resource: Option<IDXGIResource>,
-        out: &mut Vec<u8>,
     ) -> Result<Option<(u32, u32)>> {
         if info.LastPresentTime == 0 {
             return Ok(None); // only the pointer changed
         }
         let texture: ID3D11Texture2D = resource.context("no frame")?.cast()?;
-        // SAFETY: (all below) D3D11 calls on live objects; the mapped rows
-        // are read within Map/Unmap, each RowPitch bytes apart.
+        // SAFETY: (all below) D3D11 calls on live objects.
         unsafe {
             let mut desc = D3D11_TEXTURE2D_DESC::default();
             texture.GetDesc(&mut desc);
@@ -135,18 +134,30 @@ impl Duplication {
             }
             let staging = &self.staging.as_ref().expect("made above").0;
             self.context.CopyResource(staging, &texture);
+            Ok(Some((w, h)))
+        }
+    }
+
+    /// The latest picture (BGRA rows of width × 4 bytes) into `out`.
+    pub fn read(&mut self, out: &mut Vec<u8>) -> Result<()> {
+        let t = std::time::Instant::now();
+        let (staging, w, h) = self.staging.as_ref().context("no picture yet")?;
+        // SAFETY: a live staging texture; the mapped rows are read within
+        // Map/Unmap, each RowPitch bytes apart.
+        unsafe {
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             self.context.Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
-            let row = w as usize * 4;
+            let row = *w as usize * 4;
             out.clear();
-            out.reserve(row * h as usize);
-            for y in 0..h as usize {
+            out.reserve(row * *h as usize);
+            for y in 0..*h as usize {
                 let src =
                     std::slice::from_raw_parts((mapped.pData as *const u8).add(y * mapped.RowPitch as usize), row);
                 out.extend_from_slice(src);
             }
             self.context.Unmap(staging, 0);
-            Ok(Some((w, h)))
         }
+        self.last_copy = t.elapsed();
+        Ok(())
     }
 }

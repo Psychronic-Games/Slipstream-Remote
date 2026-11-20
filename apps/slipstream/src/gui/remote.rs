@@ -51,6 +51,7 @@ struct Pasting {
     sent: u64,
     total: u64,
     done: Option<Result<usize, String>>,
+    started: Option<Instant>,
 }
 
 struct Reconnecting {
@@ -197,6 +198,9 @@ pub struct Link {
     privacy: bool,
     show_tunnels: bool,
     tunnels: Vec<slipstream_session::tunnel::Tunnel>,
+    /// Forwards open when the link dropped (local port, host, port): opened
+    /// again, on the same ports, once it's back.
+    reopen_tunnels: Vec<(u16, String, u16)>,
     /// The "add a tunnel" form: local port, remote host, remote port.
     tunnel_form: (String, String, String),
     tunnel_error: Option<String>,
@@ -430,6 +434,7 @@ impl Link {
             privacy: false,
             show_tunnels: false,
             tunnels: Vec::new(),
+            reopen_tunnels: Vec::new(),
             tunnel_form: (String::new(), "localhost".into(), String::new()),
             tunnel_error: None,
             pasting: None,
@@ -571,7 +576,7 @@ impl Link {
                     self.files.lock().unwrap().disconnect();
                     self.network.lock().unwrap().disconnect();
                     self.report.cancel_requests();
-                    self.tunnels.clear();
+                    self.reopen_tunnels.extend(self.tunnels.drain(..).map(|t| (t.local_port, t.host.clone(), t.port)));
                     self.closed = Some(reason);
                     self.stats = ViewerStats::default();
                     self.reconnect_requested = retryable && self.peer.0 != 0;
@@ -725,9 +730,11 @@ impl Link {
             return;
         }
         if self.pasting.is_some() {
-            return; // one at a time
+            // One at a time.
+            self.notice = Some(("Still copying the files pasted before…".into(), Instant::now()));
+            return;
         }
-        let state = Arc::new(Mutex::new(Pasting::default()));
+        let state = Arc::new(Mutex::new(Pasting { started: Some(Instant::now()), ..Default::default() }));
         let (s, wake) = (state.clone(), ctx.clone());
         let progress = move |sent, total| {
             let mut p = s.lock().unwrap();
@@ -747,6 +754,7 @@ impl Link {
     fn poll_paste(&mut self, ctx: &egui::Context) {
         let Some(state) = &self.pasting else { return };
         let mut p = state.lock().unwrap();
+        let quick = p.started.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(5));
         let Some(done) = p.done.take() else {
             let pct = (p.sent * 100).checked_div(p.total).unwrap_or(0);
             self.notice = Some((format!("Copying files to the remote clipboard… {pct}%"), Instant::now()));
@@ -756,6 +764,18 @@ impl Link {
         drop(p);
         self.pasting = None;
         match done {
+            // A long copy: whatever has focus there now may not be where the
+            // files were meant to go, so they're left on its clipboard.
+            Ok(n) if !quick => {
+                let paste = if self.info.os == "macOS" { "Cmd+V" } else { "Ctrl+V" };
+                self.notice = Some((
+                    format!(
+                        "{n} file{} on the remote clipboard: press {paste} there to paste",
+                        if n == 1 { "" } else { "s" }
+                    ),
+                    Instant::now(),
+                ));
+            }
             Ok(n) => {
                 // Ctrl (Cmd on a Mac) may have been let go meanwhile.
                 let held =
@@ -874,7 +894,11 @@ impl Link {
         let keybar_h = if sc.keyboard { KEY_BAR_HEIGHT } else { 0.0 };
         let video_area = Rect::from_min_max(body.min, pos2(body.right() - chat_w, body.bottom() - chat_h - keybar_h));
 
-        self.drawn.insert(sc.display, Instant::now());
+        // On view only while its window can be seen: a minimized or covered
+        // window is still drawn, and kept the host streaming to nobody.
+        if ui.input(|i| i.viewport().visible()) != Some(false) {
+            self.drawn.insert(sc.display, Instant::now());
+        }
         self.draw_video(ui, sc, tab, video_area, t);
         let rail_width = framed.then(|| theme::session_rails(ui.painter(), full, body));
         self.handle_pointer(ui, sc, video_area);
@@ -909,12 +933,27 @@ impl Link {
             action = self.toolbar(ui, sc, bar, t, rail_width);
         }
 
+        if self.closed.is_none() && !self.reopen_tunnels.is_empty() {
+            for (local, host, port) in std::mem::take(&mut self.reopen_tunnels) {
+                match rt.block_on(self.session.tunnel(local, host.clone(), port)) {
+                    Ok(t) => self.tunnels.push(t),
+                    Err(e) => {
+                        self.notice = Some((
+                            format!("Couldn't forward port {local} to {host}:{port} again: {e:#}"),
+                            Instant::now(),
+                        ))
+                    }
+                }
+            }
+        }
         self.tunnels_window(&ctx, rt);
         self.sysinfo_window(&ctx, rt);
         if self.report.open {
-            let scanner = self.network.lock().unwrap();
-            let network = format!("{}\n{}", scanner.export(&self.info.host_name), scanner.diagnostic_text());
-            drop(scanner);
+            let (scanner, host) = (self.network.clone(), self.info.host_name.clone());
+            let network = move || {
+                let scanner = scanner.lock().unwrap();
+                format!("{}\n{}", scanner.export(&host), scanner.diagnostic_text())
+            };
             self.report.show(
                 &ctx,
                 rt,
@@ -925,7 +964,7 @@ impl Link {
                     can_control: self.info.capabilities.input,
                     fs: self.session.fs(),
                     stats: &self.stats,
-                    network,
+                    network: &network,
                     frame: sc.frames.latest().1,
                 },
             );

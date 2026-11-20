@@ -33,6 +33,9 @@ pub struct GenericBackend {
     input: mpsc::Sender<InputCmd>,
     #[cfg(target_os = "windows")]
     curtain: Option<crate::privacy::Curtain>,
+    /// Capture's count of screen changes when `displays` was last listed.
+    #[cfg(target_os = "linux")]
+    geometry_epoch: u64,
 }
 
 /// Work for the input thread.
@@ -53,6 +56,8 @@ impl GenericBackend {
             input: tx,
             #[cfg(target_os = "windows")]
             curtain: None,
+            #[cfg(target_os = "linux")]
+            geometry_epoch: crate::x11::geometry_epoch(),
         })
     }
 }
@@ -180,6 +185,17 @@ impl Backend for GenericBackend {
     }
 
     fn inject(&mut self, display: u32, event: InputEvent) -> Result<()> {
+        // A screen changed size or place while captured: map with the new one.
+        #[cfg(target_os = "linux")]
+        {
+            let epoch = crate::x11::geometry_epoch();
+            if epoch != self.geometry_epoch {
+                self.geometry_epoch = epoch;
+                if let Ok(fresh) = list_displays() {
+                    self.displays = fresh;
+                }
+            }
+        }
         let d = self.displays.get(display as usize).cloned().with_context(|| format!("display {display} not found"))?;
         self.input.send(InputCmd::Event(d, event)).map_err(|_| anyhow!("input worker stopped"))
     }
@@ -292,13 +308,12 @@ fn dxgi_frames(
 ) -> bool {
     let poll = (min_interval / 2).max(Duration::from_millis(4)).as_millis() as u32;
     let mut last = Instant::now() - min_interval;
-    let mut clean = Vec::new();
     let mut size = None;
     let mut dirty = false;
     let mut shown = None;
     let mut pace = crate::pace::Pace::new("screen capture (DXGI)");
     while !producer.is_closed() {
-        match dup.next(poll, &mut clean) {
+        match dup.next(poll) {
             Ok(Some(s)) => {
                 size = Some(s);
                 dirty = true;
@@ -314,8 +329,12 @@ fn dxgi_frames(
         last = Instant::now();
         dirty = false;
         shown = pointer;
-        let mut data = producer.buffer(clean.len());
-        data.extend_from_slice(&clean);
+        // Read straight from the graphics card's copy into the frame sent.
+        let mut data = producer.buffer(w as usize * h as usize * 4);
+        if dup.read(&mut data).is_err() {
+            producer.reuse(data);
+            return true;
+        }
         if let Some(p) = pointer {
             draw_pointer(&mut data, w, h, w * 4, origin, p, true);
         }

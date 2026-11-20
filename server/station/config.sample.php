@@ -13,10 +13,14 @@ return [
     // use only HTTPS for a year (HSTS). Don't with a self-signed or expiring
     // one: browsers then refuse to let anyone past a certificate warning.
     // 'hsts' => true,
+    // The address apps are given, when the station can't tell for itself
+    // (a proxy that serves HTTPS without saying so to PHP).
+    // 'base_url' => 'https://support.example.com/',
 
     // Where device records and station settings are kept. By default a
     // "slipstream-data" folder next to the web root, or ./data if that
-    // isn't writable.
+    // isn't writable; the folder chosen is remembered (lib/.data-dir), and
+    // one that already holds a station is always kept.
     // 'data_dir' => '/home/example/slipstream-data',
 
     // Independent per-network-IP budgets, per minute. Presence checks are

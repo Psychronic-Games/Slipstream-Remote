@@ -36,12 +36,15 @@ pub async fn bind_client(secret: SecretKey, server: &ServerSettings, accept_sess
     // Some Android UDP stacks advertise segmentation offload but stall
     // when a connection first sends a batch. Use individual datagrams on
     // phones to avoid that first-keyframe fallback failure (iroh issue 4555).
+    // Datagrams carry sound, which is useless late: queue a second or two at
+    // most (the default megabyte held over a minute, played out in a rush
+    // after a stall). A full queue drops the new packet, as it should.
+    let mut transport = iroh::endpoint::QuicTransportConfig::builder().datagram_send_buffer_size(16 * 1024);
     if cfg!(target_os = "android") || std::env::var_os("SLIPSTREAM_DISABLE_GSO").is_some() {
-        builder = builder.transport_config(
-            iroh::endpoint::QuicTransportConfig::builder().enable_segmentation_offload(false).build(),
-        );
+        transport = transport.enable_segmentation_offload(false);
         tracing::info!("UDP segmentation offload disabled for compatibility");
     }
+    builder = builder.transport_config(transport.build());
     // Troubleshooting aid: force every connection through the relay.
     if std::env::var_os("SLIPSTREAM_RELAY_ONLY").is_some() {
         tracing::warn!("SLIPSTREAM_RELAY_ONLY set: direct connections disabled");

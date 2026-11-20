@@ -138,12 +138,36 @@ pub fn safe_relative(rel: &str) -> Result<PathBuf> {
         if !matches!(Path::new(&clean).components().next(), Some(Component::Normal(_))) {
             bail!("invalid file name in {rel:?}");
         }
-        out.push(clean);
+        out.push(windows_safe_name(clean));
     }
     if out.as_os_str().is_empty() {
         bail!("empty file name");
     }
     Ok(out)
+}
+
+/// Names Windows keeps for devices (CON, NUL, COM1…, with any extension)
+/// get an underscore: `con.txt` from a Linux or Mac computer would otherwise
+/// open the console device instead of a file, or fail a whole folder.
+fn windows_safe_name(name: String) -> String {
+    let (stem, rest) = name.split_once('.').map_or((name.as_str(), None), |(s, r)| (s, Some(r)));
+    let upper = stem.trim_end().to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        upper
+            .strip_prefix(prefix)
+            .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"))
+    };
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || numbered("COM")
+        || numbered("LPT")
+    {
+        match rest {
+            Some(rest) => format!("{stem}_.{rest}"),
+            None => format!("{stem}_"),
+        }
+    } else {
+        name
+    }
 }
 
 /// `path`, or `path (1)`, `path (2)`… if it exists.
@@ -309,6 +333,18 @@ pub fn walk_local_tree(root: &Path) -> Result<LocalTree> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_device_names_get_an_underscore() {
+        let name = |rel: &str| safe_relative(rel).unwrap().to_string_lossy().replace('\\', "/");
+        assert_eq!(name("dir/con.txt"), "dir/con_.txt");
+        assert_eq!(name("NUL"), "NUL_");
+        assert_eq!(name("a/COM1.log.gz"), "a/COM1_.log.gz");
+        assert_eq!(name("lpt9"), "lpt9_");
+        assert_eq!(name("console.txt"), "console.txt");
+        assert_eq!(name("COM10.txt"), "COM10.txt");
+        assert_eq!(name("auxiliary/file"), "auxiliary/file");
+    }
 
     #[test]
     fn windows_unc_display_paths_remain_absolute() {

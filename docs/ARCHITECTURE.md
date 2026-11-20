@@ -572,8 +572,10 @@ Frame acknowledgements cannot advance past the last issued sequence.
   base by 60 ms (or a quarter of it): down by a quarter, and at least to 85%
   of what got through over the last 2 s, to 150 kbit/s at the lowest; up a
   quarter a second while clear. It starts at the full target on a local
-  network (base under 20 ms) and at 1.5 Mbit/s otherwise; a new pipeline on
-  the link starts where the last one ended. Changes are applied to the
+  network (base under 20 ms) and at 1.5 Mbit/s otherwise, doubling every
+  second until the first back-off; a new pipeline on the link starts where
+  the last one ended. OpenH264's ceiling (`ENCODER_OPTION_MAX_BITRATE`) is
+  raised with it, so a climb never rebuilds the encoder. Changes are applied to the
   running encoder, without a keyframe.
 * **Screen-content mode:** once automatic bitrate stays under 40% of its
   target, OpenH264 switches to its screen-content mode, whose scroll
@@ -590,6 +592,14 @@ Frame acknowledgements cannot advance past the last issued sequence.
 * **Health check:** the viewer asks for the host's pace figures every 3 s;
   the host answers at control priority, and an unanswered request means
   "stopped responding" only if nothing arrived from the host meanwhile.
+* **Redrawing:** a remote screen redraws as its frames arrive (and on
+  input); the console animates at up to 60 fps (30 unfocused). A screen
+  counts as on view only while its window can be seen, so a minimized or
+  covered viewer pauses it (hosts from 0.38). Decoded frames reuse the
+  buffers of one the renderer has let go of.
+* **Hardware encoders:** one that fails mid-stream is retried after 30 s
+  (doubling); three keyframe requests within 10 s (the viewer can't decode
+  its pictures) move encoding to the processor for a while.
 * **Slow-link test:** `scripts/test-slow-link.py` measures sessions over
   emulated links (netem in a private network namespace).
 * **Priorities:** control messages (input, acks) go before video, and video

@@ -43,6 +43,7 @@ pub struct Saved {
     /// "Remember" ticked for a link being made: saved once the host has
     /// accepted the password (a typo mustn't replace one that works).
     remember_after: Option<(AccountRef, DeviceId, String)>,
+    accounts_cache: Mutex<Option<(u64, Arc<Vec<StationAccount>>)>>,
 }
 
 struct GroupEditor {
@@ -184,9 +185,19 @@ const ROW_MAX_WIDTH: f32 = 860.0;
 /// The station sign-in fields: room for an address, no more.
 const SIGN_IN_WIDTH: f32 = 360.0;
 
-fn accounts(app: &App) -> Vec<StationAccount> {
-    // Every frame: copy the accounts only, not all the settings.
-    app.client.with_settings(|s| s.accounts.clone())
+/// The signed-in stations' accounts. Asked for many times a frame: copied
+/// from the settings only when they've changed since.
+fn accounts(app: &App) -> Arc<Vec<StationAccount>> {
+    let revision = app.client.settings_revision();
+    let mut cache = app.saved.accounts_cache.lock().unwrap();
+    match &*cache {
+        Some((seen, accounts)) if *seen == revision => accounts.clone(),
+        _ => {
+            let accounts = Arc::new(app.client.with_settings(|s| s.accounts.clone()));
+            *cache = Some((revision, accounts.clone()));
+            accounts
+        }
+    }
 }
 
 /// Runs a station call in the background; its message (or error) becomes a
@@ -749,7 +760,7 @@ pub(super) fn device_name(app: &App, r: &AccountRef, id: DeviceId) -> String {
 pub fn save_recent(app: &mut App, recent: &slipstream_core::config::RecentConnection) {
     let (id, name) = (recent.id, recent.name.as_str());
     let station = recent.station.clone().or(app.client.station_settings().url).unwrap_or_default();
-    let Some(a) = accounts(app).into_iter().find(|a| !a.signed_out && a.is_station(&station)) else {
+    let Some(a) = accounts(app).iter().find(|a| !a.signed_out && a.is_station(&station)).cloned() else {
         app.toast("Sign in to this device’s station first (Config → Stations) to save it", pal::VIOLET);
         return;
     };
@@ -772,7 +783,7 @@ pub fn save_recent(app: &mut App, recent: &slipstream_core::config::RecentConnec
 }
 
 fn open_editor(app: &mut App, r: &AccountRef, d: Option<&SavedDevice>, shared: bool) {
-    let account = accounts(app).into_iter().find(|a| AccountRef::of(a) == *r);
+    let account = accounts(app).iter().find(|a| AccountRef::of(a) == *r).cloned();
     // A shared device's password lives in this technician's own list.
     let had_password = d.is_some_and(|d| d.secret.is_some())
         || d.is_some_and(|d| {
@@ -1263,7 +1274,7 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
             .color(pal::DIM),
         );
         ui.add_space(6.0);
-        for a in &accounts {
+        for a in accounts.iter() {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(a.label().to_uppercase()).font(theme::display(17.0)).color(pal::LAVENDER));
                 ui.label(RichText::new(&a.server).font(theme::mono(14.0)).color(pal::BLUE));

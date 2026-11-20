@@ -161,6 +161,9 @@ pub(crate) struct Inner {
     /// good for that viewer (and only once) until it expires: its automatic
     /// reconnect would otherwise meet a new password and give up.
     pub resume: Mutex<Option<host::Resume>>,
+    /// Counts changes made with `Client::update_settings` (all changes to
+    /// station accounts), so the window can cache what it derives from them.
+    settings_revision: AtomicU64,
     pub backend: tokio::sync::Mutex<Option<Box<dyn Backend>>>,
     pub host_sessions: Mutex<HashMap<u64, mpsc::UnboundedSender<HostSessionCmd>>>,
     next_session: AtomicU64,
@@ -294,6 +297,7 @@ impl Client {
             password: Mutex::new(password.clone()),
             throttle: tokio::sync::Mutex::new(AuthThrottle::new()),
             resume: Mutex::new(None),
+            settings_revision: AtomicU64::new(0),
             backend: tokio::sync::Mutex::new(None),
             host_sessions: Mutex::new(HashMap::new()),
             next_session: AtomicU64::new(0),
@@ -364,9 +368,15 @@ impl Client {
 
     /// Changes settings and saves them. Reconnects to the directory if the
     /// server changed.
+    /// Changes with each [`update_settings`](Self::update_settings).
+    pub fn settings_revision(&self) -> u64 {
+        self.inner.settings_revision.load(Ordering::Acquire)
+    }
+
     pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) {
         let server_changed = {
             let mut s = self.inner.settings.lock().unwrap();
+            self.inner.settings_revision.fetch_add(1, Ordering::AcqRel);
             let before = (s.server.url.clone(), s.server.key.clone());
             f(&mut s);
             let changed = before != (s.server.url.clone(), s.server.key.clone());

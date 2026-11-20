@@ -79,8 +79,11 @@ transfer or replace host-level monitoring. Private station defaults stay unlimit
   browsers then refuse to let anyone past a certificate warning. The apps
   always check the certificate: they need a valid one (Let's Encrypt is
   fine), with no way to click past.
-  Behind a proxy that terminates HTTPS, pass `X-Forwarded-Proto`; if it
-  can't, set `'force_https' => false` in `config.php`.
+  Behind a proxy that terminates HTTPS, pass `X-Forwarded-Proto` (trusted
+  only from the same machine or a private network); if it can't, set
+  `'force_https' => false` and `'base_url' => 'https://support.example.com/'`
+  in `config.php`, so apps are given the HTTPS address. Apps never move a
+  station from `https://` to `http://` on its say-so.
 - PHP 8.0+ with the `sodium` extension (standard).
 - Linux web host where PHP may start programs (`proc_open`), Apache with
   `mod_rewrite` + `mod_proxy_http` (2.4.47+) and `.htaccess` allowed. That's
@@ -172,6 +175,10 @@ the admin page (otherwise it switches on its next restart).
 Device records and station settings go in `slipstream-data/` **next to**
 the web root (`/home/<site>/slipstream-data`), outside public reach. If that
 isn't writable, `./data` inside the site is used, protected by `.htaccess`.
+The folder chosen is remembered in `lib/.data-dir`, and a folder that
+already holds the station's settings is always kept, so a station can't
+switch to an empty one when permissions change (or when the command-line
+updater runs without a web server's document root).
 Copy `config.sample.php` to `config.php` to choose another folder or to use
 MariaDB/MySQL instead of files.
 

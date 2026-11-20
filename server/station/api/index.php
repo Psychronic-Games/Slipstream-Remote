@@ -317,6 +317,11 @@ try {
             if (!isset($p->addr)) {
                 fail('missing addr');
             }
+            // Stored and served to every lookup: a real address is a few
+            // hundred bytes.
+            if (strlen((string)json_encode($p->addr)) > 8192) {
+                fail('addr too large');
+            }
             // Heartbeats are counted per device key, which anyone can make
             // anew: new devices are also limited per network.
             if (!slip_store()->known($p->endpoint)

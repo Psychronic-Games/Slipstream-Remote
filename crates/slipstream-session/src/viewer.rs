@@ -157,6 +157,9 @@ fn host_pace_text(stages: &[slipstream_core::proto::PaceStage]) -> String {
 #[derive(Default)]
 pub struct FrameShared {
     latest: Mutex<Option<Arc<YuvFrame>>>,
+    /// A frame already shown and no longer held by anything: the decoder
+    /// fills the next one into its buffers.
+    spare: Mutex<Option<YuvFrame>>,
     serial: AtomicU64,
     repaint: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
@@ -169,15 +172,26 @@ impl FrameShared {
     }
 
     /// Called whenever a new frame arrives (e.g. `egui::Context::request_repaint`).
+    fn take_spare(&self) -> Option<YuvFrame> {
+        self.spare.lock().unwrap().take()
+    }
+
     pub fn set_repaint(&self, f: impl Fn() + Send + Sync + 'static) {
         *self.repaint.lock().unwrap() = Some(Arc::new(f));
     }
 
     fn publish(&self, frame: YuvFrame) {
-        {
+        let old = {
             let mut latest = self.latest.lock().unwrap();
-            *latest = Some(Arc::new(frame));
+            let old = latest.replace(Arc::new(frame));
             self.serial.fetch_add(1, Ordering::Release);
+            old
+        };
+        // Drawn already (the renderer let go of it): its buffers are reused.
+        if let Some(old) = old
+            && let Ok(old) = Arc::try_unwrap(old)
+        {
+            *self.spare.lock().unwrap() = Some(old);
         }
         let repaint = self.repaint.lock().unwrap().clone();
         if let Some(f) = repaint {
@@ -505,6 +519,36 @@ async fn start_audio(
 
 /// Decodes the host's audio datagrams into `player`. Up to three lost
 /// packets in a row are concealed; late or repeated ones are dropped.
+/// The next command for the host. Pointer moves queued up behind each other
+/// (the link was slow to take them) go as one, the latest: the pointer jumps
+/// to where it is now rather than replaying its whole path late.
+async fn next_cmd(pending: &mut Option<ViewerCmd>, cmds: &mut mpsc::UnboundedReceiver<ViewerCmd>) -> Option<ViewerCmd> {
+    if let Some(cmd) = pending.take() {
+        return Some(cmd);
+    }
+    let mut cmd = cmds.recv().await?;
+    while pointer_move(&cmd).is_some() {
+        match cmds.try_recv() {
+            Ok(next) if pointer_move(&next).is_some() && pointer_move(&next) == pointer_move(&cmd) => cmd = next,
+            Ok(next) => {
+                *pending = Some(next);
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    Some(cmd)
+}
+
+/// Which display a pointer move is on (`Some(None)`: the one streaming).
+fn pointer_move(cmd: &ViewerCmd) -> Option<Option<u32>> {
+    match cmd {
+        ViewerCmd::Input(InputEvent::MouseMove { .. }) => Some(None),
+        ViewerCmd::InputOn(d, InputEvent::MouseMove { .. }) => Some(Some(*d)),
+        _ => None,
+    }
+}
+
 /// Copied text up to this long (about a hundred pages) goes over as soon
 /// as it's copied; longer text only when it's pasted over there with the
 /// keyboard. It shares the stream input and frame acknowledgements take,
@@ -782,6 +826,8 @@ async fn session(
     let mut _clip_fetch: Option<Abort<()>> = None;
     // The text last put on the host's clipboard, so a paste doesn't send it again.
     let mut clip_sent: Option<u64> = None;
+    // A command read while merging pointer moves (see `next_cmd`).
+    let mut pending_cmd: Option<ViewerCmd> = None;
 
     let mut stats_tick = tokio::time::interval(Duration::from_secs(1));
     let mut last_stats = (Instant::now(), 0u64, 0u64);
@@ -856,7 +902,7 @@ async fn session(
                     write_msg(send, &ViewerMsg::Clipboard(ClipboardData::Text(text))).await?;
                 }
             }
-            cmd = cmds.recv() => match cmd {
+            cmd = next_cmd(&mut pending_cmd, cmds) => match cmd {
                 Some(ViewerCmd::Input(ev)) => write_msg(send, &ViewerMsg::Input(ev)).await?,
                 Some(ViewerCmd::InputOn(d, event)) => {
                     let msg = if multi { ViewerMsg::InputOn { display: d, event } } else { ViewerMsg::Input(event) };
@@ -1013,7 +1059,7 @@ fn decode_loop(
             continue;
         }
         let t = Instant::now();
-        match decoder.decode(&frame.data) {
+        match decoder.decode_reusing(&frame.data, frames.take_spare()) {
             Ok(Some(yuv)) => {
                 waiting_for_key = false;
                 decode_us.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
@@ -1120,5 +1166,28 @@ mod health_tests {
             viewer.close().await;
             host.close().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn queued_pointer_moves_go_as_the_latest_one() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let moved = |x: f32| ViewerCmd::Input(InputEvent::MouseMove { x, y: 0.5 });
+        for x in [0.1, 0.2, 0.3] {
+            tx.send(moved(x)).unwrap();
+        }
+        tx.send(ViewerCmd::Input(InputEvent::Key { code: "KeyA".into(), down: true })).unwrap();
+        tx.send(moved(0.4)).unwrap();
+        let mut pending = None;
+        let first = next_cmd(&mut pending, &mut rx).await.unwrap();
+        assert!(matches!(first, ViewerCmd::Input(InputEvent::MouseMove { x, .. }) if x == 0.3), "{first:?}");
+        let second = next_cmd(&mut pending, &mut rx).await.unwrap();
+        assert!(matches!(second, ViewerCmd::Input(InputEvent::Key { .. })), "the key isn't lost: {second:?}");
+        let third = next_cmd(&mut pending, &mut rx).await.unwrap();
+        assert!(matches!(third, ViewerCmd::Input(InputEvent::MouseMove { x, .. }) if x == 0.4));
     }
 }

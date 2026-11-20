@@ -352,6 +352,7 @@ async fn handle(
                 }
             };
             reply(&mut send, &StreamReply::File { size }).await?;
+            send.set_priority(BULK_PRIORITY).ok();
             let mut buf = vec![0u8; CHUNK];
             let mut remaining = size;
             while remaining > 0 {
@@ -525,13 +526,23 @@ impl RemoteFs {
         // buffered (over a megabyte) still went out, seconds of a slow link.
         let mut send = ResetUnlessFinished(Some(send));
         let stream = send.0.as_mut().expect("stream");
+        stream.set_priority(BULK_PRIORITY).ok();
         let mut remaining = size;
         let mut buf = vec![0u8; CHUNK];
         while remaining > 0 {
             let want = remaining.min(CHUNK as u64) as usize;
             let n = file.read(&mut buf[..want]).await?;
             anyhow::ensure!(n > 0, "source file became shorter during upload");
-            stream.write_all(&buf[..n]).await?;
+            if let Err(e) = stream.write_all(&buf[..n]).await {
+                // The other side stopped taking it: its reason ("disk full",
+                // "access denied") is more use than "stopped by peer".
+                if let Ok(Ok(StreamReply::Error(why))) =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), expect_msg::<StreamReply>(&mut recv)).await
+                {
+                    bail!("{why}");
+                }
+                return Err(e.into());
+            }
             remaining -= n as u64;
             progress(n as u64);
         }
@@ -588,6 +599,10 @@ impl RemoteFs {
         Ok(out)
     }
 }
+
+/// File data goes after everything else (previews and listings are at
+/// -10, video and control above): a big copy mustn't hold up looking around.
+const BULK_PRIORITY: i32 = -20;
 
 /// A send stream that's reset, not finished, if it's dropped before
 /// [`SendStream::finish`] (an abandoned upload).

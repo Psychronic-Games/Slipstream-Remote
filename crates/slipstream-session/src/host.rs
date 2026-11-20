@@ -510,22 +510,40 @@ impl Drop for PrivacyGuard {
 /// With the test pattern it sends a test tone instead (no feedback loop when
 /// host and viewer share a machine).
 fn send_audio(conn: Connection, test_tone: bool) -> Result<slipstream_audio::Capture> {
-    let mut encoder = slipstream_audio::opus::Encoder::new(96_000)?;
+    // 64 kbit/s stereo is near-transparent for a computer's sounds, and a
+    // third less than before on a slow link.
+    let mut encoder = slipstream_audio::opus::Encoder::new(64_000)?;
     let mut seq = 0u16;
+    // Silence isn't sent (after a short tail, so sounds fade out properly):
+    // most of the time a computer makes none, and it cost 80 kbit/s.
+    let mut quiet = 0u32;
     let start = if test_tone { slipstream_audio::Capture::test_tone } else { slipstream_audio::Capture::start };
-    start(Box::new(move |frame: &[i16]| match encoder.encode(frame) {
-        Ok(packet) => {
-            let mut d = Vec::with_capacity(packet.len() + 3);
-            d.push(slipstream_core::proto::AUDIO_DATAGRAM);
-            d.extend_from_slice(&seq.to_le_bytes());
-            d.extend_from_slice(packet);
-            seq = seq.wrapping_add(1);
-            // A full send queue drops the frame, which is the right thing for audio.
-            let _ = conn.send_datagram(d.into());
+    start(Box::new(move |frame: &[i16]| {
+        if frame.iter().all(|s| s.unsigned_abs() <= 2) {
+            quiet = quiet.saturating_add(1);
+            if quiet > SILENT_TAIL_FRAMES {
+                return;
+            }
+        } else {
+            quiet = 0;
         }
-        Err(e) => debug!("audio encode: {e:#}"),
+        match encoder.encode(frame) {
+            Ok(packet) => {
+                let mut d = Vec::with_capacity(packet.len() + 3);
+                d.push(slipstream_core::proto::AUDIO_DATAGRAM);
+                d.extend_from_slice(&seq.to_le_bytes());
+                d.extend_from_slice(packet);
+                seq = seq.wrapping_add(1);
+                // A full send queue drops the frame, which is the right thing for audio.
+                let _ = conn.send_datagram(d.into());
+            }
+            Err(e) => debug!("audio encode: {e:#}"),
+        }
     }))
 }
+
+/// Silent frames still sent after sound stops (20 ms each).
+const SILENT_TAIL_FRAMES: u32 = 10;
 
 /// Starts capturing `display`. The outer error means the backend is gone
 /// (fatal); the inner one that this capture failed.
@@ -629,6 +647,13 @@ async fn session_loop(
     let mut desktop_tick = tokio::time::interval(Duration::from_secs(3));
     let mut hidden_since: Option<Instant> = None;
     let mut held_mods: Vec<String> = Vec::new();
+    // Keys and buttons the viewer holds down. If the link goes silent while
+    // any are (no packet for a while: the viewer's health check alone sends
+    // one every 3 s), they're released, rather than staying pressed here
+    // until the connection times out half a minute later.
+    let mut held = Held::default();
+    let mut silence_tick = tokio::time::interval(Duration::from_secs(1));
+    let mut last_heard = (conn.stats().udp_rx.bytes, Instant::now());
 
     loop {
         tokio::select! {
@@ -658,6 +683,29 @@ async fn session_loop(
                 write_msg(&mut send,&HostMsg::Bye {reason:reason.clone()}).await?;
                 crate::flush(&mut send).await;
                 return Ok(reason);
+            }
+            _ = silence_tick.tick() => {
+                // A screen whose stream failed (its writer ended) starts
+                // again, rather than staying frozen until it's hidden and
+                // shown.
+                let dead: Vec<u32> = shown.iter().filter(|(_, one)| one.tx.is_closed()).map(|(&d, _)| d).collect();
+                for d in dead {
+                    let settings = shown.remove(&d).map(|one| one.pipeline.settings()).unwrap_or_default();
+                    info!(display = d, "restarting a screen's stream that stopped");
+                    if let Ok(one) = start_shown(inner, conn, d, settings, &err_tx).await? {
+                        shown.insert(d, one);
+                    }
+                }
+                let received = conn.stats().udp_rx.bytes;
+                if received != last_heard.0 {
+                    last_heard = (received, Instant::now());
+                } else if !held.is_empty() && last_heard.1.elapsed() >= SILENCE_RELEASE {
+                    info!("nothing heard from the viewer for a while: releasing its held keys and buttons");
+                    if let Some(b) = inner.backend.lock().await.as_mut() {
+                        let _ = b.inject(held.display, InputEvent::ReleaseAll);
+                    }
+                    held = Held::default();
+                }
             }
             _ = desktop_tick.tick() => {
                 // A chat-only link isn't looking at the screen.
@@ -764,13 +812,9 @@ async fn session_loop(
                                 write_msg(&mut send, &HostMsg::Notice(format!("no display {d}"))).await?;
                                 continue;
                             };
-                            match open_capture(inner, d, s.max_fps).await? {
-                                Ok(c) => {
-                                    let flow = link_flow(conn);
-                                    let (tx, rx) = mpsc::channel::<VideoFrame>(4);
-                                    tokio::spawn(display_writer(conn.clone(), d, rx));
-                                    let pipeline = Pipeline::start(c, flow.clone(), s, tx.clone(), err_tx.clone());
-                                    shown.insert(d, Shown { pipeline, flow, tx });
+                            match start_shown(inner, conn, d, s, &err_tx).await? {
+                                Ok(one) => {
+                                    shown.insert(d, one);
                                     write_msg(&mut send, &HostMsg::StreamStarted { display: d, width: info.width, height: info.height }).await?;
                                 }
                                 Err(e) => write_msg(&mut send, &HostMsg::Notice(format!("capture failed: {e:#}"))).await?,
@@ -800,6 +844,7 @@ async fn session_loop(
                             write_msg(&mut send, &HostMsg::Notice(SAS_NOTICE.into())).await?;
                         }
                         if caps.input {
+                            held.note(display, &ev);
                             let mut b = inner.backend.lock().await;
                             if let Some(b) = b.as_mut()
                                 && let Err(e) = b.inject(display, ev)
@@ -810,7 +855,8 @@ async fn session_loop(
                     }
                     ViewerMsg::Clipboard(ClipboardData::Text(t)) => {
                         // Chat-only links don't share clipboards either way.
-                        if viewing.get() && let Some(c) = &clipboard { c.set_text(t); }
+                        // Before the next message: it's often the paste keystroke.
+                        if viewing.get() && let Some(c) = &clipboard { c.set_text_then(t, Duration::from_millis(300)).await; }
                     }
                     // Viewers paste files with uploads + StreamOpen::ClipboardFiles.
                     ViewerMsg::Clipboard(ClipboardData::Files { .. }) => {}
@@ -909,6 +955,46 @@ async fn session_loop(
 
 /// A display streamed on its own uni-stream, for viewers that show several
 /// at once.
+/// Silence from the viewer after which its held input is released.
+const SILENCE_RELEASE: Duration = Duration::from_secs(5);
+
+/// What the viewer holds down, and on which display.
+#[derive(Default)]
+struct Held {
+    keys: std::collections::HashSet<String>,
+    buttons: u8,
+    display: u32,
+}
+
+impl Held {
+    fn note(&mut self, display: u32, ev: &InputEvent) {
+        match ev {
+            InputEvent::Key { code, down: true } => {
+                self.keys.insert(code.clone());
+                self.display = display;
+            }
+            InputEvent::Key { code, down: false } => {
+                self.keys.remove(code);
+            }
+            InputEvent::MouseButton { button, down } => {
+                let bit = 1u8 << (*button as u8 & 7);
+                if *down {
+                    self.buttons |= bit;
+                    self.display = display;
+                } else {
+                    self.buttons &= !bit;
+                }
+            }
+            InputEvent::ReleaseAll => *self = Self::default(),
+            _ => {}
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.keys.is_empty() && self.buttons == 0
+    }
+}
+
 /// Frame accounting that takes the link's base round trip from the
 /// connection's selected path.
 fn link_flow(conn: &Connection) -> Arc<Flow> {
@@ -920,6 +1006,27 @@ struct Shown {
     pipeline: Pipeline,
     flow: Arc<Flow>,
     tx: mpsc::Sender<VideoFrame>,
+}
+
+/// Starts streaming display `d` on a stream of its own. The outer error
+/// means the screen backend is gone; the inner one that capture failed.
+async fn start_shown(
+    inner: &Arc<Inner>,
+    conn: &Connection,
+    d: u32,
+    settings: StreamSettings,
+    err_tx: &mpsc::UnboundedSender<String>,
+) -> Result<Result<Shown>> {
+    Ok(match open_capture(inner, d, settings.max_fps).await? {
+        Ok(capture) => {
+            let flow = link_flow(conn);
+            let (tx, rx) = mpsc::channel::<VideoFrame>(4);
+            tokio::spawn(display_writer(conn.clone(), d, rx));
+            let pipeline = Pipeline::start(capture, flow.clone(), settings, tx.clone(), err_tx.clone());
+            Ok(Shown { pipeline, flow, tx })
+        }
+        Err(e) => Err(anyhow::anyhow!(e)),
+    })
 }
 
 /// Writes one display's frames on a stream of its own, which starts with
@@ -956,6 +1063,24 @@ impl<T> Drop for AbortOnDrop<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_input_is_tracked_until_released() {
+        use slipstream_core::proto::MouseButton;
+        let mut held = Held::default();
+        assert!(held.is_empty());
+        held.note(3, &InputEvent::Key { code: "ShiftLeft".into(), down: true });
+        held.note(3, &InputEvent::MouseButton { button: MouseButton::Left, down: true });
+        assert!(!held.is_empty());
+        assert_eq!(held.display, 3);
+        held.note(3, &InputEvent::Key { code: "ShiftLeft".into(), down: false });
+        assert!(!held.is_empty(), "the button is still down");
+        held.note(3, &InputEvent::MouseButton { button: MouseButton::Left, down: false });
+        assert!(held.is_empty());
+        held.note(0, &InputEvent::Key { code: "KeyA".into(), down: true });
+        held.note(0, &InputEvent::ReleaseAll);
+        assert!(held.is_empty());
+    }
 
     #[test]
     fn ctrl_alt_del_is_recognised() {
