@@ -32,6 +32,9 @@ use crate::files::RemoteFs;
 /// Commands from the UI.
 #[derive(Debug)]
 pub enum ViewerCmd {
+    /// Tests: end as if the network had cut the link off.
+    #[cfg(test)]
+    Interrupt,
     Input(InputEvent),
     /// Input on one display: pointer positions are on that display (hosts
     /// that stream one display at a time apply it to the one streaming).
@@ -112,11 +115,20 @@ pub struct ViewerStats {
 }
 
 /// Asks the host how fast its video stages run, every few seconds, until
-/// it says it can't (older hosts).
-async fn poll_host_pace(fs: RemoteFs, out: Arc<Mutex<Vec<slipstream_core::proto::PaceStage>>>) -> Option<String> {
+/// it says it can't (older hosts). An unanswered request means the host
+/// stopped responding only if nothing else arrived from it meanwhile
+/// (`received` counts what the connection received): on a slow, busy link
+/// the answer can just be late.
+async fn poll_host_pace(
+    fs: RemoteFs,
+    out: Arc<Mutex<Vec<slipstream_core::proto::PaceStage>>>,
+    received: impl Fn() -> u64,
+) -> Option<String> {
     loop {
+        let before = received();
         match tokio::time::timeout(Duration::from_secs(6), fs.ask(slipstream_core::proto::StreamOpen::Pace)).await {
             Ok(Ok((_, _, slipstream_core::proto::StreamReply::Pace(stages)))) => *out.lock().unwrap() = stages,
+            Err(_) if received() != before => {}
             Err(_) => return Some("The remote host stopped responding; it may be restarting".into()),
             // Older hosts can decline this optional request. A real connection
             // close is handled by the control stream, not mistaken for a hang.
@@ -340,14 +352,25 @@ async fn fetch_clipboard_files(
     events: mpsc::UnboundedSender<ViewerEvent>,
 ) {
     let result = async {
-        let dir = tokio::task::spawn_blocking(|| crate::fsops::paste_dir(rand::random())).await?;
-        let mut count = 0;
+        // Clears out pastes from over a day ago, as the host does.
+        let dir = tokio::task::spawn_blocking(|| crate::fsops::make_paste_dir(rand::random())).await?;
+        // The host's summary stops counting after a few seconds (a slow
+        // drive), so the limits are checked again on what's really there.
+        let mut files = Vec::new();
+        let (mut bytes, mut count) = (0u64, 0u64);
         for item in &items {
-            for (remote, rel, _) in fs.walk(item.path.clone(), item.is_dir, item.name.clone(), item.size).await? {
-                let dest = dir.join(crate::fsops::safe_relative(&rel)?);
-                fs.download(remote, &dest, |_| {}).await?;
+            for entry in fs.walk(item.path.clone(), item.is_dir, item.name.clone(), item.size).await? {
+                bytes += entry.2;
                 count += 1;
+                if bytes > AUTO_FETCH_BYTES || count > AUTO_FETCH_FILES {
+                    bail!("they're too many to copy through the clipboard — use Files instead");
+                }
+                files.push(entry);
             }
+        }
+        for (remote, rel, _) in files {
+            let dest = dir.join(crate::fsops::safe_relative(&rel)?);
+            fs.download(remote, &dest, |_| {}).await?;
         }
         let top: Vec<_> = std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
         if top.is_empty() {
@@ -482,6 +505,22 @@ async fn start_audio(
 
 /// Decodes the host's audio datagrams into `player`. Up to three lost
 /// packets in a row are concealed; late or repeated ones are dropped.
+/// Copied text up to this long (about a hundred pages) goes over as soon
+/// as it's copied; longer text only when it's pasted over there with the
+/// keyboard. It shares the stream input and frame acknowledgements take,
+/// and a megabyte held them up for seconds on a slow link.
+const AUTO_CLIP_TEXT: usize = 256 << 10;
+/// Pasted text longer than this isn't sent (messages stop at 32 MiB, and
+/// one that size would hold up input for minutes on a slow link).
+const MAX_CLIP_TEXT: usize = 8 << 20;
+
+fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
 async fn receive_audio(conn: Connection, player: slipstream_audio::Player) {
     use slipstream_audio::opus::{Decoder, FRAME_SAMPLES};
     let Ok(mut decoder) = Decoder::new() else { return };
@@ -502,8 +541,13 @@ async fn receive_audio(conn: Connection, player: slipstream_audio::Player) {
                         }
                     }
                 }
-                0x8000.. => continue, // late or repeated
-                _ => {}               // a long gap: just carry on
+                // A little late (reordered) or repeated.
+                0xFFCD.. => continue,
+                // Far behind: the host started its sound again (muted, then
+                // unmuted), counting from 0. Before, these were all dropped
+                // as late until the count caught up: minutes of silence.
+                0x8000.. => {}
+                _ => {} // a long gap: just carry on
             }
         }
         expect = Some(seq.wrapping_add(1));
@@ -597,9 +641,15 @@ async fn run(
             .map(|r| SessionEnd::connection(&r))
             .unwrap_or_else(|| SessionEnd::interrupted(format!("{e:#}"))),
     };
-    let _ = tokio::time::timeout(Duration::from_millis(250), write_msg(&mut send, &ViewerMsg::Bye)).await;
-    crate::flush(&mut send).await;
-    conn.close(0u32.into(), b"bye");
+    if ended.retryable {
+        // Cut off, not ended: no Bye, and a close that tells the host this
+        // viewer means to reconnect (it keeps its one-time password for it).
+        conn.close(slipstream_core::proto::INTERRUPTED_CLOSE_CODE.into(), b"interrupted");
+    } else {
+        let _ = tokio::time::timeout(Duration::from_millis(250), write_msg(&mut send, &ViewerMsg::Bye)).await;
+        crate::flush(&mut send).await;
+        conn.close(0u32.into(), b"bye");
+    }
     let _ = events.send(ViewerEvent::Disconnected { reason: ended.reason, retryable: ended.retryable });
 }
 
@@ -730,6 +780,8 @@ async fn session(
     };
     // The latest fetch of files copied over there (a newer copy replaces it).
     let mut _clip_fetch: Option<Abort<()>> = None;
+    // The text last put on the host's clipboard, so a paste doesn't send it again.
+    let mut clip_sent: Option<u64> = None;
 
     let mut stats_tick = tokio::time::interval(Duration::from_secs(1));
     let mut last_stats = (Instant::now(), 0u64, 0u64);
@@ -739,8 +791,9 @@ async fn session(
     let (health_tx, mut health_rx) = mpsc::channel(1);
     let fs = RemoteFs::new(conn.clone());
     let pace_out = host_pace.clone();
+    let pace_conn = conn.clone();
     let _pace_task = Abort(tokio::spawn(async move {
-        if let Some(reason) = poll_host_pace(fs, pace_out).await {
+        if let Some(reason) = poll_host_pace(fs, pace_out, move || pace_conn.stats().udp_rx.bytes).await {
             let _ = health_tx.send(reason).await;
         }
     }));
@@ -793,9 +846,13 @@ async fn session(
             },
             Some(clip) = clip_rx.recv() => {
                 // Local files go over on paste (`paste_files`), not on copy.
+                // So does longer text: it shares the stream that carries
+                // input and frame acknowledgements, and a big copy sent on
+                // every copy froze the mouse and picture on a slow link.
                 if let Clip::Text(text) = clip
-                    && text.len() <= 1 << 20
+                    && text.len() <= AUTO_CLIP_TEXT
                 {
+                    clip_sent = Some(text_hash(&text));
                     write_msg(send, &ViewerMsg::Clipboard(ClipboardData::Text(text))).await?;
                 }
             }
@@ -825,8 +882,18 @@ async fn session(
                     write_msg(send, &ViewerMsg::SetSettings(s)).await?;
                 }
                 Some(ViewerCmd::Chat(t)) => write_msg(send, &ViewerMsg::Chat(t)).await?,
+                // Pasting there: the text goes over unless it already has.
                 Some(ViewerCmd::Clipboard(t)) => {
-                    write_msg(send, &ViewerMsg::Clipboard(ClipboardData::Text(t))).await?;
+                    let hash = text_hash(&t);
+                    if t.len() > MAX_CLIP_TEXT {
+                        let _ = events.send(ViewerEvent::Notice(format!(
+                            "The copied text ({} MB) is too long to paste over there; send it as a file with Files",
+                            t.len() >> 20
+                        )));
+                    } else if clip_sent != Some(hash) {
+                        clip_sent = Some(hash);
+                        write_msg(send, &ViewerMsg::Clipboard(ClipboardData::Text(t))).await?;
+                    }
                 }
                 Some(ViewerCmd::Privacy(on)) => write_msg(send, &ViewerMsg::SetPrivacy(on)).await?,
                 // Choosing a display on a chat-only link starts viewing it.
@@ -853,6 +920,8 @@ async fn session(
                     }
                 }
                 Some(ViewerCmd::Disconnect) | None => return Ok(SessionEnd::deliberate("disconnected")),
+                #[cfg(test)]
+                Some(ViewerCmd::Interrupt) => return Ok(SessionEnd::interrupted("cut off")),
             },
             _ = stats_tick.tick() => {
                 let (t0, b0, f0) = last_stats;
@@ -1039,7 +1108,7 @@ mod health_tests {
             });
             let answer = tokio::time::timeout(
                 Duration::from_secs(8),
-                poll_host_pace(RemoteFs::new(out.clone()), Arc::default()),
+                poll_host_pace(RemoteFs::new(out.clone()), Arc::default(), || 0),
             )
             .await
             .unwrap();

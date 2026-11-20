@@ -188,6 +188,8 @@ pub struct Encoder {
     hw_failed: Vec<hardware::Kind>,
     /// Hardware is off: not wanted, or none could be used.
     hw_off: bool,
+    /// OpenH264 in its screen-content mode (see [`Encoder::set_screen_content`]).
+    screen: bool,
 }
 
 impl Encoder {
@@ -213,6 +215,29 @@ impl Encoder {
             hw: None,
             hw_failed: Vec::new(),
             hw_off: !hardware,
+            screen: false,
+        }
+    }
+
+    /// Encodes in software with OpenH264's screen-content mode (on) or its
+    /// camera mode (off, the default). Screen-content mode detects
+    /// scrolling: on a slow link, where frames go out a few a second and
+    /// each scrolls a long way, camera mode coded every one almost from
+    /// scratch (on a 2 Mbit/s link, scrolling text ran at 4 fps; 43 in
+    /// screen-content mode, with less data). Camera mode is about 5x
+    /// faster and much sharper once the picture is still, so it suits a
+    /// fast link. A change starts with a keyframe.
+    ///
+    /// Hardware encoders have no such mode and fared the same as camera
+    /// mode (NVENC: 3 fps on that link), so software encoding takes over
+    /// while it's on; on a link that slow the processor has the time.
+    pub fn set_screen_content(&mut self, on: bool) {
+        if on != self.screen {
+            tracing::debug!(on, "screen-content mode");
+            self.screen = on;
+            self.dirty = true;
+            // Frees the graphics card's encoder; reopened once it's off.
+            self.hw = None;
         }
     }
 
@@ -302,7 +327,7 @@ impl Encoder {
         // dB once it's still (examples/encode_bench.rs). On a slow virtual
         // machine that's the difference between ~35 and 60 frames a second.
         let config = EncoderConfig::new()
-            .usage_type(UsageType::CameraVideoRealTime)
+            .usage_type(if self.screen { UsageType::ScreenContentRealTime } else { UsageType::CameraVideoRealTime })
             .rate_control_mode(RateControlMode::Bitrate)
             .bitrate(BitRate::from_bps(kbps * 1000))
             .max_frame_rate(FrameRate::from_hz(fps))
@@ -354,7 +379,7 @@ impl Encoder {
     /// Opens a hardware encoder for `w`×`h` frames of `format` if needed,
     /// the first that works. False if there's none to use.
     fn hardware_ready(&mut self, w: u32, h: u32, format: PixelFormat) -> bool {
-        if self.hw_off {
+        if self.hw_off || self.screen {
             return false;
         }
         if self.hw.as_ref().is_some_and(|hw| hw.size() == (w, h) && hw.format() == format) {

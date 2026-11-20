@@ -116,10 +116,7 @@ impl RelayLog {
                     return None;
                 }
                 let record: Device = read_json(&station.join("devices").join(format!("{endpoint}.json")), 16 * 1024)?;
-                let alias = read_json::<Shared>(&station.join("shared.json"), 4 * 1024 * 1024)
-                    .and_then(|s| s.devices.into_iter().find(|d| d.id == record.id))
-                    .map(|d| d.name)
-                    .filter(|n| !n.is_empty());
+                let alias = shared_name(&station.join("shared.json"), record.id);
                 Some((record.id, alias.unwrap_or(record.name)))
             } else {
                 resolver.db.describe_endpoint(&endpoint).ok().flatten()
@@ -297,6 +294,25 @@ struct Device {
 struct Shared {
     devices: Vec<Device>,
 }
+/// The station's own name for a device, from its shared list. The list
+/// (up to 4 MB) is parsed again only when the file changes: every relay
+/// connection asked, and after a restart every host reconnects at once.
+fn shared_name(path: &Path, id: u32) -> Option<String> {
+    type Names = (Option<std::time::SystemTime>, u64, std::collections::HashMap<u32, String>);
+    static CACHE: std::sync::Mutex<Option<(std::path::PathBuf, Names)>> = std::sync::Mutex::new(None);
+    let meta = std::fs::metadata(path).ok()?;
+    let stamp = (meta.modified().ok(), meta.len());
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let fresh = cache.as_ref().is_some_and(|(p, (m, l, _))| p == path && (*m, *l) == stamp);
+    if !fresh {
+        let names = read_json::<Shared>(path, 4 * 1024 * 1024)
+            .map(|s| s.devices.into_iter().filter(|d| !d.name.is_empty()).map(|d| (d.id, d.name)).collect())
+            .unwrap_or_default();
+        *cache = Some((path.to_path_buf(), (stamp.0, stamp.1, names)));
+    }
+    cache.as_ref().and_then(|(_, (_, _, names))| names.get(&id).cloned())
+}
+
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path, limit: u64) -> Option<T> {
     let file = std::fs::File::open(path).ok()?;
     if file.metadata().ok()?.len() > limit {

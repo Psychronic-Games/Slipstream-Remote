@@ -382,6 +382,11 @@ fn stage(active: &mut Active, state: &State, ui: &mut Ui, rect: Rect) {
     if room.pin.is_some_and(|id| !tiles.iter().any(|t| t.id == id)) {
         room.pin = None;
     }
+    // The organizer's state lists the participants; one without any
+    // (buggy, or hostile) mustn't crash this window.
+    if tiles.is_empty() {
+        return;
+    }
     if tiles.len() == 1 {
         draw(ui, room, &tiles[0], rect.shrink(4.0), false);
         let hint = rect.center_top() + vec2(0.0, 24.0);
@@ -423,7 +428,7 @@ fn stage(active: &mut Active, state: &State, ui: &mut Ui, rect: Rect) {
             }
         }
         Layout::Speaker => {
-            let main_id = main_id(room, &tiles).unwrap_or(tiles[0].id);
+            let main_id = main_id(room, &tiles).unwrap_or_else(|| tiles[0].id);
             let horizontal = matches!(room.strip, Strip::Bottom | Strip::Top);
             let thickness = if horizontal {
                 (rect.height() * 0.2).clamp(90.0, 150.0)

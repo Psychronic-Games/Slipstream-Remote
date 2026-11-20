@@ -115,12 +115,12 @@ function slip_station_save(array $changes): array
     flock($fh, LOCK_EX);
     $cur = json_decode((string)@file_get_contents($path), true) ?: [];
     $new = array_merge($cur, $changes);
-    $tmp = $path . '.' . bin2hex(random_bytes(4));
-    file_put_contents($tmp, json_encode($new, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-    @chmod($tmp, 0640);
-    rename($tmp, $path);
-    flock($fh, LOCK_UN);
-    fclose($fh);
+    try {
+        slip_save_json($path, $new);
+    } finally {
+        flock($fh, LOCK_UN);
+        fclose($fh);
+    }
     $GLOBALS['slip_station_cache'] = $new;
     return $new;
 }
@@ -223,10 +223,7 @@ class SlipFileStore implements SlipStore
 
     private function save(string $endpoint, array $d): void
     {
-        $path = $this->devicePath($endpoint);
-        $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
-        file_put_contents($tmp, json_encode($d, JSON_UNESCAPED_SLASHES));
-        rename($tmp, $path);
+        slip_save_json($this->devicePath($endpoint), $d, JSON_UNESCAPED_SLASHES);
     }
 
     public function register(string $endpoint, array $info, string $addrJson): int
@@ -505,10 +502,7 @@ function slip_user_update(string $u, callable $fn): ?array
             return null;
         }
         $new = $fn($cur);
-        $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
-        file_put_contents($tmp, json_encode($new, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-        @chmod($tmp, 0640);
-        rename($tmp, $path);
+        slip_save_json($path, $new);
         return $new;
     } finally {
         flock($fh, LOCK_UN);
@@ -857,12 +851,17 @@ function slip_shared_state_update(callable $fn): array
     }
 }
 
-function slip_save_json(string $path, array $value): void
+/**
+ * Replaces `$path` with `$value` as JSON, or leaves it as it was: a full disk
+ * (easy on shared hosting) must never leave a cut-off file in its place.
+ */
+function slip_save_json(string $path, array $value, int $flags = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES): void
 {
     $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
     try {
-        if (file_put_contents($tmp, json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)) === false) {
-            throw new RuntimeException('could not write station data');
+        $json = json_encode($value, $flags | JSON_THROW_ON_ERROR);
+        if (file_put_contents($tmp, $json) !== strlen($json)) {
+            throw new RuntimeException('could not write station data (is the disk full?)');
         }
         @chmod($tmp, 0640);
         if (!rename($tmp, $path)) {
@@ -1534,6 +1533,23 @@ function slip_scheme(): string
     return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
 }
 
+/**
+ * Whether this request came over HTTPS for certain: TLS here, or a proxy on
+ * this machine or its private network saying so (X-Forwarded-Proto from
+ * anywhere else could be anyone's).
+ */
+function slip_https_verified(): bool
+{
+    if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+        return true;
+    }
+    $proto = strtolower(trim(explode(',', (string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
+    $ip = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+    return $proto === 'https'
+        && filter_var($ip, FILTER_VALIDATE_IP) !== false
+        && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
+}
+
 function slip_host(): string
 {
     return preg_replace('/[^A-Za-z0-9.\-:\[\]]/', '', $_SERVER['HTTP_HOST'] ?? 'localhost');
@@ -1553,6 +1569,21 @@ function slip_server_address(): string
 }
 
 /** Relays to advertise: ours (with the access key) if it's running. */
+/** Restarts the relay if it isn't running, checked at most once a minute. */
+function slip_relay_check_now_and_then(): void
+{
+    $stamp = slip_data_dir() . '/relay-checked';
+    $last = @filemtime($stamp);
+    if ($last !== false && time() - $last < 60) {
+        return;
+    }
+    @touch($stamp);
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    }
+    slip_relay_ensure();
+}
+
 function slip_relays(): array
 {
     if (!slip_relay_ensure()) {
@@ -1764,9 +1795,13 @@ function slip_enforce_https(): void
     $file = slip_data_dir() . '/https-hosts.json';
     $hosts = is_file($file) ? (json_decode((string)@file_get_contents($file), true) ?: []) : [];
     if (slip_scheme() === 'https') {
-        if (!in_array($name, $hosts, true) && count($hosts) < 20) {
-            $hosts[] = $name;
-            @file_put_contents($file, json_encode(array_values($hosts)), LOCK_EX);
+        // Remember the name only for HTTPS that really reached us: anyone can
+        // send X-Forwarded-Proto, and one forged request turned plain HTTP
+        // away for good on a station without HTTPS. Most recent first, so
+        // made-up Host names can't fill the list and keep the real one out.
+        if (slip_https_verified() && ($hosts[0] ?? null) !== $name) {
+            $hosts = array_slice(array_values(array_merge([$name], array_diff($hosts, [$name]))), 0, 20);
+            @file_put_contents($file, json_encode($hosts), LOCK_EX);
         }
         if ((slip_config()['hsts'] ?? false) === true) {
             header('Strict-Transport-Security: max-age=31536000');

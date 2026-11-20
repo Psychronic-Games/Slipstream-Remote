@@ -213,10 +213,14 @@ impl Sound {
                     let speaker = speakers.get_mut(&packet.participant).unwrap();
                     if let Some(seq) = speaker.seq {
                         let gap = packet.sequence.wrapping_sub(seq);
-                        if gap == 0 || gap > 32768 {
+                        // Repeated, or a little late (reordered): dropped.
+                        // Far behind means the microphone started again from
+                        // 0 (muted, then unmuted): carry on from there, or
+                        // they'd be silent until the count caught up.
+                        if gap == 0 || gap >= 0xFFCD {
                             continue;
                         }
-                        for _ in 1..gap.min(4) {
+                        for _ in 1..if gap > 32768 { 1 } else { gap.min(4) } {
                             let mut pcm = [0; opus::FRAME_SAMPLES];
                             if speaker.decoder.decode(None, &mut pcm).is_ok() {
                                 speaker.jitter.push(&pcm);

@@ -30,22 +30,75 @@ use tokio::sync::mpsc;
 pub struct Flow {
     state: Mutex<FlowState>,
     cv: Condvar,
+    /// The connection's own round-trip time (QUIC), when there is one.
+    path_rtt: Option<Box<dyn Fn() -> Option<Duration> + Send + Sync>>,
+}
+
+struct Sent {
+    seq: u64,
+    at: Instant,
+    bytes: usize,
+    keyframe: bool,
 }
 
 struct FlowState {
     next_seq: u64,
     acked: u64,
-    /// (seq, sent at) for frames in flight.
-    sent: VecDeque<(u64, Instant)>,
+    /// Frames in flight.
+    sent: VecDeque<Sent>,
+    /// Round trips of delivered frames (keyframes aside), smoothed.
     srtt: Option<Duration>,
     min_rtt: Option<Duration>,
+    /// Bytes the viewer acknowledged, and when, over the last second.
+    delivered: VecDeque<(Instant, usize)>,
+    /// The connection's lowest round trip lately, and when it was seen.
+    path_min: Option<(Duration, Instant)>,
+    path_polled: Option<Instant>,
+    /// When the first frame was acknowledged (throughput needs a while).
+    first_delivery: Option<Instant>,
+    /// The automatic bitrate last in use, for the next pipeline on this
+    /// link (another display or settings): it starts there, not at the top.
+    last_kbps: Option<u32>,
 }
 
+/// How long the connection's lowest round trip stands for the base (a
+/// route can change); a newer sample replaces it after this.
+const PATH_MIN_WINDOW: Duration = Duration::from_secs(30);
+/// The most frames in flight, however long the round trip: at 60 fps a
+/// 250 ms link needs 16 to keep the frame rate.
+const MAX_IN_FLIGHT: u64 = 16;
+
 impl Flow {
+    /// Without a connection (tests): the base round trip comes from frames.
+    #[cfg(test)]
     pub fn new() -> Arc<Self> {
+        Self::build(None)
+    }
+
+    /// Takes the link's base round trip from `rtt` (the connection's
+    /// measured path), rather than from frame acknowledgements: those
+    /// include the time it takes to send a frame, which a big keyframe on
+    /// a slow link stretches to seconds.
+    pub fn with_path_rtt(rtt: impl Fn() -> Option<Duration> + Send + Sync + 'static) -> Arc<Self> {
+        Self::build(Some(Box::new(rtt)))
+    }
+
+    fn build(path_rtt: Option<Box<dyn Fn() -> Option<Duration> + Send + Sync>>) -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new(FlowState { next_seq: 1, acked: 0, sent: VecDeque::new(), srtt: None, min_rtt: None }),
+            state: Mutex::new(FlowState {
+                next_seq: 1,
+                acked: 0,
+                sent: VecDeque::new(),
+                srtt: None,
+                min_rtt: None,
+                delivered: VecDeque::new(),
+                path_min: None,
+                path_polled: None,
+                first_delivery: None,
+                last_kbps: None,
+            }),
             cv: Condvar::new(),
+            path_rtt,
         })
     }
 
@@ -55,19 +108,27 @@ impl Flow {
             return;
         }
         s.acked = seq;
-        while let Some(&(sq, at)) = s.sent.front() {
-            if sq > seq {
+        let now = Instant::now();
+        s.first_delivery.get_or_insert(now);
+        while let Some(front) = s.sent.front() {
+            if front.seq > seq {
                 break;
             }
-            s.sent.pop_front();
-            if sq == seq {
-                let sample = at.elapsed();
+            let sent = s.sent.pop_front().unwrap();
+            s.delivered.push_back((now, sent.bytes));
+            // A keyframe's round trip is mostly the time to send it, not
+            // queueing: leave it out, or one would set the base for good.
+            if sent.seq == seq && !sent.keyframe {
+                let sample = now - sent.at;
                 s.srtt = Some(match s.srtt {
                     None => sample,
                     Some(prev) => (prev * 7 + sample) / 8,
                 });
                 s.min_rtt = Some(s.min_rtt.map_or(sample, |m| m.min(sample)));
             }
+        }
+        while s.delivered.front().is_some_and(|(at, _)| now - *at > DELIVERY_WINDOW) {
+            s.delivered.pop_front();
         }
         self.cv.notify_all();
     }
@@ -76,36 +137,104 @@ impl Flow {
         s.next_seq - 1 - s.acked
     }
 
-    /// Blocks until another frame may be sent, or `timeout` passes.
-    fn wait_for_credit(&self, base_limit: u32, frame_interval: Duration, timeout: Duration) -> bool {
-        let s = self.state.lock().unwrap();
-        let (s, _) = self
-            .cv
-            .wait_timeout_while(s, timeout, |s| Flow::in_flight(s) >= limit(s, base_limit, frame_interval))
-            .unwrap();
-        Flow::in_flight(&s) < limit(&s, base_limit, frame_interval)
+    /// Samples the connection's round trip now and then, keeping its
+    /// lowest value of the last [`PATH_MIN_WINDOW`].
+    fn poll_path(&self, s: &mut FlowState) {
+        let Some(rtt) = &self.path_rtt else { return };
+        if s.path_polled.is_some_and(|t| t.elapsed() < Duration::from_millis(250)) {
+            return;
+        }
+        s.path_polled = Some(Instant::now());
+        if let Some(sample) = rtt().filter(|d| !d.is_zero()) {
+            let stale = s.path_min.is_none_or(|(min, at)| sample <= min || at.elapsed() > PATH_MIN_WINDOW);
+            if stale {
+                s.path_min = Some((sample, Instant::now()));
+            }
+        }
     }
 
-    fn take_seq(&self) -> u64 {
+    /// Blocks until another frame may be sent, or `timeout` passes.
+    fn wait_for_credit(&self, base_limit: u32, frame_interval: Duration, timeout: Duration) -> bool {
+        let mut s = self.state.lock().unwrap();
+        self.poll_path(&mut s);
+        let (s, _) = self.cv.wait_timeout_while(s, timeout, |s| !may_send(s, base_limit, frame_interval)).unwrap();
+        may_send(&s, base_limit, frame_interval)
+    }
+
+    fn take_seq(&self, bytes: usize, keyframe: bool) -> u64 {
         let mut s = self.state.lock().unwrap();
         let seq = s.next_seq;
         s.next_seq += 1;
-        s.sent.push_back((seq, Instant::now()));
+        s.sent.push_back(Sent { seq, at: Instant::now(), bytes, keyframe });
         seq
     }
 
+    /// The smoothed frame round trip, and the link's base round trip.
     fn rtts(&self) -> (Option<Duration>, Option<Duration>) {
-        let s = self.state.lock().unwrap();
-        (s.srtt, s.min_rtt)
+        let mut s = self.state.lock().unwrap();
+        self.poll_path(&mut s);
+        (s.srtt, base_rtt(&s))
     }
+
+    /// What reached the viewer lately, in kbit/s; `None` until there's
+    /// enough of it to tell.
+    fn delivered_kbps(&self) -> Option<u32> {
+        delivered_bps(&self.state.lock().unwrap()).map(|bps| (bps * 8.0 / 1000.0) as u32)
+    }
+
+    fn remember_kbps(&self, kbps: u32) {
+        self.state.lock().unwrap().last_kbps = Some(kbps);
+    }
+
+    fn last_kbps(&self) -> Option<u32> {
+        self.state.lock().unwrap().last_kbps
+    }
+}
+
+/// Throughput is averaged over this long: acknowledgements arrive in
+/// bursts (after a loss is repaired, say), and a shorter window overstates it.
+const DELIVERY_WINDOW: Duration = Duration::from_secs(2);
+
+/// Bytes a second the viewer acknowledged over the last [`DELIVERY_WINDOW`].
+fn delivered_bps(s: &FlowState) -> Option<f64> {
+    let since = s.first_delivery?.elapsed();
+    if since < Duration::from_secs(1) || s.delivered.len() < 4 {
+        return None;
+    }
+    let bytes: usize = s.delivered.iter().map(|(_, b)| b).sum();
+    Some(bytes as f64 / since.min(DELIVERY_WINDOW).as_secs_f64())
+}
+
+/// Whether another frame may go out. At least `base` frames always may (a
+/// picture gets through however slow the link). Beyond that, frames go out
+/// while the round trip needs them, and while what's in flight would reach
+/// the viewer within about a round trip at the rate it's been arriving:
+/// counting frames alone let a dozen big ones queue up on a slow link,
+/// seconds of lag.
+fn may_send(s: &FlowState, base: u32, frame_interval: Duration) -> bool {
+    let frames = Flow::in_flight(s);
+    if frames < base.max(1) as u64 {
+        return true;
+    }
+    if frames >= limit(s, base, frame_interval) {
+        return false;
+    }
+    let (Some(rate), Some(rtt)) = (delivered_bps(s), base_rtt(s)) else { return false };
+    let budget = rate * (rtt.as_secs_f64() * 1.25 + 0.1);
+    let in_flight: usize = s.sent.iter().map(|f| f.bytes).sum();
+    (in_flight as f64) < budget
+}
+
+fn base_rtt(s: &FlowState) -> Option<Duration> {
+    s.path_min.map(|(rtt, _)| rtt).or(s.min_rtt)
 }
 
 fn limit(s: &FlowState, base: u32, frame_interval: Duration) -> u64 {
     let base = base.max(1) as u64;
-    match s.min_rtt {
+    match base_rtt(s) {
         Some(rtt) if !frame_interval.is_zero() => {
             let needed = (rtt.as_secs_f64() / frame_interval.as_secs_f64()).ceil() as u64 + 1;
-            needed.clamp(base, 8)
+            needed.clamp(base, MAX_IN_FLIGHT.max(base))
         }
         _ => base,
     }
@@ -183,27 +312,92 @@ struct RateControl {
     target_kbps: u32,
     current_kbps: u32,
     last_change: Instant,
+    /// Below the target since last there.
+    backed_off: bool,
+    /// Since when the bitrate has been near the target (a fast link).
+    full_since: Option<Instant>,
 }
 
+/// Automatic bitrate starts here at most and climbs within seconds on a
+/// fast link: starting at the full target sent a first keyframe a slow
+/// link took seconds to carry.
+const START_KBPS: u32 = 1_500;
+/// The lowest automatic bitrate: a picture still gets through on a link of
+/// a couple of hundred kbit/s.
+const FLOOR_KBPS: u32 = 150;
+
 impl RateControl {
-    fn new(target: u32) -> Self {
-        Self { target_kbps: target, current_kbps: target, last_change: Instant::now() }
+    /// `base` is the link's round trip if known, and `last` the bitrate a
+    /// previous pipeline on this link ended at.
+    fn new(target: u32, base: Option<Duration>, last: Option<u32>) -> Self {
+        let start = match (last, base) {
+            (Some(last), _) => last,
+            // A local network: the full target straight away.
+            (None, Some(rtt)) if rtt < Duration::from_millis(20) => target,
+            _ => START_KBPS,
+        };
+        let current = start.clamp(FLOOR_KBPS, target.max(FLOOR_KBPS));
+        let mut rc = Self {
+            target_kbps: target,
+            current_kbps: current,
+            last_change: Instant::now(),
+            backed_off: current < target,
+            full_since: None,
+        };
+        rc.note_level();
+        rc
     }
 
-    /// Returns a new bitrate if it should change.
-    fn update(&mut self, srtt: Option<Duration>, min_rtt: Option<Duration>) -> Option<u32> {
-        let (Some(srtt), Some(min_rtt)) = (srtt, min_rtt) else { return None };
+    fn note_level(&mut self) {
+        if self.current_kbps.saturating_mul(10) >= self.target_kbps.saturating_mul(9) {
+            self.full_since.get_or_insert_with(Instant::now);
+        } else {
+            self.full_since = None;
+        }
+    }
+
+    /// Whether software encoding should be in screen-content mode (see
+    /// `Encoder::set_screen_content`): once the link holds the bitrate
+    /// under 40% of the target, until it has carried 90% for 5 s. Apart,
+    /// so a link near either mark doesn't switch (each switch is a
+    /// keyframe) back and forth.
+    fn screen_content(&self, now: bool) -> bool {
+        if now {
+            !self.full_since.is_some_and(|t| t.elapsed() >= Duration::from_secs(5))
+        } else {
+            self.current_kbps.saturating_mul(5) < self.target_kbps.saturating_mul(2)
+        }
+    }
+
+    /// Returns a new bitrate if it should change. `srtt` is the frames'
+    /// smoothed round trip, `base` the link's own, and `delivered_kbps`
+    /// what actually got through lately.
+    fn update(&mut self, srtt: Option<Duration>, base: Option<Duration>, delivered_kbps: Option<u32>) -> Option<u32> {
+        let (Some(srtt), Some(base)) = (srtt, base) else { return None };
         let since = self.last_change.elapsed();
-        let queueing = srtt > min_rtt * 2 + Duration::from_millis(40);
-        let floor = (self.target_kbps / 8).max(500);
-        if queueing && since > Duration::from_millis(500) && self.current_kbps > floor {
-            self.current_kbps = (self.current_kbps * 3 / 4).max(floor);
-        } else if !queueing && since > Duration::from_secs(2) && self.current_kbps < self.target_kbps {
-            self.current_kbps = (self.current_kbps + self.target_kbps / 10).min(self.target_kbps);
+        // Frames queueing up behind each other: well over the link's own
+        // round trip. An absolute margin, mostly: on a long link, twice
+        // the round trip would allow seconds of lag before reacting.
+        let queueing = srtt > base + (base / 4).max(Duration::from_millis(60));
+        if queueing && since > Duration::from_millis(500) && self.current_kbps > FLOOR_KBPS {
+            // Back off at least to what's getting through.
+            let mut next = self.current_kbps * 3 / 4;
+            if let Some(delivered) = delivered_kbps {
+                next = next.min(delivered.saturating_mul(85) / 100);
+            }
+            self.current_kbps = next.max(FLOOR_KBPS);
+            self.backed_off = true;
+        } else if !queueing && since > Duration::from_secs(1) && self.current_kbps < self.target_kbps {
+            let step = (self.target_kbps / 20).max(self.current_kbps / 4);
+            self.current_kbps = (self.current_kbps + step).min(self.target_kbps);
+            if self.current_kbps == self.target_kbps {
+                self.backed_off = false;
+            }
         } else {
             return None;
         }
         self.last_change = Instant::now();
+        self.note_level();
         Some(self.current_kbps)
     }
 }
@@ -306,6 +500,7 @@ fn encode_loop(
     let mut waited_viewer = slipstream_platform::pace::Pace::new("waiting for the viewer");
     let mut waited_screen = slipstream_platform::pace::Pace::new("waiting for a new screen frame");
     let mut speed = Speed::new();
+    let mut screen_content = false;
 
     while !stop.load(Ordering::Relaxed) {
         let current = *settings.lock().unwrap();
@@ -366,18 +561,35 @@ fn encode_loop(
         // Adaptive bitrate (only in automatic mode).
         if applied.bitrate_kbps == 0 {
             let rc = rate.get_or_insert_with(|| {
-                RateControl::new(auto_bitrate_kbps(frame.width, frame.height, applied.max_fps as f32))
+                let target = auto_bitrate_kbps(frame.width, frame.height, applied.max_fps as f32);
+                let rc = RateControl::new(target, flow.rtts().1, flow.last_kbps());
+                encoder
+                    .set_settings(EncoderSettings { bitrate_kbps: rc.current_kbps, max_fps: applied.max_fps as f32 });
+                rc
             });
-            let (srtt, min_rtt) = flow.rtts();
-            if let Some(kbps) = rc.update(srtt, min_rtt) {
-                tracing::debug!(kbps, ?srtt, ?min_rtt, "bitrate adjusted");
+            let (srtt, base) = flow.rtts();
+            let delivered = flow.delivered_kbps();
+            if let Some(kbps) = rc.update(srtt, base, delivered) {
+                tracing::debug!(kbps, ?srtt, ?base, ?delivered, "bitrate adjusted");
+                flow.remember_kbps(kbps);
                 encoder.set_settings(EncoderSettings { bitrate_kbps: kbps, max_fps: applied.max_fps as f32 });
             }
         }
-        // Keep every frame while the link keeps up; drop frames to hold the
-        // rate once it's congested, or when the viewer chose a fixed rate.
-        let congested = rate.as_ref().is_some_and(|r| r.current_kbps < r.target_kbps);
-        encoder.set_frame_skip(applied.bitrate_kbps != 0 || congested);
+        // Automatic bitrate: the encoder keeps every frame it's given, and
+        // the frame window above holds frames back while the link is full
+        // (before encoding, so nothing is wasted). The encoder's own
+        // skipping, after a big keyframe on a slow link, went on paying it
+        // back for many seconds of frozen picture. A fixed bitrate (the
+        // viewer's choice) still has the encoder hold it.
+        encoder.set_frame_skip(applied.bitrate_kbps != 0);
+        // Screen-content mode on a slow link: an automatic bitrate held well
+        // under its target, or a low one the viewer chose.
+        screen_content = match (applied.bitrate_kbps, &rate) {
+            (0, Some(rc)) => rc.screen_content(screen_content),
+            (0, None) => false,
+            (fixed, _) => fixed <= 2_000,
+        };
+        encoder.set_screen_content(screen_content);
 
         let force = keyframe.swap(false, Ordering::Relaxed);
         let scale = if applied.adaptive_resolution && !sharp { speed.scale } else { 1.0 };
@@ -419,7 +631,10 @@ fn encode_loop(
         if let Some(old) = last_frame.replace(frame) {
             capture.recycle(old);
         }
-        let seq = flow.take_seq();
+        if encoded.keyframe {
+            tracing::debug!(bytes = encoded.data.len(), width = encoded.width, height = encoded.height, "keyframe");
+        }
+        let seq = flow.take_seq(encoded.data.len(), encoded.keyframe);
         let msg = VideoFrame {
             seq,
             keyframe: encoded.keyframe,
@@ -621,8 +836,8 @@ mod tests {
         let flow = Flow::new();
         let iv = Duration::from_millis(16);
         assert!(flow.wait_for_credit(2, iv, Duration::ZERO));
-        flow.take_seq();
-        flow.take_seq();
+        flow.take_seq(1000, true);
+        flow.take_seq(1000, false);
         assert!(!flow.wait_for_credit(2, iv, Duration::from_millis(5)));
         flow.ack(u64::MAX);
         flow.ack(3);
@@ -693,11 +908,110 @@ mod tests {
 
     #[test]
     fn rate_control_backs_off_and_recovers() {
-        let mut rc = RateControl::new(8000);
+        let mut rc = RateControl::new(8000, Some(Duration::from_millis(80)), None);
+        assert_eq!(rc.current_kbps, START_KBPS, "starts low enough for a slow link's first keyframe");
+        assert_eq!(RateControl::new(8000, Some(Duration::from_millis(2)), None).current_kbps, 8000, "LAN: full rate");
+        assert_eq!(RateControl::new(8000, None, Some(900)).current_kbps, 900, "a new pipeline resumes the link's rate");
         rc.last_change -= Duration::from_secs(3);
         let base = Some(Duration::from_millis(20));
-        assert_eq!(rc.update(Some(Duration::from_millis(200)), base), Some(6000));
+        assert_eq!(rc.update(Some(Duration::from_millis(200)), base, None), Some(START_KBPS * 3 / 4));
+        assert!(rc.backed_off);
         rc.last_change -= Duration::from_secs(3);
-        assert_eq!(rc.update(Some(Duration::from_millis(25)), base), Some(6800));
+        let up = rc.update(Some(Duration::from_millis(25)), base, None).unwrap();
+        assert!(up > START_KBPS * 3 / 4);
+        // Climbs to the target on a fast link, and frame skipping ends there.
+        for _ in 0..20 {
+            rc.last_change -= Duration::from_secs(3);
+            rc.update(Some(Duration::from_millis(25)), base, None);
+        }
+        assert_eq!(rc.current_kbps, 8000);
+        assert!(!rc.backed_off);
+    }
+
+    /// Screen-content mode while the link holds the rate well down; back to
+    /// camera mode only after a while near the target.
+    #[test]
+    fn screen_content_mode_follows_the_link() {
+        let lan = RateControl::new(8000, Some(Duration::from_millis(2)), None);
+        assert!(!lan.screen_content(false), "a local network starts in camera mode");
+        let mut rc = RateControl::new(8000, Some(Duration::from_millis(80)), None);
+        assert!(rc.screen_content(false), "a link of unknown speed starts low, in screen-content mode");
+        rc.current_kbps = 4000;
+        rc.note_level();
+        assert!(rc.screen_content(true), "stays until the link carries near the target");
+        assert!(!rc.screen_content(false), "but doesn't switch to it between the marks");
+        rc.current_kbps = 7500;
+        rc.note_level();
+        assert!(rc.screen_content(true));
+        rc.full_since = Some(Instant::now() - Duration::from_secs(6));
+        assert!(!rc.screen_content(true), "back to camera mode after 5 s near the target");
+    }
+
+    /// A slow link: back off to what gets through, below the old 500 kbit/s
+    /// floor, and react on a long link before seconds of lag build up.
+    #[test]
+    fn rate_control_follows_a_slow_long_link() {
+        let mut rc = RateControl::new(4000, None, Some(4000));
+        rc.last_change -= Duration::from_secs(3);
+        let base = Some(Duration::from_millis(300));
+        // 100 ms of queueing over a 300 ms link is enough to react.
+        assert_eq!(rc.update(Some(Duration::from_millis(400)), base, Some(400)), Some(340));
+        for _ in 0..10 {
+            rc.last_change -= Duration::from_secs(3);
+            rc.update(Some(Duration::from_millis(900)), base, Some(180));
+        }
+        assert_eq!(rc.current_kbps, FLOOR_KBPS);
+        // Queueing below the margin isn't congestion.
+        rc.last_change -= Duration::from_secs(3);
+        assert!(rc.update(Some(Duration::from_millis(350)), base, Some(180)).unwrap() > FLOOR_KBPS);
+    }
+
+    /// The base round trip comes from the connection, not a keyframe that
+    /// took seconds to send; a long link gets enough frames in flight; and
+    /// what's in flight stays within about a round trip of throughput.
+    #[test]
+    fn flow_base_ignores_keyframes_and_scales_the_window() {
+        let flow = Flow::with_path_rtt(|| Some(Duration::from_millis(250)));
+        let iv = Duration::from_micros(16_667);
+        let seq = flow.take_seq(200_000, true);
+        std::thread::sleep(Duration::from_millis(30));
+        flow.ack(seq);
+        let (srtt, base) = flow.rtts();
+        assert_eq!(srtt, None, "a keyframe's send time isn't a round-trip sample");
+        assert_eq!(base, Some(Duration::from_millis(250)));
+        // Two frames go out before anything is known about throughput.
+        for _ in 0..2 {
+            assert!(flow.wait_for_credit(2, iv, Duration::ZERO));
+            flow.take_seq(1000, false);
+        }
+        assert!(!flow.wait_for_credit(2, iv, Duration::ZERO), "no throughput known yet");
+        // 50 KB/s arriving: room for 50 KB/s x (1.25 x 250 ms + 100 ms) ≈ 20 KB.
+        {
+            let mut s = flow.state.lock().unwrap();
+            let now = Instant::now();
+            s.first_delivery = Some(now - Duration::from_secs(3));
+            s.delivered = (0..10).map(|i| (now - Duration::from_millis(i * 190), 10_000)).collect();
+        }
+        assert_eq!(flow.delivered_kbps(), Some(400));
+        let mut small = 2;
+        while flow.wait_for_credit(2, iv, Duration::ZERO) {
+            flow.take_seq(1000, false);
+            small += 1;
+        }
+        assert_eq!(small, 16, "250 ms at 60 fps: 16 small frames in flight");
+        let flow = Flow::with_path_rtt(|| Some(Duration::from_millis(250)));
+        flow.rtts();
+        {
+            let mut s = flow.state.lock().unwrap();
+            let now = Instant::now();
+            s.first_delivery = Some(now - Duration::from_secs(3));
+            s.delivered = (0..10).map(|i| (now - Duration::from_millis(i * 190), 10_000)).collect();
+        }
+        let mut big = 0;
+        while flow.wait_for_credit(2, iv, Duration::ZERO) {
+            flow.take_seq(6000, false);
+            big += 1;
+        }
+        assert_eq!(big, 4, "big frames stop at the byte budget, not the frame count");
     }
 }

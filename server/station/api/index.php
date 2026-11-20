@@ -3,6 +3,9 @@
  * Slipstream Station directory API: POST {"op": …} as JSON.
  * See ../lib/slipstream.php and crates/slipstream-core/src/directory.rs.
  */
+// Apps read JSON: a PHP warning printed before it (hosts that display
+// errors) read as "did not answer like a Slipstream server". PHP still logs it.
+ini_set('display_errors', '0');
 require __DIR__ . '/../lib/slipstream.php';
 
 header('Content-Type: application/json');
@@ -72,7 +75,9 @@ if ($op === 'login') {
     }
     $u = slip_user_norm($req['username'] ?? '');
     $pw = (string)($req['password'] ?? '');
-    if (!slip_rate_ok("login|$u", 10)) {
+    // Per address, and per account from anywhere: the per-address limit
+    // alone let guesses spread over many addresses go unchecked.
+    if (!slip_rate_ok("login|$u", 10) || !slip_rate_ok("applogin|$u", 30, 'account')) {
         fail('too many attempts for that account, wait a minute', 429);
     }
     $acct = slip_user_load($u);
@@ -325,6 +330,11 @@ try {
                 'app_version' => slip_clip($i->app_version ?? '', 32),
             ];
             $id = slip_store()->register($p->endpoint, $info, json_encode($p->addr, JSON_UNESCAPED_SLASHES));
+            // Hosts only say hello when they connect, so heartbeats also
+            // restart a relay the hosting provider stopped (at most once a
+            // minute, after the reply): before, relayed links failed until
+            // an app restarted or an admin opened the console.
+            register_shutdown_function('slip_relay_check_now_and_then');
             // Discovery is retried on later heartbeats if shared storage is
             // temporarily unavailable; it must not break the device's ID.
             try {

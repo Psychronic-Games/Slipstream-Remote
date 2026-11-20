@@ -128,6 +128,15 @@ password is replaced. The unattended password never asks. Approval happens
 before the screen is opened, so a declined viewer never sees a frame or a
 portal prompt.
 
+**Resuming** (`host::Resume`). The one-time password is replaced after
+every session. When the network cut a one-time-password session off (the
+connection timed out or was reset, or the viewer closed it with
+`INTERRUPTED_CLOSE_CODE` rather than saying `Bye`), the host also accepts
+that session's password from the same viewer endpoint, once, for 150 s, as
+an extra SPAKE2 challenge: the viewer's automatic reconnect gets back in,
+without asking for approval again. Anyone else, or after a deliberate end,
+gets the new password only.
+
 ## Session protocol (ALPN `slipstream/remote/1`, `PROTOCOL_VERSION` 6)
 
 * **Message limits:** frames are length-prefixed (`framing.rs`, 32 MiB at
@@ -546,22 +555,43 @@ system_profiler and mount output. Device-URI credentials are omitted.
 ### Latency control
 
 The viewer acks every decoded frame. The host only encodes a new frame when
-fewer than *N* (default 2) frames are unacknowledged. *N* grows with the
-link's base round-trip time (the minimum seen, not the smoothed one, which
-includes queueing). Frames are skipped *before* encoding, never after, so
-the H.264 reference chain is never broken and stale frames never pile up in
-buffers — the picture is always as fresh as the network allows.
+fewer than *N* (default 2) frames are unacknowledged, or, beyond those,
+while the frames in flight are under about a round trip of measured
+throughput (`may_send` in `video.rs`). *N* grows with the link's base
+round-trip time, up to 16. The base is the connection's own (QUIC) round
+trip, its lowest of the last 30 s; frame acks include the time to send a
+frame, which a keyframe on a slow link stretches to seconds, and keyframes
+aren't round-trip samples. Frames are skipped *before* encoding, never
+after, so the H.264 reference chain is never broken and stale frames never
+pile up in buffers — the picture is always as fresh as the network allows.
 The decode queue also holds at most two pending frames. Encoder sends observe
 shutdown while backpressured, and the session observes video-writer failures.
 Frame acknowledgements cannot advance past the last issued sequence.
 
-* **Bitrate** adapts AIMD-style when frame round trips stretch. Changes are
-  applied to the running encoder, without a keyframe.
-* **Frame skipping** by the encoder's rate control is off while the link
-  keeps up, so motion stays at full frame rate (quality dips instead). It
-  switches on once the adaptive bitrate has backed off, or when the viewer
-  chose a fixed bitrate, because big frames on a congested link mean lag.
-  A frame it skips is re-sent when the screen goes still.
+* **Bitrate** adapts AIMD-style when frame round trips stretch past the
+  base by 60 ms (or a quarter of it): down by a quarter, and at least to 85%
+  of what got through over the last 2 s, to 150 kbit/s at the lowest; up a
+  quarter a second while clear. It starts at the full target on a local
+  network (base under 20 ms) and at 1.5 Mbit/s otherwise; a new pipeline on
+  the link starts where the last one ended. Changes are applied to the
+  running encoder, without a keyframe.
+* **Screen-content mode:** once automatic bitrate stays under 40% of its
+  target, OpenH264 switches to its screen-content mode, whose scroll
+  detection keeps scrolled text cheap when frames are far apart (camera
+  mode coded them almost from scratch: 4 fps on a 2 Mbit/s link, 43 in
+  screen-content mode). Hardware encoders have no such mode, so the
+  processor takes over meanwhile. Back to camera mode (5x faster, sharper
+  still text) after 5 s at 90% of the target.
+* **Frame skipping** by the encoder's rate control is only for a fixed
+  bitrate the viewer chose. With automatic bitrate the frame window holds
+  frames back instead: the encoder's own skipping paid a big keyframe back
+  with seconds of frozen picture. A frame it skips is re-sent when the
+  screen goes still.
+* **Health check:** the viewer asks for the host's pace figures every 3 s;
+  the host answers at control priority, and an unanswered request means
+  "stopped responding" only if nothing arrived from the host meanwhile.
+* **Slow-link test:** `scripts/test-slow-link.py` measures sessions over
+  emulated links (netem in a private network namespace).
 * **Priorities:** control messages (input, acks) go before video, and video
   before file transfers, so a big copy can't freeze the picture.
 * **Big screens:** OpenH264 takes at most 4K by area, so larger screens

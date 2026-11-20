@@ -157,6 +157,10 @@ pub(crate) struct Inner {
     /// Held for the whole password exchange, so checks run one at a time
     /// (see `host::run_session`).
     pub throttle: tokio::sync::Mutex<AuthThrottle>,
+    /// The one-time password of a session the network interrupted, still
+    /// good for that viewer (and only once) until it expires: its automatic
+    /// reconnect would otherwise meet a new password and give up.
+    pub resume: Mutex<Option<host::Resume>>,
     pub backend: tokio::sync::Mutex<Option<Box<dyn Backend>>>,
     pub host_sessions: Mutex<HashMap<u64, mpsc::UnboundedSender<HostSessionCmd>>>,
     next_session: AtomicU64,
@@ -289,6 +293,7 @@ impl Client {
             stopping: watch::channel(false).0,
             password: Mutex::new(password.clone()),
             throttle: tokio::sync::Mutex::new(AuthThrottle::new()),
+            resume: Mutex::new(None),
             backend: tokio::sync::Mutex::new(None),
             host_sessions: Mutex::new(HashMap::new()),
             next_session: AtomicU64::new(0),
@@ -670,6 +675,10 @@ fn set_status(inner: &Inner, status: DirStatus) {
 /// network address changes.
 async fn directory_task(inner: Arc<Inner>) {
     let mut backoff = Duration::from_secs(1);
+    // Set once a heartbeat gets through: the next failure starts the
+    // backoff over, rather than waiting the longest step after every
+    // brief outage (long enough for the station to list us offline).
+    let registered = std::sync::atomic::AtomicBool::new(false);
     loop {
         // Listen for a station change before reading the settings: a change
         // in between would otherwise be missed (notify_waiters keeps no permit).
@@ -694,7 +703,7 @@ async fn directory_task(inner: Arc<Inner>) {
         };
         set_status(&inner, DirStatus::Connecting);
         let result = tokio::select! {
-            r = run_directory(&inner, &server, key) => r,
+            r = run_directory(&inner, &server, key, &registered) => r,
             _ = &mut changed => Ok(()),
         };
         inner.dir_client.send_replace(None);
@@ -702,6 +711,9 @@ async fn directory_task(inner: Arc<Inner>) {
             Ok(()) => backoff = Duration::from_secs(1),
             Err(e) => {
                 debug!("directory: {e:#}");
+                if registered.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                    backoff = Duration::from_secs(1);
+                }
                 set_status(&inner, DirStatus::Error(short_error(&e)));
                 tokio::select! {
                     _ = tokio::time::sleep(backoff) => {}
@@ -718,7 +730,12 @@ fn short_error(e: &anyhow::Error) -> String {
     if s.chars().count() > 120 { format!("{}…", s.chars().take(120).collect::<String>()) } else { s }
 }
 
-async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Result<()> {
+async fn run_directory(
+    inner: &Inner,
+    server: &str,
+    key: Option<String>,
+    registered: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
     let has_private_key = key.as_deref().is_some_and(|k| !k.is_empty());
     let mut dc = DirectoryClient::new(server, key)?;
     let hello = dc.hello().await?;
@@ -763,14 +780,24 @@ async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Resu
     let secret = inner.endpoint.secret_key().clone();
     let mut addr_watch = inner.endpoint.watch_addr();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(slipstream_core::directory::HEARTBEAT_SECS));
+    // After a sleep or a stall, one heartbeat, not a burst of missed ones.
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Failed inventory uploads wait longer each time (a slow uplink, or a
+    // report the station refuses), up to an hour, not a minute forever.
+    let mut inventory_retry = Duration::from_secs(60);
     loop {
         tokio::select! {
             result = inventory_tasks.join_next(), if !inventory_tasks.is_empty() => {
                 let delay = match result {
-                    Some(Ok(Ok(()))) => Duration::from_secs(15 * 60),
+                    Some(Ok(Ok(()))) => {
+                        inventory_retry = Duration::from_secs(60);
+                        Duration::from_secs(15 * 60)
+                    }
                     other => {
                         debug!(?other, "station inventory publication failed");
-                        Duration::from_secs(60)
+                        let delay = inventory_retry;
+                        inventory_retry = (inventory_retry * 2).min(Duration::from_secs(60 * 60));
+                        delay
                     }
                 };
                 inventory_due = std::time::Instant::now() + delay;
@@ -788,7 +815,17 @@ async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Resu
             os: slipstream_core::os_name(),
             app_version: slipstream_core::APP_VERSION.into(),
         };
-        let id = dc.register(&secret, inner.endpoint.addr(), info).await.context("registering")?;
+        // One slow or lost heartbeat mustn't take this device offline: try
+        // again shortly on the same connection before starting over.
+        let id = match dc.register(&secret, inner.endpoint.addr(), info.clone()).await {
+            Ok(id) => id,
+            Err(e) => {
+                debug!("heartbeat failed, trying again: {e:#}");
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                dc.register(&secret, inner.endpoint.addr(), info).await.context("registering")?
+            }
+        };
+        registered.store(true, std::sync::atomic::Ordering::Relaxed);
         if *inner.dir_status.borrow() != (DirStatus::Online { id }) {
             info!(%id, "registered with directory");
             let changed = {
@@ -1045,13 +1082,20 @@ mod tests {
             false
         };
         for round in 0..4 {
-            let text: String = (0..600_000).map(|i| char::from(b'a' + ((i * 7 + round) % 26) as u8)).collect();
+            let text: String = (0..250_000).map(|i| char::from(b'a' + ((i * 7 + round) % 26) as u8)).collect();
             *viewer_clip.lock().unwrap() = Some(Clip::Text(text.clone()));
             assert!(tokio::task::block_in_place(|| poll(&host_clip, &text)), "viewer → host, round {round}");
-            let back = text.to_uppercase();
+            let back: String = (0..600_000).map(|i| char::from(b'A' + ((i * 7 + round) % 26) as u8)).collect();
             *host_clip.lock().unwrap() = Some(Clip::Text(back.clone()));
             assert!(tokio::task::block_in_place(|| poll(&viewer_clip, &back)), "host → viewer, round {round}");
         }
+        // Longer copies here go over when pasted there, not on every copy.
+        let long: String = (0..600_000).map(|i| char::from(b'a' + (i % 26) as u8)).collect();
+        *viewer_clip.lock().unwrap() = Some(Clip::Text(long.clone()));
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(!matches!(&*host_clip.lock().unwrap(), Some(Clip::Text(t)) if t == &long), "sent before a paste");
+        session.send(ViewerCmd::Clipboard(long.clone()));
+        assert!(tokio::task::block_in_place(|| poll(&host_clip, &long)), "sent on paste");
         session.send(ViewerCmd::Chat("still here".into()));
         assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::HostChat { text, .. } if text == "still here")).await);
 
@@ -1991,6 +2035,38 @@ mod tests {
         second.shutdown().await;
         host.shutdown().await;
         for dir in [hdir, adir, bdir] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// A one-time-password link the network cut off reconnects with the same
+    /// code (only that viewer, only once); one ended on purpose doesn't.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn interrupted_one_time_links_resume_with_the_same_code() {
+        let (host, mut events, hdir) = client("resume-host", true).await;
+        let (viewer, _events, vdir) = client("resume-viewer", false).await;
+        let (other, _events, odir) = client("resume-other", false).await;
+        let code = host.one_time_password();
+        let (session, _video) = viewer.connect_direct(host.endpoint_addr(), &code, |_| {}).await.unwrap();
+        session.send(ViewerCmd::Interrupt);
+        assert!(wait_for(&mut events, |e| matches!(e, ClientEvent::Password(p) if p != &code)).await);
+        drop(session);
+        assert!(other.connect_direct(host.endpoint_addr(), &code, |_| {}).await.is_err(), "only for the same viewer");
+        let (resumed, _video) = viewer
+            .connect_direct(host.endpoint_addr(), &code, |_| {})
+            .await
+            .expect("the cut-off viewer reconnects with its code");
+        resumed.send(ViewerCmd::Disconnect);
+        assert!(wait_for(&mut events, |e| matches!(e, ClientEvent::HostSessionEnded { .. })).await);
+        drop(resumed);
+        assert!(
+            viewer.connect_direct(host.endpoint_addr(), &code, |_| {}).await.is_err(),
+            "a link ended on purpose doesn't keep the code"
+        );
+        for c in [viewer, other, host] {
+            c.shutdown().await;
+        }
+        for dir in [hdir, vdir, odir] {
             let _ = std::fs::remove_dir_all(dir);
         }
     }

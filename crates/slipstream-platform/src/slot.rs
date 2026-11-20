@@ -57,6 +57,9 @@ impl FrameSlot {
     /// possible (keeps its capacity, so filling it doesn't fault in pages).
     pub fn buffer(&self, len: usize) -> Vec<u8> {
         let mut s = self.state.lock().unwrap();
+        // Spares too small for this size (the screen got bigger) would sit
+        // in the pool for good, and every frame allocate afresh.
+        s.spare.retain(|b| b.capacity() >= len);
         let mut buf = match s.spare.iter().position(|b| b.capacity() >= len) {
             Some(i) => s.spare.swap_remove(i),
             None => Vec::with_capacity(len),

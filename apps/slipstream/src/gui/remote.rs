@@ -2143,6 +2143,8 @@ impl Link {
         let mut close: Option<usize> = None;
         let mut add = false;
         theme::window("port-forwarding", pal::GOLD)
+            // One per link: they'd share position and field state otherwise.
+            .id(egui::Id::unique(("port-forwarding", self.id)))
             .collapsible(false)
             .resizable(false)
             .default_width(460.0)

@@ -25,6 +25,7 @@ scripts/check.sh cargo build --workspace --locked
 scripts/check.sh                # unit + end-to-end session tests
 scripts/check.sh cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all                 # rustfmt.toml; CI checks formatting and Clippy
+scripts/check.sh python3 scripts/test-slow-link.py  # sessions over emulated slow, lossy links
 scripts/check.sh cargo run -p slipstream         # the app
 scripts/check.sh scripts/try-local.sh # one-machine trial: local server + host + viewer
 ```

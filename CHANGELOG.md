@@ -13,6 +13,61 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+- **Much better on slow, lossy connections.** On links of 0.6–2 Mbit/s with
+  long round trips and some packet loss, scrolling a page of text ran at
+  2–7 frames a second and the session dropped and reconnected every few
+  seconds ("The remote host stopped responding"). It now runs at 25–43
+  frames a second there, with no drops (measured with
+  `scripts/test-slow-link.py`; fast links are unchanged):
+  - The health check is answered ahead of the picture, and only counts as a
+    hang if nothing at all arrives from the other computer.
+  - Automatic bitrate measures the link properly: it backs off to what gets
+    through (down to 150 kbit/s, not 500), reacts before lag builds up on a
+    long link, starts low enough for a slow link's first picture, and keeps
+    no more in flight than the link carries in about a round trip.
+  - On a slow link, encoding switches to a mode that recognises scrolling
+    (OpenH264's screen-content mode), even where a graphics card would
+    encode, and back once the link proves fast.
+- **A one-time-password link the network cut off reconnects by itself.**
+  The code shown at the other end changed after every session, so the
+  automatic reconnect failed as a wrong password. The interrupted viewer may
+  now use the old code once more, for a couple of minutes. Needs this version
+  on both sides.
+- **Sound after unmuting.** Unmuting a link's sound (or a meeting
+  microphone) after a while gave as long again of silence.
+- **Big copies no longer freeze the mouse.** Copied text over 256 KiB goes to
+  the other computer when it's pasted there (once), not on every copy, and
+  over 8 MiB is refused instead of ending the link. Copying files on the
+  computer being helped no longer stalls the link while a slow network
+  drive is read.
+- **Staying online:** a single failed heartbeat to the station is retried at
+  once instead of after a long backoff, so devices don't flicker offline on
+  a flaky connection.
+- **Fixes:**
+  - A link made while the window was minimized opens (it waited for the
+    window to be restored), as do updates.
+  - Clicking beside the *Establishing link* dialog no longer cancels it.
+  - *Remember* in the password prompt saves the password only once it
+    worked.
+  - The device editor keeps what was typed when the station is still busy.
+  - Cancelling an upload stops sending at once.
+  - Files pasted from the other computer's clipboard are cleaned up after a
+    day on the viewer too.
+  - A meeting organizer's empty participant list can't crash the window.
+  - Linux: the window no longer waits on `systemctl`.
+  - Less work every frame on the Bridge; GDI capture and the frame pool
+    reuse their buffers.
+- **Stations:**
+  - A forged `X-Forwarded-Proto` header can no longer make an HTTP-only
+    station redirect everything to HTTPS.
+  - Account, device and station files are never replaced by a cut-off copy
+    when the disk is full.
+  - A relay the hosting provider stopped is restarted within a minute.
+  - A failing self-update backs off instead of downloading again every two
+    minutes.
+  - App sign-in is also limited per account, from any address.
+  - PHP warnings can't break the API's answers.
+
 - **Android: the keyboard opens for passwords.** Tapping the password
   field in *Connect to …* (a saved device without a saved password, or a
   recent link) didn't bring up the keyboard, so there was no way to type

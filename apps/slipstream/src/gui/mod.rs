@@ -897,10 +897,11 @@ impl App {
         } else {
             via
         };
-        let destination = self.connect_destination.take();
+        // A refused request keeps the window it was meant for.
         if self.attempt.is_some() {
             return;
         }
+        let destination = self.connect_destination.take();
         let progress = Arc::new(Mutex::new(format!("Locating {id}…")));
         let (tx, rx) = oneshot::channel();
         let client = self.client.clone();
@@ -928,6 +929,7 @@ impl App {
             Err(oneshot::error::TryRecvError::Closed) => Err("connection attempt failed".into()),
         };
         let attempt = self.attempt.take().expect("checked");
+        saved::link_made(self, ctx, attempt.id, result.is_ok());
         match result {
             Ok((session, events)) => {
                 self.open_link_tab(
@@ -2078,7 +2080,11 @@ impl App {
             );
             chrome.footer(ui);
         });
-        if cancel || result.should_close() {
+        // Escape, Close or Abort. Not any click beside the dialog (egui's
+        // modal closes on those): the backdrop covers this window's own
+        // title bar, and minimizing it while a slow link connected
+        // silently gave up.
+        if cancel || (result.should_close() && ctx.input(|i| i.key_pressed(egui::Key::Escape))) {
             self.cancel_attempt();
         }
         ctx.request_repaint_after(self.frame_interval().max(Duration::from_millis(33)));
@@ -2269,6 +2275,13 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         #[cfg(target_os = "linux")]
         self.screen_access.poll();
+        // Here, not in `ui`: eframe skips that while the window is minimized,
+        // and a link made meanwhile (a slow one, say) never opened.
+        self.poll_attempt(ctx);
+        self.poll_update(ctx);
+        self.poll_link();
+        self.poll_service(ctx);
+        saved::poll(self, ctx);
         while let Ok((id, action)) = self.session_actions.1.try_recv() {
             self.session_action(ctx, id, action);
         }
@@ -2395,7 +2408,7 @@ impl eframe::App for App {
         // Closing quits, unless the user chose to keep running in the tray
         // (or the service hosts this computer: the app then sits in the
         // tray, unless they turned that off).
-        let app = self.client.settings().app;
+        let app = self.client.with_settings(|s| s.app.clone());
         if ctx.input(|i| i.viewport().close_requested())
             && !self.quitting
             && self.tray.is_some()
@@ -2507,11 +2520,6 @@ impl eframe::App for App {
         // the soft keyboard (the root Ui covers the whole screen).
         #[cfg(target_os = "android")]
         let ui = &mut ui.new_child(UiBuilder::new().max_rect(ctx.content_rect()));
-        self.poll_attempt(&ctx);
-        self.poll_update(&ctx);
-        self.poll_link();
-        self.poll_service(&ctx);
-        saved::poll(self, &ctx);
         // Native tools are registered in logic, including while hidden.
         if ctx.embed_viewports() {
             let mut links: Vec<Arc<Mutex<remote::Link>>> = Vec::new();

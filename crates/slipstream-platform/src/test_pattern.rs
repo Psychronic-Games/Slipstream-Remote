@@ -65,13 +65,20 @@ impl Backend for TestPattern {
         let (w, h) = (self.width, self.height);
         let log = self.log.clone();
         let interval = Duration::from_secs_f64(1.0 / max_fps.clamp(1, 240) as f64);
+        // SLIPSTREAM_TEST_BUSY=1: a scrolling page of text-like detail, which
+        // compresses like a real document being scrolled (slow-link tests).
+        let busy = std::env::var_os("SLIPSTREAM_TEST_BUSY").is_some();
         thread::Builder::new().name("test-pattern".into()).spawn(move || {
             let start = Instant::now();
             let mut next = start;
             while !producer.is_closed() {
                 let t = start.elapsed().as_secs_f32();
                 let pointer = log.lock().unwrap().pointer;
-                producer.put(render(w, h, t, pointer));
+                let mut frame = render(w, h, t, pointer);
+                if busy {
+                    scrolling_text(&mut frame, t);
+                }
+                producer.put(frame);
                 next += interval;
                 match next.checked_duration_since(Instant::now()) {
                     Some(wait) => thread::sleep(wait),
@@ -89,6 +96,30 @@ impl Backend for TestPattern {
         }
         log.events.push(event);
         Ok(())
+    }
+}
+
+/// Fills the left two thirds with "text": lines of words in a 40-glyph
+/// alphabet (dark ink on a light page, ragged line ends), scrolling 120 px
+/// a second, so it compresses about like a real document being scrolled.
+fn scrolling_text(frame: &mut RawFrame, t: f32) {
+    let hash = |a: u32, b: u32| (a.wrapping_mul(2_654_435_761) ^ b.wrapping_mul(40_503)).wrapping_mul(2_246_822_519);
+    let (w, h, stride) = (frame.width, frame.height, frame.stride as usize);
+    let scroll = (t * 120.0) as u32;
+    let page = w * 2 / 3;
+    for y in 0..h {
+        let (line, cy) = ((y + scroll) / 18, (y + scroll) % 18);
+        let line_end = page / 2 + hash(line, 7) % (page / 2);
+        let row = &mut frame.data[y as usize * stride..][..w as usize * 4];
+        for x in 0..page {
+            let (cell, cx) = (x / 7, x % 7);
+            let code = hash(line, cell) % 48;
+            // Codes past the alphabet are spaces between words.
+            let ink =
+                x < line_end && code < 40 && cy < 12 && cx < 6 && (hash(code, 99) >> ((cx + cy * 6) % 29)) & 1 == 1;
+            let v = if ink { 30 } else { 235 };
+            row[x as usize * 4..][..3].copy_from_slice(&[v, v, v]);
+        }
     }
 }
 

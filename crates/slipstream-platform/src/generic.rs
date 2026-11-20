@@ -382,9 +382,14 @@ fn gdi_until(
                 previous.clear();
                 previous.extend_from_slice(&data);
                 producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
+            } else {
+                // Unchanged: the buffer goes back to the pool (dropping it
+                // allocated a whole new screen's worth on the next poll).
+                producer.reuse(data);
             }
             pace.add(t.elapsed());
         } else {
+            producer.reuse(data);
             // A desktop switch can fail a few captures; keep trying a while.
             gdi = None;
             failures += 1;

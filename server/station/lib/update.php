@@ -475,13 +475,19 @@ function slip_update_background(): void
     }
     $state = slip_update_state();
     $installing = slip_update_available($state) && slip_update_auto();
+    // An install that keeps failing (a folder it can't write, a full disk,
+    // downloads cut short) waits twice as long each round, up to the
+    // regular check: it re-downloaded everything every two minutes, forever.
+    $rounds = $installing ? (int)($state['rounds'] ?? 0) : 0;
+    $retry = min(SLIP_UPDATE_RETRY << min($rounds, 10), SLIP_UPDATE_EVERY);
     $due = time() - (int)($state['checked'] ?? 0) >= SLIP_UPDATE_EVERY
-        || ($installing && time() - (int)($state['step_at'] ?? 0) >= SLIP_UPDATE_RETRY);
+        || ($installing && time() - (int)($state['step_at'] ?? 0) >= $retry);
     if (!$due) {
         return;
     }
     // Claim this round, so concurrent requests don't start it again.
     $state['step_at'] = time();
+    $state['rounds'] = $installing ? $rounds + 1 : 0;
     if (!$installing) {
         $state['checked'] = time();
     }

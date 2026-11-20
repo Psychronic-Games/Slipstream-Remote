@@ -51,8 +51,10 @@ impl PublicStation {
 }
 
 impl Client {
+    // Both run several times a frame: they read the settings in place
+    // rather than copying them (with every station's device lists).
     pub fn has_custom_station(&self) -> bool {
-        has_custom(&self.settings())
+        self.with_settings(has_custom)
     }
 
     pub fn station_settings(&self) -> ServerSettings {
@@ -61,7 +63,7 @@ impl Client {
         {
             return public.settings.lock().unwrap().clone();
         }
-        self.settings().server
+        self.with_settings(|s| s.server.clone())
     }
 
     pub fn public_dir_status(&self) -> DirStatus {

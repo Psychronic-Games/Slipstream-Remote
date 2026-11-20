@@ -265,5 +265,7 @@ Each step has an issue with tasks and pointers into the code in
 - How it fits together: [ARCHITECTURE.md](ARCHITECTURE.md).
 - User-facing behaviour: [GETTING-STARTED.md](GETTING-STARTED.md) and
   [STATION-SETUP.md](STATION-SETUP.md).
-- Audit findings and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md) and
-  [AUDIT-2026-11-05.md](AUDIT-2026-11-05.md) (with open items).
+- Audit findings and limits: [AUDIT-2026-10-18.md](AUDIT-2026-10-18.md),
+  [AUDIT-2026-11-05.md](AUDIT-2026-11-05.md) and
+  [AUDIT-2026-11-19.md](AUDIT-2026-11-19.md) (slow links and performance;
+  with open items).

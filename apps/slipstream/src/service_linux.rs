@@ -98,23 +98,37 @@ pub fn installed() -> bool {
     Path::new(UNIT_PATH).exists()
 }
 
-/// What systemd says ("active", "failed", …), looked up at most every two
-/// seconds; `None` if it isn't installed.
+/// What systemd says ("active", "failed", …); `None` if it isn't
+/// installed. The window asks every frame, so after the first answer it gets
+/// the last one while a fresh one is looked up in the background (at most
+/// every two seconds): `systemctl` can take seconds while systemd is busy
+/// (booting, upgrading packages), and the window froze meanwhile.
 fn state() -> Option<String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
     static SEEN: std::sync::Mutex<Option<(Instant, Option<String>)>> = std::sync::Mutex::new(None);
-    let mut seen = SEEN.lock().unwrap();
-    if let Some((at, state)) = &*seen
-        && at.elapsed() < Duration::from_secs(2)
-    {
-        return state.clone();
+    static LOOKING: AtomicBool = AtomicBool::new(false);
+    fn look_up() -> Option<String> {
+        let state = installed().then(|| {
+            systemctl(&["is-active", UNIT])
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default()
+        });
+        *SEEN.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), state.clone()));
+        state
     }
-    let state = installed().then(|| {
-        systemctl(&["is-active", UNIT])
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default()
-    });
-    *seen = Some((Instant::now(), state.clone()));
-    state
+    let seen = SEEN.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    match seen {
+        None => look_up(),
+        Some((at, state)) => {
+            if at.elapsed() >= Duration::from_secs(2) && !LOOKING.swap(true, Ordering::AcqRel) {
+                std::thread::spawn(|| {
+                    look_up();
+                    LOOKING.store(false, Ordering::Release);
+                });
+            }
+            state
+        }
+    }
 }
 
 /// The service's state in words, for the Bridge and Config pages.

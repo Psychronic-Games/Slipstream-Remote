@@ -40,6 +40,9 @@ pub struct Saved {
     editor: Option<Editor>,
     group_editor: Option<GroupEditor>,
     prompt: Option<Prompt>,
+    /// "Remember" ticked for a link being made: saved once the host has
+    /// accepted the password (a typo mustn't replace one that works).
+    remember_after: Option<(AccountRef, DeviceId, String)>,
 }
 
 struct GroupEditor {
@@ -182,7 +185,8 @@ const ROW_MAX_WIDTH: f32 = 860.0;
 const SIGN_IN_WIDTH: f32 = 360.0;
 
 fn accounts(app: &App) -> Vec<StationAccount> {
-    app.client.settings().accounts
+    // Every frame: copy the accounts only, not all the settings.
+    app.client.with_settings(|s| s.accounts.clone())
 }
 
 /// Runs a station call in the background; its message (or error) becomes a
@@ -388,30 +392,32 @@ fn own_device(app: &App, account: &StationAccount) -> Option<SavedDevice> {
     if cfg!(target_os = "android") {
         return None;
     }
-    let settings = app.client.settings();
+    // Every frame, for each account: only the fields needed.
+    let (public_device_id, last_device_id, device_name) =
+        app.client.with_settings(|s| (s.host.public_device_id, s.host.last_device_id, s.device_name.clone()));
     if slipstream_core::config::is_public_station(&account.server) {
         let status = if app.via_service { app.service_public_status.as_ref() } else { Some(&app.public_status) };
         let id = match status {
             Some(slipstream_session::DirStatus::Online { id }) => Some(*id),
-            _ if !app.via_service => settings.host.public_device_id,
+            _ if !app.via_service => public_device_id,
             _ => None,
         };
         #[cfg(target_os = "linux")]
         let id = if app.via_service { crate::service::hosted_id(true) } else { id };
-        return own_device_entry(account, slipstream_core::config::PUBLIC_STATION_URL, id, &settings.device_name);
+        return own_device_entry(account, slipstream_core::config::PUBLIC_STATION_URL, id, &device_name);
     }
     if app.via_service && !app.service_station_matches() {
         return None;
     }
     let id = match app.dir_status {
         slipstream_session::DirStatus::Online { id } => Some(id),
-        _ => settings.host.last_device_id,
+        _ => last_device_id,
     };
     #[cfg(windows)]
     let id = if app.via_service { crate::service::hosted_id() } else { id };
     #[cfg(target_os = "linux")]
     let id = if app.via_service { crate::service::hosted_id(false) } else { id };
-    own_device_entry(account, app.client.station_settings().url.as_deref()?, id, &settings.device_name)
+    own_device_entry(account, app.client.station_settings().url.as_deref()?, id, &device_name)
 }
 
 fn own_device_entry(account: &StationAccount, server: &str, id: Option<DeviceId>, name: &str) -> Option<SavedDevice> {
@@ -690,6 +696,32 @@ pub(super) fn ask_password(
         note,
         focused: false,
     });
+}
+
+/// Saves `password` (sealed) in the technician's own entry for device `id`.
+fn remember_password(app: &mut App, ctx: &egui::Context, r: AccountRef, id: DeviceId, password: String) {
+    let client = app.client.clone();
+    spawn_job(app, ctx, "Saving the password", async move {
+        let a = client
+            .with_settings(|s| s.accounts.iter().find(|a| AccountRef::of(a) == r).cloned())
+            .ok_or_else(|| anyhow::anyhow!("signed out"))?;
+        let mut device =
+            password_entry(&a, id).ok_or_else(|| anyhow::anyhow!("device is no longer in the station list"))?;
+        device.secret = None;
+        client.save_device(&r, device, Some(password), false).await?;
+        Ok(String::new())
+    });
+}
+
+/// A link attempt to `id` ended (`made`: the host accepted the password):
+/// a password the prompt was asked to remember is saved now, or forgotten.
+pub(super) fn link_made(app: &mut App, ctx: &egui::Context, id: DeviceId, made: bool) {
+    if let Some((r, wanted, password)) = app.saved.remember_after.take()
+        && made
+        && wanted == id
+    {
+        remember_password(app, ctx, r, id, password);
+    }
 }
 
 pub(super) fn prompt_open(app: &App) -> bool {
@@ -1047,6 +1079,13 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
             });
             chrome.footer(ui);
         });
+    // Only one station call at a time: keep the editor (and what was typed
+    // in it) open rather than closing it on an unsaved change.
+    if (save || delete) && app.saved.job.is_some() {
+        app.toast("One moment: still talking to the station", pal::GOLD);
+        app.saved.editor = Some(e);
+        return;
+    }
     if save {
         let id: DeviceId = match e.id.parse() {
             Ok(id) => id,
@@ -1177,22 +1216,15 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
             chrome.footer(ui);
         });
     if go && !p.password.is_empty() {
-        if p.remember {
-            // Save it as well, sealed, alongside connecting.
-            let (client, r, id, pw) = (app.client.clone(), p.account.clone(), p.id, p.password.clone());
-            spawn_job(app, ctx, "Saving the password", async move {
-                let a = client
-                    .settings()
-                    .accounts
-                    .into_iter()
-                    .find(|a| AccountRef::of(a) == r)
-                    .ok_or_else(|| anyhow::anyhow!("signed out"))?;
-                let mut device =
-                    password_entry(&a, id).ok_or_else(|| anyhow::anyhow!("device is no longer in the station list"))?;
-                device.secret = None;
-                client.save_device(&r, device, Some(pw), false).await?;
-                Ok(String::new())
-            });
+        match p.purpose {
+            // Saved once the link is made (`link_made`).
+            Purpose::Connect if p.remember => {
+                app.saved.remember_after = Some((p.account.clone(), p.id, p.password.clone()));
+            }
+            Purpose::Connect => app.saved.remember_after = None,
+            // A chat is made elsewhere: saved alongside.
+            Purpose::Chat if p.remember => remember_password(app, ctx, p.account.clone(), p.id, p.password.clone()),
+            Purpose::Chat => {}
         }
         match p.purpose {
             Purpose::Connect => {

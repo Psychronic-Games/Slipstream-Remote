@@ -11,6 +11,10 @@ pub const PROTOCOL_VERSION: u32 = 6;
 /// close code, without adding a control-stream variant older viewers reject.
 pub const HOST_RESTARTING: &str = "The remote host is restarting after an update";
 pub const RESTART_CLOSE_CODE: u32 = 1;
+/// A viewer closing a link the network interrupted, to reconnect: the host
+/// keeps its one-time password for that viewer a little while (hosts from
+/// before 0.39 treat it like any close).
+pub const INTERRUPTED_CLOSE_CODE: u32 = 2;
 
 /// Audio travels as QUIC datagrams (a lost one is concealed, never waited
 /// for): `[AUDIO_DATAGRAM][u16 LE sequence][Opus packet]`, 20 ms each.

@@ -98,6 +98,7 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     // Password check (see slipstream_core::auth), one at a time: the
     // throttle stays locked until this attempt is counted, so parallel
     // connections can't slip extra guesses in before the lockout starts.
+    let session_password: Option<String>;
     let (confirm, matched) = {
         let Ok(mut throttle) = tokio::time::timeout(AUTH_QUEUE_WAIT, inner.throttle.lock()).await else {
             fail(&mut send, "the device is busy with another sign-in — try again", 5).await?;
@@ -107,10 +108,24 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
             fail(&mut send, "too many wrong passwords — try again shortly", wait.as_secs() as u32 + 1).await?;
             return Ok(());
         }
-        let mut secrets = vec![password_secret(&inner.one_time_password())];
+        let one_time_password = inner.one_time_password();
+        let mut secrets = vec![password_secret(&one_time_password)];
         if let Some(p) = settings.host.permanent_secret() {
             secrets.push(p);
         }
+        // This viewer's interrupted session: its password, once more.
+        let resumable = {
+            let mut resume = inner.resume.lock().unwrap();
+            if resume.as_ref().is_some_and(|r| r.peer == peer && Instant::now() < r.until) {
+                resume.take()
+            } else {
+                None
+            }
+        };
+        let resume_index = resumable.as_ref().map(|r| {
+            secrets.push(password_secret(&r.password));
+            secrets.len() - 1
+        });
         let (auth, pakes) = HostAuth::start(&secrets, &host_id, &peer);
         let exchange = async {
             write_msg(&mut send, &HostMsg::AuthChallenge { pakes }).await?;
@@ -133,6 +148,12 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
         match auth.finish(&pakes, &confirms) {
             Ok(c) => {
                 throttle.record_success();
+                // The password this link may resume with, if it's cut off.
+                session_password = match resume_index {
+                    Some(i) if c.1 == i => resumable.map(|r| r.password),
+                    _ if c.1 == 0 => Some(one_time_password),
+                    _ => None,
+                };
                 c
             }
             Err(_) => {
@@ -245,10 +266,39 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     info!(%peer, %reason, "session ended");
     let restarting = reason == slipstream_core::proto::HOST_RESTARTING;
     inner.emit(ClientEvent::HostSessionEnded { session: id, reason });
-    // A new one-time password after every session, like TeamViewer.
+    // A new one-time password after every session, like TeamViewer. If the
+    // network cut a one-time-password session off (not anyone's choice),
+    // the old one stays good for that viewer's reconnect, briefly, once.
+    if let Some(password) = session_password
+        && interrupted(&conn)
+    {
+        *inner.resume.lock().unwrap() = Some(Resume { peer, password, until: Instant::now() + RESUME_WINDOW });
+    }
     rotate_password(&inner);
     conn.close((if restarting { slipstream_core::proto::RESTART_CLOSE_CODE } else { 0 }).into(), b"bye");
     Ok(())
+}
+
+/// How long an interrupted session's one-time password stays good for its
+/// viewer: longer than the viewer keeps retrying (two minutes).
+const RESUME_WINDOW: Duration = Duration::from_secs(150);
+
+/// See `Inner::resume`.
+pub(crate) struct Resume {
+    peer: iroh::EndpointId,
+    password: String,
+    until: Instant,
+}
+
+/// The connection was lost rather than closed: timed out, reset, or closed
+/// by a viewer that's going to reconnect.
+fn interrupted(conn: &Connection) -> bool {
+    use iroh::endpoint::ConnectionError as E;
+    match conn.close_reason() {
+        Some(E::TimedOut | E::Reset | E::ConnectionClosed(_)) => true,
+        Some(E::ApplicationClosed(c)) => c.error_code == slipstream_core::proto::INTERRUPTED_CLOSE_CODE.into(),
+        _ => false,
+    }
 }
 
 fn rotate_password(inner: &Inner) {
@@ -561,8 +611,11 @@ async fn session_loop(
         viewing.clone(),
     )));
 
-    let flow = Flow::new();
+    let flow = link_flow(conn);
     let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();
+    // Copied files, summed up in the background (the newest copy wins).
+    let (summary_tx, mut summary_rx) = mpsc::channel(1);
+    let mut _clip_summary: Option<AbortOnDrop<()>> = None;
     let mut pipeline: Option<Pipeline> = None;
     // Viewers that stream several displays at once (`ShowDisplays`).
     let mut shown: HashMap<u32, Shown> = HashMap::new();
@@ -668,7 +721,7 @@ async fn session_loop(
                             drop(pipeline); // stop the old capture first
                             match open_capture(inner, d, s.max_fps).await? {
                                 Ok(c) => {
-                                    let flow = Flow::new();
+                                    let flow = link_flow(conn);
                                     let pipeline = Pipeline::start(c, flow.clone(), s, tx.clone(), err_tx.clone());
                                     shown.insert(d, Shown { pipeline, flow, tx });
                                 }
@@ -713,7 +766,7 @@ async fn session_loop(
                             };
                             match open_capture(inner, d, s.max_fps).await? {
                                 Ok(c) => {
-                                    let flow = Flow::new();
+                                    let flow = link_flow(conn);
                                     let (tx, rx) = mpsc::channel::<VideoFrame>(4);
                                     tokio::spawn(display_writer(conn.clone(), d, rx));
                                     let pipeline = Pipeline::start(c, flow.clone(), s, tx.clone(), err_tx.clone());
@@ -803,13 +856,29 @@ async fn session_loop(
                 Clip::Text(_) => {}
                 // Copied files: tell the viewer what they are (it decides
                 // whether to fetch them), if it may have them.
+                // Summed up off this loop: a copied folder on a slow or
+                // unreachable network drive can take a minute to stat, and
+                // meanwhile no input or frame acknowledgement got through.
                 Clip::Files(paths) if caps.file_transfer => {
-                    let summary = tokio::task::spawn_blocking(move || fsops_summary(&paths)).await?;
-                    let (items, total_bytes, file_count) = summary;
-                    write_msg(&mut send, &HostMsg::Clipboard(ClipboardData::Files { items, total_bytes, file_count })).await?;
+                    let tx = summary_tx.clone();
+                    _clip_summary = Some(AbortOnDrop(tokio::spawn(async move {
+                        let summary = tokio::time::timeout(
+                            Duration::from_secs(30),
+                            tokio::task::spawn_blocking(move || fsops_summary(&paths)),
+                        )
+                        .await;
+                        if let Ok(Ok(summary)) = summary {
+                            let _ = tx.send(summary).await;
+                        }
+                    })));
                 }
                 Clip::Files(_) => {}
             }},
+            Some((items, total_bytes, file_count)) = summary_rx.recv() => {
+                if viewing.get() {
+                    write_msg(&mut send, &HostMsg::Clipboard(ClipboardData::Files { items, total_bytes, file_count })).await?;
+                }
+            }
             Some(err) = err_rx.recv() => {
                 drop(pipeline.take());
                 shown.clear();
@@ -840,6 +909,13 @@ async fn session_loop(
 
 /// A display streamed on its own uni-stream, for viewers that show several
 /// at once.
+/// Frame accounting that takes the link's base round trip from the
+/// connection's selected path.
+fn link_flow(conn: &Connection) -> Arc<Flow> {
+    let conn = conn.clone();
+    Flow::with_path_rtt(move || conn.paths().iter().find(|p| p.is_selected()).map(|p| p.rtt()))
+}
+
 struct Shown {
     pipeline: Pipeline,
     flow: Arc<Flow>,
