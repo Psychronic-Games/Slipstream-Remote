@@ -151,7 +151,12 @@ mod tests {
         use crate::proto::{Capabilities, HostExtras, HostMsg, SessionInfo};
         let ok = || HostMsg::AuthOk {
             confirm: [3; 32],
-            session: SessionInfo { host_name: "host".into(), os: "Linux".into(), displays: Vec::new(), capabilities: Capabilities::default() },
+            session: SessionInfo {
+                host_name: "host".into(),
+                os: "Linux".into(),
+                displays: Vec::new(),
+                capabilities: Capabilities::default(),
+            },
         };
         let extras = HostExtras { text_input: true, multi_display: true };
         let with = postcard::to_stdvec(&(ok(), extras.clone())).unwrap();
@@ -169,10 +174,17 @@ mod tests {
     fn text_for_hosts_without_text_input_uses_us_keys() {
         use crate::proto::{InputEvent, us_keys_for_text};
         let key = |code: &str, down| InputEvent::Key { code: code.into(), down };
-        assert_eq!(us_keys_for_text("a@"), [
-            key("KeyA", true), key("KeyA", false),
-            key("ShiftLeft", true), key("Digit2", true), key("Digit2", false), key("ShiftLeft", false),
-        ]);
+        assert_eq!(
+            us_keys_for_text("a@"),
+            [
+                key("KeyA", true),
+                key("KeyA", false),
+                key("ShiftLeft", true),
+                key("Digit2", true),
+                key("Digit2", false),
+                key("ShiftLeft", false),
+            ]
+        );
         // What a US keyboard can't type is left out.
         assert!(us_keys_for_text("é").is_empty());
     }

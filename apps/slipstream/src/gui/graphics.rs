@@ -152,7 +152,10 @@ mod win {
 
     use eframe::egui_wgpu::{WgpuSetupCreateNew, wgpu};
 
-    use super::{super::softgl, super::video, STRIKES, Tier, format_failed, keys, parse_crash, parse_failed, parse_marker, resolve};
+    use super::{
+        super::softgl, super::video, STRIKES, Tier, format_failed, keys, parse_crash, parse_failed, parse_marker,
+        resolve,
+    };
 
     /// Set for the throwaway process that tries one driver ([`probe`]).
     pub const ENV_PROBE: &str = "SLIPSTREAM_PROBE_GRAPHICS";
@@ -183,7 +186,8 @@ mod win {
         passed_over: Vec<String>,
     }
 
-    static RUN: Mutex<Run> = Mutex::new(Run { failed: Vec::new(), strike: None, armed: None, chosen: None, passed_over: Vec::new() });
+    static RUN: Mutex<Run> =
+        Mutex::new(Run { failed: Vec::new(), strike: None, armed: None, chosen: None, passed_over: Vec::new() });
 
     fn pass_over(tier: Tier, why: &str) {
         RUN.lock().unwrap().passed_over.push(format!("{} ({why})", tier.label()));
@@ -221,7 +225,8 @@ mod win {
     }
 
     fn test(what: &str, tier: Tier) -> bool {
-        std::env::var(ENV_TEST).is_ok_and(|v| v.split(',').any(|t| t.trim().split_once(':') == Some((what, tier.key()))))
+        std::env::var(ENV_TEST)
+            .is_ok_and(|v| v.split(',').any(|t| t.trim().split_once(':') == Some((what, tier.key()))))
     }
 
     fn save_failed(failed: &[Tier]) {
@@ -233,7 +238,9 @@ mod win {
 
     /// Reads what earlier starts left behind.
     fn load() {
-        let saved = std::fs::read_to_string(failed_file()).map(|t| parse_failed(&t, slipstream_core::BUILD_NUMBER)).unwrap_or_default();
+        let saved = std::fs::read_to_string(failed_file())
+            .map(|t| parse_failed(&t, slipstream_core::BUILD_NUMBER))
+            .unwrap_or_default();
         let handed = std::env::var(ENV_FAILED).ok();
         let marker = std::fs::read_to_string(marker()).ok().and_then(|t| parse_marker(&t));
         let crash = std::fs::read(crash_file()).ok().and_then(|b| parse_crash(&b));
@@ -241,12 +248,17 @@ mod win {
         let (failed, strike) = resolve(&saved, handed.as_deref(), marker);
         for tier in failed.iter().filter(|t| !saved.contains(t)) {
             match &crash {
-                Some(crash) => tracing::warn!("{} crashed while the window was starting ({crash}): not using it", tier.label()),
+                Some(crash) => {
+                    tracing::warn!("{} crashed while the window was starting ({crash}): not using it", tier.label())
+                }
                 None => tracing::warn!("{} didn't get the window started: not using it", tier.label()),
             }
         }
         if let Some((tier, strikes)) = strike {
-            tracing::warn!("{} didn't finish starting last time ({strikes} of {STRIKES} before it's passed over)", tier.label());
+            tracing::warn!(
+                "{} didn't finish starting last time ({strikes} of {STRIKES} before it's passed over)",
+                tier.label()
+            );
         }
         if failed != saved {
             save_failed(&failed);
@@ -306,7 +318,11 @@ mod win {
 
     fn choose(rt: &tokio::runtime::Runtime) -> Renderer {
         if softgl::running_beside() {
-            return if !failed(Tier::SoftGlBeside) && start_software(rt, Tier::SoftGlBeside) { Renderer::Full } else { Renderer::Compact };
+            return if !failed(Tier::SoftGlBeside) && start_software(rt, Tier::SoftGlBeside) {
+                Renderer::Full
+            } else {
+                Renderer::Compact
+            };
         }
         // SLIPSTREAM_SOFTWARE_RENDERER=1 goes straight to it (troubleshooting).
         if std::env::var_os("SLIPSTREAM_SOFTWARE_RENDERER").is_none() {
@@ -483,7 +499,12 @@ mod win {
         use std::process::{Command, Stdio};
         let label = tier.label();
         let Ok(exe) = std::env::current_exe() else { return Probe::Unusable };
-        let child = Command::new(exe).env(ENV_PROBE, tier.key()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn();
+        let child = Command::new(exe)
+            .env(ENV_PROBE, tier.key())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn();
         let Ok(mut child) = child else { return Probe::Unusable };
         // Read as it comes: a driver that fills the pipe mustn't block.
         let out = child.stdout.take().map(|mut out| {
@@ -538,10 +559,14 @@ mod win {
     /// [`ENV_PROBE`], as the window would. Exit code 0: on a graphics card;
     /// 2: on the processor; 1: not at all. Says which adapter on stdout.
     pub fn probe(which: &str) -> i32 {
-        use windows_sys::Win32::System::Diagnostics::Debug::{SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, SetErrorMode};
+        use windows_sys::Win32::System::Diagnostics::Debug::{
+            SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, SetErrorMode,
+        };
         // SAFETY: plain Win32 call. A crash here must not put up a dialog.
         unsafe { SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX) };
-        let Some(tier) = Tier::parse(which).filter(|t| matches!(t, Tier::Vulkan | Tier::Dx12 | Tier::SystemGl)) else { return 1 };
+        let Some(tier) = Tier::parse(which).filter(|t| matches!(t, Tier::Vulkan | Tier::Dx12 | Tier::SystemGl)) else {
+            return 1;
+        };
         if test("probe-crash", tier) {
             // SAFETY: none. The test is what a crashing driver does.
             unsafe { std::ptr::null_mut::<u32>().write_volatile(1) };
@@ -652,7 +677,10 @@ mod win {
             System::{
                 Diagnostics::Debug::{EXCEPTION_POINTERS, SetUnhandledExceptionFilter},
                 Environment::GetCommandLineW,
-                LibraryLoader::{GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, GetModuleFileNameW, GetModuleHandleExW},
+                LibraryLoader::{
+                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    GetModuleFileNameW, GetModuleHandleExW,
+                },
                 Threading::{CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW},
             },
         };
@@ -700,7 +728,8 @@ mod win {
         unsafe extern "system" fn on_crash(info: *const EXCEPTION_POINTERS) -> i32 {
             const CONTINUE_SEARCH: i32 = 0; // crash as usual
             const EXECUTE_HANDLER: i32 = 1; // end the process quietly
-            let (exe, command_line, note) = (EXE.load(Ordering::SeqCst), COMMAND_LINE.load(Ordering::SeqCst), NOTE.load(Ordering::SeqCst));
+            let (exe, command_line, note) =
+                (EXE.load(Ordering::SeqCst), COMMAND_LINE.load(Ordering::SeqCst), NOTE.load(Ordering::SeqCst));
             if !ARMED.swap(false, Ordering::SeqCst) || exe.is_null() || command_line.is_null() {
                 return CONTINUE_SEARCH;
             }
@@ -718,7 +747,8 @@ mod win {
                     } else {
                         0
                     };
-                    let file = CreateFileW(note, GENERIC_WRITE, 0, std::ptr::null(), CREATE_ALWAYS, 0, std::ptr::null_mut());
+                    let file =
+                        CreateFileW(note, GENERIC_WRITE, 0, std::ptr::null(), CREATE_ALWAYS, 0, std::ptr::null_mut());
                     if file != INVALID_HANDLE_VALUE {
                         let code = (record.ExceptionCode as u32).to_le_bytes();
                         let mut written = 0;
@@ -730,7 +760,19 @@ mod win {
                 let mut startup: STARTUPINFOW = std::mem::zeroed();
                 startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
                 let mut process: PROCESS_INFORMATION = std::mem::zeroed();
-                if CreateProcessW(exe, command_line, std::ptr::null(), std::ptr::null(), 0, 0, std::ptr::null(), std::ptr::null(), &startup, &mut process) == 0 {
+                if CreateProcessW(
+                    exe,
+                    command_line,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0,
+                    0,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    &startup,
+                    &mut process,
+                ) == 0
+                {
                     return CONTINUE_SEARCH;
                 }
                 CloseHandle(process.hThread);

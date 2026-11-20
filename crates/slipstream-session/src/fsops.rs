@@ -7,9 +7,7 @@ use anyhow::{Context, Result, bail};
 use slipstream_core::proto::{DirEntry, DirListing, Place};
 
 pub fn home() -> PathBuf {
-    directories::UserDirs::new()
-        .map(|d| d.home_dir().to_path_buf())
-        .unwrap_or_else(std::env::temp_dir)
+    directories::UserDirs::new().map(|d| d.home_dir().to_path_buf()).unwrap_or_else(std::env::temp_dir)
 }
 
 /// Where received files go by default: the Desktop, else Downloads, else home.
@@ -69,9 +67,12 @@ pub fn places() -> Vec<Place> {
 pub async fn list_async(path: Option<String>) -> Result<DirListing> {
     use std::sync::{Arc, OnceLock};
     static WORKERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
-    let permit = WORKERS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
-        .clone().acquire_owned().await?;
-    tokio::task::spawn_blocking(move || {let _permit=permit;list(path.as_deref())}).await?
+    let permit = WORKERS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2))).clone().acquire_owned().await?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        list(path.as_deref())
+    })
+    .await?
 }
 
 /// Lists a folder (`None` = home). Folders first, then files, by name.
@@ -114,7 +115,9 @@ pub fn list(path: Option<&str>) -> Result<DirListing> {
 /// Paths as users expect to see them (no `\\?\` prefix on Windows).
 pub fn display(p: &Path) -> String {
     let s = p.display().to_string();
-    if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {return format!(r"\\{unc}");}
+    if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc}");
+    }
     s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s)
 }
 
@@ -126,10 +129,8 @@ pub fn safe_relative(rel: &str) -> Result<PathBuf> {
         if part.is_empty() || part == "." {
             continue;
         }
-        let clean: String = part
-            .chars()
-            .filter(|c| !c.is_control() && !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|'))
-            .collect();
+        let clean: String =
+            part.chars().filter(|c| !c.is_control() && !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')).collect();
         let clean = clean.trim().trim_end_matches('.').to_string();
         if clean.is_empty() || clean == ".." {
             bail!("invalid file name in {rel:?}");
@@ -204,7 +205,9 @@ pub fn paste_dir(batch: u64) -> PathBuf {
 /// Creates the folder for a paste, first removing pastes from over a day ago.
 pub fn make_paste_dir(batch: u64) -> PathBuf {
     let dir = paste_dir(batch);
-    if !dir.is_dir() && let Some(root) = trusted_paste_root() {
+    if !dir.is_dir()
+        && let Some(root) = trusted_paste_root()
+    {
         for e in std::fs::read_dir(&root).into_iter().flatten().flatten() {
             let old = e
                 .metadata()
@@ -278,12 +281,20 @@ pub fn walk_local_tree(root: &Path) -> Result<LocalTree> {
     let mut visited = std::collections::HashSet::new();
     while let Some(path) = stack.pop() {
         let metadata = std::fs::metadata(&path).with_context(|| format!("reading {}", path.display()))?;
-        let rel = path.strip_prefix(base)?.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+        let rel = path
+            .strip_prefix(base)?
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         if metadata.is_dir() {
             // Follow useful symlinks, but stop a link back into an ancestor.
-            if !visited.insert(std::fs::canonicalize(&path)?) { continue; }
+            if !visited.insert(std::fs::canonicalize(&path)?) {
+                continue;
+            }
             out.directories.push(rel);
-            let mut children = std::fs::read_dir(&path)?.map(|entry| entry.map(|e| e.path())).collect::<std::io::Result<Vec<_>>>()?;
+            let mut children =
+                std::fs::read_dir(&path)?.map(|entry| entry.map(|e| e.path())).collect::<std::io::Result<Vec<_>>>()?;
             children.sort();
             stack.extend(children.into_iter().rev());
         } else if metadata.is_file() {
@@ -301,16 +312,17 @@ mod tests {
 
     #[test]
     fn windows_unc_display_paths_remain_absolute() {
-        assert_eq!(display(Path::new(r"\\?\UNC\server\share\folder")),r"\\server\share\folder");
-        assert_eq!(display(Path::new(r"\\?\C:\folder")),r"C:\folder");
+        assert_eq!(display(Path::new(r"\\?\UNC\server\share\folder")), r"\\server\share\folder");
+        assert_eq!(display(Path::new(r"\\?\C:\folder")), r"C:\folder");
     }
 
     #[cfg(unix)]
     #[test]
     fn dangling_links_are_occupied_destinations() {
-        let dir=tempfile::tempdir().unwrap();let dest=dir.path().join("note.txt");
-        std::os::unix::fs::symlink(dir.path().join("missing"),&dest).unwrap();
-        assert_eq!(unique_path(&dest),dir.path().join("note (1).txt"));
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("note.txt");
+        std::os::unix::fs::symlink(dir.path().join("missing"), &dest).unwrap();
+        assert_eq!(unique_path(&dest), dir.path().join("note (1).txt"));
     }
 
     #[test]
@@ -333,9 +345,12 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&root, root.join("data/back-to-root")).unwrap();
         let tree = walk_local_tree(&root).unwrap();
-        assert_eq!(walk_local(&root).unwrap(),tree.files,"clipboard traversal also stops symlink cycles");
+        assert_eq!(walk_local(&root).unwrap(), tree.files, "clipboard traversal also stops symlink cycles");
         let name = root.file_name().unwrap().to_str().unwrap();
-        assert_eq!(tree.directories, [name.to_owned(), format!("{name}/data"), format!("{name}/empty"), format!("{name}/empty/nested")]);
+        assert_eq!(
+            tree.directories,
+            [name.to_owned(), format!("{name}/data"), format!("{name}/empty"), format!("{name}/empty/nested")]
+        );
         assert_eq!(tree.files.len(), 1);
         assert_eq!(tree.files[0].1, format!("{name}/data/note.txt"));
         assert_eq!(tree.files[0].2, 5);

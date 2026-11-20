@@ -101,18 +101,32 @@ impl ManageForm {
 
     /// What to save; an empty one clears it. `old` is the ID the saved
     /// controller password was sealed for.
-    fn build(&self, client: &slipstream_session::Client, r: &AccountRef, id: DeviceId, old: Option<DeviceId>) -> anyhow::Result<slipstream_core::account::Management> {
+    fn build(
+        &self,
+        client: &slipstream_session::Client,
+        r: &AccountRef,
+        id: DeviceId,
+        old: Option<DeviceId>,
+    ) -> anyhow::Result<slipstream_core::account::Management> {
         use slipstream_core::account::{Controller, Management, normalize_mac};
         let wake_mac = match self.wake_mac.trim() {
             "" => String::new(),
-            mac => normalize_mac(mac).ok_or_else(|| anyhow::anyhow!("Enter the Wake-on-LAN address like 00:11:22:33:44:55"))?,
+            mac => normalize_mac(mac)
+                .ok_or_else(|| anyhow::anyhow!("Enter the Wake-on-LAN address like 00:11:22:33:44:55"))?,
         };
         let controller = match self.kind {
             None => None,
             Some(kind) => {
-                let mut controller = Controller { kind, address: self.address.trim().to_string(), username: self.username.trim().to_string(), secret: None };
+                let mut controller = Controller {
+                    kind,
+                    address: self.address.trim().to_string(),
+                    username: self.username.trim().to_string(),
+                    secret: None,
+                };
                 if controller.target().is_none() {
-                    anyhow::bail!("Enter the management controller's address, like 10.0.0.20 or https://10.0.0.20:8443");
+                    anyhow::bail!(
+                        "Enter the management controller's address, like 10.0.0.20 or https://10.0.0.20:8443"
+                    );
                 }
                 controller.secret = if !self.password.is_empty() {
                     Some(client.seal_secret(r, id, &self.password)?)
@@ -121,7 +135,9 @@ impl ManageForm {
                 } else {
                     match (&self.sealed, old) {
                         // Sealed for this device's ID: re-seal if the ID changed.
-                        (Some(sealed), Some(old)) if old != id => Some(client.seal_secret(r, id, &client.open_secret(r, old, sealed)?)?),
+                        (Some(sealed), Some(old)) if old != id => {
+                            Some(client.seal_secret(r, id, &client.open_secret(r, old, sealed)?)?)
+                        }
                         (sealed, _) => sealed.clone(),
                     }
                 };
@@ -156,7 +172,8 @@ pub(super) enum Purpose {
     Chat,
 }
 
-pub(super) const REFUSED: &str = "That password was refused. Enter the current one; Remember replaces a saved password.";
+pub(super) const REFUSED: &str =
+    "That password was refused. Enter the current one; Remember replaces a saved password.";
 
 /// Widest a device row grows: Connect, Chat, Meeting and Edit stay beside
 /// the name in a wide window instead of drifting to the far edge.
@@ -193,7 +210,8 @@ pub fn poll(app: &mut App, ctx: &egui::Context) {
     // SLIPSTREAM_TEST_SAVED=edit opens the editor on the first saved device
     // (screenshots).
     static TESTED: AtomicBool = AtomicBool::new(false);
-    if std::env::var("SLIPSTREAM_TEST_SAVED").as_deref() == Ok("edit") && !TESTED.swap(true, Ordering::Relaxed)
+    if std::env::var("SLIPSTREAM_TEST_SAVED").as_deref() == Ok("edit")
+        && !TESTED.swap(true, Ordering::Relaxed)
         && let Some(a) = accounts(app).first()
         && let Some(d) = a.devices.first()
     {
@@ -227,7 +245,8 @@ pub fn poll(app: &mut App, ctx: &egui::Context) {
     }
     app.saved.last_presence = Some(Instant::now());
     app.saved.busy.store(true, Ordering::Relaxed);
-    let (client, map, busy, wake) = (app.client.clone(), app.saved.presence.clone(), app.saved.busy.clone(), ctx.clone());
+    let (client, map, busy, wake) =
+        (app.client.clone(), app.saved.presence.clone(), app.saved.busy.clone(), ctx.clone());
     app.rt.spawn(async move {
         if sync {
             client.sync_accounts().await;
@@ -279,17 +298,25 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
             if !app.saved.search.is_empty() && theme::pill(ui, "Clear", pal::BLUE).clicked() {
                 app.saved.search.clear();
             }
-            ui.add(theme::text_input(&mut app.saved.search)
-                .id_salt("saved-device-search")
-                .hint_text("Find a device by name, ID, group or station…")
-                .desired_width(ui.available_width()));
+            ui.add(
+                theme::text_input(&mut app.saved.search)
+                    .id_salt("saved-device-search")
+                    .hint_text("Find a device by name, ID, group or station…")
+                    .desired_width(ui.available_width()),
+            );
         });
         let filter = app.saved.search.to_lowercase();
         let total = accounts.iter().map(|a| a.devices.len() + a.shared.len()).sum::<usize>();
-        let found = accounts.iter().map(|a| {
-            a.devices.iter().chain(&a.shared)
-                .filter(|d| matches(&filter, &d.name, d.id, &d.group, &a.label())).count()
-        }).sum::<usize>();
+        let found = accounts
+            .iter()
+            .map(|a| {
+                a.devices
+                    .iter()
+                    .chain(&a.shared)
+                    .filter(|d| matches(&filter, &d.name, d.id, &d.group, &a.label()))
+                    .count()
+            })
+            .sum::<usize>();
         if !filter.trim().is_empty() {
             ui.label(RichText::new(format!("{found} of {total} devices")).small().color(pal::DIM));
             if found == 0 {
@@ -305,33 +332,50 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
                 ui.label(RichText::new(a.label().to_uppercase()).font(theme::display(18.0)).color(pal::LAVENDER));
                 ui.label(RichText::new(format!("· {}", a.user.name)).color(pal::DIM));
                 if a.signed_out {
-                    ui.label(RichText::new("SIGNED OUT: sign in again under Config → Stations").font(theme::display(14.0)).color(pal::RED));
+                    ui.label(
+                        RichText::new("SIGNED OUT: sign in again under Config → Stations")
+                            .font(theme::display(14.0))
+                            .color(pal::RED),
+                    );
                 }
-                    if !a.signed_out && theme::pill(ui, "+ Group", pal::BLUE).clicked() {
-                        app.saved.group_editor = Some(GroupEditor {account:r.clone(),name:String::new()});
-                    }
-                    if !a.signed_out && theme::pill(ui, "+ Device", pal::VIOLET).clicked() {
-                        open_editor(app, &r, None, false);
-                    }
-                    if !a.signed_out {
-                        let own = own_device(app, a);
-                        let button = ui.add_enabled(own.is_some(), |ui: &mut egui::Ui| theme::pill(ui, "This device", pal::BLUE))
-                            .on_hover_text("Fill in this computer's ID and name; choose a group before saving")
-                            .on_disabled_hover_text("This device needs an ID on this station. Its ID is shown in This device above.");
-                        if button.clicked() && let Some(device) = own {
-                            let existing = a.devices.iter().any(|d| d.id == device.id);
-                            open_editor(app, &r, Some(&device), false);
-                            if !existing && let Some(editor) = &mut app.saved.editor { editor.original = None; }
+                if !a.signed_out && theme::pill(ui, "+ Group", pal::BLUE).clicked() {
+                    app.saved.group_editor = Some(GroupEditor { account: r.clone(), name: String::new() });
+                }
+                if !a.signed_out && theme::pill(ui, "+ Device", pal::VIOLET).clicked() {
+                    open_editor(app, &r, None, false);
+                }
+                if !a.signed_out {
+                    let own = own_device(app, a);
+                    let button = ui
+                        .add_enabled(own.is_some(), |ui: &mut egui::Ui| theme::pill(ui, "This device", pal::BLUE))
+                        .on_hover_text("Fill in this computer's ID and name; choose a group before saving")
+                        .on_disabled_hover_text(
+                            "This device needs an ID on this station. Its ID is shown in This device above.",
+                        );
+                    if button.clicked()
+                        && let Some(device) = own
+                    {
+                        let existing = a.devices.iter().any(|d| d.id == device.id);
+                        open_editor(app, &r, Some(&device), false);
+                        if !existing && let Some(editor) = &mut app.saved.editor {
+                            editor.original = None;
                         }
                     }
+                }
             });
             if a.devices.is_empty() && a.shared.is_empty() && a.groups.is_empty() && a.shared_groups.is_empty() {
-                ui.label(RichText::new("Nothing saved yet: add a device, or use the star on a recent link.").color(pal::DIM));
+                ui.label(
+                    RichText::new("Nothing saved yet: add a device, or use the star on a recent link.").color(pal::DIM),
+                );
             }
             grouped_devices(app, ui, &ctx, &r, a, &a.devices, false, t);
             if !a.shared.is_empty() || !a.shared_groups.is_empty() {
                 ui.add_space(4.0);
-                ui.label(RichText::new(format!("SHARED BY {}", a.label().to_uppercase())).font(theme::display(14.0)).color(pal::GOLD));
+                ui.label(
+                    RichText::new(format!("SHARED BY {}", a.label().to_uppercase()))
+                        .font(theme::display(14.0))
+                        .color(pal::GOLD),
+                );
                 grouped_devices(app, ui, &ctx, &r, a, &a.shared, true, t);
             }
         }
@@ -341,7 +385,9 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
 /// Only use this computer's ID on the station it belongs to. The Windows
 /// service's published ID takes precedence over the viewer-only GUI identity.
 fn own_device(app: &App, account: &StationAccount) -> Option<SavedDevice> {
-    if cfg!(target_os = "android") { return None; }
+    if cfg!(target_os = "android") {
+        return None;
+    }
     let settings = app.client.settings();
     if slipstream_core::config::is_public_station(&account.server) {
         let status = if app.via_service { app.service_public_status.as_ref() } else { Some(&app.public_status) };
@@ -354,7 +400,9 @@ fn own_device(app: &App, account: &StationAccount) -> Option<SavedDevice> {
         let id = if app.via_service { crate::service::hosted_id(true) } else { id };
         return own_device_entry(account, slipstream_core::config::PUBLIC_STATION_URL, id, &settings.device_name);
     }
-    if app.via_service && !app.service_station_matches() { return None; }
+    if app.via_service && !app.service_station_matches() {
+        return None;
+    }
     let id = match app.dir_status {
         slipstream_session::DirStatus::Online { id } => Some(id),
         _ => settings.host.last_device_id,
@@ -367,41 +415,74 @@ fn own_device(app: &App, account: &StationAccount) -> Option<SavedDevice> {
 }
 
 fn own_device_entry(account: &StationAccount, server: &str, id: Option<DeviceId>, name: &str) -> Option<SavedDevice> {
-    if !account.is_station(server) { return None; }
+    if !account.is_station(server) {
+        return None;
+    }
     let id = id?;
     let existing = account.devices.iter().find(|d| d.id == id);
     Some(existing.cloned().unwrap_or_else(|| SavedDevice {
-        id, name: name.to_string(), notes: String::new(), group: String::new(), secret: None, added_by: None, management: None,
+        id,
+        name: name.to_string(),
+        notes: String::new(),
+        group: String::new(),
+        secret: None,
+        added_by: None,
+        management: None,
     }))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn grouped_devices(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef,
-    account: &StationAccount, devices: &[SavedDevice], shared: bool, t: f64) {
+fn grouped_devices(
+    app: &mut App,
+    ui: &mut Ui,
+    ctx: &egui::Context,
+    r: &AccountRef,
+    account: &StationAccount,
+    devices: &[SavedDevice],
+    shared: bool,
+    t: f64,
+) {
     let filter = app.saved.search.to_lowercase();
     let empty = if shared { account.shared_groups.as_slice() } else { account.groups.as_slice() };
     for (group, devices) in grouped(devices, empty, &filter, &account.label()) {
-        let title = format!("{}  ·  {}", if group.is_empty() { "UNGROUPED".into() } else { group.to_uppercase() }, devices.len());
-        egui::CollapsingHeader::new(RichText::new(title).font(theme::display_bold(17.0)).color(if shared { pal::GOLD } else { pal::LAVENDER }))
-            .id_salt(("saved-group", &account.server, &account.user.username, shared, &group))
-            .default_open(true).open((!filter.trim().is_empty()).then_some(true)).show(ui, |ui| {
-                if !account.signed_out && (!shared || account.user.admin) {
-                    ui.horizontal(|ui| {
-                        if ui.small_button("+ Add device").clicked() {
-                            open_editor(app,r,None,shared);
-                            if let Some(editor) = &mut app.saved.editor {editor.group=group.to_owned();}
+        let title = format!(
+            "{}  ·  {}",
+            if group.is_empty() { "UNGROUPED".into() } else { group.to_uppercase() },
+            devices.len()
+        );
+        egui::CollapsingHeader::new(RichText::new(title).font(theme::display_bold(17.0)).color(if shared {
+            pal::GOLD
+        } else {
+            pal::LAVENDER
+        }))
+        .id_salt(("saved-group", &account.server, &account.user.username, shared, &group))
+        .default_open(true)
+        .open((!filter.trim().is_empty()).then_some(true))
+        .show(ui, |ui| {
+            if !account.signed_out && (!shared || account.user.admin) {
+                ui.horizontal(|ui| {
+                    if ui.small_button("+ Add device").clicked() {
+                        open_editor(app, r, None, shared);
+                        if let Some(editor) = &mut app.saved.editor {
+                            editor.group = group.to_owned();
                         }
-                        if devices.is_empty() && !shared && ui.small_button("Remove empty group").clicked() {
-                            let (client,r,name)=(app.client.clone(),r.clone(),group.to_owned());
-                            spawn_job(app,ctx,"Remove group",async move {
-                                client.delete_group(&r,&name).await?; Ok("Empty group removed".into())
-                            });
-                        }
-                    });
-                }
-                if devices.is_empty() {ui.label(RichText::new("No devices yet").color(pal::DIM));}
-                for device in devices { device_row(app, ui, ctx, r, account, device, shared, t); }
-            });
+                    }
+                    if devices.is_empty() && !shared && ui.small_button("Remove empty group").clicked() {
+                        let (client, r, name) = (app.client.clone(), r.clone(), group.to_owned());
+                        spawn_job(app, ctx, "Remove group", async move {
+                            client.delete_group(&r, &name).await?;
+                            Ok("Empty group removed".into())
+                        });
+                    }
+                });
+            }
+            if devices.is_empty() {
+                ui.label(RichText::new("No devices yet").color(pal::DIM));
+            }
+            for device in devices {
+                device_row(app, ui, ctx, r, account, device, shared, t);
+            }
+        });
     }
 }
 
@@ -437,14 +518,23 @@ pub(super) fn grouped<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a: &StationAccount, d: &SavedDevice, shared: bool, t: f64) {
+fn device_row(
+    app: &mut App,
+    ui: &mut Ui,
+    ctx: &egui::Context,
+    r: &AccountRef,
+    a: &StationAccount,
+    d: &SavedDevice,
+    shared: bool,
+    t: f64,
+) {
     let presence = app.saved.presence.lock().unwrap().get(&(r.clone(), d.id)).cloned();
-    let (color,tip)=match presence {
-        Some(Presence::Online)=>(pal::GREEN,"online"),
-        Some(Presence::Offline)=>(pal::DIM,"offline"),
-        _=>(pal::GOLD,"checking…"),
+    let (color, tip) = match presence {
+        Some(Presence::Online) => (pal::GREEN, "online"),
+        Some(Presence::Offline) => (pal::DIM, "offline"),
+        _ => (pal::GOLD, "checking…"),
     };
-    let name=if d.name.is_empty() {d.id.to_string()} else {d.name.clone()};
+    let name = if d.name.is_empty() { d.id.to_string() } else { d.name.clone() };
     let chat_live = app.chats.live(r, d.id);
     let unread = app.chats.unread(r, d.id);
     let saved_password = a.devices.iter().any(|own| own.id == d.id && own.secret.is_some());
@@ -452,13 +542,21 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(20.0, 21.0), Sense::hover());
             theme::lamp(ui.painter(), rect.center(), color, t);
-            ui.add(egui::Label::new(RichText::new(name.to_uppercase()).font(theme::display(18.0)).color(pal::TAN)).truncate())
-                .on_hover_text(format!("{name} · {tip}"));
+            ui.add(
+                egui::Label::new(RichText::new(name.to_uppercase()).font(theme::display(18.0)).color(pal::TAN))
+                    .truncate(),
+            )
+            .on_hover_text(format!("{name} · {tip}"));
         });
         ui.horizontal(|ui| {
             ui.label(RichText::new(d.id.to_string()).font(theme::mono(13.0)).color(pal::BLUE));
-            if saved_password {ui.label(RichText::new("PASSWORD SAVED").font(theme::display(12.0)).color(pal::GOLD));}
-            if !d.notes.is_empty() {ui.add(egui::Label::new(RichText::new(&d.notes).small().color(pal::DIM)).truncate()).on_hover_text(&d.notes);}
+            if saved_password {
+                ui.label(RichText::new("PASSWORD SAVED").font(theme::display(12.0)).color(pal::GOLD));
+            }
+            if !d.notes.is_empty() {
+                ui.add(egui::Label::new(RichText::new(&d.notes).small().color(pal::DIM)).truncate())
+                    .on_hover_text(&d.notes);
+            }
         });
     };
     let mut action = None;
@@ -468,7 +566,12 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
     // `action` records which was pressed, `manage` anchors its menu.
     let mut actions = |ui: &mut Ui, right_to_left: bool| {
         let mut buttons: Vec<(&str, egui::Color32, bool, RowAction)> = vec![
-            ("Connect", pal::ORANGE, (app.attempt.is_none() || chat_live.is_some()) && !a.signed_out, RowAction::Connect),
+            (
+                "Connect",
+                pal::ORANGE,
+                (app.attempt.is_none() || chat_live.is_some()) && !a.signed_out,
+                RowAction::Connect,
+            ),
             (if unread { "Chat ◆" } else { "Chat" }, pal::BLUE, !a.signed_out, RowAction::Chat),
             ("Meeting", pal::GREEN, !a.signed_out, RowAction::Meeting),
             (if console { "Manage ◆" } else { "Manage" }, pal::PEACH, !a.signed_out, RowAction::Manage),
@@ -480,10 +583,14 @@ fn device_row(app: &mut App, ui: &mut Ui, ctx: &egui::Context, r: &AccountRef, a
             buttons.reverse();
         }
         for (label, color, enabled, which) in buttons {
-            let response = ui.add_enabled(enabled, |ui: &mut egui::Ui| theme::pill_sized(ui, label, color, vec2(0.0, 28.0)));
+            let response =
+                ui.add_enabled(enabled, |ui: &mut egui::Ui| theme::pill_sized(ui, label, color, vec2(0.0, 28.0)));
             let response = match which {
-                RowAction::Chat => response.on_hover_text("Message the person at this computer without showing its screen"),
-                RowAction::Manage => response.on_hover_text("Restart, wake, and its management controller (BIOS-level console and power)"),
+                RowAction::Chat => {
+                    response.on_hover_text("Message the person at this computer without showing its screen")
+                }
+                RowAction::Manage => response
+                    .on_hover_text("Restart, wake, and its management controller (BIOS-level console and power)"),
                 _ => response,
             };
             if which == RowAction::Manage {
@@ -556,12 +663,21 @@ pub(super) fn connect(app: &mut App, ctx: &egui::Context, r: &AccountRef, d: &Sa
 
 /// Asks for a device's password, then connects or opens a chat. Remember
 /// starts ticked when a saved password exists, so typing replaces it.
-pub(super) fn ask_password(app: &mut App, r: &AccountRef, id: DeviceId, name: &str, purpose: Purpose, note: Option<String>) {
+pub(super) fn ask_password(
+    app: &mut App,
+    r: &AccountRef,
+    id: DeviceId,
+    name: &str,
+    purpose: Purpose,
+    note: Option<String>,
+) {
     // An automatic re-prompt never replaces a prompt someone is typing in.
     if note.is_some() && app.saved.prompt.is_some() {
         return;
     }
-    let saved = accounts(app).iter().find(|a| AccountRef::of(a) == *r)
+    let saved = accounts(app)
+        .iter()
+        .find(|a| AccountRef::of(a) == *r)
         .is_some_and(|a| a.devices.iter().any(|d| d.id == id && d.secret.is_some()));
     app.saved.prompt = Some(Prompt {
         destination: if purpose == Purpose::Connect { app.connect_destination.take() } else { None },
@@ -589,7 +705,9 @@ pub(super) fn set_prompt_destination(app: &mut App, destination: Option<egui::Vi
 
 /// A saved device's name (its ID when it has none or isn't listed).
 pub(super) fn device_name(app: &App, r: &AccountRef, id: DeviceId) -> String {
-    accounts(app).iter().find(|a| AccountRef::of(a) == *r)
+    accounts(app)
+        .iter()
+        .find(|a| AccountRef::of(a) == *r)
         .and_then(|a| a.devices.iter().chain(&a.shared).find(|d| d.id == id && !d.name.is_empty()))
         .map(|d| d.name.clone())
         .unwrap_or_else(|| id.to_string())
@@ -603,7 +721,15 @@ pub fn save_recent(app: &mut App, recent: &slipstream_core::config::RecentConnec
         app.toast("Sign in to this device’s station first (Config → Stations) to save it", pal::VIOLET);
         return;
     };
-    let draft = SavedDevice { id, name: name.to_string(), notes: String::new(), group: String::new(), secret: None, added_by: None, management: None };
+    let draft = SavedDevice {
+        id,
+        name: name.to_string(),
+        notes: String::new(),
+        group: String::new(),
+        secret: None,
+        added_by: None,
+        management: None,
+    };
     open_editor(app, &AccountRef::of(&a), Some(&draft), false);
     // It's a new entry, not an edit of an existing one.
     if let Some(e) = &mut app.saved.editor
@@ -617,10 +743,14 @@ fn open_editor(app: &mut App, r: &AccountRef, d: Option<&SavedDevice>, shared: b
     let account = accounts(app).into_iter().find(|a| AccountRef::of(a) == *r);
     // A shared device's password lives in this technician's own list.
     let had_password = d.is_some_and(|d| d.secret.is_some())
-        || d.is_some_and(|d| account.as_ref().is_some_and(|a| a.devices.iter().any(|own| own.id == d.id && own.secret.is_some())));
+        || d.is_some_and(|d| {
+            account.as_ref().is_some_and(|a| a.devices.iter().any(|own| own.id == d.id && own.secret.is_some()))
+        });
     let locked = shared && d.is_some() && !account.as_ref().is_some_and(|a| a.user.admin);
     // Remote management is the technician's own, also for shared devices.
-    let manage = ManageForm::from(d.and_then(|d| account.as_ref()?.devices.iter().find(|own| own.id == d.id)?.management.as_ref()));
+    let manage = ManageForm::from(
+        d.and_then(|d| account.as_ref()?.devices.iter().find(|own| own.id == d.id)?.management.as_ref()),
+    );
     app.saved.editor = Some(Editor {
         account: r.clone(),
         id: d.map(|d| d.id.to_string()).unwrap_or_default(),
@@ -639,7 +769,10 @@ fn open_editor(app: &mut App, r: &AccountRef, d: Option<&SavedDevice>, shared: b
 
 /// Opens the editor on a listed device (the Manage menu's set-up item).
 pub(super) fn edit_device(app: &mut App, r: &AccountRef, d: &SavedDevice) {
-    let shared = !accounts(app).iter().find(|a| AccountRef::of(a) == *r).is_some_and(|a| a.devices.iter().any(|own| own.id == d.id));
+    let shared = !accounts(app)
+        .iter()
+        .find(|a| AccountRef::of(a) == *r)
+        .is_some_and(|a| a.devices.iter().any(|own| own.id == d.id));
     open_editor(app, r, Some(d), shared);
     if let Some(e) = &mut app.saved.editor {
         e.manage.open = true;
@@ -721,61 +854,92 @@ fn manage_section(ui: &mut Ui, e: &mut Editor, account: &StationAccount) {
 }
 
 fn field(ui: &mut Ui, value: &mut String, hint: &str, password: bool, width: f32) -> egui::Response {
-    ui.add(theme::text_input(value).hint_text(hint).password(password)
-        .desired_width(width.min(ui.available_width())))
+    ui.add(theme::text_input(value).hint_text(hint).password(password).desired_width(width.min(ui.available_width())))
 }
 
 /// An editable group name with its chooser integrated into the same field.
 fn group_field(ui: &mut Ui, value: &mut String, groups: BTreeSet<&str>) {
-    let input = ui.add(theme::text_input(value).hint_text("Ungrouped or new group")
-        .char_limit(64).desired_width(280.0)
-        .frame(theme::input_frame().inner_margin(egui::Margin {left:9,right:36,top:4,bottom:4})));
+    let input = ui.add(
+        theme::text_input(value)
+            .hint_text("Ungrouped or new group")
+            .char_limit(64)
+            .desired_width(280.0)
+            .frame(theme::input_frame().inner_margin(egui::Margin { left: 9, right: 36, top: 4, bottom: 4 })),
+    );
     let rect = input.rect;
-    let cap=egui::Rect::from_min_max(egui::pos2(rect.right()-34.0,rect.top()+2.0),rect.max-vec2(2.0,2.0));
-    let response=ui.interact(cap,ui.make_persistent_id("group-choices"),Sense::click()).on_hover_text("Choose a group, or type a new name");
-    let color=if response.hovered() {pal::TAN} else {pal::ORANGE};
-    ui.painter().rect_filled(cap,egui::CornerRadius {ne:4,se:4,..Default::default()},color);
-    let center=cap.center();
-    ui.painter().line_segment([center+vec2(-5.0,-2.0),center+vec2(0.0,3.0)],egui::Stroke::new(2.0,pal::BG));
-    ui.painter().line_segment([center+vec2(0.0,3.0),center+vec2(5.0,-2.0)],egui::Stroke::new(2.0,pal::BG));
-    response.widget_info(||egui::WidgetInfo::labeled(egui::Role::Button,true,"Choose group"));
+    let cap = egui::Rect::from_min_max(egui::pos2(rect.right() - 34.0, rect.top() + 2.0), rect.max - vec2(2.0, 2.0));
+    let response = ui
+        .interact(cap, ui.make_persistent_id("group-choices"), Sense::click())
+        .on_hover_text("Choose a group, or type a new name");
+    let color = if response.hovered() { pal::TAN } else { pal::ORANGE };
+    ui.painter().rect_filled(cap, egui::CornerRadius { ne: 4, se: 4, ..Default::default() }, color);
+    let center = cap.center();
+    ui.painter().line_segment([center + vec2(-5.0, -2.0), center + vec2(0.0, 3.0)], egui::Stroke::new(2.0, pal::BG));
+    ui.painter().line_segment([center + vec2(0.0, 3.0), center + vec2(5.0, -2.0)], egui::Stroke::new(2.0, pal::BG));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Choose group"));
     theme::console_menu(&response).anchor(rect).width(rect.width()).show(|ui| {
-        ui.set_min_width((rect.width()-12.0).max(120.0));
-        if ui.add_sized(vec2(ui.available_width(),28.0),egui::Button::selectable(value.is_empty(),"Ungrouped")).clicked() {value.clear();ui.close();}
+        ui.set_min_width((rect.width() - 12.0).max(120.0));
+        if ui
+            .add_sized(vec2(ui.available_width(), 28.0), egui::Button::selectable(value.is_empty(), "Ungrouped"))
+            .clicked()
+        {
+            value.clear();
+            ui.close();
+        }
         for group in groups {
-            if ui.add_sized(vec2(ui.available_width(),28.0),egui::Button::selectable(value==group,group).truncate()).on_hover_text(group).clicked() {*value=group.to_string();ui.close();}
+            if ui
+                .add_sized(vec2(ui.available_width(), 28.0), egui::Button::selectable(value == group, group).truncate())
+                .on_hover_text(group)
+                .clicked()
+            {
+                *value = group.to_string();
+                ui.close();
+            }
         }
     });
 }
 
 /// The add/edit and password dialogs (every frame).
 pub fn windows(app: &mut App, ctx: &egui::Context) {
-    group_window(app,ctx);
+    group_window(app, ctx);
     editor_window(app, ctx);
     prompt_window(app, ctx);
 }
 
 fn group_window(app: &mut App, ctx: &egui::Context) {
-    let Some(mut editor)=app.saved.group_editor.take() else {return};
-    let mut open=true;
-    let mut save=false;
-    theme::window("new-device-group",pal::BLUE).collapsible(false).resizable(false)
-        .default_width(330.0).anchor(egui::Align2::CENTER_CENTER,vec2(0.0,0.0)).show(ctx,|ui| {
-            let chrome=theme::window_header(ui,"New group",pal::BLUE);
-            if chrome.close {open=false;}
-            ui.label(RichText::new("Saved on your technician account, available on your other computers.").small().color(pal::DIM));
-            let input=field(ui,&mut editor.name,"Group name",false,280.0);
-            let valid=!editor.name.trim().is_empty() && app.saved.job.is_none();
-            save=ui.add_enabled(valid, |ui: &mut egui::Ui| theme::pill(ui,"Create group",pal::GREEN)).clicked()
-                || (valid && input.lost_focus() && ui.input(|i|i.key_pressed(egui::Key::Enter)));
+    let Some(mut editor) = app.saved.group_editor.take() else { return };
+    let mut open = true;
+    let mut save = false;
+    theme::window("new-device-group", pal::BLUE)
+        .collapsible(false)
+        .resizable(false)
+        .default_width(330.0)
+        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            let chrome = theme::window_header(ui, "New group", pal::BLUE);
+            if chrome.close {
+                open = false;
+            }
+            ui.label(
+                RichText::new("Saved on your technician account, available on your other computers.")
+                    .small()
+                    .color(pal::DIM),
+            );
+            let input = field(ui, &mut editor.name, "Group name", false, 280.0);
+            let valid = !editor.name.trim().is_empty() && app.saved.job.is_none();
+            save = ui.add_enabled(valid, |ui: &mut egui::Ui| theme::pill(ui, "Create group", pal::GREEN)).clicked()
+                || (valid && input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
             chrome.footer(ui);
         });
     if save {
-        let client=app.client.clone();
-        spawn_job(app,ctx,"Create group",async move {
-            client.save_group(&editor.account,&editor.name).await?; Ok("Group created".into())
+        let client = app.client.clone();
+        spawn_job(app, ctx, "Create group", async move {
+            client.save_group(&editor.account, &editor.name).await?;
+            Ok("Group created".into())
         });
-    } else if open {app.saved.group_editor=Some(editor);}
+    } else if open {
+        app.saved.group_editor = Some(editor);
+    }
 }
 
 fn editor_window(app: &mut App, ctx: &egui::Context) {
@@ -900,10 +1064,22 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
                 return;
             }
         };
-        let saved_management = accounts(app).iter().find(|a| AccountRef::of(a) == e.account)
-            .and_then(|a| a.devices.iter().find(|d| d.id == id)).and_then(|d| d.management.clone()).unwrap_or_default();
+        let saved_management = accounts(app)
+            .iter()
+            .find(|a| AccountRef::of(a) == e.account)
+            .and_then(|a| a.devices.iter().find(|d| d.id == id))
+            .and_then(|d| d.management.clone())
+            .unwrap_or_default();
         let management_changed = management != saved_management;
-        let mut device = SavedDevice { id, name: e.name.trim().to_string(), notes: e.notes.trim().to_string(), group: e.group.trim().to_string(), secret: None, added_by: None, management: None };
+        let mut device = SavedDevice {
+            id,
+            name: e.name.trim().to_string(),
+            notes: e.notes.trim().to_string(),
+            group: e.group.trim().to_string(),
+            secret: None,
+            added_by: None,
+            management: None,
+        };
         if !e.shared {
             device.management = Some(management.clone());
         }
@@ -914,7 +1090,8 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
         } else {
             None
         };
-        let (client, r, shared, original, locked) = (app.client.clone(), e.account.clone(), e.shared, e.original, e.locked);
+        let (client, r, shared, original, locked) =
+            (app.client.clone(), e.account.clone(), e.shared, e.original, e.locked);
         let name = if device.name.is_empty() { id.to_string() } else { device.name.clone() };
         spawn_job(app, ctx, "Saving", async move {
             if !locked {
@@ -929,8 +1106,14 @@ fn editor_window(app: &mut App, ctx: &egui::Context) {
             // A shared device's password and remote management go in this
             // technician's own list.
             if shared && (password.is_some() || management_changed) {
-                let a = client.settings().accounts.into_iter().find(|a| AccountRef::of(a) == r).ok_or_else(|| anyhow::anyhow!("signed out"))?;
-                let mut entry = password_entry(&a, id).ok_or_else(|| anyhow::anyhow!("device is no longer in the station list"))?;
+                let a = client
+                    .settings()
+                    .accounts
+                    .into_iter()
+                    .find(|a| AccountRef::of(a) == r)
+                    .ok_or_else(|| anyhow::anyhow!("signed out"))?;
+                let mut entry =
+                    password_entry(&a, id).ok_or_else(|| anyhow::anyhow!("device is no longer in the station list"))?;
                 entry.secret = None;
                 entry.management = Some(management);
                 client.save_device(&r, entry, password, false).await?;
@@ -982,10 +1165,15 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
             go = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.checkbox(&mut p.remember, "Remember unattended password in my list");
             if p.purpose == Purpose::Chat {
-                ui.label(RichText::new("Opens a chat only: their screen isn't shared until you press Connect.").small().color(pal::DIM));
+                ui.label(
+                    RichText::new("Opens a chat only: their screen isn't shared until you press Connect.")
+                        .small()
+                        .color(pal::DIM),
+                );
             }
             ui.add_space(6.0);
-            go |= theme::pill(ui, if p.purpose == Purpose::Chat { "Open chat" } else { "Engage" }, pal::ORANGE).clicked();
+            go |=
+                theme::pill(ui, if p.purpose == Purpose::Chat { "Open chat" } else { "Engage" }, pal::ORANGE).clicked();
             chrome.footer(ui);
         });
     if go && !p.password.is_empty() {
@@ -993,8 +1181,14 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
             // Save it as well, sealed, alongside connecting.
             let (client, r, id, pw) = (app.client.clone(), p.account.clone(), p.id, p.password.clone());
             spawn_job(app, ctx, "Saving the password", async move {
-                let a = client.settings().accounts.into_iter().find(|a| AccountRef::of(a) == r).ok_or_else(|| anyhow::anyhow!("signed out"))?;
-                let mut device = password_entry(&a, id).ok_or_else(|| anyhow::anyhow!("device is no longer in the station list"))?;
+                let a = client
+                    .settings()
+                    .accounts
+                    .into_iter()
+                    .find(|a| AccountRef::of(a) == r)
+                    .ok_or_else(|| anyhow::anyhow!("signed out"))?;
+                let mut device =
+                    password_entry(&a, id).ok_or_else(|| anyhow::anyhow!("device is no longer in the station list"))?;
                 device.secret = None;
                 client.save_device(&r, device, Some(pw), false).await?;
                 Ok(String::new())
@@ -1002,7 +1196,7 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
         }
         match p.purpose {
             Purpose::Connect => {
-                app.connect_destination=p.destination;
+                app.connect_destination = p.destination;
                 app.start_connect_to(ctx, p.id, p.password, Some(p.account));
             }
             Purpose::Chat => super::chats::start(app, ctx, &p.account, p.id, &p.name, p.password),
@@ -1016,8 +1210,8 @@ fn prompt_window(app: &mut App, ctx: &egui::Context) {
 
 /// A shared device's credential belongs in this technician's personal vault.
 fn password_entry(account: &StationAccount, id: DeviceId) -> Option<SavedDevice> {
-    let mut device = account.devices.iter().find(|d| d.id == id)
-        .or_else(|| account.shared.iter().find(|d| d.id == id))?.clone();
+    let mut device =
+        account.devices.iter().find(|d| d.id == id).or_else(|| account.shared.iter().find(|d| d.id == id))?.clone();
     device.added_by = None;
     Some(device)
 }
@@ -1046,31 +1240,37 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
                 if a.signed_out {
                     ui.label(RichText::new("SIGNED OUT").font(theme::display(14.0)).color(pal::RED));
                 }
-                    if theme::pill_sized(ui, "Sign out", pal::LAVENDER, vec2(84.0, 26.0)).clicked() {
-                        sign_out = Some(AccountRef::of(a));
-                    }
-                    if a.signed_out && theme::pill_sized(ui, "Sign in again", pal::VIOLET, vec2(110.0, 26.0)).clicked() {
-                        app.saved.station = a.server.clone();
-                        app.saved.username = a.user.username.clone();
-                    }
+                if theme::pill_sized(ui, "Sign out", pal::LAVENDER, vec2(84.0, 26.0)).clicked() {
+                    sign_out = Some(AccountRef::of(a));
+                }
+                if a.signed_out && theme::pill_sized(ui, "Sign in again", pal::VIOLET, vec2(110.0, 26.0)).clicked() {
+                    app.saved.station = a.server.clone();
+                    app.saved.username = a.user.username.clone();
+                }
             });
         }
         ui.add_space(6.0);
         ui.label(RichText::new("SIGN IN TO A STATION").font(theme::display(15.0)).color(pal::VIOLET));
-        let busy=app.saved.job.is_some();
-        let label=if busy {"Signing in…"} else {"Sign in"};
-        let own=app.client.station_settings().url.unwrap_or_default();
-        let hint=if own.is_empty() {"support.example.com"} else {own.as_str()};
-        let mut go=false;
+        let busy = app.saved.job.is_some();
+        let label = if busy { "Signing in…" } else { "Sign in" };
+        let own = app.client.station_settings().url.unwrap_or_default();
+        let hint = if own.is_empty() { "support.example.com" } else { own.as_str() };
+        let mut go = false;
         // Labelled rows like the rest of Config, fields no wider than an
         // address needs, and Sign in under them where the eye ends up.
-        let pressed_enter=ui.input(|i|i.key_pressed(egui::Key::Enter));
-        let mut enter=|response: egui::Response| go|=response.lost_focus() && pressed_enter;
-        super::settings::row(ui, "Station", |ui| enter(field(ui,&mut app.saved.station,hint,false,SIGN_IN_WIDTH)));
-        super::settings::row(ui, "Username", |ui| enter(field(ui,&mut app.saved.username,"username",false,SIGN_IN_WIDTH)));
-        super::settings::row(ui, "Password", |ui| enter(field(ui,&mut app.saved.password,"password",true,SIGN_IN_WIDTH)));
+        let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let mut enter = |response: egui::Response| go |= response.lost_focus() && pressed_enter;
+        super::settings::row(ui, "Station", |ui| enter(field(ui, &mut app.saved.station, hint, false, SIGN_IN_WIDTH)));
+        super::settings::row(ui, "Username", |ui| {
+            enter(field(ui, &mut app.saved.username, "username", false, SIGN_IN_WIDTH))
+        });
+        super::settings::row(ui, "Password", |ui| {
+            enter(field(ui, &mut app.saved.password, "password", true, SIGN_IN_WIDTH))
+        });
         super::settings::row(ui, "", |ui| {
-            go|=ui.add_enabled(!busy, |ui: &mut egui::Ui| theme::pill_sized(ui,label,pal::VIOLET,vec2(110.0,30.0))).clicked();
+            go |= ui
+                .add_enabled(!busy, |ui: &mut egui::Ui| theme::pill_sized(ui, label, pal::VIOLET, vec2(110.0, 30.0)))
+                .clicked();
         });
         if go {
             // An empty address means this app's own station.
@@ -1086,7 +1286,11 @@ pub fn stations_panel(app: &mut App, ui: &mut Ui) {
                 app.saved.last_presence = None;
                 spawn_job(app, &ctx, "Sign-in", async move {
                     client.sign_in(&station, &user, &pw).await?;
-                    let a = client.settings().accounts.into_iter().find(|a| a.is_station(&station) && a.user.username == user.to_lowercase());
+                    let a = client
+                        .settings()
+                        .accounts
+                        .into_iter()
+                        .find(|a| a.is_station(&station) && a.user.username == user.to_lowercase());
                     Ok(match a {
                         Some(a) => format!("Signed in to {} as {}", a.label(), a.user.name),
                         None => "Signed in".into(),
@@ -1111,13 +1315,26 @@ mod tests {
     #[test]
     fn shared_password_entries_use_the_personal_vault_and_preserve_personal_details() {
         let id = DeviceId(482913077);
-        let shared = SavedDevice { id, name: "OFFICE-PC".into(), group: String::new(), notes: String::new(), secret: None, added_by: Some("Automatic enrollment".into()), management: None };
+        let shared = SavedDevice {
+            id,
+            name: "OFFICE-PC".into(),
+            group: String::new(),
+            notes: String::new(),
+            secret: None,
+            added_by: Some("Automatic enrollment".into()),
+            management: None,
+        };
         let mut account = StationAccount { shared: vec![shared.clone()], ..Default::default() };
         let copied = password_entry(&account, id).unwrap();
         assert!(copied.added_by.is_none());
         assert!(copied.secret.is_none());
         assert_eq!(account.shared[0], shared);
-        let own = SavedDevice { name: "My preferred name".into(), group: "Office".into(), notes: "Keep these notes".into(), ..copied };
+        let own = SavedDevice {
+            name: "My preferred name".into(),
+            group: "Office".into(),
+            notes: "Keep these notes".into(),
+            ..copied
+        };
         account.devices.push(own.clone());
         assert_eq!(password_entry(&account, id), Some(own));
         assert!(password_entry(&account, DeviceId(482913078)).is_none());
@@ -1126,8 +1343,13 @@ mod tests {
     #[test]
     fn search_combines_device_name_id_group_and_station_without_changing_membership() {
         let device = SavedDevice {
-            id: DeviceId(482913077), name: "Front Desk".into(), group: "Office".into(),
-            notes: String::new(), secret: None, added_by: None, management: None,
+            id: DeviceId(482913077),
+            name: "Front Desk".into(),
+            group: "Office".into(),
+            notes: String::new(),
+            secret: None,
+            added_by: None,
+            management: None,
         };
         let devices = vec![device];
         let empty = vec!["Empty lab".to_owned()];

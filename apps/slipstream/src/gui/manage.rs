@@ -67,11 +67,14 @@ fn target(app: &App, account: &AccountRef, device: &SavedDevice) -> Target {
     // Remote management lives on the technician's own entry for the device.
     let (management, gateway_name) = app.client.with_settings(|s| {
         let a = s.accounts.iter().find(|a| AccountRef::of(a) == *account);
-        let management = a.and_then(|a| a.devices.iter().find(|d| d.id == device.id))
-            .and_then(|d| d.management.clone()).unwrap_or_default();
+        let management = a
+            .and_then(|a| a.devices.iter().find(|d| d.id == device.id))
+            .and_then(|d| d.management.clone())
+            .unwrap_or_default();
         let gateway_name = management.gateway.map(|g| {
             a.and_then(|a| a.devices.iter().chain(&a.shared).find(|d| d.id == g && !d.name.is_empty()))
-                .map(|d| d.name.clone()).unwrap_or_else(|| g.to_string())
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| g.to_string())
         });
         (management, gateway_name)
     });
@@ -102,7 +105,8 @@ fn menu(app: &mut App, response: &Response, t: Target, console_open: bool) {
         ui.set_min_width(260.0);
         ui.label(RichText::new(t.name.to_uppercase()).font(theme::display(15.0)).color(pal::PEACH));
         for action in [PowerAction::Restart, PowerAction::RestartSafeMode, PowerAction::RestartToFirmware] {
-            if ui.add_enabled(online && !busy, egui::Button::new(format!("{}…", action.label())))
+            if ui
+                .add_enabled(online && !busy, egui::Button::new(format!("{}…", action.label())))
                 .on_disabled_hover_text("It has to be online (and its password saved)")
                 .clicked()
             {
@@ -112,7 +116,8 @@ fn menu(app: &mut App, response: &Response, t: Target, console_open: bool) {
         ui.separator();
         let gateway = t.gateway_name.as_deref();
         let wake = gateway.is_some() && t.management.mac().is_some();
-        if ui.add_enabled(wake && !busy, egui::Button::new("Wake (Wake-on-LAN)"))
+        if ui
+            .add_enabled(wake && !busy, egui::Button::new("Wake (Wake-on-LAN)"))
             .on_hover_text(gateway.map(|g| format!("Sent from {g} on its network")).unwrap_or_default())
             .on_disabled_hover_text("Set a gateway device and its Wake-on-LAN address under Edit → Remote management")
             .clicked()
@@ -126,8 +131,11 @@ fn menu(app: &mut App, response: &Response, t: Target, console_open: bool) {
                 if ui.button("Close management console").clicked() {
                     close_console = true;
                 }
-            } else if ui.add_enabled(gateway.is_some() && !busy, egui::Button::new("Open management console"))
-                .on_hover_text("Its web page (with the BIOS-level console and power) in your browser, through the gateway")
+            } else if ui
+                .add_enabled(gateway.is_some() && !busy, egui::Button::new("Open management console"))
+                .on_hover_text(
+                    "Its web page (with the BIOS-level console and power) in your browser, through the gateway",
+                )
                 .on_disabled_hover_text("Choose a gateway device under Edit → Remote management")
                 .clicked()
             {
@@ -135,7 +143,10 @@ fn menu(app: &mut App, response: &Response, t: Target, console_open: bool) {
             }
             if controller.kind == ControllerKind::Redfish {
                 for power in ControllerPower::ALL {
-                    if ui.add_enabled(gateway.is_some() && !busy, egui::Button::new(format!("{}…", power.label()))).clicked() {
+                    if ui
+                        .add_enabled(gateway.is_some() && !busy, egui::Button::new(format!("{}…", power.label())))
+                        .clicked()
+                    {
                         chosen = Some(Action::Power(power));
                     }
                 }
@@ -146,7 +157,11 @@ fn menu(app: &mut App, response: &Response, t: Target, console_open: bool) {
         }
         if t.management.is_empty() {
             ui.separator();
-            if ui.button("Set up remote management…").on_hover_text("A gateway, Wake-on-LAN and its management controller").clicked() {
+            if ui
+                .button("Set up remote management…")
+                .on_hover_text("A gateway, Wake-on-LAN and its management controller")
+                .clicked()
+            {
                 set_up = true;
             }
         }
@@ -187,7 +202,10 @@ pub fn windows(app: &mut App, ctx: &egui::Context) {
             Ok(Outcome::Message(text)) => app.toast(text, pal::GREEN),
             Ok(Outcome::Console(console)) => {
                 ctx.open_url(egui::OpenUrl::new_tab(console.console.url.clone()));
-                app.toast("Management console opened in your browser (its certificate is self-signed: allow it there)", pal::GREEN);
+                app.toast(
+                    "Management console opened in your browser (its certificate is self-signed: allow it there)",
+                    pal::GREEN,
+                );
                 app.manage.consoles.push(*console);
             }
             Err(e) => app.toast(format!("{what}: {e}"), pal::RED),
@@ -199,8 +217,13 @@ pub fn windows(app: &mut App, ctx: &egui::Context) {
     let Some(pending) = app.manage.confirm.take() else { return };
     let t = target(app, &pending.account, &pending.device);
     let (title, body) = match &pending.action {
-        Action::Restart(action) => (format!("{}?", action.label()), format!("{} restarts in a few seconds. Unsaved work there is lost.", t.name)),
-        Action::Power(power) => (format!("{}?", power.label()), format!("{} — sent to {}'s management controller.", power.label(), t.name)),
+        Action::Restart(action) => (
+            format!("{}?", action.label()),
+            format!("{} restarts in a few seconds. Unsaved work there is lost.", t.name),
+        ),
+        Action::Power(power) => {
+            (format!("{}?", power.label()), format!("{} — sent to {}'s management controller.", power.label(), t.name))
+        }
         _ => (String::new(), String::new()),
     };
     let (mut go, mut cancel) = (false, false);
@@ -236,7 +259,8 @@ fn start(app: &mut App, ctx: &egui::Context, t: &Target, action: Action) {
         },
         None => String::new(),
     };
-    let (client, account, device, name, mac) = (app.client.clone(), t.account.clone(), t.device.id, t.name.clone(), t.management.wake_mac.clone());
+    let (client, account, device, name, mac) =
+        (app.client.clone(), t.account.clone(), t.device.id, t.name.clone(), t.management.wake_mac.clone());
     let gateway_name = t.gateway_name.clone().unwrap_or_default();
     let what = match &action {
         Action::Wake => format!("Waking {name}"),

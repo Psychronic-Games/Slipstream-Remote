@@ -59,7 +59,10 @@ impl SystemBackend {
                 let (tx, rx) = mpsc::channel();
                 let shared = screens.clone();
                 let created = Instant::now();
-                thread::Builder::new().name("uinput".into()).spawn(move || input_worker(devices, rx, shared, created)).context("starting the input thread")?;
+                thread::Builder::new()
+                    .name("uinput".into())
+                    .spawn(move || input_worker(devices, rx, shared, created))
+                    .context("starting the input thread")?;
                 Some(tx)
             }
             None => None,
@@ -89,7 +92,12 @@ fn on_desktop(displays: &[DisplayInfo], display: u32, x: f32, y: f32) -> (f32, f
     (((d.x - left) as f32 + x * d.width as f32) / width, ((d.y - top) as f32 + y * d.height as f32) / height)
 }
 
-fn input_worker(mut devices: uinput::Devices, rx: mpsc::Receiver<(u32, InputEvent)>, screens: Arc<Mutex<Vec<kms::Screen>>>, created: Instant) {
+fn input_worker(
+    mut devices: uinput::Devices,
+    rx: mpsc::Receiver<(u32, InputEvent)>,
+    screens: Arc<Mutex<Vec<kms::Screen>>>,
+    created: Instant,
+) {
     let mut held = HeldInputs::default();
     let mut failed = false;
     let mut apply = |devices: &mut uinput::Devices, display: u32, event: InputEvent| {

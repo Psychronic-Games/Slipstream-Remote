@@ -11,15 +11,15 @@ mod accounts;
 pub mod approval;
 pub mod files;
 pub mod fsops;
-pub mod preview;
 mod host;
 mod incoming;
+pub mod management;
 pub mod meetings;
 pub mod network;
-pub mod support;
-pub mod power;
-pub mod management;
 mod network_names;
+pub mod power;
+pub mod preview;
+pub mod support;
 pub mod tunnel;
 pub mod update;
 mod video;
@@ -34,8 +34,11 @@ use std::{
     time::Duration,
 };
 
+pub use accounts::{AccountRef, Presence};
 use anyhow::{Context, Result, bail};
+pub use files::RemoteFs;
 use iroh::{Endpoint, EndpointId, Watcher};
+pub use slipstream_codec::YuvFrame;
 pub use slipstream_core;
 use slipstream_core::{
     auth::{AuthThrottle, generate_password},
@@ -44,12 +47,9 @@ use slipstream_core::{
     net,
     proto::ALPN_REMOTE,
 };
-pub use slipstream_codec::YuvFrame;
 use slipstream_platform::Backend;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, info, warn};
-pub use accounts::{AccountRef, Presence};
-pub use files::RemoteFs;
 pub use viewer::{AudioOut, FrameShared, LinkMode, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 
 /// Connection state to the directory server.
@@ -57,7 +57,9 @@ pub use viewer::{AudioOut, FrameShared, LinkMode, ViewerCmd, ViewerEvent, Viewer
 pub enum DirStatus {
     NotConfigured,
     Connecting,
-    Online { id: DeviceId },
+    Online {
+        id: DeviceId,
+    },
     /// Server reachable (view-only client; not registered).
     Ready,
     Error(String),
@@ -73,14 +75,31 @@ pub enum ClientEvent {
     Motd(String),
     /// Name of the organisation running the station, if any.
     Org(Option<String>),
-    HostSessionStarted { session: u64, peer: String },
+    HostSessionStarted {
+        session: u64,
+        peer: String,
+    },
     /// The link asked for the picture, sound or control: until then it is
     /// a chat-only link (viewers before 0.33 ask straight away).
-    HostSessionViewing { session: u64 },
-    HostSessionEnded { session: u64, reason: String },
-    HostChat { session: u64, text: String },
-    HostStatus { session: u64, text: String },
-    FileReceived { session: u64, path: std::path::PathBuf },
+    HostSessionViewing {
+        session: u64,
+    },
+    HostSessionEnded {
+        session: u64,
+        reason: String,
+    },
+    HostChat {
+        session: u64,
+        text: String,
+    },
+    HostStatus {
+        session: u64,
+        text: String,
+    },
+    FileReceived {
+        session: u64,
+        path: std::path::PathBuf,
+    },
     Notice(String),
     CallChanged,
     /// A one-time-password link is waiting for Allow, or stopped waiting
@@ -159,7 +178,7 @@ impl Inner {
     pub fn save_settings(&self) {
         // Serialize snapshots as well as writes. A delayed older snapshot
         // must not replace settings saved after a concurrent mutation.
-        let _save=self.save_lock.lock().unwrap();
+        let _save = self.save_lock.lock().unwrap();
         let s = self.settings.lock().unwrap().clone();
         if let Err(e) = self.store.save_settings(&s) {
             warn!("saving settings failed: {e:#}");
@@ -195,8 +214,10 @@ impl Client {
         slipstream_platform::camera::start_cancellable(index, cancelled)
     }
 
-    pub fn meeting_cameras(&self)->Result<Vec<(u32,String)>> {
-        if self.inner.opts.test_pattern {return Ok(vec![(0,"Test camera 1".into()),(1,"Test camera 2".into())]);}
+    pub fn meeting_cameras(&self) -> Result<Vec<(u32, String)>> {
+        if self.inner.opts.test_pattern {
+            return Ok(vec![(0, "Test camera 1".into()), (1, "Test camera 2".into())]);
+        }
         slipstream_platform::camera::devices()
     }
 
@@ -205,14 +226,16 @@ impl Client {
         let backend = host::screen_backend(&self.inner).await?;
         Ok(backend.as_ref().context("No screen is available")?.displays())
     }
-    pub async fn capture_for_meeting(&self, index:u32) -> Result<slipstream_platform::FrameStream> {
-        self.meeting_capture(index,15).await
+    pub async fn capture_for_meeting(&self, index: u32) -> Result<slipstream_platform::FrameStream> {
+        self.meeting_capture(index, 15).await
     }
-    async fn meeting_capture(&self,index:u32,fps:u32)->Result<slipstream_platform::FrameStream> {
+    async fn meeting_capture(&self, index: u32, fps: u32) -> Result<slipstream_platform::FrameStream> {
         let mut backend = host::screen_backend(&self.inner).await?;
         let backend = backend.as_mut().context("No screen is available")?;
         let displays = backend.displays();
-        let display = displays.iter().find(|d| d.index==index)
+        let display = displays
+            .iter()
+            .find(|d| d.index == index)
             .context("The selected screen is no longer available; choose a screen again")?;
         backend.capture(display.index, fps)
     }
@@ -240,7 +263,9 @@ impl Client {
                 let persistent = store.identity()?;
                 let secret = if opts.accept_sessions {
                     slipstream_core::config::public_identity(&persistent)
-                } else { iroh::SecretKey::generate() };
+                } else {
+                    iroh::SecretKey::generate()
+                };
                 Some(stations::PublicStation::bind(secret, server.clone(), opts.accept_sessions).await?)
             }
             None => None,
@@ -340,7 +365,9 @@ impl Client {
             let before = (s.server.url.clone(), s.server.key.clone());
             f(&mut s);
             let changed = before != (s.server.url.clone(), s.server.key.clone());
-            if changed { s.host.last_device_id = None; }
+            if changed {
+                s.host.last_device_id = None;
+            }
             changed
         };
         self.inner.save_settings();
@@ -350,7 +377,9 @@ impl Client {
     }
 
     pub fn dir_status(&self) -> DirStatus {
-        if !stations::has_custom(&self.settings()) && let Some(public) = &self.inner.public_station {
+        if !stations::has_custom(&self.settings())
+            && let Some(public) = &self.inner.public_station
+        {
             return public.status.borrow().clone();
         }
         self.inner.dir_status.borrow().clone()
@@ -390,13 +419,14 @@ impl Client {
     /// its binary. Graceful shutdown must not look like a deliberate End Link.
     pub async fn notify_restarting(&self) {
         for tx in self.inner.host_sessions.lock().unwrap().values() {
-            let _=tx.send(HostSessionCmd::Restart);
+            let _ = tx.send(HostSessionCmd::Restart);
         }
-        let _=tokio::time::timeout(Duration::from_secs(1),async {
+        let _ = tokio::time::timeout(Duration::from_secs(1), async {
             while !self.inner.host_sessions.lock().unwrap().is_empty() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-        }).await;
+        })
+        .await;
     }
 
     async fn directory(&self) -> Result<DirectoryClient> {
@@ -462,7 +492,9 @@ impl Client {
             Lookup::NotFound => bail!("no device has the ID {id}"),
         };
         let endpoint = self.endpoint_for_address(station.as_deref());
-        if addr.id == self.inner.endpoint.id() || self.inner.public_station.as_ref().is_some_and(|p| addr.id == p.endpoint.id()) {
+        if addr.id == self.inner.endpoint.id()
+            || self.inner.public_station.as_ref().is_some_and(|p| addr.id == p.endpoint.id())
+        {
             bail!("that's this device's own ID");
         }
         let (name, viewer_settings) = {
@@ -542,13 +574,29 @@ impl Client {
         update::available(&self.directory().await?, &slipstream_core::release::trusted_keys()).await
     }
 
-    async fn download_latest_update(&self, requested: &update::UpdateInfo, staged: &std::path::Path, progress: impl FnMut(u64, u64)) -> Result<update::UpdateInfo> {
-        update::download_latest(&self.directory().await?, requested, staged, &slipstream_core::release::trusted_keys(), progress).await
+    async fn download_latest_update(
+        &self,
+        requested: &update::UpdateInfo,
+        staged: &std::path::Path,
+        progress: impl FnMut(u64, u64),
+    ) -> Result<update::UpdateInfo> {
+        update::download_latest(
+            &self.directory().await?,
+            requested,
+            staged,
+            &slipstream_core::release::trusted_keys(),
+            progress,
+        )
+        .await
     }
 
     /// Downloads into a temporary directory for a privileged installer. The
     /// guard removes staging data on cancellation or any installation failure.
-    pub async fn stage_update(&self, info: &update::UpdateInfo, progress: impl FnMut(u64, u64)) -> Result<(update::UpdateInfo, tempfile::TempPath)> {
+    pub async fn stage_update(
+        &self,
+        info: &update::UpdateInfo,
+        progress: impl FnMut(u64, u64),
+    ) -> Result<(update::UpdateInfo, tempfile::TempPath)> {
         let staged = tempfile::NamedTempFile::with_prefix("slipstream-update-")?.into_temp_path();
         let info = self.download_latest_update(info, &staged, progress).await?;
         Ok((info, staged))
@@ -556,11 +604,20 @@ impl Client {
 
     /// Downloads and verifies the latest signed build to `staged` (Android:
     /// the app hands it to the system installer itself).
-    pub async fn download_update(&self, info: &update::UpdateInfo, staged: &std::path::Path, progress: impl FnMut(u64, u64)) -> Result<update::UpdateInfo> {
+    pub async fn download_update(
+        &self,
+        info: &update::UpdateInfo,
+        staged: &std::path::Path,
+        progress: impl FnMut(u64, u64),
+    ) -> Result<update::UpdateInfo> {
         self.download_latest_update(info, staged, progress).await
     }
 
-    pub async fn install_update(&self, info: &update::UpdateInfo, progress: impl FnMut(u64, u64)) -> Result<std::path::PathBuf> {
+    pub async fn install_update(
+        &self,
+        info: &update::UpdateInfo,
+        progress: impl FnMut(u64, u64),
+    ) -> Result<std::path::PathBuf> {
         let staged = update::staging_path()?;
         self.download_latest_update(info, &staged, progress).await?;
         self.notify_restarting().await;
@@ -583,7 +640,9 @@ impl Client {
         // keep the app from exiting (or an update from restarting it).
         if let Some(public) = &self.inner.public_station {
             let dc = public.directory.borrow().clone();
-            if self.inner.opts.accept_sessions && let Some(dc) = dc {
+            if self.inner.opts.accept_sessions
+                && let Some(dc) = dc
+            {
                 let _ = tokio::time::timeout(Duration::from_secs(2), dc.unregister(public.endpoint.secret_key())).await;
             }
             let _ = tokio::time::timeout(Duration::from_secs(3), public.endpoint.close()).await;
@@ -619,8 +678,13 @@ async fn directory_task(inner: Arc<Inner>) {
         changed.as_mut().enable();
         let (server, key) = {
             let s = inner.settings.lock().unwrap();
-            (s.server.url.clone().filter(|u| !u.trim().is_empty()
-                && !(inner.public_station.is_some() && slipstream_core::config::is_public_station(u))), s.server.key.clone())
+            (
+                s.server.url.clone().filter(|u| {
+                    !u.trim().is_empty()
+                        && !(inner.public_station.is_some() && slipstream_core::config::is_public_station(u))
+                }),
+                s.server.key.clone(),
+            )
         };
         let Some(server) = server else {
             inner.dir_client.send_replace(None);
@@ -742,7 +806,10 @@ async fn run_directory(inner: &Inner, server: &str, key: Option<String>) -> Resu
             let directory = dc.clone();
             let signing_key = secret.clone();
             inventory_tasks.spawn(async move {
-                let inventory = tokio::task::spawn_blocking(move || slipstream_platform::machine::station_inventory(include_report)).await?;
+                let inventory = tokio::task::spawn_blocking(move || {
+                    slipstream_platform::machine::station_inventory(include_report)
+                })
+                .await?;
                 directory.publish_inventory(&signing_key, inventory).await
             });
         }
@@ -858,7 +925,8 @@ mod tests {
         s.host.set_permanent_password(Some("correct horse battery"));
         tweak(&mut s);
         store.save_settings(&s).unwrap();
-        let opts = ClientOptions { test_pattern: host, accept_sessions: host, clipboard, audio_out, ..Default::default() };
+        let opts =
+            ClientOptions { test_pattern: host, accept_sessions: host, clipboard, audio_out, ..Default::default() };
         let (c, ev) = Client::start(store, opts).await.unwrap();
         (c, ev, dir)
     }
@@ -921,23 +989,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(vdir);
     }
 
-    #[tokio::test(flavor="multi_thread")]
+    #[tokio::test(flavor = "multi_thread")]
     async fn explicit_end_stays_closed_but_update_restart_requests_recovery() {
-        let (host,_hev,hdir)=client("deliberate-host",true).await;
-        let (viewer,_vev,vdir)=client("deliberate-viewer",false).await;
+        let (host, _hev, hdir) = client("deliberate-host", true).await;
+        let (viewer, _vev, vdir) = client("deliberate-viewer", false).await;
         for mode in 0..3 {
-            let (session,mut events)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
-            match mode {0=>host.disconnect_all_host_sessions(),1=>session.send(ViewerCmd::Disconnect),_=>host.notify_restarting().await}
-            let retryable=tokio::time::timeout(Duration::from_secs(8),async {
-                while let Some(event)=events.recv().await {
-                    if let ViewerEvent::Disconnected{retryable,..}=event {return retryable;}
+            let (session, mut events) =
+                viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+            match mode {
+                0 => host.disconnect_all_host_sessions(),
+                1 => session.send(ViewerCmd::Disconnect),
+                _ => host.notify_restarting().await,
+            }
+            let retryable = tokio::time::timeout(Duration::from_secs(8), async {
+                while let Some(event) = events.recv().await {
+                    if let ViewerEvent::Disconnected { retryable, .. } = event {
+                        return retryable;
+                    }
                 }
                 panic!("missing disconnect event");
-            }).await.unwrap();
-            assert_eq!(retryable,mode==2,"wrong recovery policy for session end mode {mode}");drop(session);
+            })
+            .await
+            .unwrap();
+            assert_eq!(retryable, mode == 2, "wrong recovery policy for session end mode {mode}");
+            drop(session);
         }
-        viewer.shutdown().await;host.shutdown().await;
-        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
     /// Big control messages (clipboard) arrive intact while video and frame
@@ -948,8 +1028,10 @@ mod tests {
         let host_clip = Arc::new(Mutex::new(None::<Clip>));
         let viewer_clip = Arc::new(Mutex::new(None::<Clip>));
         let (host, mut hev, _) = client_with("bhost", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
-        let (viewer, _vev, _) = client_with("bviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
-        let (session, mut events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let (viewer, _vev, _) =
+            client_with("bviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
+        let (session, mut events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Stats(s) if s.fps > 10.0)).await, "video flowing");
 
         let poll = |clip: &Arc<Mutex<Option<Clip>>>, want: &str| {
@@ -985,8 +1067,12 @@ mod tests {
         let heard = Arc::new(Mutex::new(Vec::<i16>::new()));
         let (host, _hev, _) = client("ahost", true).await;
         let (viewer, _vev, _) =
-            client_full("aviewer", false, Default::default(), AudioOut::Memory(heard.clone()), |s| s.viewer.play_audio = true).await;
-        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+            client_full("aviewer", false, Default::default(), AudioOut::Memory(heard.clone()), |s| {
+                s.viewer.play_audio = true
+            })
+            .await;
+        let (session, _events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         assert!(session.info().capabilities.audio);
 
         let wait = |want: usize| {
@@ -1091,7 +1177,8 @@ mod tests {
     async fn system_info_end_to_end() {
         let (host, _hev, _) = client("sihost", true).await;
         let (viewer, _vev, _) = client("siviewer", false).await;
-        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let (session, _events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         let info = session.system_info().await.unwrap();
         let computer = info.iter().find(|s| s.title == "Computer").expect("a Computer section");
         assert!(computer.rows.iter().any(|(k, v)| k == "Serial number" && !v.is_empty()), "{computer:?}");
@@ -1110,37 +1197,66 @@ mod tests {
         use slipstream_core::network::{ScanEvent, ScanRequest};
         let (host, _hev, hdir) = client("nhost", true).await;
         let (viewer, _vev, vdir) = client("nviewer", false).await;
-        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let (session, _events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         assert!(session.info().capabilities.network_scan);
         let interfaces = session.fs().network_interfaces().await.unwrap();
         if let Some(interface) = interfaces.first() {
             let listener = tokio::net::TcpListener::bind((interface.address, 0)).await.unwrap();
             let port = listener.local_addr().unwrap().port();
-            let request = ScanRequest { interface: interface.address, cidr: format!("{}/32", interface.address), ports: vec![port] };
+            let request = ScanRequest {
+                interface: interface.address,
+                cidr: format!("{}/32", interface.address),
+                ports: vec![port],
+            };
             let mut scan = session.fs().network_scan(request.clone());
             let mut got_device = false;
             tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
                     match scan.events.recv().await.expect("scan event").unwrap() {
-                        ScanEvent::Device(d) if d.address == interface.address => { assert_eq!(d.open_ports, vec![port]); got_device = true; }
+                        ScanEvent::Device(d) if d.address == interface.address => {
+                            assert_eq!(d.open_ports, vec![port]);
+                            got_device = true;
+                        }
                         ScanEvent::Finished => break,
-                        _ => {},
+                        _ => {}
                     }
                 }
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
             assert!(got_device);
-            let names=session.fs().network_names(interface.address,vec![interface.address]).await.unwrap();
-            assert!(names.iter().any(|n|n.address==interface.address&&!n.name.is_empty()));
+            let names = session.fs().network_names(interface.address, vec![interface.address]).await.unwrap();
+            assert!(names.iter().any(|n| n.address == interface.address && !n.name.is_empty()));
             let mut invalid = session.fs().network_scan(ScanRequest { cidr: "0.0.0.0/0".into(), ..request.clone() });
-            assert!(tokio::time::timeout(Duration::from_secs(5), invalid.events.recv()).await.unwrap().unwrap().is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_secs(5), invalid.events.recv()).await.unwrap().unwrap().is_err()
+            );
 
-            let (strict, _sev, sdir) = client_with("nstrict", true, Default::default(), |s| s.host.allow_network_scan = false).await;
-            let (restricted, _events) = viewer.connect_direct(strict.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+            let (strict, _sev, sdir) =
+                client_with("nstrict", true, Default::default(), |s| s.host.allow_network_scan = false).await;
+            let (restricted, _events) =
+                viewer.connect_direct(strict.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
             assert!(!restricted.info().capabilities.network_scan);
             assert!(restricted.fs().network_interfaces().await.unwrap_err().to_string().contains("not allowed"));
-            assert!(restricted.fs().network_names(interface.address,vec![interface.address]).await.unwrap_err().to_string().contains("not allowed"));
+            assert!(
+                restricted
+                    .fs()
+                    .network_names(interface.address, vec![interface.address])
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("not allowed")
+            );
             let mut denied = restricted.fs().network_scan(request);
-            assert!(tokio::time::timeout(Duration::from_secs(5), denied.events.recv()).await.unwrap().unwrap().unwrap_err().contains("not allowed"));
+            assert!(
+                tokio::time::timeout(Duration::from_secs(5), denied.events.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap_err()
+                    .contains("not allowed")
+            );
             drop(restricted);
             strict.shutdown().await;
             let _ = std::fs::remove_dir_all(sdir);
@@ -1158,23 +1274,34 @@ mod tests {
         use slipstream_core::proto::StreamOpen;
         let (host, _hev, hdir) = client("webhost", true).await;
         let (viewer, _vev, vdir) = client("webviewer", false).await;
-        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
-        for (address,port) in [(std::net::Ipv4Addr::LOCALHOST,22),(std::net::Ipv4Addr::BROADCAST,443)] {
-            assert!(session.fs().ask(StreamOpen::OpenNetworkWeb { address,port }).await.is_err());
+        let (session, _events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        for (address, port) in [(std::net::Ipv4Addr::LOCALHOST, 22), (std::net::Ipv4Addr::BROADCAST, 443)] {
+            assert!(session.fs().ask(StreamOpen::OpenNetworkWeb { address, port }).await.is_err());
         }
         drop(session);
         host.shutdown().await;
-        for (name, scan, input) in [("webnoscan",false,true),("webviewonly",true,false)] {
-            let (host, _events, dir) = client_with(name,true,Default::default(),|s| {
-                s.host.allow_network_scan=scan;s.host.allow_input=input;
-            }).await;
-            let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
-            let err = session.fs().ask(StreamOpen::OpenNetworkWeb { address:std::net::Ipv4Addr::LOCALHOST,port:80 }).await.unwrap_err();
-            assert!(format!("{err:#}").contains("not allowed"),"{err:#}");
-            drop(session);host.shutdown().await;let _=std::fs::remove_dir_all(dir);
+        for (name, scan, input) in [("webnoscan", false, true), ("webviewonly", true, false)] {
+            let (host, _events, dir) = client_with(name, true, Default::default(), |s| {
+                s.host.allow_network_scan = scan;
+                s.host.allow_input = input;
+            })
+            .await;
+            let (session, _events) =
+                viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+            let err = session
+                .fs()
+                .ask(StreamOpen::OpenNetworkWeb { address: std::net::Ipv4Addr::LOCALHOST, port: 80 })
+                .await
+                .unwrap_err();
+            assert!(format!("{err:#}").contains("not allowed"), "{err:#}");
+            drop(session);
+            host.shutdown().await;
+            let _ = std::fs::remove_dir_all(dir);
         }
         viewer.shutdown().await;
-        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1191,42 +1318,77 @@ mod tests {
             ("supportreadonly", false, false, false, false),
         ] {
             let (host, mut events, hd) = client_with(name, true, Default::default(), |s| {
-                s.host.allow_input = control;s.host.allow_network_scan=scan;s.host.allow_tunnels=tunnels;s.host.allow_wake_on_lan=wake;
-            }).await;
-            let (session, _ev)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery", |_|{}).await.unwrap();
-            let fs=session.fs();
+                s.host.allow_input = control;
+                s.host.allow_network_scan = scan;
+                s.host.allow_tunnels = tunnels;
+                s.host.allow_wake_on_lan = wake;
+            })
+            .await;
+            let (session, _ev) =
+                viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+            let fs = session.fs();
             if control {
                 fs.support_status("Checking the printer".into()).await.unwrap();
-                assert!(wait_for(&mut events,|e| matches!(e,ClientEvent::HostStatus{text,..} if text=="Checking the printer")).await);
+                assert!(
+                    wait_for(
+                        &mut events,
+                        |e| matches!(e,ClientEvent::HostStatus{text,..} if text=="Checking the printer")
+                    )
+                    .await
+                );
                 fs.support_status(String::new()).await.unwrap();
-                assert!(wait_for(&mut events,|e| matches!(e,ClientEvent::HostStatus{text,..} if text.is_empty())).await);
-                assert!(fs.ask(StreamOpen::SupportStatus{text:"bad\nstatus".into()}).await.is_err());
+                assert!(
+                    wait_for(&mut events, |e| matches!(e,ClientEvent::HostStatus{text,..} if text.is_empty())).await
+                );
+                assert!(fs.ask(StreamOpen::SupportStatus { text: "bad\nstatus".into() }).await.is_err());
             } else {
-                assert!(format!("{:#}",fs.support_status("Checking".into()).await.unwrap_err()).contains("not allowed"));
+                assert!(
+                    format!("{:#}", fs.support_status("Checking".into()).await.unwrap_err()).contains("not allowed")
+                );
             }
-            let wake_error=fs.wake_on_lan(Ipv4Addr::LOCALHOST,"ff:ff:ff:ff:ff:ff".into()).await.unwrap_err();
-            assert!(format!("{wake_error:#}").contains(if wake && scan && control {"unicast"}else{"not allowed"}));
-            let diagnostic=fs.network_diagnostics(Ipv4Addr::LOCALHOST,"invalid name!".into(),None).await.unwrap_err();
-            assert!(format!("{diagnostic:#}").contains(if scan {"DNS name"}else{"not allowed"}));
-            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let port=listener.local_addr().unwrap().port();
-            let server=tokio::spawn(async move {
-                while let Ok((mut stream,_))=listener.accept().await {
-                    tokio::spawn(async move {let (mut r,mut w)=stream.split();let _=tokio::io::copy(&mut r,&mut w).await;});
+            let wake_error = fs.wake_on_lan(Ipv4Addr::LOCALHOST, "ff:ff:ff:ff:ff:ff".into()).await.unwrap_err();
+            assert!(format!("{wake_error:#}").contains(if wake && scan && control {
+                "unicast"
+            } else {
+                "not allowed"
+            }));
+            let diagnostic =
+                fs.network_diagnostics(Ipv4Addr::LOCALHOST, "invalid name!".into(), None).await.unwrap_err();
+            assert!(format!("{diagnostic:#}").contains(if scan { "DNS name" } else { "not allowed" }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    tokio::spawn(async move {
+                        let (mut r, mut w) = stream.split();
+                        let _ = tokio::io::copy(&mut r, &mut w).await;
+                    });
                 }
             });
             if tunnels {
-                use tokio::io::{AsyncReadExt,AsyncWriteExt};
-                let tunnel=fs.connect_through(Ipv4Addr::LOCALHOST,port).await.unwrap();
-                let mut socket=tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST,tunnel.local_port)).await.unwrap();
-                socket.write_all(b"support tunnel").await.unwrap();let mut echoed=[0;14];socket.read_exact(&mut echoed).await.unwrap();assert_eq!(&echoed,b"support tunnel");
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let tunnel = fs.connect_through(Ipv4Addr::LOCALHOST, port).await.unwrap();
+                let mut socket =
+                    tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, tunnel.local_port)).await.unwrap();
+                socket.write_all(b"support tunnel").await.unwrap();
+                let mut echoed = [0; 14];
+                socket.read_exact(&mut echoed).await.unwrap();
+                assert_eq!(&echoed, b"support tunnel");
                 drop(tunnel);
-            } else {assert!(format!("{:#}",fs.connect_through(Ipv4Addr::LOCALHOST,port).await.err().unwrap()).contains("not allowed"));}
+            } else {
+                assert!(
+                    format!("{:#}", fs.connect_through(Ipv4Addr::LOCALHOST, port).await.err().unwrap())
+                        .contains("not allowed")
+                );
+            }
             server.abort();
             assert!(!fs.support_inventory().await.unwrap().is_empty());
-            drop(session);host.shutdown().await;let _=std::fs::remove_dir_all(hd);
+            drop(session);
+            host.shutdown().await;
+            let _ = std::fs::remove_dir_all(hd);
         }
-        viewer.shutdown().await;let _=std::fs::remove_dir_all(vd);
+        viewer.shutdown().await;
+        let _ = std::fs::remove_dir_all(vd);
     }
 
     /// Port forwarding carries a TCP connection both ways, and is refused
@@ -1261,25 +1423,32 @@ mod tests {
         assert_eq!(back, payload, "echo through the tunnel");
 
         // Closing a forward must close already-connected sockets as well.
-        let mut live=tokio::net::TcpStream::connect(("127.0.0.1",tunnel.local_port)).await.unwrap();
-        live.write_all(b"live").await.unwrap();let mut echoed=[0u8;4];
-        live.read_exact(&mut echoed).await.unwrap();assert_eq!(&echoed,b"live");
+        let mut live = tokio::net::TcpStream::connect(("127.0.0.1", tunnel.local_port)).await.unwrap();
+        live.write_all(b"live").await.unwrap();
+        let mut echoed = [0u8; 4];
+        live.read_exact(&mut echoed).await.unwrap();
+        assert_eq!(&echoed, b"live");
         drop(tunnel);
-        let result=tokio::time::timeout(Duration::from_secs(3),live.read(&mut echoed)).await.expect("closed tunnel left a connection alive");
-        assert!(matches!(result,Ok(0)|Err(_)));
+        let result = tokio::time::timeout(Duration::from_secs(3), live.read(&mut echoed))
+            .await
+            .expect("closed tunnel left a connection alive");
+        assert!(matches!(result, Ok(0) | Err(_)));
 
         // IPv6 literals must not be formatted as an ambiguous host:port string.
-        if let Ok(echo6)=tokio::net::TcpListener::bind(("::1",0)).await {
-            let port=echo6.local_addr().unwrap().port();
-            let job=tokio::spawn(async move {
-                let (mut socket,_)=echo6.accept().await.unwrap();
-                let (mut read,mut write)=socket.split();let _=tokio::io::copy(&mut read,&mut write).await;
+        if let Ok(echo6) = tokio::net::TcpListener::bind(("::1", 0)).await {
+            let port = echo6.local_addr().unwrap().port();
+            let job = tokio::spawn(async move {
+                let (mut socket, _) = echo6.accept().await.unwrap();
+                let (mut read, mut write) = socket.split();
+                let _ = tokio::io::copy(&mut read, &mut write).await;
             });
-            let tunnel6=session.tunnel(0,"::1".into(),port).await.unwrap();
-            let mut socket=tokio::net::TcpStream::connect(("127.0.0.1",tunnel6.local_port)).await.unwrap();
+            let tunnel6 = session.tunnel(0, "::1".into(), port).await.unwrap();
+            let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", tunnel6.local_port)).await.unwrap();
             socket.write_all(b"ipv6").await.unwrap();
-            tokio::time::timeout(Duration::from_secs(3),socket.read_exact(&mut echoed)).await.unwrap().unwrap();
-            assert_eq!(&echoed,b"ipv6");drop(tunnel6);job.abort();
+            tokio::time::timeout(Duration::from_secs(3), socket.read_exact(&mut echoed)).await.unwrap().unwrap();
+            assert_eq!(&echoed, b"ipv6");
+            drop(tunnel6);
+            job.abort();
         }
 
         // A target the host can't reach: the error comes back.
@@ -1354,19 +1523,28 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor="multi_thread")]
+    #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_settings_changes_match_the_persisted_snapshot() {
-        let (client,_events,dir)=client("settings-writers",false).await;
-        let expected=std::thread::scope(|scope| {
-            let jobs:Vec<_>=(0..8).map(|_| {
-                let client=&client;
-                scope.spawn(move || {for _ in 0..10 {client.update_settings(|s|s.device_name.push('x'));}})
-            }).collect();
-            for job in jobs {job.join().unwrap();}
+        let (client, _events, dir) = client("settings-writers", false).await;
+        let expected = std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..8)
+                .map(|_| {
+                    let client = &client;
+                    scope.spawn(move || {
+                        for _ in 0..10 {
+                            client.update_settings(|s| s.device_name.push('x'));
+                        }
+                    })
+                })
+                .collect();
+            for job in jobs {
+                job.join().unwrap();
+            }
             client.settings()
         });
-        assert_eq!(client.inner.store.load_settings().device_name,expected.device_name);
-        client.shutdown().await;let _=std::fs::remove_dir_all(dir);
+        assert_eq!(client.inner.store.load_settings().device_name, expected.device_name);
+        client.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Remote file browsing, upload (incl. subfolders), download, and that
@@ -1376,7 +1554,8 @@ mod tests {
         use slipstream_core::proto::UploadTarget;
         let (host, mut hev, _) = client("fhost", true).await;
         let (viewer, _vev, _) = client("fviewer", false).await;
-        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let (session, _events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         let fs = session.fs();
 
         let work = std::env::temp_dir().join(format!("slipstream-fm-{}", std::process::id()));
@@ -1391,14 +1570,20 @@ mod tests {
         // A drop resolves once, without needing an input-stream cursor move.
         // Non-Windows hosts use their default receive folder.
         #[cfg(not(windows))]
-        assert_eq!(fs.drop_target(500, 300).await.unwrap(), UploadTarget::Folder(crate::fsops::display(&crate::fsops::default_upload_dir())));
+        assert_eq!(
+            fs.drop_target(500, 300).await.unwrap(),
+            UploadTarget::Folder(crate::fsops::display(&crate::fsops::default_upload_dir()))
+        );
         fs.make_dir(remote_dir.join("Empty folder/nested").display().to_string()).await.unwrap();
         assert!(remote_dir.join("Empty folder/nested").is_dir());
 
         // Upload a file into a nested folder of the remote dir.
         let mut sent = 0u64;
         let target = UploadTarget::Folder(remote_dir.display().to_string());
-        let saved = fs.upload(&local_dir.join("big.bin"), target.clone(), "Photos/2026/big.bin".into(), |n| sent += n).await.unwrap();
+        let saved = fs
+            .upload(&local_dir.join("big.bin"), target.clone(), "Photos/2026/big.bin".into(), |n| sent += n)
+            .await
+            .unwrap();
         assert_eq!(sent, payload.len() as u64);
         assert_eq!(std::fs::read(remote_dir.join("Photos/2026/big.bin")).unwrap(), payload);
         assert!(saved.ends_with("big.bin"));
@@ -1411,18 +1596,30 @@ mod tests {
         // Two uploads can finish into the same requested name concurrently.
         // Neither the staging file nor the final file may be shared/overwritten.
         let request = slipstream_core::proto::StreamOpen::Upload {
-            target: target.clone(), rel_path: "concurrent.bin".into(), size: 4,
+            target: target.clone(),
+            rel_path: "concurrent.bin".into(),
+            size: 4,
         };
-        let (mut a,mut ar,_) = fs.ask(request.clone()).await.unwrap();
-        let (mut b,mut br,_) = fs.ask(request).await.unwrap();
-        a.write_all(b"aaaa").await.unwrap(); a.finish().unwrap();
-        b.write_all(b"bbbb").await.unwrap(); b.finish().unwrap();
-        let saved_a=slipstream_core::framing::expect_msg::<slipstream_core::proto::StreamReply>(&mut ar).await.unwrap();
-        let saved_b=slipstream_core::framing::expect_msg::<slipstream_core::proto::StreamReply>(&mut br).await.unwrap();
-        let (slipstream_core::proto::StreamReply::Saved {path:a},slipstream_core::proto::StreamReply::Saved {path:b})=(saved_a,saved_b) else {panic!("uploads were not saved")};
-        assert_ne!(a,b,"simultaneous uploads overwrote the same destination");
-        assert_eq!(std::fs::read(a).unwrap(),b"aaaa");
-        assert_eq!(std::fs::read(b).unwrap(),b"bbbb");
+        let (mut a, mut ar, _) = fs.ask(request.clone()).await.unwrap();
+        let (mut b, mut br, _) = fs.ask(request).await.unwrap();
+        a.write_all(b"aaaa").await.unwrap();
+        a.finish().unwrap();
+        b.write_all(b"bbbb").await.unwrap();
+        b.finish().unwrap();
+        let saved_a =
+            slipstream_core::framing::expect_msg::<slipstream_core::proto::StreamReply>(&mut ar).await.unwrap();
+        let saved_b =
+            slipstream_core::framing::expect_msg::<slipstream_core::proto::StreamReply>(&mut br).await.unwrap();
+        let (
+            slipstream_core::proto::StreamReply::Saved { path: a },
+            slipstream_core::proto::StreamReply::Saved { path: b },
+        ) = (saved_a, saved_b)
+        else {
+            panic!("uploads were not saved")
+        };
+        assert_ne!(a, b, "simultaneous uploads overwrote the same destination");
+        assert_eq!(std::fs::read(a).unwrap(), b"aaaa");
+        assert_eq!(std::fs::read(b).unwrap(), b"bbbb");
 
         // Path traversal is refused.
         assert!(fs.upload(&local_dir.join("big.bin"), target.clone(), "../escape.bin".into(), |_| {}).await.is_err());
@@ -1442,12 +1639,12 @@ mod tests {
 
         // Passive previews are small, use the same authenticated session,
         // and unsupported files do not break subsequent browsing/transfers.
-        let image=image::RgbaImage::from_pixel(600,300,image::Rgba([10,50,200,255]));
+        let image = image::RgbaImage::from_pixel(600, 300, image::Rgba([10, 50, 200, 255]));
         image.save(remote_dir.join("photo.png")).unwrap();
-        let preview=fs.preview(remote_dir.join("photo.png").display().to_string()).await.unwrap().unwrap();
+        let preview = fs.preview(remote_dir.join("photo.png").display().to_string()).await.unwrap().unwrap();
         assert!(preview.valid());
-        assert!(matches!(preview,slipstream_core::proto::FilePreview::Image {width:128,height:64,..}));
-        std::fs::write(remote_dir.join("notes.txt"),"Remote text preview\nSecond line").unwrap();
+        assert!(matches!(preview, slipstream_core::proto::FilePreview::Image { width: 128, height: 64, .. }));
+        std::fs::write(remote_dir.join("notes.txt"), "Remote text preview\nSecond line").unwrap();
         assert!(matches!(fs.preview(remote_dir.join("notes.txt").display().to_string()).await.unwrap(),
             Some(slipstream_core::proto::FilePreview::Text(t)) if t.contains("Second line")));
         assert!(fs.preview(remote_dir.join("Photos/2026/big.bin").display().to_string()).await.unwrap().is_none());
@@ -1460,196 +1657,316 @@ mod tests {
         std::fs::remove_dir_all(work).ok();
     }
 
-    #[tokio::test(flavor="multi_thread")]
+    #[tokio::test(flavor = "multi_thread")]
     async fn interrupted_and_oversized_uploads_leave_no_partial_files() {
-        use slipstream_core::{proto::{StreamOpen,StreamReply,UploadTarget},framing::expect_msg};
-        let (host,_events,hdir)=client("broken-upload-host",true).await;
-        let (viewer,_events,vdir)=client("broken-upload-viewer",false).await;
-        let (session,_events)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
-        let work=tempfile::tempdir().unwrap();let fs=session.fs();
-        for mode in ["reset","short","excess"] {
-            let (mut send,mut recv,_)=fs.ask(StreamOpen::Upload {
-                target:UploadTarget::Folder(work.path().display().to_string()),rel_path:format!("{mode}.bin"),size:if mode=="excess" {1}else{4},
-            }).await.unwrap();
+        use slipstream_core::{
+            framing::expect_msg,
+            proto::{StreamOpen, StreamReply, UploadTarget},
+        };
+        let (host, _events, hdir) = client("broken-upload-host", true).await;
+        let (viewer, _events, vdir) = client("broken-upload-viewer", false).await;
+        let (session, _events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let fs = session.fs();
+        for mode in ["reset", "short", "excess"] {
+            let (mut send, mut recv, _) = fs
+                .ask(StreamOpen::Upload {
+                    target: UploadTarget::Folder(work.path().display().to_string()),
+                    rel_path: format!("{mode}.bin"),
+                    size: if mode == "excess" { 1 } else { 4 },
+                })
+                .await
+                .unwrap();
             send.write_all(b"xx").await.unwrap();
-            if mode=="reset" {send.reset(0u32.into()).unwrap();}else{send.finish().unwrap();}
-            let response=tokio::time::timeout(Duration::from_secs(3),expect_msg::<StreamReply>(&mut recv)).await.unwrap().unwrap();
-            assert!(matches!(response,StreamReply::Error(_)),"{mode}: {response:?}");
-            assert_eq!(std::fs::read_dir(work.path()).unwrap().count(),0,"{mode} left staging files");
+            if mode == "reset" {
+                send.reset(0u32.into()).unwrap();
+            } else {
+                send.finish().unwrap();
+            }
+            let response = tokio::time::timeout(Duration::from_secs(3), expect_msg::<StreamReply>(&mut recv))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(response, StreamReply::Error(_)), "{mode}: {response:?}");
+            assert_eq!(std::fs::read_dir(work.path()).unwrap().count(), 0, "{mode} left staging files");
         }
         // Different extensions previously used the same staging filename.
-        let source=work.path().join("source");std::fs::write(&source,vec![42;1_000_000]).unwrap();
-        let target=UploadTarget::Folder(work.path().display().to_string());
-        let a=fs.upload(&source,target.clone(),"image.one".into(),|_|{}).await.unwrap();
-        let b=fs.upload(&source,target,"image.two".into(),|_|{}).await.unwrap();
-        let dest=work.path().join("downloads");std::fs::create_dir(&dest).unwrap();
-        let (dest_a,dest_b)=(dest.join("image.one"),dest.join("image.two"));
-        let (a,b)=tokio::join!(fs.download(a,&dest_a,|_|{}),fs.download(b,&dest_b,|_|{}));
-        for path in [a.unwrap(),b.unwrap()] {assert_eq!(std::fs::read(path).unwrap(),vec![42;1_000_000]);}
-        #[cfg(unix)] {
-            std::os::unix::fs::symlink(work.path(),work.path().join("cycle")).unwrap();
-            let files=tokio::time::timeout(Duration::from_secs(3),fs.walk(work.path().display().to_string(),true,"tree".into(),0)).await.unwrap().unwrap();
-            assert_eq!(files.len(),5,"remote symlink traversal repeated a directory");
+        let source = work.path().join("source");
+        std::fs::write(&source, vec![42; 1_000_000]).unwrap();
+        let target = UploadTarget::Folder(work.path().display().to_string());
+        let a = fs.upload(&source, target.clone(), "image.one".into(), |_| {}).await.unwrap();
+        let b = fs.upload(&source, target, "image.two".into(), |_| {}).await.unwrap();
+        let dest = work.path().join("downloads");
+        std::fs::create_dir(&dest).unwrap();
+        let (dest_a, dest_b) = (dest.join("image.one"), dest.join("image.two"));
+        let (a, b) = tokio::join!(fs.download(a, &dest_a, |_| {}), fs.download(b, &dest_b, |_| {}));
+        for path in [a.unwrap(), b.unwrap()] {
+            assert_eq!(std::fs::read(path).unwrap(), vec![42; 1_000_000]);
         }
-        drop(session);viewer.shutdown().await;host.shutdown().await;
-        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(work.path(), work.path().join("cycle")).unwrap();
+            let files = tokio::time::timeout(
+                Duration::from_secs(3),
+                fs.walk(work.path().display().to_string(), true, "tree".into(), 0),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(files.len(), 5, "remote symlink traversal repeated a directory");
+        }
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
-    #[tokio::test(flavor="multi_thread",worker_threads=2)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_stopped_video_receiver_ends_the_session_instead_of_freezing() {
-        use slipstream_core::{auth::ViewerAuth,framing::{expect_msg,write_msg},proto::{HostMsg,ViewerMsg,VideoFrame,StreamSettings,PROTOCOL_VERSION,ALPN_REMOTE}};
-        let (host,mut events,hdir)=client("video-stop-host",true).await;
-        let (viewer,_events,vdir)=client("video-stop-viewer",false).await;
-        let conn=viewer.inner.endpoint.connect(host.endpoint_addr(),ALPN_REMOTE).await.unwrap();
-        let (mut send,mut recv)=conn.open_bi().await.unwrap();
-        write_msg(&mut send,&ViewerMsg::Hello {version:PROTOCOL_VERSION,viewer_name:"video-stop-test".into()}).await.unwrap();
-        let HostMsg::AuthChallenge {pakes}=expect_msg(&mut recv).await.unwrap() else {panic!("no challenge")};
-        let (auth,pakes,confirms)=ViewerAuth::respond("correct horse battery",&pakes,&host.inner.endpoint.id(),&viewer.inner.endpoint.id()).unwrap();
-        write_msg(&mut send,&ViewerMsg::AuthResponse {pakes,confirms}).await.unwrap();
-        let HostMsg::AuthOk {confirm,..}=expect_msg(&mut recv).await.unwrap() else {panic!("not authenticated")};
+        use slipstream_core::{
+            auth::ViewerAuth,
+            framing::{expect_msg, write_msg},
+            proto::{ALPN_REMOTE, HostMsg, PROTOCOL_VERSION, StreamSettings, VideoFrame, ViewerMsg},
+        };
+        let (host, mut events, hdir) = client("video-stop-host", true).await;
+        let (viewer, _events, vdir) = client("video-stop-viewer", false).await;
+        let conn = viewer.inner.endpoint.connect(host.endpoint_addr(), ALPN_REMOTE).await.unwrap();
+        let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        write_msg(&mut send, &ViewerMsg::Hello { version: PROTOCOL_VERSION, viewer_name: "video-stop-test".into() })
+            .await
+            .unwrap();
+        let HostMsg::AuthChallenge { pakes } = expect_msg(&mut recv).await.unwrap() else { panic!("no challenge") };
+        let (auth, pakes, confirms) = ViewerAuth::respond(
+            "correct horse battery",
+            &pakes,
+            &host.inner.endpoint.id(),
+            &viewer.inner.endpoint.id(),
+        )
+        .unwrap();
+        write_msg(&mut send, &ViewerMsg::AuthResponse { pakes, confirms }).await.unwrap();
+        let HostMsg::AuthOk { confirm, .. } = expect_msg(&mut recv).await.unwrap() else { panic!("not authenticated") };
         auth.verify_host(&confirm).unwrap();
-        write_msg(&mut send,&ViewerMsg::StartStream {display:0,settings:StreamSettings {max_in_flight:1,..Default::default()}}).await.unwrap();
-        let mut video=tokio::time::timeout(Duration::from_secs(3),conn.accept_uni()).await.unwrap().unwrap();
+        write_msg(
+            &mut send,
+            &ViewerMsg::StartStream { display: 0, settings: StreamSettings { max_in_flight: 1, ..Default::default() } },
+        )
+        .await
+        .unwrap();
+        let mut video = tokio::time::timeout(Duration::from_secs(3), conn.accept_uni()).await.unwrap().unwrap();
         // Consume the sole frame without granting more credit. The writer is
         // now waiting for the encoder, so only STOP_SENDING can wake it.
-        let _:VideoFrame=tokio::time::timeout(Duration::from_secs(3),expect_msg(&mut video)).await.unwrap().unwrap();
+        let _: VideoFrame =
+            tokio::time::timeout(Duration::from_secs(3), expect_msg(&mut video)).await.unwrap().unwrap();
         video.stop(0u32.into()).unwrap();
-        let bye=tokio::time::timeout(Duration::from_secs(3),async {
-            loop {if let HostMsg::Bye {reason}=expect_msg(&mut recv).await.unwrap() {break reason;}}
-        }).await.unwrap();
-        assert!(bye.contains("Video stream"),"{bye}");
-        conn.close(0u32.into(),b"test complete");
-        assert!(wait_for(&mut events,|e|matches!(e,ClientEvent::HostSessionEnded {..})).await);
-        viewer.shutdown().await;host.shutdown().await;
-        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+        let bye = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let HostMsg::Bye { reason } = expect_msg(&mut recv).await.unwrap() {
+                    break reason;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(bye.contains("Video stream"), "{bye}");
+        conn.close(0u32.into(), b"test complete");
+        assert!(wait_for(&mut events, |e| matches!(e, ClientEvent::HostSessionEnded { .. })).await);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
-    #[tokio::test(flavor="multi_thread",worker_threads=2)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn meeting_screen_selection_uses_explicit_sparse_id_without_input_or_automatic_capture() {
-        use slipstream_platform::{Backend,FrameStream,test_pattern::TestPattern};
-        struct Screens {seen:Arc<Mutex<Vec<u32>>>}
-        impl Backend for Screens {
-            fn name(&self)->&'static str {"meeting-screen-selection"}
-            fn displays(&self)->Vec<slipstream_core::proto::DisplayInfo> {
-                [7,27].into_iter().map(|index|slipstream_core::proto::DisplayInfo {index,name:format!("Screen {index}"),width:320,height:180,x:0,y:0,primary:index==7}).collect()
-            }
-            fn capture(&mut self,index:u32,fps:u32)->Result<FrameStream> {self.seen.lock().unwrap().push(index);TestPattern::new(320,180).capture(0,fps)}
-            fn inject(&mut self,_index:u32,_event:InputEvent)->Result<()> {panic!("meeting capture must not inject input")}
+        use slipstream_platform::{Backend, FrameStream, test_pattern::TestPattern};
+        struct Screens {
+            seen: Arc<Mutex<Vec<u32>>>,
         }
-        let (client,_events,dir)=client("meeting-screen-choice",false).await;
-        let seen=Arc::new(Mutex::new(Vec::new()));
-        *client.inner.backend.lock().await=Some(Box::new(Screens {seen:seen.clone()}));
-        let choices=client.meeting_displays().await.unwrap();
-        assert_eq!(choices.iter().map(|d|d.index).collect::<Vec<_>>(),vec![7,27]);
-        assert!(seen.lock().unwrap().is_empty(),"listing screens started capture");
+        impl Backend for Screens {
+            fn name(&self) -> &'static str {
+                "meeting-screen-selection"
+            }
+            fn displays(&self) -> Vec<slipstream_core::proto::DisplayInfo> {
+                [7, 27]
+                    .into_iter()
+                    .map(|index| slipstream_core::proto::DisplayInfo {
+                        index,
+                        name: format!("Screen {index}"),
+                        width: 320,
+                        height: 180,
+                        x: 0,
+                        y: 0,
+                        primary: index == 7,
+                    })
+                    .collect()
+            }
+            fn capture(&mut self, index: u32, fps: u32) -> Result<FrameStream> {
+                self.seen.lock().unwrap().push(index);
+                TestPattern::new(320, 180).capture(0, fps)
+            }
+            fn inject(&mut self, _index: u32, _event: InputEvent) -> Result<()> {
+                panic!("meeting capture must not inject input")
+            }
+        }
+        let (client, _events, dir) = client("meeting-screen-choice", false).await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        *client.inner.backend.lock().await = Some(Box::new(Screens { seen: seen.clone() }));
+        let choices = client.meeting_displays().await.unwrap();
+        assert_eq!(choices.iter().map(|d| d.index).collect::<Vec<_>>(), vec![7, 27]);
+        assert!(seen.lock().unwrap().is_empty(), "listing screens started capture");
         assert!(client.capture_for_meeting(99).await.is_err());
-        assert!(seen.lock().unwrap().is_empty(),"invalid choice fell back to another screen");
-        let capture=client.capture_for_meeting(27).await.unwrap();
-        assert_eq!(*seen.lock().unwrap(),vec![27]);
-        let frame=capture.next(Duration::from_secs(2)).unwrap().unwrap();
-        assert_eq!((frame.width,frame.height),(320,180));
+        assert!(seen.lock().unwrap().is_empty(), "invalid choice fell back to another screen");
+        let capture = client.capture_for_meeting(27).await.unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![27]);
+        let frame = capture.next(Duration::from_secs(2)).unwrap().unwrap();
+        assert_eq!((frame.width, frame.height), (320, 180));
         assert!(client.inner.host_sessions.lock().unwrap().is_empty());
-        drop(capture);client.shutdown().await;let _=std::fs::remove_dir_all(dir);
+        drop(capture);
+        client.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// A newer viewer streams several screens at once, each to its own
     /// picture; input goes to the screen it's for, typed text as text, and
     /// screens it stops showing pause.
-    #[tokio::test(flavor="multi_thread")]
+    #[tokio::test(flavor = "multi_thread")]
     async fn several_screens_stream_at_once_and_pause_when_hidden() {
-        use slipstream_platform::{Backend,FrameStream,test_pattern::TestPattern};
-        type Log=Arc<Mutex<Vec<(u32,InputEvent)>>>;
+        use slipstream_platform::{Backend, FrameStream, test_pattern::TestPattern};
+        type Log = Arc<Mutex<Vec<(u32, InputEvent)>>>;
         struct TwoScreens(Log);
         impl Backend for TwoScreens {
-            fn name(&self)->&'static str {"two-screens"}
-            fn displays(&self)->Vec<slipstream_core::proto::DisplayInfo> {
-                [(0,320,180),(1,160,96)].into_iter().map(|(index,width,height)|slipstream_core::proto::DisplayInfo {
-                    index,name:format!("Screen {index}"),width,height,x:index as i32*320,y:0,primary:index==0}).collect()
+            fn name(&self) -> &'static str {
+                "two-screens"
             }
-            fn capture(&mut self,index:u32,fps:u32)->anyhow::Result<FrameStream> {
-                let (w,h)=if index==0 {(320,180)} else {(160,96)};
-                TestPattern::new(w,h).capture(0,fps)
+            fn displays(&self) -> Vec<slipstream_core::proto::DisplayInfo> {
+                [(0, 320, 180), (1, 160, 96)]
+                    .into_iter()
+                    .map(|(index, width, height)| slipstream_core::proto::DisplayInfo {
+                        index,
+                        name: format!("Screen {index}"),
+                        width,
+                        height,
+                        x: index as i32 * 320,
+                        y: 0,
+                        primary: index == 0,
+                    })
+                    .collect()
             }
-            fn inject(&mut self,index:u32,event:InputEvent)->anyhow::Result<()> {self.0.lock().unwrap().push((index,event));Ok(())}
+            fn capture(&mut self, index: u32, fps: u32) -> anyhow::Result<FrameStream> {
+                let (w, h) = if index == 0 { (320, 180) } else { (160, 96) };
+                TestPattern::new(w, h).capture(0, fps)
+            }
+            fn inject(&mut self, index: u32, event: InputEvent) -> anyhow::Result<()> {
+                self.0.lock().unwrap().push((index, event));
+                Ok(())
+            }
         }
-        async fn picture(frames:&viewer::FrameShared,width:u32)->bool {
+        async fn picture(frames: &viewer::FrameShared, width: u32) -> bool {
             for _ in 0..200 {
-                if frames.latest().1.is_some_and(|f|f.width==width) {return true;}
+                if frames.latest().1.is_some_and(|f| f.width == width) {
+                    return true;
+                }
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
             false
         }
-        let (host,_hev,hdir)=client("screens-host",true).await;
-        let (viewer,_vev,vdir)=client("screens-viewer",false).await;
-        let log=Log::default();
-        *host.inner.backend.lock().await=Some(Box::new(TwoScreens(log.clone())));
-        let (session,mut events)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
+        let (host, _hev, hdir) = client("screens-host", true).await;
+        let (viewer, _vev, vdir) = client("screens-viewer", false).await;
+        let log = Log::default();
+        *host.inner.backend.lock().await = Some(Box::new(TwoScreens(log.clone())));
+        let (session, mut events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         assert!(session.multi_display() && session.text_input());
-        assert!(wait_for(&mut events,|e|matches!(e,ViewerEvent::StreamStarted {display:0,..})).await);
-        session.send(ViewerCmd::ShowDisplays(vec![0,1]));
-        assert!(wait_for(&mut events,|e|matches!(e,ViewerEvent::StreamStarted {display:1,..})).await);
-        let (first,second)=(session.frames_for(0),session.frames_for(1));
-        assert!(picture(&first,320).await,"screen 1's picture");
-        assert!(picture(&second,160).await,"screen 2's picture, at the same time");
+        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::StreamStarted { display: 0, .. })).await);
+        session.send(ViewerCmd::ShowDisplays(vec![0, 1]));
+        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::StreamStarted { display: 1, .. })).await);
+        let (first, second) = (session.frames_for(0), session.frames_for(1));
+        assert!(picture(&first, 320).await, "screen 1's picture");
+        assert!(picture(&second, 160).await, "screen 2's picture, at the same time");
 
-        session.input_on(1,InputEvent::MouseMove {x:0.5,y:0.5});
-        session.input_on(0,InputEvent::MouseMove {x:0.25,y:0.25});
+        session.input_on(1, InputEvent::MouseMove { x: 0.5, y: 0.5 });
+        session.input_on(0, InputEvent::MouseMove { x: 0.25, y: 0.25 });
         session.input(InputEvent::Text("héllo".into()));
-        let deadline=tokio::time::Instant::now()+Duration::from_secs(3);
-        while !log.lock().unwrap().iter().any(|(_,e)|matches!(e,InputEvent::Text(_))) {
-            assert!(tokio::time::Instant::now()<deadline,"text arrived");tokio::time::sleep(Duration::from_millis(10)).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        while !log.lock().unwrap().iter().any(|(_, e)| matches!(e, InputEvent::Text(_))) {
+            assert!(tokio::time::Instant::now() < deadline, "text arrived");
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         {
-            let log=log.lock().unwrap();
-            assert!(log.contains(&(1,InputEvent::MouseMove {x:0.5,y:0.5})),"{log:?}");
-            assert!(log.contains(&(0,InputEvent::MouseMove {x:0.25,y:0.25})),"{log:?}");
-            assert!(log.iter().any(|(_,e)|*e==InputEvent::Text("héllo".into())),"{log:?}");
+            let log = log.lock().unwrap();
+            assert!(log.contains(&(1, InputEvent::MouseMove { x: 0.5, y: 0.5 })), "{log:?}");
+            assert!(log.contains(&(0, InputEvent::MouseMove { x: 0.25, y: 0.25 })), "{log:?}");
+            assert!(log.iter().any(|(_, e)| *e == InputEvent::Text("héllo".into())), "{log:?}");
         }
 
         // Only screen 2 on view: screen 1's picture stops, screen 2's goes on.
         session.send(ViewerCmd::ShowDisplays(vec![1]));
         tokio::time::sleep(Duration::from_millis(600)).await;
-        let (paused,going)=(first.latest().0,second.latest().0);
+        let (paused, going) = (first.latest().0, second.latest().0);
         tokio::time::sleep(Duration::from_millis(600)).await;
-        assert_eq!(first.latest().0,paused,"a hidden screen keeps streaming");
-        assert!(second.latest().0>going,"the shown screen stopped");
+        assert_eq!(first.latest().0, paused, "a hidden screen keeps streaming");
+        assert!(second.latest().0 > going, "the shown screen stopped");
         // And back again.
-        session.send(ViewerCmd::ShowDisplays(vec![0,1]));
+        session.send(ViewerCmd::ShowDisplays(vec![0, 1]));
         tokio::time::sleep(Duration::from_millis(800)).await;
-        assert!(first.latest().0>paused,"screen 1 resumed");
+        assert!(first.latest().0 > paused, "screen 1 resumed");
 
-        drop(session);viewer.shutdown().await;host.shutdown().await;
-        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
-    #[tokio::test(flavor="multi_thread")]
+    #[tokio::test(flavor = "multi_thread")]
     async fn abrupt_disconnect_releases_input_and_sparse_display_ids_work() {
-        use slipstream_platform::{Backend,FrameStream,test_pattern::TestPattern};
+        use slipstream_platform::{Backend, FrameStream, test_pattern::TestPattern};
         struct Offset(TestPattern);
         impl Backend for Offset {
-            fn name(&self)->&'static str {"offset-test-pattern"}
-            fn displays(&self)->Vec<slipstream_core::proto::DisplayInfo> {
-                let mut displays=self.0.displays();displays[0].index=7;displays
+            fn name(&self) -> &'static str {
+                "offset-test-pattern"
             }
-            fn capture(&mut self,index:u32,fps:u32)->anyhow::Result<FrameStream> {assert_eq!(index,7);self.0.capture(0,fps)}
-            fn inject(&mut self,index:u32,event:InputEvent)->anyhow::Result<()> {assert_eq!(index,7);self.0.inject(0,event)}
+            fn displays(&self) -> Vec<slipstream_core::proto::DisplayInfo> {
+                let mut displays = self.0.displays();
+                displays[0].index = 7;
+                displays
+            }
+            fn capture(&mut self, index: u32, fps: u32) -> anyhow::Result<FrameStream> {
+                assert_eq!(index, 7);
+                self.0.capture(0, fps)
+            }
+            fn inject(&mut self, index: u32, event: InputEvent) -> anyhow::Result<()> {
+                assert_eq!(index, 7);
+                self.0.inject(0, event)
+            }
         }
-        let (host,mut events,hdir)=client("release-host",true).await;
-        let (viewer,_events,vdir)=client("release-viewer",false).await;
-        let backend=TestPattern::new(64,64);let log=backend.input_log();
-        *host.inner.backend.lock().await=Some(Box::new(Offset(backend)));
-        let (session,mut video)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
-        assert!(wait_for(&mut video,|e|matches!(e,ViewerEvent::Stats(stats) if stats.width==64)).await,"non-contiguous display ID did not start video");
-        session.input(InputEvent::Key {code:"ControlLeft".into(),down:true});
-        let deadline=tokio::time::Instant::now()+Duration::from_secs(3);
-        while !log.lock().unwrap().events.iter().any(|event|matches!(event,InputEvent::Key {down:true,..})) {
-            assert!(tokio::time::Instant::now()<deadline);tokio::time::sleep(Duration::from_millis(10)).await;
+        let (host, mut events, hdir) = client("release-host", true).await;
+        let (viewer, _events, vdir) = client("release-viewer", false).await;
+        let backend = TestPattern::new(64, 64);
+        let log = backend.input_log();
+        *host.inner.backend.lock().await = Some(Box::new(Offset(backend)));
+        let (session, mut video) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        assert!(
+            wait_for(&mut video, |e| matches!(e,ViewerEvent::Stats(stats) if stats.width==64)).await,
+            "non-contiguous display ID did not start video"
+        );
+        session.input(InputEvent::Key { code: "ControlLeft".into(), down: true });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        while !log.lock().unwrap().events.iter().any(|event| matches!(event, InputEvent::Key { down: true, .. })) {
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         viewer.inner.endpoint.close().await;
-        assert!(wait_for(&mut events,|e|matches!(e,ClientEvent::HostSessionEnded {..})).await);
-        assert!(matches!(log.lock().unwrap().events.last(),Some(InputEvent::ReleaseAll)));
-        drop(session);viewer.shutdown().await;host.shutdown().await;
-        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+        assert!(wait_for(&mut events, |e| matches!(e, ClientEvent::HostSessionEnded { .. })).await);
+        assert!(matches!(log.lock().unwrap().events.last(), Some(InputEvent::ReleaseAll)));
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1658,7 +1975,8 @@ mod tests {
         let (first, _events, adir) = client("dual-password-a", false).await;
         let (second, _events, bdir) = client("dual-password-b", false).await;
         let code = host.one_time_password();
-        let (permanent, _events) = first.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let (permanent, _events) =
+            first.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         let (temporary, _events) = second.connect_direct(host.endpoint_addr(), &code, |_| {}).await.unwrap();
         temporary.send(ViewerCmd::Disconnect);
         assert!(wait_for(&mut events, |e| matches!(e, ClientEvent::Password(password) if password != &code)).await);
@@ -1672,7 +1990,9 @@ mod tests {
         first.shutdown().await;
         second.shutdown().await;
         host.shutdown().await;
-        for dir in [hdir, adir, bdir] { let _ = std::fs::remove_dir_all(dir); }
+        for dir in [hdir, adir, bdir] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1687,7 +2007,8 @@ mod tests {
             let backend = host.inner.backend.lock().await;
             std::ptr::from_ref(&**backend.as_ref().unwrap()).cast::<()>() as usize
         };
-        let (session, mut video) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let (session, mut video) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         assert!(wait_for(&mut video, |e| matches!(e, ViewerEvent::Stats(_))).await);
         assert!(host.reset_screen_access().await.is_err());
         host.prepare_screen_access().await.unwrap();
@@ -1716,31 +2037,45 @@ mod tests {
     async fn empty_cached_screen_backend_is_reopened() {
         struct Revoked;
         impl slipstream_platform::Backend for Revoked {
-            fn name(&self)->&'static str {"revoked-screen"}
-            fn displays(&self)->Vec<slipstream_core::proto::DisplayInfo> {Vec::new()}
-            fn capture(&mut self,_display:u32,_fps:u32)->anyhow::Result<slipstream_platform::FrameStream> {anyhow::bail!("revoked")}
-            fn inject(&mut self,_display:u32,_event:InputEvent)->anyhow::Result<()> {Ok(())}
+            fn name(&self) -> &'static str {
+                "revoked-screen"
+            }
+            fn displays(&self) -> Vec<slipstream_core::proto::DisplayInfo> {
+                Vec::new()
+            }
+            fn capture(&mut self, _display: u32, _fps: u32) -> anyhow::Result<slipstream_platform::FrameStream> {
+                anyhow::bail!("revoked")
+            }
+            fn inject(&mut self, _display: u32, _event: InputEvent) -> anyhow::Result<()> {
+                Ok(())
+            }
         }
-        let (host,_events,hdir)=client("revokedhost",true).await;
-        let (viewer,_events,vdir)=client("revokedviewer",false).await;
-        *host.inner.backend.lock().await=Some(Box::new(Revoked));
-        let (session,_events)=viewer.connect_direct(host.endpoint_addr(),"correct horse battery",|_|{}).await.unwrap();
-        assert_eq!(session.info().displays.len(),1);
-        assert_eq!(session.info().displays[0].width,1280);
-        drop(session);viewer.shutdown().await;host.shutdown().await;
-        let _=std::fs::remove_dir_all(hdir);let _=std::fs::remove_dir_all(vdir);
+        let (host, _events, hdir) = client("revokedhost", true).await;
+        let (viewer, _events, vdir) = client("revokedviewer", false).await;
+        *host.inner.backend.lock().await = Some(Box::new(Revoked));
+        let (session, _events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        assert_eq!(session.info().displays.len(), 1);
+        assert_eq!(session.info().displays[0].width, 1280);
+        drop(session);
+        viewer.shutdown().await;
+        host.shutdown().await;
+        let _ = std::fs::remove_dir_all(hdir);
+        let _ = std::fs::remove_dir_all(vdir);
     }
 
     /// With file transfer disabled on the host, nothing gets through.
     #[tokio::test(flavor = "multi_thread")]
     async fn file_transfer_can_be_disabled() {
-        let (host, _hev, _) = client_with("nfhost", true, Default::default(), |s| s.host.allow_file_transfer = false).await;
+        let (host, _hev, _) =
+            client_with("nfhost", true, Default::default(), |s| s.host.allow_file_transfer = false).await;
         let (viewer, _vev, _) = client("nfviewer", false).await;
-        let (session, _events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let (session, _events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
         assert!(!session.info().capabilities.file_transfer);
         let err = session.fs().list(None).await.unwrap_err();
         assert!(format!("{err:#}").contains("not allowed"), "{err:#}");
-        let preview_err=session.fs().preview("unused.png".into()).await.unwrap_err();
+        let preview_err = session.fs().preview("unused.png".into()).await.unwrap_err();
         assert!(format!("{preview_err:#}").contains("not allowed"));
         let drop_err = session.fs().drop_target(500, 300).await.unwrap_err();
         assert!(format!("{drop_err:#}").contains("not allowed"), "{drop_err:#}");
@@ -1756,8 +2091,10 @@ mod tests {
         let host_clip = Arc::new(Mutex::new(Some(Clip::Text("host start".into()))));
         let viewer_clip = Arc::new(Mutex::new(Some(Clip::Text("viewer start".into()))));
         let (host, mut hev, _) = client_with("chost", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
-        let (viewer, _vev, _) = client_with("cviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
-        let (session, mut events) = viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
+        let (viewer, _vev, _) =
+            client_with("cviewer", false, ClipboardSource::Memory(viewer_clip.clone()), |_| {}).await;
+        let (session, mut events) =
+            viewer.connect_direct(host.endpoint_addr(), "correct horse battery", |_| {}).await.unwrap();
 
         session.send(ViewerCmd::Chat("hello host".into()));
         assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::HostChat { text, .. } if text == "hello host")).await);
@@ -1783,14 +2120,16 @@ mod tests {
         // A normal disconnect reaches the host as such, not as a lost link.
         drop(session);
         let mut why = String::new();
-        assert!(wait_for(&mut hev, |e| match e {
-            ClientEvent::HostSessionEnded { reason, .. } => {
-                why = reason.clone();
-                true
-            }
-            _ => false,
-        })
-        .await);
+        assert!(
+            wait_for(&mut hev, |e| match e {
+                ClientEvent::HostSessionEnded { reason, .. } => {
+                    why = reason.clone();
+                    true
+                }
+                _ => false,
+            })
+            .await
+        );
         assert_eq!(why, "they ended the session");
         viewer.shutdown().await;
         host.shutdown().await;
@@ -1816,7 +2155,8 @@ mod tests {
                     let n = socket.read(&mut buf).await.unwrap_or(0);
                     let request = String::from_utf8_lossy(&buf[..n]).to_string();
                     // "admin:secret" in basic authentication.
-                    let authorized = request.contains("Authorization: Basic YWRtaW46c2VjcmV0") || request.contains("authorization: Basic YWRtaW46c2VjcmV0");
+                    let authorized = request.contains("Authorization: Basic YWRtaW46c2VjcmV0")
+                        || request.contains("authorization: Basic YWRtaW46c2VjcmV0");
                     let line = request.lines().next().unwrap_or("").to_string();
                     seen.lock().unwrap().push(request.clone());
                     let (status, body) = if !authorized {
@@ -1830,27 +2170,50 @@ mod tests {
                     } else {
                         ("404 Not Found", String::new())
                     };
-                    let reply = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
                     let _ = socket.write_all(reply.as_bytes()).await;
                 });
             }
         });
-        let (gateway, _gev, gdir) = client_with("rf-gateway", true, Default::default(), |s| s.host.allow_tunnels = true).await;
+        let (gateway, _gev, gdir) =
+            client_with("rf-gateway", true, Default::default(), |s| s.host.allow_tunnels = true).await;
         let (viewer, _vev, vdir) = client("rf-viewer", false).await;
         let (link, _events) = viewer
             .connect_direct_with(gateway.endpoint_addr(), "correct horse battery", LinkMode::ChatOnly, |_| {})
             .await
             .unwrap();
-        let controller = Controller { kind: ControllerKind::Redfish, address: format!("http://127.0.0.1:{port}"), username: "admin".into(), secret: None };
+        let controller = Controller {
+            kind: ControllerKind::Redfish,
+            address: format!("http://127.0.0.1:{port}"),
+            username: "admin".into(),
+            secret: None,
+        };
         assert_eq!(crate::management::controller_state(&link, &controller, "secret").await.unwrap(), "On");
-        let report = crate::management::controller_power(&link, &controller, "secret", crate::management::ControllerPower::Restart).await.unwrap();
+        let report = crate::management::controller_power(
+            &link,
+            &controller,
+            "secret",
+            crate::management::ControllerPower::Restart,
+        )
+        .await
+        .unwrap();
         assert!(report.contains("GracefulRestart"), "{report}");
         let posted = requests.lock().unwrap().iter().find(|r| r.starts_with("POST")).cloned().unwrap();
         assert!(posted.contains(r#""ResetType":"GracefulRestart""#), "{posted}");
-        let refused = crate::management::controller_power(&link, &controller, "wrong", crate::management::ControllerPower::On).await.unwrap_err();
+        let refused =
+            crate::management::controller_power(&link, &controller, "wrong", crate::management::ControllerPower::On)
+                .await
+                .unwrap_err();
         assert!(format!("{refused:#}").contains("refused the username or password"), "{refused:#}");
         let web = Controller { kind: ControllerKind::Web, ..controller.clone() };
-        assert!(crate::management::controller_power(&link, &web, "secret", crate::management::ControllerPower::On).await.is_err());
+        assert!(
+            crate::management::controller_power(&link, &web, "secret", crate::management::ControllerPower::On)
+                .await
+                .is_err()
+        );
         let console = crate::management::console(&link, &controller).await.unwrap();
         assert!(console.url.starts_with("http://127.0.0.1:"), "{}", console.url);
         drop(console);
@@ -1865,7 +2228,8 @@ mod tests {
     /// (With it, a test would restart this computer: not tested here.)
     #[tokio::test(flavor = "multi_thread")]
     async fn restart_requests_need_control_permission() {
-        let (host, _hev, hdir) = client_with("power-host", true, Default::default(), |s| s.host.allow_input = false).await;
+        let (host, _hev, hdir) =
+            client_with("power-host", true, Default::default(), |s| s.host.allow_input = false).await;
         let (viewer, _vev, vdir) = client("power-viewer", false).await;
         let (session, _events) = viewer
             .connect_direct_with(host.endpoint_addr(), "correct horse battery", LinkMode::ChatOnly, |_| {})
@@ -1887,26 +2251,40 @@ mod tests {
         use slipstream_platform::clipboard::{Clip, ClipboardSource};
         let host_clip = Arc::new(Mutex::new(Some(Clip::Text("host start".into()))));
         let viewer_clip = Arc::new(Mutex::new(Some(Clip::Text("viewer start".into()))));
-        let (host, mut hev, hdir) = client_with("chatonly-host", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
-        let (viewer, _vev, vdir) = client_with("chatonly-viewer", false, ClipboardSource::Memory(viewer_clip.clone()), |s| s.viewer.play_audio = true).await;
+        let (host, mut hev, hdir) =
+            client_with("chatonly-host", true, ClipboardSource::Memory(host_clip.clone()), |_| {}).await;
+        let (viewer, _vev, vdir) =
+            client_with("chatonly-viewer", false, ClipboardSource::Memory(viewer_clip.clone()), |s| {
+                s.viewer.play_audio = true
+            })
+            .await;
         let (session, mut events) = viewer
             .connect_direct_with(host.endpoint_addr(), "correct horse battery", LinkMode::ChatOnly, |_| {})
             .await
             .unwrap();
         let mut id = None;
-        assert!(wait_for(&mut hev, |e| match e {
-            ClientEvent::HostSessionStarted { session, peer } => { id = Some(*session); peer == "chatonly-viewer" }
-            _ => false,
-        }).await);
+        assert!(
+            wait_for(&mut hev, |e| match e {
+                ClientEvent::HostSessionStarted { session, peer } => {
+                    id = Some(*session);
+                    peer == "chatonly-viewer"
+                }
+                _ => false,
+            })
+            .await
+        );
         let id = id.unwrap();
 
         // Chat both ways, while nothing else moves.
         session.send(ViewerCmd::Chat("can I help?".into()));
         let mut early = Vec::new();
-        assert!(wait_for(&mut hev, |e| {
-            early.push(format!("{e:?}"));
-            matches!(e, ClientEvent::HostChat { text, .. } if text == "can I help?")
-        }).await);
+        assert!(
+            wait_for(&mut hev, |e| {
+                early.push(format!("{e:?}"));
+                matches!(e, ClientEvent::HostChat { text, .. } if text == "can I help?")
+            })
+            .await
+        );
         host.host_chat(id, "yes please".into());
         *host_clip.lock().unwrap() = Some(Clip::Text("copied on host".into()));
         *viewer_clip.lock().unwrap() = Some(Clip::Text("copied on viewer".into()));
@@ -1919,16 +2297,35 @@ mod tests {
                     None => return false,
                 }
             }
-        }).await.unwrap_or(false);
+        })
+        .await
+        .unwrap_or(false);
         assert!(replied, "host reply");
         tokio::time::sleep(Duration::from_millis(1500)).await;
-        while let Ok(e) = events.try_recv() { seen.push(e); }
-        while let Ok(e) = hev.try_recv() { early.push(format!("{e:?}")); }
+        while let Ok(e) = events.try_recv() {
+            seen.push(e);
+        }
+        while let Ok(e) = hev.try_recv() {
+            early.push(format!("{e:?}"));
+        }
         assert!(!seen.iter().any(|e| matches!(e, ViewerEvent::StreamStarted { .. })), "no picture: {seen:?}");
-        assert!(seen.iter().filter_map(|e| match e { ViewerEvent::Stats(s) => Some(s.fps), _ => None }).all(|fps| fps == 0.0));
+        assert!(
+            seen.iter()
+                .filter_map(|e| match e {
+                    ViewerEvent::Stats(s) => Some(s.fps),
+                    _ => None,
+                })
+                .all(|fps| fps == 0.0)
+        );
         assert!(!early.iter().any(|e| e.contains("HostSessionViewing")), "reported as viewing: {early:?}");
-        assert!(matches!(&*viewer_clip.lock().unwrap(), Some(Clip::Text(t)) if t == "copied on viewer"), "host clipboard leaked");
-        assert!(matches!(&*host_clip.lock().unwrap(), Some(Clip::Text(t)) if t == "copied on host"), "viewer clipboard leaked");
+        assert!(
+            matches!(&*viewer_clip.lock().unwrap(), Some(Clip::Text(t)) if t == "copied on viewer"),
+            "host clipboard leaked"
+        );
+        assert!(
+            matches!(&*host_clip.lock().unwrap(), Some(Clip::Text(t)) if t == "copied on host"),
+            "viewer clipboard leaked"
+        );
         // The host's screen was never opened (no Wayland prompt for a chat),
         // so the link learned no displays.
         assert!(host.inner.backend.lock().await.is_none(), "screen opened for a chat");
@@ -1937,14 +2334,29 @@ mod tests {
         // Turned into a session: the host says so, opens its screen, tells
         // the viewer what it has, and the picture flows.
         session.send(ViewerCmd::StartViewing);
-        assert!(wait_for(&mut hev, |e| matches!(e, ClientEvent::HostSessionViewing { session } if *session == id)).await);
+        assert!(
+            wait_for(&mut hev, |e| matches!(e, ClientEvent::HostSessionViewing { session } if *session == id)).await
+        );
         assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Capabilities(c) if c.input && c.chat)).await);
         let mut shown = None;
-        assert!(wait_for(&mut events, |e| match e {
-            ViewerEvent::Displays(d) => { shown = d.first().map(|d| d.index); d.len() == 1 && d[0].width == 1280 }
-            _ => false,
-        }).await, "displays sent once the screen opened");
-        assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::StreamStarted { display, .. } if Some(*display) == shown)).await);
+        assert!(
+            wait_for(&mut events, |e| match e {
+                ViewerEvent::Displays(d) => {
+                    shown = d.first().map(|d| d.index);
+                    d.len() == 1 && d[0].width == 1280
+                }
+                _ => false,
+            })
+            .await,
+            "displays sent once the screen opened"
+        );
+        assert!(
+            wait_for(
+                &mut events,
+                |e| matches!(e, ViewerEvent::StreamStarted { display, .. } if Some(*display) == shown)
+            )
+            .await
+        );
         assert!(wait_for(&mut events, |e| matches!(e, ViewerEvent::Stats(s) if s.fps > 5.0)).await, "video flowing");
         // A second StartViewing changes nothing.
         session.send(ViewerCmd::StartViewing);
@@ -1962,7 +2374,8 @@ mod tests {
     /// the unattended password never does. A declined code is replaced.
     #[tokio::test(flavor = "multi_thread")]
     async fn one_time_links_wait_for_approval_and_unattended_links_do_not() {
-        let (host, _hev, hdir) = client_with("approve-host", true, Default::default(), |s| s.host.confirm_links = true).await;
+        let (host, _hev, hdir) =
+            client_with("approve-host", true, Default::default(), |s| s.host.confirm_links = true).await;
         let (viewer, _vev, vdir) = client("approve-viewer", false).await;
         let addr = host.endpoint_addr();
         let approvals = host.approvals();
@@ -1993,7 +2406,10 @@ mod tests {
         let declined = answer(false);
         let notices = Arc::new(Mutex::new(Vec::new()));
         let seen = notices.clone();
-        let err = format!("{:#}", viewer.connect_direct(addr.clone(), &code, move |n| seen.lock().unwrap().push(n)).await.err().unwrap());
+        let err = format!(
+            "{:#}",
+            viewer.connect_direct(addr.clone(), &code, move |n| seen.lock().unwrap().push(n)).await.err().unwrap()
+        );
         declined.await.unwrap();
         assert!(err.contains("declined"), "unexpected error: {err}");
         assert!(notices.lock().unwrap().iter().any(|n| n == approval::WAITING));

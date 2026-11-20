@@ -64,11 +64,7 @@ mod linux {
             vec![self.icon.clone()]
         }
         fn tool_tip(&self) -> ksni::ToolTip {
-            ksni::ToolTip {
-                title: "Slipstream Remote".into(),
-                description: self.status.clone(),
-                ..Default::default()
-            }
+            ksni::ToolTip { title: "Slipstream Remote".into(), description: self.status.clone(), ..Default::default() }
         }
         fn activate(&mut self, _x: i32, _y: i32) {
             self.send(TrayCmd::Show);
@@ -141,7 +137,13 @@ impl Tray {
         {
             let (tx, ctx) = (tx.clone(), ctx.clone());
             MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
-                let cmd = if e.id == quit_id { TrayCmd::Quit } else if e.id == open_id { TrayCmd::Show } else { return };
+                let cmd = if e.id == quit_id {
+                    TrayCmd::Quit
+                } else if e.id == open_id {
+                    TrayCmd::Show
+                } else {
+                    return;
+                };
                 let _ = tx.send(cmd);
                 ctx.request_repaint();
             }));

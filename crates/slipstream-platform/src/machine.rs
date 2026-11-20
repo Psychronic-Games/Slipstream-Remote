@@ -59,7 +59,10 @@ pub fn collect() -> Vec<InfoSection> {
             computer.row("Motherboard", hw.board.clone());
         }
     }
-    computer.row("Serial number", Some(serial.clone().unwrap_or_else(|| "Unavailable (not reported or access denied)".into())));
+    computer.row(
+        "Serial number",
+        Some(serial.clone().unwrap_or_else(|| "Unavailable (not reported or access denied)".into())),
+    );
     computer.row("Motherboard serial", motherboard_serial().clone());
     computer.row("BIOS / firmware", hw.bios.clone());
     computer.row("Up for", Some(duration(System::uptime())));
@@ -84,7 +87,10 @@ pub fn collect() -> Vec<InfoSection> {
             _ => format!("{threads} cores"),
         }),
     );
-    cpu.row("Speed", cpus.first().map(|c| c.frequency()).filter(|&f| f > 0).map(|f| format!("{:.2} GHz", f as f64 / 1000.0)));
+    cpu.row(
+        "Speed",
+        cpus.first().map(|c| c.frequency()).filter(|&f| f > 0).map(|f| format!("{:.2} GHz", f as f64 / 1000.0)),
+    );
     cpu.row("In use", Some(format!("{:.0} %", sys.global_cpu_usage())));
     out.push(cpu.done());
 
@@ -101,7 +107,8 @@ pub fn collect() -> Vec<InfoSection> {
     for (name, mem, _) in &nvidia {
         let short = name.trim_start_matches("NVIDIA ");
         if let Some(g) = gpus.iter_mut().find(|g| g.contains(short)) {
-            let driver = g.split_once("driver").map(|(_, d)| format!(", driver{}", d.trim_end_matches(')'))).unwrap_or_default();
+            let driver =
+                g.split_once("driver").map(|(_, d)| format!(", driver{}", d.trim_end_matches(')'))).unwrap_or_default();
             *g = format!("{name} ({mem}{driver})");
         } else {
             gpus.push(format!("{name} ({mem})"));
@@ -127,7 +134,10 @@ pub fn collect() -> Vec<InfoSection> {
         let mount = d.mount_point().display().to_string();
         // Linux lists bind mounts and snapshots of the same volume many times.
         let key = (d.name().to_os_string(), d.total_space());
-        if d.total_space() == 0 || seen.contains(&key) || (cfg!(target_os = "linux") && !linux_interesting_mount(&mount)) {
+        if d.total_space() == 0
+            || seen.contains(&key)
+            || (cfg!(target_os = "linux") && !linux_interesting_mount(&mount))
+        {
             continue;
         }
         seen.push(key);
@@ -195,7 +205,8 @@ pub fn collect() -> Vec<InfoSection> {
     for name in names {
         let data = &networks[name];
         let addrs: Vec<_> = data.ip_networks().iter().filter(|n| !n.addr.is_loopback()).collect();
-        let link_local = |a: &std::net::IpAddr| matches!(a, std::net::IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80);
+        let link_local =
+            |a: &std::net::IpAddr| matches!(a, std::net::IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80);
         // An adapter with only a link-local address isn't connected to anything.
         if addrs.iter().all(|n| link_local(&n.addr)) {
             continue;
@@ -227,7 +238,10 @@ pub fn collect() -> Vec<InfoSection> {
         .filter(|(_, gw)| !gateways_shown.contains(gw))
         .map(|(dev, gw)| if dev.is_empty() { gw.to_string() } else { format!("{gw} on {dev}") })
         .collect();
-    net.row(if gateways.len() > 1 { "Gateways" } else { "Gateway" }, Some(gateways.join(", ")).filter(|g| !g.is_empty()));
+    net.row(
+        if gateways.len() > 1 { "Gateways" } else { "Gateway" },
+        Some(gateways.join(", ")).filter(|g| !g.is_empty()),
+    );
     let dns: Vec<String> = routes.dns.iter().map(ToString::to_string).collect();
     net.row("DNS servers", Some(dns.join(", ")).filter(|d| !d.is_empty()));
     out.push(net.done());
@@ -292,7 +306,10 @@ fn motherboard_serial() -> &'static Option<String> {
 fn motherboard_model() -> Option<String> {
     use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
     let key = r"HARDWARE\DESCRIPTION\System\BIOS";
-    join_names(&[reg_string(HKEY_LOCAL_MACHINE, key, "BaseBoardManufacturer"), reg_string(HKEY_LOCAL_MACHINE, key, "BaseBoardProduct")])
+    join_names(&[
+        reg_string(HKEY_LOCAL_MACHINE, key, "BaseBoardManufacturer"),
+        reg_string(HKEY_LOCAL_MACHINE, key, "BaseBoardProduct"),
+    ])
 }
 
 #[cfg(not(windows))]
@@ -327,9 +344,19 @@ fn clean_serial_number(value: Option<String>) -> Option<String> {
     let value = value?;
     let value = value.trim().trim_matches('\0').trim();
     const JUNK: [&str; 13] = [
-        "unknown", "none", "default string", "system serial number", "system serial#",
-        "to be filled by o.e.m.", "to be filled by oem", "not specified",
-        "not applicable", "not available", "n/a", "o.e.m.", "invalid",
+        "unknown",
+        "none",
+        "default string",
+        "system serial number",
+        "system serial#",
+        "to be filled by o.e.m.",
+        "to be filled by oem",
+        "not specified",
+        "not applicable",
+        "not available",
+        "n/a",
+        "o.e.m.",
+        "invalid",
     ];
     if value.is_empty()
         || value.len() > 128
@@ -372,13 +399,23 @@ pub fn network_interfaces() -> Vec<slipstream_core::network::NetworkInterface> {
     for (name, data) in &networks {
         for network in data.ip_networks() {
             let IpAddr::V4(address) = network.addr else { continue };
-            if address.is_loopback() || address.is_unspecified() || address.is_link_local() { continue; }
+            if address.is_loopback() || address.is_unspecified() || address.is_link_local() {
+                continue;
+            }
             let gateway = routes.gateways.iter().find_map(|(dev, ip)| {
-                if dev != name { return None; }
-                match ip { IpAddr::V4(ip) => Some(*ip), _ => None }
+                if dev != name {
+                    return None;
+                }
+                match ip {
+                    IpAddr::V4(ip) => Some(*ip),
+                    _ => None,
+                }
             });
             out.push(slipstream_core::network::NetworkInterface {
-                name: name.clone(), address, prefix: network.prefix.min(32), gateway,
+                name: name.clone(),
+                address,
+                prefix: network.prefix.min(32),
+                gateway,
                 mac: data.mac_address().to_string(),
             });
         }
@@ -397,7 +434,14 @@ pub fn network_name_config() -> (Option<String>, Vec<std::net::IpAddr>) {
     #[cfg(target_os = "linux")]
     if dns.is_empty() {
         for line in std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default().lines() {
-            if let Some(ip) = line.trim().strip_prefix("nameserver").and_then(|v| v.split_whitespace().next()).and_then(|v| v.parse().ok()) { dns.push(ip); }
+            if let Some(ip) = line
+                .trim()
+                .strip_prefix("nameserver")
+                .and_then(|v| v.split_whitespace().next())
+                .and_then(|v| v.parse().ok())
+            {
+                dns.push(ip);
+            }
         }
     }
     (sysinfo::System::host_name(), dns)
@@ -434,7 +478,8 @@ fn net_extras() -> NetExtras {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use windows_sys::Win32::{
         NetworkManagement::IpHelper::{
-            GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, GetAdaptersAddresses, IP_ADAPTER_ADDRESSES_LH,
+            GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, GetAdaptersAddresses,
+            IP_ADAPTER_ADDRESSES_LH,
         },
         Networking::WinSock::{AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR, SOCKADDR_IN, SOCKADDR_IN6},
     };
@@ -447,7 +492,9 @@ fn net_extras() -> NetExtras {
             return None;
         }
         match (*sa).sa_family {
-            AF_INET => Some(IpAddr::V4(Ipv4Addr::from((*(sa as *const SOCKADDR_IN)).sin_addr.S_un.S_addr.to_ne_bytes()))),
+            AF_INET => {
+                Some(IpAddr::V4(Ipv4Addr::from((*(sa as *const SOCKADDR_IN)).sin_addr.S_un.S_addr.to_ne_bytes())))
+            }
             AF_INET6 => Some(IpAddr::V6(Ipv6Addr::from((*(sa as *const SOCKADDR_IN6)).sin6_addr.u.Byte))),
             _ => None,
         }
@@ -487,7 +534,9 @@ fn net_extras() -> NetExtras {
                 let mut d = ad.FirstDnsServerAddress;
                 while !d.is_null() {
                     // Site-local fec0:0:0:ffff::* are placeholders Windows lists when there's no IPv6 DNS.
-                    if let Some(addr) = ip((*d).Address.lpSockaddr).filter(|a| !matches!(a, IpAddr::V6(v6) if v6.segments()[0] == 0xfec0)) {
+                    if let Some(addr) = ip((*d).Address.lpSockaddr)
+                        .filter(|a| !matches!(a, IpAddr::V6(v6) if v6.segments()[0] == 0xfec0))
+                    {
                         out.add_dns(addr);
                     }
                     d = (*d).Next;
@@ -529,9 +578,12 @@ fn net_extras() -> NetExtras {
         }
     }
     // systemd-resolved's real upstream servers, not its 127.0.0.53 stub.
-    let conf = std::fs::read_to_string("/run/systemd/resolve/resolv.conf").or_else(|_| std::fs::read_to_string("/etc/resolv.conf")).unwrap_or_default();
+    let conf = std::fs::read_to_string("/run/systemd/resolve/resolv.conf")
+        .or_else(|_| std::fs::read_to_string("/etc/resolv.conf"))
+        .unwrap_or_default();
     for line in conf.lines() {
-        if let Some(ip) = line.trim().strip_prefix("nameserver").and_then(|r| r.trim().split('%').next()?.parse().ok()) {
+        if let Some(ip) = line.trim().strip_prefix("nameserver").and_then(|r| r.trim().split('%').next()?.parse().ok())
+        {
             out.add_dns(ip);
         }
     }
@@ -541,7 +593,12 @@ fn net_extras() -> NetExtras {
 #[cfg(target_os = "macos")]
 fn net_extras() -> NetExtras {
     let run = |cmd: &str, args: &[&str]| {
-        std::process::Command::new(cmd).args(args).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+        std::process::Command::new(cmd)
+            .args(args)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
     };
     let mut out = NetExtras::default();
     let route = run("route", &["-n", "get", "default"]);
@@ -550,7 +607,12 @@ fn net_extras() -> NetExtras {
         out.add_gateway(field("interface:").unwrap_or_default(), gw);
     }
     for line in run("scutil", &["--dns"]).lines() {
-        if let Some(ip) = line.trim().strip_prefix("nameserver[").and_then(|r| r.split_once(':')).and_then(|(_, v)| v.trim().parse().ok()) {
+        if let Some(ip) = line
+            .trim()
+            .strip_prefix("nameserver[")
+            .and_then(|r| r.split_once(':'))
+            .and_then(|(_, v)| v.trim().parse().ok())
+        {
             out.add_dns(ip);
         }
     }
@@ -646,7 +708,10 @@ fn sensor_name(label: &str) -> Option<(u8, String)> {
         "spd5118" | "jc42" => (3, "Memory module".to_string()),
         "acpitz" => (3, "Motherboard (ACPI)".to_string()),
         c if c.contains("xhci") => (3, "USB controller".to_string()),
-        c if ["r8169", "r8125", "igb", "igc", "e1000e", "ixgbe", "iwlwifi", "mt79", "ath1"].iter().any(|n| c.starts_with(n)) => {
+        c if ["r8169", "r8125", "igb", "igc", "e1000e", "ixgbe", "iwlwifi", "mt79", "ath1"]
+            .iter()
+            .any(|n| c.starts_with(n)) =>
+        {
             (3, "Network adapter".to_string())
         }
         _ if rest.starts_with("temp") && rest.len() <= 5 => (4, chip.replace('_', " ")),
@@ -691,7 +756,20 @@ struct Hardware {
 
 /// "Vendor Product", leaving out placeholder strings firmware is full of.
 fn join_names(parts: &[Option<String>]) -> Option<String> {
-    const JUNK: [&str; 12] = ["to be filled by o.e.m.", "to be filled by oem", "default string", "system product name", "system manufacturer", "not applicable", "o.e.m.", "unknown", "none", "not specified", "n/a", "system version"];
+    const JUNK: [&str; 12] = [
+        "to be filled by o.e.m.",
+        "to be filled by oem",
+        "default string",
+        "system product name",
+        "system manufacturer",
+        "not applicable",
+        "o.e.m.",
+        "unknown",
+        "none",
+        "not specified",
+        "n/a",
+        "system version",
+    ];
     let words: Vec<String> = parts
         .iter()
         .flatten()
@@ -708,7 +786,10 @@ fn hardware() -> Hardware {
     let nt = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
     let get = |key: &str, value: &str| reg_string(HKEY_LOCAL_MACHINE, key, value);
     let build = match (get(nt, "DisplayVersion").or_else(|| get(nt, "ReleaseId")), get(nt, "CurrentBuild")) {
-        (Some(v), Some(b)) => Some(format!("{v} (build {b}{})", reg_dword(HKEY_LOCAL_MACHINE, nt, "UBR").map(|u| format!(".{u}")).unwrap_or_default())),
+        (Some(v), Some(b)) => Some(format!(
+            "{v} (build {b}{})",
+            reg_dword(HKEY_LOCAL_MACHINE, nt, "UBR").map(|u| format!(".{u}")).unwrap_or_default()
+        )),
         (None, Some(b)) => Some(format!("build {b}")),
         _ => None,
     };
@@ -745,7 +826,9 @@ fn hardware() -> Hardware {
 /// (for when `sysinfo` lists none).
 #[cfg(windows)]
 fn windows_volumes() -> Vec<(String, u64, u64, String)> {
-    use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
+    };
     const DRIVE_FIXED: u32 = 3;
     const DRIVE_REMOVABLE: u32 = 2;
     let mut out = Vec::new();
@@ -766,7 +849,17 @@ fn windows_volumes() -> Vec<(String, u64, u64, String)> {
                 continue;
             }
             let mut fs = [0u16; 32];
-            let fs = if GetVolumeInformationW(w.as_ptr(), std::ptr::null_mut(), 0, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), fs.as_mut_ptr(), fs.len() as u32) != 0 {
+            let fs = if GetVolumeInformationW(
+                w.as_ptr(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                fs.as_mut_ptr(),
+                fs.len() as u32,
+            ) != 0
+            {
                 String::from_utf16_lossy(&fs[..fs.iter().position(|&c| c == 0).unwrap_or(0)])
             } else {
                 String::new()
@@ -778,18 +871,27 @@ fn windows_volumes() -> Vec<(String, u64, u64, String)> {
 }
 
 #[cfg(windows)]
-pub(super) fn reg_raw(root: windows_sys::Win32::System::Registry::HKEY, key: &str, value: &str, flags: u32) -> Option<Vec<u8>> {
+pub(super) fn reg_raw(
+    root: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+    value: &str,
+    flags: u32,
+) -> Option<Vec<u8>> {
     use windows_sys::Win32::System::Registry::RegGetValueW;
     let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
     let (k, v) = (wide(key), wide(value));
     let mut len = 0u32;
     // SAFETY: sizing call, then a read into a buffer of that size.
     unsafe {
-        if RegGetValueW(root, k.as_ptr(), v.as_ptr(), flags, std::ptr::null_mut(), std::ptr::null_mut(), &mut len) != 0 || len == 0 {
+        if RegGetValueW(root, k.as_ptr(), v.as_ptr(), flags, std::ptr::null_mut(), std::ptr::null_mut(), &mut len) != 0
+            || len == 0
+        {
             return None;
         }
         let mut buf = vec![0u8; len as usize];
-        if RegGetValueW(root, k.as_ptr(), v.as_ptr(), flags, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut len) != 0 {
+        if RegGetValueW(root, k.as_ptr(), v.as_ptr(), flags, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut len)
+            != 0
+        {
             return None;
         }
         buf.truncate(len as usize);
@@ -801,7 +903,8 @@ pub(super) fn reg_raw(root: windows_sys::Win32::System::Registry::HKEY, key: &st
 fn reg_string(root: windows_sys::Win32::System::Registry::HKEY, key: &str, value: &str) -> Option<String> {
     use windows_sys::Win32::System::Registry::RRF_RT_REG_SZ;
     let buf = reg_raw(root, key, value, RRF_RT_REG_SZ)?;
-    let units: Vec<u16> = buf.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).take_while(|&u| u != 0).collect();
+    let units: Vec<u16> =
+        buf.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).take_while(|&u| u != 0).collect();
     Some(String::from_utf16_lossy(&units)).filter(|s| !s.trim().is_empty())
 }
 
@@ -836,9 +939,12 @@ fn hardware() -> Hardware {
         let uevent = std::fs::read_to_string(format!("{dev}/uevent")).unwrap_or_default();
         let field = |k: &str| uevent.lines().find_map(|l| l.strip_prefix(k)).map(str::to_string);
         let slot = field("PCI_SLOT_NAME=");
-        let name = slot.as_deref().and_then(lspci_name).or_else(|| field("PCI_ID=").map(|id| format!("PCI device {id}")));
+        let name =
+            slot.as_deref().and_then(lspci_name).or_else(|| field("PCI_ID=").map(|id| format!("PCI device {id}")));
         let Some(name) = name else { continue };
-        let vram = std::fs::read_to_string(format!("{dev}/mem_info_vram_total")).ok().and_then(|s| s.trim().parse::<u64>().ok());
+        let vram = std::fs::read_to_string(format!("{dev}/mem_info_vram_total"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
         let driver = field("DRIVER=").map(|d| format!("driver {d}"));
         let extra: Vec<String> = vram.map(bytes).into_iter().chain(driver).collect();
         let line = if extra.is_empty() { name } else { format!("{name} ({})", extra.join(", ")) };
@@ -870,7 +976,8 @@ fn linux_drives() -> Vec<(String, u64)> {
     names
         .into_iter()
         .filter_map(|n| {
-            let read = |f: &str| std::fs::read_to_string(format!("/sys/block/{n}/{f}")).ok().map(|s| s.trim().to_string());
+            let read =
+                |f: &str| std::fs::read_to_string(format!("/sys/block/{n}/{f}")).ok().map(|s| s.trim().to_string());
             let sectors: u64 = read("size")?.parse().ok()?;
             let model = read("device/model").filter(|m| !m.is_empty()).unwrap_or_else(|| n.clone());
             (sectors > 0).then_some((model, sectors * 512))
@@ -892,7 +999,11 @@ fn lspci_name(slot: &str) -> Option<String> {
 #[cfg(target_os = "macos")]
 fn hardware() -> Hardware {
     let run = |cmd: &str, args: &[&str]| {
-        std::process::Command::new(cmd).args(args).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        std::process::Command::new(cmd)
+            .args(args)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
     };
     let gpus = run("system_profiler", &["SPDisplaysDataType"])
         .unwrap_or_default()
@@ -936,8 +1047,14 @@ mod tests {
     #[test]
     fn custom_pc_model_uses_the_board_and_preserves_oem_models() {
         assert_eq!(super::join_names(&[Some("System Product Name".into())]), None);
-        assert_eq!(super::display_model(None, Some("ASUS PRIME X870".into())).as_deref(), Some("Motherboard: ASUS PRIME X870"));
-        assert_eq!(super::display_model(Some("Dell OptiPlex".into()), Some("OEM board".into())).as_deref(), Some("Dell OptiPlex"));
+        assert_eq!(
+            super::display_model(None, Some("ASUS PRIME X870".into())).as_deref(),
+            Some("Motherboard: ASUS PRIME X870")
+        );
+        assert_eq!(
+            super::display_model(Some("Dell OptiPlex".into()), Some("OEM board".into())).as_deref(),
+            Some("Dell OptiPlex")
+        );
         assert_eq!(super::display_model(None, None), None);
     }
 
@@ -966,9 +1083,18 @@ mod tests {
         }
         assert_eq!(clean_serial_number(None), None);
         for serial in [
-            "", " \0\n", "Unknown", "Default string", "System Serial Number",
-            "To Be Filled By O.E.M.", "Not Specified", "N/A", "00000000", "FFFF-FFFF",
-            "abc\n123", "abc\0def",
+            "",
+            " \0\n",
+            "Unknown",
+            "Default string",
+            "System Serial Number",
+            "To Be Filled By O.E.M.",
+            "Not Specified",
+            "N/A",
+            "00000000",
+            "FFFF-FFFF",
+            "abc\n123",
+            "abc\0def",
         ] {
             assert_eq!(clean_serial_number(Some(serial.into())), None, "{serial:?}");
         }
@@ -977,9 +1103,22 @@ mod tests {
 
     #[test]
     fn spots_virtual_machines() {
-        let hw = |system: &str, board: &str| super::Hardware { system: Some(system.into()), board: Some(board.into()), ..Default::default() };
-        assert_eq!(super::hypervisor(&hw("VMware, Inc. VMware Virtual Platform", "Intel Corporation 440BX Desktop Reference Platform")), Some("VMware"));
-        assert_eq!(super::hypervisor(&hw("Microsoft Corporation Virtual Machine", "Microsoft Corporation Virtual Machine")), Some("Hyper-V"));
+        let hw = |system: &str, board: &str| super::Hardware {
+            system: Some(system.into()),
+            board: Some(board.into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            super::hypervisor(&hw(
+                "VMware, Inc. VMware Virtual Platform",
+                "Intel Corporation 440BX Desktop Reference Platform"
+            )),
+            Some("VMware")
+        );
+        assert_eq!(
+            super::hypervisor(&hw("Microsoft Corporation Virtual Machine", "Microsoft Corporation Virtual Machine")),
+            Some("Hyper-V")
+        );
         assert_eq!(super::hypervisor(&hw("Supermicro SYS-5019C-M", "Supermicro X11SCM-F")), None);
     }
 

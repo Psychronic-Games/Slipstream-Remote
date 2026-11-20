@@ -15,27 +15,20 @@ use tokio::{net::UdpSocket, sync::Semaphore, task::JoinSet};
 const WAIT: Duration = Duration::from_millis(850);
 static LOOKUPS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
-pub(crate) async fn lookup_batch(source: Ipv4Addr, addresses: Vec<Ipv4Addr>, interfaces: &[NetworkInterface]) -> Result<Vec<DeviceName>> {
+pub(crate) async fn lookup_batch(
+    source: Ipv4Addr,
+    addresses: Vec<Ipv4Addr>,
+    interfaces: &[NetworkInterface],
+) -> Result<Vec<DeviceName>> {
     if addresses.len() > 16 {
         bail!("Choose at most 16 devices per name request");
     }
     for address in &addresses {
-        validate(
-            &ScanRequest {
-                interface: source,
-                cidr: format!("{address}/32"),
-                ports: vec![80],
-            },
-            interfaces,
-        )?;
+        validate(&ScanRequest { interface: source, cidr: format!("{address}/32"), ports: vec![80] }, interfaces)?;
     }
     let (hostname, dns) = tokio::task::spawn_blocking(slipstream_platform::machine::network_name_config).await?;
     let dns = Arc::new(
-        dns.into_iter()
-            .filter(|ip| !ip.is_unspecified())
-            .take(3)
-            .map(|ip| SocketAddr::new(ip, 53))
-            .collect::<Vec<_>>(),
+        dns.into_iter().filter(|ip| !ip.is_unspecified()).take(3).map(|ip| SocketAddr::new(ip, 53)).collect::<Vec<_>>(),
     );
     let mut jobs = JoinSet::new();
     for address in addresses {
@@ -68,18 +61,12 @@ async fn lookup(address: Ipv4Addr, source: Ipv4Addr, dns: &[SocketAddr]) -> Opti
         jobs.spawn(async move { dns_name(address, source, server, false).await.map(|name| (name, "Reverse DNS")) });
     }
     jobs.spawn(async move {
-        dns_name(address, source, SocketAddr::from((address, 5353)), true)
-            .await
-            .map(|name| (name, "mDNS"))
+        dns_name(address, source, SocketAddr::from((address, 5353)), true).await.map(|name| (name, "mDNS"))
     });
     jobs.spawn(async move { netbios_name(address, source).await.map(|name| (name, "NetBIOS")) });
     while let Some(Ok(result)) = jobs.join_next().await {
         if let Some((name, kind)) = result {
-            return Some(DeviceName {
-                address,
-                name,
-                source: kind.into(),
-            });
+            return Some(DeviceName { address, name, source: kind.into() });
         }
     }
     None
@@ -87,7 +74,11 @@ async fn lookup(address: Ipv4Addr, source: Ipv4Addr, dns: &[SocketAddr]) -> Opti
 
 fn clean_name(name: &str) -> Option<String> {
     let name = name.trim().trim_end_matches('.');
-    if name.is_empty() || name.len() > 253 || name.parse::<IpAddr>().is_ok() || name.chars().any(|c| c.is_control() || c.is_whitespace()) {
+    if name.is_empty()
+        || name.len() > 253
+        || name.parse::<IpAddr>().is_ok()
+        || name.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
         return None;
     }
     Some(name.to_string())

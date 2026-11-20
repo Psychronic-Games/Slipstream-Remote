@@ -150,10 +150,7 @@ mod tests {
                 if matches!(code, "Fn" | "Copy" | "Cut" | "Paste") {
                     continue;
                 }
-                assert!(
-                    slipstream_platform::keymap::lookup(code).is_some(),
-                    "{code} is not in the key table"
-                );
+                assert!(slipstream_platform::keymap::lookup(code).is_some(), "{code} is not in the key table");
             }
         }
     }

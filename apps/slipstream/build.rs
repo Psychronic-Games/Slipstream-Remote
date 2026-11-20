@@ -21,7 +21,8 @@ fn main() {
             .filter(|o| o.status.success())
             .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u16>().ok())
             .unwrap_or(0);
-        let parts: Vec<String> = version.split(['.', '-', '+']).take(3).map(|p| p.parse::<u16>().unwrap_or(0).to_string()).collect();
+        let parts: Vec<String> =
+            version.split(['.', '-', '+']).take(3).map(|p| p.parse::<u16>().unwrap_or(0).to_string()).collect();
         let numeric = format!("{},{build}", parts.join(","));
         let macros = [format!("SLIP_VER={numeric}"), format!("SLIP_VER_STR=\"{version}\"")];
         embed_resource::compile("../../packaging/windows/slipstream.rc", macros.iter())
@@ -54,13 +55,18 @@ fn older_windows() {
     let msvc = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
     if let (true, Ok(path)) = (msvc, std::env::var("SLIPSTREAM_YY_THUNKS")) {
-        let path = std::path::Path::new(&path).canonicalize().unwrap_or_else(|_| panic!("SLIPSTREAM_YY_THUNKS: no file at {path}"));
+        let path = std::path::Path::new(&path)
+            .canonicalize()
+            .unwrap_or_else(|_| panic!("SLIPSTREAM_YY_THUNKS: no file at {path}"));
         println!("cargo:rerun-if-changed={}", path.display());
         println!("cargo:rustc-link-arg-bins={}", path.display());
         // The object asks for these import libraries in mixed case
         // ("PowrProf.lib"), which a case-sensitive cross-build sysroot
         // can't find. Ask for them in lower case instead (Windows doesn't mind).
-        for lib in ["Advapi32", "crypt32", "Dnsapi", "DXGI", "Gdi32", "Iphlpapi", "mfplat", "Ole32", "PowrProf", "User32", "uuid", "winhttp", "Ws2_32"] {
+        for lib in [
+            "Advapi32", "crypt32", "Dnsapi", "DXGI", "Gdi32", "Iphlpapi", "mfplat", "Ole32", "PowrProf", "User32",
+            "uuid", "winhttp", "Ws2_32",
+        ] {
             println!("cargo:rustc-link-arg-bins=/NODEFAULTLIB:{lib}.lib");
             println!("cargo:rustc-link-arg-bins={}.lib", lib.to_lowercase());
         }
@@ -82,7 +88,9 @@ fn software_renderer(windows: bool) {
                 .iter()
                 .map(|name| {
                     let path = std::path::Path::new(&dir).join(format!("{name}.gz"));
-                    let path = path.canonicalize().unwrap_or_else(|_| panic!("SLIPSTREAM_SOFTGL_DIR has no {}", path.display()));
+                    let path = path
+                        .canonicalize()
+                        .unwrap_or_else(|_| panic!("SLIPSTREAM_SOFTGL_DIR has no {}", path.display()));
                     println!("cargo:rerun-if-changed={}", path.display());
                     format!("({name:?}, include_bytes!({:?}))", path.display().to_string())
                 })

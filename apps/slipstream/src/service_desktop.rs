@@ -53,7 +53,9 @@ const RELEASE: Duration = Duration::from_secs(6);
 
 fn socket_path() -> PathBuf {
     // Tests run both sides without root.
-    std::env::var_os("SLIPSTREAM_DESKTOP_SOCKET").map(PathBuf::from).unwrap_or_else(|| "/run/slipstream-remote/desktop.sock".into())
+    std::env::var_os("SLIPSTREAM_DESKTOP_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| "/run/slipstream-remote/desktop.sock".into())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -88,14 +90,23 @@ struct Session {
 /// session of `uid`'s own.
 fn parse_session(text: &str, uid: u32) -> Option<Session> {
     let get = |key: &str| text.lines().find_map(|line| line.strip_prefix(key)?.strip_prefix('='));
-    if get("User")?.trim().parse::<u32>().ok()? != uid || get("Class")?.trim() != "user" || !matches!(get("Type")?.trim(), "wayland" | "x11" | "mir") {
+    if get("User")?.trim().parse::<u32>().ok()? != uid
+        || get("Class")?.trim() != "user"
+        || !matches!(get("Type")?.trim(), "wayland" | "x11" | "mir")
+    {
         return None;
     }
-    Some(Session { active: get("Active")?.trim() == "yes", locked: get("LockedHint").is_some_and(|v| v.trim() == "yes") })
+    Some(Session {
+        active: get("Active")?.trim() == "yes",
+        locked: get("LockedHint").is_some_and(|v| v.trim() == "yes"),
+    })
 }
 
 fn session_state(uid: u32, session: &str) -> Option<Session> {
-    let out = std::process::Command::new("loginctl").args(["show-session", session, "-p", "User", "-p", "Class", "-p", "Type", "-p", "Active", "-p", "LockedHint"]).output().ok()?;
+    let out = std::process::Command::new("loginctl")
+        .args(["show-session", session, "-p", "User", "-p", "Class", "-p", "Type", "-p", "Active", "-p", "LockedHint"])
+        .output()
+        .ok()?;
     parse_session(&String::from_utf8_lossy(&out.stdout), uid)
 }
 
@@ -199,8 +210,14 @@ pub async fn run_service() -> Result<()> {
         let candidates: Vec<(u64, u32, String)> = desks.iter().map(|d| (d.id, d.uid, d.session.clone())).collect();
         let holder = lent;
         let wanted = tokio::task::spawn_blocking(move || {
-            let fit = |(_, uid, session): &&(u64, u32, String)| desktop_should_host(session_state(*uid, session), reads);
-            candidates.iter().filter(|c| Some(c.0) == holder).find(fit).or_else(|| candidates.iter().find(fit)).map(|c| c.0)
+            let fit =
+                |(_, uid, session): &&(u64, u32, String)| desktop_should_host(session_state(*uid, session), reads);
+            candidates
+                .iter()
+                .filter(|c| Some(c.0) == holder)
+                .find(fit)
+                .or_else(|| candidates.iter().find(fit))
+                .map(|c| c.0)
         })
         .await
         .unwrap_or(None);
@@ -352,7 +369,8 @@ fn sync_profile(from: &Path, settings: bool) -> Result<SecretKey> {
     if own.dir() == from {
         bail!("the desktop host needs a profile of its own");
     }
-    let key = std::fs::read(from.join("identity.key")).with_context(|| format!("reading this app's identity in {}", from.display()))?;
+    let key = std::fs::read(from.join("identity.key"))
+        .with_context(|| format!("reading this app's identity in {}", from.display()))?;
     let dest = own.dir().join("identity.key");
     if std::fs::read(&dest).ok().as_deref() != Some(&key[..]) {
         let tmp = dest.with_extension("new");
@@ -389,7 +407,10 @@ fn login_session() -> Option<String> {
     }
     // SAFETY: a plain call.
     let uid = unsafe { libc::getuid() };
-    let out = std::process::Command::new("loginctl").args(["show-user", &uid.to_string(), "-p", "Display", "--value"]).output().ok()?;
+    let out = std::process::Command::new("loginctl")
+        .args(["show-user", &uid.to_string(), "-p", "Display", "--value"])
+        .output()
+        .ok()?;
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|id| !id.is_empty())
 }
 
@@ -558,7 +579,10 @@ mod tests {
                 write.write_all(b"hello 1 42\n").await.unwrap();
                 let ask = lines.next_line().await.unwrap().unwrap();
                 let nonce = unhex::<32>(ask.strip_prefix("prove ").unwrap()).unwrap();
-                write.write_all(format!("proof {}\n", hex(&key.sign(&proof_message(&nonce)).to_bytes())).as_bytes()).await.unwrap();
+                write
+                    .write_all(format!("proof {}\n", hex(&key.sign(&proof_message(&nonce)).to_bytes())).as_bytes())
+                    .await
+                    .unwrap();
                 (lines, write)
             }
         };

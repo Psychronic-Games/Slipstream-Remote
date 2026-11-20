@@ -19,11 +19,7 @@ pub struct NetworkInterface {
 
 impl NetworkInterface {
     pub fn cidr(&self) -> String {
-        format!(
-            "{}/{}",
-            Ipv4Addr::from(u32::from(self.address) & mask(self.prefix)),
-            self.prefix
-        )
+        format!("{}/{}", Ipv4Addr::from(u32::from(self.address) & mask(self.prefix)), self.prefix)
     }
 }
 
@@ -76,11 +72,7 @@ pub fn web_url(address: Ipv4Addr, port: u16) -> Result<String> {
 }
 
 pub fn mask(prefix: u8) -> u32 {
-    if prefix == 0 {
-        0
-    } else {
-        u32::MAX << (32 - prefix.min(32))
-    }
+    if prefix == 0 { 0 } else { u32::MAX << (32 - prefix.min(32)) }
 }
 
 /// Inclusive usable range. /31 and /32 are point-to-point and single hosts.
@@ -88,32 +80,21 @@ pub fn subnet(cidr: &str) -> Result<(u32, u32)> {
     let Some((address, prefix)) = cidr.trim().split_once('/') else {
         bail!("Enter an IPv4 subnet, e.g. 192.168.1.0/24");
     };
-    let address: Ipv4Addr = address
-        .parse()
-        .map_err(|_| anyhow::anyhow!("Invalid IPv4 address"))?;
-    let prefix: u8 = prefix
-        .parse()
-        .map_err(|_| anyhow::anyhow!("Invalid subnet prefix"))?;
+    let address: Ipv4Addr = address.parse().map_err(|_| anyhow::anyhow!("Invalid IPv4 address"))?;
+    let prefix: u8 = prefix.parse().map_err(|_| anyhow::anyhow!("Invalid subnet prefix"))?;
     if prefix > 32 {
         bail!("Subnet prefix must be 0–32");
     }
     let network = u32::from(address) & mask(prefix);
     let broadcast = network | !mask(prefix);
-    Ok(if prefix < 31 {
-        (network + 1, broadcast - 1)
-    } else {
-        (network, broadcast)
-    })
+    Ok(if prefix < 31 { (network + 1, broadcast - 1) } else { (network, broadcast) })
 }
 
 pub fn parse_ports(text: &str) -> Result<Vec<u16>> {
     let mut ports = std::collections::BTreeSet::new();
     for item in text.split(',').map(str::trim) {
         let parse = |s: &str| -> Result<u16> {
-            let p: u16 = s
-                .trim()
-                .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid TCP port: {s}"))?;
+            let p: u16 = s.trim().parse().map_err(|_| anyhow::anyhow!("Invalid TCP port: {s}"))?;
             if p == 0 {
                 bail!("TCP ports start at 1");
             }
@@ -149,9 +130,7 @@ pub fn validate(request: &ScanRequest, interfaces: &[NetworkInterface]) -> Resul
     let interface = interfaces
         .iter()
         .find(|i| i.address == request.interface)
-        .ok_or_else(|| {
-            anyhow::anyhow!("That IPv4 adapter is no longer connected; refresh the adapters")
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("That IPv4 adapter is no longer connected; refresh the adapters"))?;
     if interface.prefix > 32 {
         bail!("Invalid adapter subnet");
     }
@@ -204,12 +183,14 @@ mod tests {
     use super::*;
     #[test]
     fn browser_targets_only_standard_web_ports_on_unicast_addresses() {
-        let address = Ipv4Addr::new(192,168,1,10);
-        assert_eq!(web_url(address,80).unwrap(), "http://192.168.1.10/");
-        assert_eq!(web_url(address,443).unwrap(), "https://192.168.1.10/");
-        for port in [0,22,445,8080,u16::MAX] { assert!(web_url(address,port).is_err()); }
-        for address in [Ipv4Addr::UNSPECIFIED,Ipv4Addr::BROADCAST,Ipv4Addr::new(224,0,0,1)] {
-            assert!(web_url(address,80).is_err());
+        let address = Ipv4Addr::new(192, 168, 1, 10);
+        assert_eq!(web_url(address, 80).unwrap(), "http://192.168.1.10/");
+        assert_eq!(web_url(address, 443).unwrap(), "https://192.168.1.10/");
+        for port in [0, 22, 445, 8080, u16::MAX] {
+            assert!(web_url(address, port).is_err());
+        }
+        for address in [Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST, Ipv4Addr::new(224, 0, 0, 1)] {
+            assert!(web_url(address, 80).is_err());
         }
     }
 
@@ -217,10 +198,7 @@ mod tests {
     fn subnet_boundaries_and_limits() {
         assert_eq!(
             subnet("192.168.1.75/24").unwrap(),
-            (
-                u32::from(Ipv4Addr::new(192, 168, 1, 1)),
-                u32::from(Ipv4Addr::new(192, 168, 1, 254))
-            )
+            (u32::from(Ipv4Addr::new(192, 168, 1, 1)), u32::from(Ipv4Addr::new(192, 168, 1, 254)))
         );
         assert_eq!(subnet("10.0.0.2/31").unwrap(), (0x0a000002, 0x0a000003));
         assert_eq!(subnet("10.0.0.2/32").unwrap(), (0x0a000002, 0x0a000002));
@@ -233,11 +211,7 @@ mod tests {
             gateway: None,
             mac: String::new(),
         }];
-        let mut r = ScanRequest {
-            interface: interfaces[0].address,
-            cidr: "10.0.0.0/24".into(),
-            ports: vec![80],
-        };
+        let mut r = ScanRequest { interface: interfaces[0].address, cidr: "10.0.0.0/24".into(), ports: vec![80] };
         assert!(validate(&r, &interfaces).is_ok());
         r.cidr = "10.1.0.0/24".into();
         assert!(validate(&r, &interfaces).is_ok(), "routed subnets and VLANs are allowed");

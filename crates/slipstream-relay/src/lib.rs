@@ -7,8 +7,8 @@
 //! [`Client::forward_udp`]); the phone opens the real connections with its
 //! own sockets. On desktops, [`tunnel`] captures the computer's traffic.
 
-pub mod proto;
 mod client;
+pub mod proto;
 mod server;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub mod tunnel;

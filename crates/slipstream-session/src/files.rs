@@ -81,7 +81,9 @@ async fn handle(
     viewing: Arc<crate::host::Viewing>,
 ) -> Result<()> {
     // Request headers are paths and names: 1 MiB is plenty.
-    let req: StreamOpen = tokio::time::timeout(std::time::Duration::from_secs(10), expect_msg_max(&mut recv, 1 << 20)).await.context("file request header timed out")??;
+    let req: StreamOpen = tokio::time::timeout(std::time::Duration::from_secs(10), expect_msg_max(&mut recv, 1 << 20))
+        .await
+        .context("file request header timed out")??;
     // Health checks are part of any link; everything else is more than chat.
     if !matches!(req, StreamOpen::Pace) {
         viewing.note();
@@ -100,9 +102,15 @@ async fn handle(
             reply(&mut send, &response).await?;
         }
         StreamOpen::NetworkDiagnostics { interface, name, comparison_dns } => {
-            if !policy.network_scan {return reply(&mut send, &denied("Network diagnostics")).await;}
+            if !policy.network_scan {
+                return reply(&mut send, &denied("Network diagnostics")).await;
+            }
             let Ok(_permit) = scans.try_acquire_owned() else {
-                return reply(&mut send, &StreamReply::Error("A scan or diagnostic is already running in this session".into())).await;
+                return reply(
+                    &mut send,
+                    &StreamReply::Error("A scan or diagnostic is already running in this session".into()),
+                )
+                .await;
             };
             tokio::select! {
                 result = crate::support::diagnose(interface, name, comparison_dns, &tools.station) => {
@@ -116,14 +124,21 @@ async fn handle(
             }
         }
         StreamOpen::SupportStatus { text } => {
-            if !policy.remote_input {return reply(&mut send, &denied("Support status (remote control)")).await;}
+            if !policy.remote_input {
+                return reply(&mut send, &denied("Support status (remote control)")).await;
+            }
             match crate::support::status_text(&text) {
-                Ok(text) => { (tools.status)(text); reply(&mut send, &StreamReply::Done).await?; }
+                Ok(text) => {
+                    (tools.status)(text);
+                    reply(&mut send, &StreamReply::Done).await?;
+                }
                 Err(e) => reply(&mut send, &StreamReply::Error(e.to_string())).await?,
             }
         }
         StreamOpen::FilePreview { path } => {
-            if !policy.browse { return reply(&mut send, &denied("Browsing files")).await; }
+            if !policy.browse {
+                return reply(&mut send, &denied("Browsing files")).await;
+            }
             // Ordinary unreadable/unsupported files keep their generic icon.
             tokio::select! {
                 preview = crate::preview::load(path) => {
@@ -151,7 +166,9 @@ async fn handle(
             reply(&mut send, &response).await?;
         }
         StreamOpen::DropTarget { x, y } => {
-            if !policy.receive { return reply(&mut send, &denied("Receiving files")).await; }
+            if !policy.receive {
+                return reply(&mut send, &denied("Receiving files")).await;
+            }
             let result = tokio::task::spawn_blocking(move || crate::desktop_shell::drop_folder(x, y)).await?;
             let response = match result {
                 Ok(path) => StreamReply::DropTarget { path: fsops::display(&path) },
@@ -160,7 +177,9 @@ async fn handle(
             reply(&mut send, &response).await?;
         }
         StreamOpen::NetworkNames { interface, addresses } => {
-            if !policy.network_scan { return reply(&mut send, &denied("Network scanning")).await; }
+            if !policy.network_scan {
+                return reply(&mut send, &denied("Network scanning")).await;
+            }
             let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
             let stopped = send.stopped();
             tokio::select! {
@@ -175,14 +194,22 @@ async fn handle(
             }
         }
         StreamOpen::NetworkInterfaces => {
-            if !policy.network_scan { return reply(&mut send, &denied("Network scanning")).await; }
+            if !policy.network_scan {
+                return reply(&mut send, &denied("Network scanning")).await;
+            }
             let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
             reply(&mut send, &StreamReply::NetworkInterfaces(interfaces)).await?;
         }
         StreamOpen::NetworkScan(request) => {
-            if !policy.network_scan { return reply(&mut send, &denied("Network scanning")).await; }
+            if !policy.network_scan {
+                return reply(&mut send, &denied("Network scanning")).await;
+            }
             let Ok(_permit) = scans.try_acquire_owned() else {
-                return reply(&mut send, &StreamReply::Error("A network scan is already running in this session".into())).await;
+                return reply(
+                    &mut send,
+                    &StreamReply::Error("A network scan is already running in this session".into()),
+                )
+                .await;
             };
             let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
             // Resolves on STOP_SENDING or connection close; dropping the
@@ -197,8 +224,14 @@ async fn handle(
             let r = match &clipboard {
                 Some(cb) if policy.receive => {
                     let items: Vec<PathBuf> = tokio::task::spawn_blocking(move || {
-                        std::fs::read_dir(fsops::paste_dir(batch)).into_iter().flatten().flatten().map(|e| e.path()).collect()
-                    }).await?;
+                        std::fs::read_dir(fsops::paste_dir(batch))
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                            .map(|e| e.path())
+                            .collect()
+                    })
+                    .await?;
                     cb.set_files(items);
                     StreamReply::Done
                 }
@@ -211,9 +244,13 @@ async fn handle(
                 return reply(&mut send, &denied("Port forwarding")).await;
             }
             let hostname = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(&host);
-            let target = if hostname.contains(':') {format!("[{hostname}]:{port}")} else {format!("{hostname}:{port}")};
-            match tokio::time::timeout(std::time::Duration::from_secs(10), tokio::net::TcpStream::connect((hostname, port)))
-                .await
+            let target =
+                if hostname.contains(':') { format!("[{hostname}]:{port}") } else { format!("{hostname}:{port}") };
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                tokio::net::TcpStream::connect((hostname, port)),
+            )
+            .await
             {
                 Ok(Ok(tcp)) => {
                     tracing::info!(%target, "tunnel opened");
@@ -239,9 +276,17 @@ async fn handle(
         StreamOpen::Pace => {
             // The host's version first (no figures), so the viewer's log
             // says which build these figures come from.
-            let version = slipstream_core::proto::PaceStage { name: format!("Slipstream {}", slipstream_core::VERSION_STRING), fps: 0.0, ms: 0.0 };
+            let version = slipstream_core::proto::PaceStage {
+                name: format!("Slipstream {}", slipstream_core::VERSION_STRING),
+                fps: 0.0,
+                ms: 0.0,
+            };
             let stages = std::iter::once(version)
-                .chain(slipstream_platform::pace::live().into_iter().map(|(name, fps, ms)| slipstream_core::proto::PaceStage { name, fps, ms }))
+                .chain(
+                    slipstream_platform::pace::live()
+                        .into_iter()
+                        .map(|(name, fps, ms)| slipstream_core::proto::PaceStage { name, fps, ms }),
+                )
                 .collect();
             reply(&mut send, &StreamReply::Pace(stages)).await?;
         }
@@ -259,7 +304,11 @@ async fn handle(
         }
         StreamOpen::Places => {
             // Probing drives can stall on a disconnected network drive.
-            let r = if policy.browse { StreamReply::Places(tokio::task::spawn_blocking(fsops::places).await?) } else { denied("Browsing files") };
+            let r = if policy.browse {
+                StreamReply::Places(tokio::task::spawn_blocking(fsops::places).await?)
+            } else {
+                denied("Browsing files")
+            };
             reply(&mut send, &r).await?;
         }
         StreamOpen::List { path } => {
@@ -335,7 +384,8 @@ async fn handle(
                 };
                 let is_dir = base.is_dir();
                 (base, is_dir)
-            }).await?;
+            })
+            .await?;
             if !is_dir {
                 reply(&mut send, &StreamReply::Error(format!("folder {} does not exist", base.display()))).await?;
                 return Ok(());
@@ -375,7 +425,9 @@ pub struct RemoteFs {
 impl RemoteFs {
     /// Current transport state, also available to independently drawn tools
     /// while their parent window is minimized and its UI isn't running.
-    pub fn is_connected(&self)->bool {self.conn.close_reason().is_none()}
+    pub fn is_connected(&self) -> bool {
+        self.conn.close_reason().is_none()
+    }
 
     pub(crate) fn new(conn: Connection) -> Self {
         Self { conn }
@@ -400,9 +452,12 @@ impl RemoteFs {
     /// Freeze the destination before walking/uploading a dropped folder.
     /// This request is independent of the input stream: no cursor-move race.
     pub async fn drop_target(&self, x: i32, y: i32) -> Result<UploadTarget> {
-        let response = tokio::time::timeout(std::time::Duration::from_secs(12), self.ask(StreamOpen::DropTarget { x, y }))
-            .await.context("remote drop-folder lookup timed out")?
-            .context("drop-folder lookup failed; update the remote app if it predates this feature")?.2;
+        let response =
+            tokio::time::timeout(std::time::Duration::from_secs(12), self.ask(StreamOpen::DropTarget { x, y }))
+                .await
+                .context("remote drop-folder lookup timed out")?
+                .context("drop-folder lookup failed; update the remote app if it predates this feature")?
+                .2;
         match response {
             StreamReply::DropTarget { path } => Ok(UploadTarget::Folder(path)),
             other => bail!("unexpected drop-folder reply {other:?}"),
@@ -416,10 +471,14 @@ impl RemoteFs {
             send.set_priority(-10)?;
             write_msg(&mut send, &StreamOpen::FilePreview { path }).await?;
             expect_msg::<StreamReply>(&mut recv).await
-        }).await.context("file preview timed out")??;
+        })
+        .await
+        .context("file preview timed out")??;
         match response {
             StreamReply::FilePreview(preview) => {
-                if preview.as_ref().is_some_and(|p| !p.valid()) { bail!("invalid file preview"); }
+                if preview.as_ref().is_some_and(|p| !p.valid()) {
+                    bail!("invalid file preview");
+                }
                 Ok(preview)
             }
             StreamReply::Error(e) => bail!("{e}"),
@@ -446,7 +505,13 @@ impl RemoteFs {
     }
 
     /// Uploads one local file. Returns where it was saved remotely.
-    pub async fn upload(&self, local: &Path, target: UploadTarget, rel_path: String, mut progress: impl FnMut(u64)) -> Result<String> {
+    pub async fn upload(
+        &self,
+        local: &Path,
+        target: UploadTarget,
+        rel_path: String,
+        mut progress: impl FnMut(u64),
+    ) -> Result<String> {
         let (mut file, size) = open_regular(local).await?;
         let (mut send, mut recv, reply) = self.ask(StreamOpen::Upload { target, rel_path, size }).await?;
         if !matches!(reply, StreamReply::Ready) {
@@ -476,12 +541,19 @@ impl RemoteFs {
         let (_send, mut recv, reply) = self.ask(StreamOpen::Download { path: remote.clone() }).await?;
         let StreamReply::File { size } = reply else { bail!("unexpected reply {reply:?}") };
         crate::incoming::receive(&mut recv, dest, size, &mut progress)
-            .await.with_context(|| format!("downloading {remote}"))
+            .await
+            .with_context(|| format!("downloading {remote}"))
     }
 
     /// All files under a remote path, with paths relative to its parent
     /// (`Folder/sub/file`) and sizes. A file yields itself.
-    pub async fn walk(&self, path: String, is_dir: bool, name: String, size: u64) -> Result<Vec<(String, String, u64)>> {
+    pub async fn walk(
+        &self,
+        path: String,
+        is_dir: bool,
+        name: String,
+        size: u64,
+    ) -> Result<Vec<(String, String, u64)>> {
         if !is_dir {
             return Ok(vec![(path, name, size)]);
         }
@@ -491,7 +563,9 @@ impl RemoteFs {
         while let Some((dir, rel)) = stack.pop() {
             let listing = self.list(Some(dir)).await?;
             // Hosts return canonical listing paths, including symlink targets.
-            if !visited.insert(listing.path.clone()) {continue;}
+            if !visited.insert(listing.path.clone()) {
+                continue;
+            }
             for e in listing.entries {
                 let child = format!("{}{}{}", listing.path.trim_end_matches(['/', '\\']), listing.sep, e.name);
                 let child_rel = format!("{rel}/{}", e.name);

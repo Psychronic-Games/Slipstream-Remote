@@ -14,7 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
       # OpenH264 needs nasm for its SIMD code (2-3x faster video).
       - name: nasm
         shell: bash
@@ -32,6 +37,9 @@ jobs:
             libwayland-dev libxcb1-dev libxrandr-dev libxdo-dev libxtst-dev libdbus-1-dev \
             libegl1-mesa-dev libgbm-dev php-cli php-sqlite3
       - run: cargo build --workspace --all-targets
+      - name: Clippy
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace
       - name: Station administrator and account regressions
         if: runner.os == 'Linux'

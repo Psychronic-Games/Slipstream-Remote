@@ -43,9 +43,7 @@ pub fn password_secret(pw: &str) -> [u8; 32] {
 pub fn generate_password(len: usize) -> String {
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
     let mut rng = rand::rng();
-    (0..len)
-        .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
-        .collect()
+    (0..len).map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char).collect()
 }
 
 /// Host side of the handshake.
@@ -58,10 +56,8 @@ impl HostAuth {
     /// the challenge messages to send.
     pub fn start(secrets: &[[u8; 32]], host: &EndpointId, viewer: &EndpointId) -> (Self, Vec<Vec<u8>>) {
         let (id_a, id_b) = ids(host, viewer);
-        let (states, msgs) = secrets
-            .iter()
-            .map(|secret| Spake2::<Ed25519Group>::start_a(&Password::new(secret), &id_a, &id_b))
-            .unzip();
+        let (states, msgs) =
+            secrets.iter().map(|secret| Spake2::<Ed25519Group>::start_a(&Password::new(secret), &id_a, &id_b)).unzip();
         (Self { states }, msgs)
     }
 
@@ -164,9 +160,7 @@ impl AuthThrottle {
 
     /// Remaining lockout, if attempts are currently blocked.
     pub fn locked(&self) -> Option<Duration> {
-        self.locked_until
-            .and_then(|t| t.checked_duration_since(Instant::now()))
-            .filter(|d| !d.is_zero())
+        self.locked_until.and_then(|t| t.checked_duration_since(Instant::now())).filter(|d| !d.is_zero())
     }
 
     pub fn record_failure(&mut self) {
@@ -193,7 +187,13 @@ mod tests {
         (SecretKey::generate().public(), SecretKey::generate().public())
     }
 
-    fn matched(host_pws: &[&str], typed: &str, host_seen_by_viewer: EndpointId, host: EndpointId, viewer: EndpointId) -> Option<usize> {
+    fn matched(
+        host_pws: &[&str],
+        typed: &str,
+        host_seen_by_viewer: EndpointId,
+        host: EndpointId,
+        viewer: EndpointId,
+    ) -> Option<usize> {
         let secrets: Vec<[u8; 32]> = host_pws.iter().map(|s| password_secret(s)).collect();
         let (h, challenges) = HostAuth::start(&secrets, &host, &viewer);
         let (v, pakes, confirms) = ViewerAuth::respond(typed, &challenges, &host_seen_by_viewer, &viewer).unwrap();
@@ -201,7 +201,13 @@ mod tests {
         v.verify_host(&c).is_ok().then_some(index)
     }
 
-    fn run(host_pws: &[&str], typed: &str, host_seen_by_viewer: EndpointId, host: EndpointId, viewer: EndpointId) -> bool {
+    fn run(
+        host_pws: &[&str],
+        typed: &str,
+        host_seen_by_viewer: EndpointId,
+        host: EndpointId,
+        viewer: EndpointId,
+    ) -> bool {
         matched(host_pws, typed, host_seen_by_viewer, host, viewer).is_some()
     }
 

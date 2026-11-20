@@ -25,7 +25,9 @@ struct ExecutableNote {
 #[used]
 #[unsafe(link_section = ".note.slipstream")]
 static EXECUTABLE_NOTE: ExecutableNote = ExecutableNote {
-    name_len: 11, description_len: 32, kind: 0x534c4950,
+    name_len: 11,
+    description_len: 32,
+    kind: 0x534c4950,
     name: *b"SLIPSTREAM\0\0",
     description: *b"slipstream-remote-executable-v1\0",
 };
@@ -44,12 +46,18 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
 /// Exec is parsed as a desktop string and then as a quoted command argument.
 pub(super) fn exec_argument(path: &Path) -> Result<String> {
     let path = path.to_str().context("executable path is not UTF-8")?;
-    anyhow::ensure!(!path.chars().any(|c| c.is_control() || c == '='), "executable path cannot be represented in a desktop entry");
+    anyhow::ensure!(
+        !path.chars().any(|c| c.is_control() || c == '='),
+        "executable path cannot be represented in a desktop entry"
+    );
     let mut quoted = String::from("\"");
     for ch in path.chars() {
         match ch {
             '\\' => quoted.push_str("\\\\\\\\"),
-            '"' | '`' | '$' => { quoted.push_str("\\\\"); quoted.push(ch); }
+            '"' | '`' | '$' => {
+                quoted.push_str("\\\\");
+                quoted.push(ch);
+            }
             '%' => quoted.push_str("%%"),
             _ => quoted.push(ch),
         }
@@ -78,13 +86,17 @@ pub fn integrate() -> Result<()> {
         enc.write_header()?.write_image_data(&icon.rgba)?;
         let path = data.join(format!("icons/hicolor/{size}x{size}/apps/{APP_ID}.png"));
         changed |= write_if_changed(&path, &png)?;
-        changed |= write_if_changed(&data.join(format!("icons/hicolor/{size}x{size}/mimetypes/application-x-slipstream-remote.png")), &png)?;
+        changed |= write_if_changed(
+            &data.join(format!("icons/hicolor/{size}x{size}/mimetypes/application-x-slipstream-remote.png")),
+            &png,
+        )?;
     }
     let mime_changed = write_if_changed(&data.join("mime/packages/slipstream-remote.xml"), FILE_MIME.as_bytes())?;
     // A pre-existing MIME cache may belong to other applications. Record only a
     // successful refresh so installing a missing helper repairs things next run.
     let mime_stamp = data.join("slipstream/desktop-mime-installed.xml");
-    if mime_changed || !data.join("mime/mime.cache").exists()
+    if mime_changed
+        || !data.join("mime/mime.cache").exists()
         || !data.join("mime/application/x-slipstream-remote.xml").exists()
         || !fs::read(&mime_stamp).is_ok_and(|bytes| bytes == FILE_MIME.as_bytes())
     {
@@ -94,7 +106,9 @@ pub fn integrate() -> Result<()> {
             write_if_changed(&mime_stamp, FILE_MIME.as_bytes())?;
             changed = true;
         } else {
-            tracing::warn!("could not refresh the executable's file icon; install shared-mime-info (Debian: sudo apt install shared-mime-info) and relaunch Slipstream");
+            tracing::warn!(
+                "could not refresh the executable's file icon; install shared-mime-info (Debian: sudo apt install shared-mime-info) and relaunch Slipstream"
+            );
         }
     }
     changed |= mime_changed;
@@ -118,7 +132,10 @@ pub fn integrate() -> Result<()> {
                 .args(["default", &format!("{APP_ID}.desktop"), "x-scheme-handler/slipstream"])
                 .status();
         }
-        let _ = std::process::Command::new("gtk-update-icon-cache").args(["-q", "-t"]).arg(data.join("icons/hicolor")).status();
+        let _ = std::process::Command::new("gtk-update-icon-cache")
+            .args(["-q", "-t"])
+            .arg(data.join("icons/hicolor"))
+            .status();
     }
     Ok(())
 }
@@ -130,7 +147,10 @@ mod tests {
 
     #[test]
     fn executable_paths_escape_both_desktop_and_command_syntax() {
-        assert_eq!(exec_argument(Path::new("/home/test/Slipstream Remote (2)")).unwrap(), "\"/home/test/Slipstream Remote (2)\"");
+        assert_eq!(
+            exec_argument(Path::new("/home/test/Slipstream Remote (2)")).unwrap(),
+            "\"/home/test/Slipstream Remote (2)\""
+        );
         assert_eq!(exec_argument(Path::new(r#"/tmp/a\b"$`%"#)).unwrap(), r#""/tmp/a\\\\b\\"\\$\\`%%""#);
         assert!(exec_argument(Path::new("/tmp/app\nHidden=true")).is_err());
     }
@@ -140,6 +160,9 @@ mod tests {
         let mut prefix = Vec::new();
         fs::File::open(std::env::current_exe().unwrap()).unwrap().take(65536).read_to_end(&mut prefix).unwrap();
         let marker = b"slipstream-remote-executable-v1";
-        assert!(prefix.windows(marker.len()).any(|bytes| bytes == marker), "ELF branding note missing from the first 64 KiB");
+        assert!(
+            prefix.windows(marker.len()).any(|bytes| bytes == marker),
+            "ELF branding note missing from the first 64 KiB"
+        );
     }
 }

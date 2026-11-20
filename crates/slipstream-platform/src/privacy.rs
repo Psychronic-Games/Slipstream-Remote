@@ -20,15 +20,15 @@ use anyhow::{Result, anyhow, bail};
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
     Graphics::Gdi::{
-        BeginPaint, CreateFontW, DT_CENTER, DT_NOPREFIX, DT_WORDBREAK, DeleteObject, DrawTextW, EndPaint,
-        FillRect, GetStockObject, BLACK_BRUSH, PAINTSTRUCT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+        BLACK_BRUSH, BeginPaint, CreateFontW, DT_CENTER, DT_NOPREFIX, DT_WORDBREAK, DeleteObject, DrawTextW, EndPaint,
+        FillRect, GetStockObject, PAINTSTRUCT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
     },
     System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW},
     UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW, GetSystemMetrics,
         HWND_TOPMOST, LWA_ALPHA, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SM_CXVIRTUALSCREEN,
-        SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SW_SHOWNOACTIVATE, SetLayeredWindowAttributes, SetTimer, SetWindowDisplayAffinity, SetWindowPos, ShowWindow,
+        SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, SetLayeredWindowAttributes, SetTimer, SetWindowDisplayAffinity, SetWindowPos, ShowWindow,
         TranslateMessage, WM_CLOSE, WM_DESTROY, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
         WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
     },
@@ -180,7 +180,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 SetBkMode(hdc, TRANSPARENT as i32);
                 SetTextColor(hdc, 0x0000_99ff); // the console orange (0x00BBGGRR)
                 let text = wide(&MESSAGE.lock().unwrap());
-                let mut box_ = RECT { left: r.left, top: r.top + (r.bottom - r.top) / 2 - 90, right: r.right, bottom: r.bottom };
+                let mut box_ =
+                    RECT { left: r.left, top: r.top + (r.bottom - r.top) / 2 - 90, right: r.right, bottom: r.bottom };
                 DrawTextW(hdc, text.as_ptr(), -1, &mut box_, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
                 SelectObject(hdc, old);
                 DeleteObject(font);

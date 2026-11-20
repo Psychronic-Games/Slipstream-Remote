@@ -1,8 +1,8 @@
 //! "Start with the system" for unattended access.
 
-use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 use anyhow::Context;
+use anyhow::Result;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn exe() -> Result<String> {
@@ -27,7 +27,9 @@ fn entry_enabled(entry: &str) -> bool {
             desktop = line == "[Desktop Entry]";
         } else if desktop && let Some((key, value)) = line.split_once('=') {
             match (key.trim(), value.trim()) {
-                ("Hidden", "true") | ("X-GNOME-Autostart-enabled" | "X-KDE-autostart-enabled", "false") => return false,
+                ("Hidden", "true") | ("X-GNOME-Autostart-enabled" | "X-KDE-autostart-enabled", "false") => {
+                    return false;
+                }
                 _ => {}
             }
         }
@@ -39,7 +41,9 @@ fn entry_enabled(entry: &str) -> bool {
 /// normally launched copy without enabling missing or desktop-disabled entries.
 #[cfg(target_os = "linux")]
 pub fn refresh_enabled() -> Result<()> {
-    if std::env::var_os("SLIPSTREAM_HOME").is_some() { return Ok(()); }
+    if std::env::var_os("SLIPSTREAM_HOME").is_some() {
+        return Ok(());
+    }
     let path = entry_path().context("no config directory")?;
     refresh_entry(&path, &std::env::current_exe()?)
 }
@@ -51,12 +55,16 @@ fn refresh_entry(path: &std::path::Path, executable: &std::path::Path) -> Result
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.into()),
     };
-    if !entry_enabled(&entry) { return Ok(()); }
+    if !entry_enabled(&entry) {
+        return Ok(());
+    }
     let command = format!("Exec={} --minimized", super::desktop::exec_argument(executable)?);
     let mut desktop = false;
     let mut updated = String::new();
     for line in entry.lines() {
-        if line.trim().starts_with('[') { desktop = line.trim() == "[Desktop Entry]"; }
+        if line.trim().starts_with('[') {
+            desktop = line.trim() == "[Desktop Entry]";
+        }
         if desktop && line.split_once('=').is_some_and(|(key, _)| key.trim() == "Exec") {
             updated.push_str(&command);
         } else {

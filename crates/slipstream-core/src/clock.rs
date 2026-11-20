@@ -43,10 +43,7 @@ pub const BUILD_UNIX: i64 = {
 };
 
 fn system_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 /// Corrected current time, Unix seconds.
@@ -214,9 +211,13 @@ pub async fn sync_from(url: &reqwest::Url) -> Result<()> {
 
 /// A readable UTC timestamp for exported reports and their preview.
 pub fn format_utc(seconds: u64) -> String {
-    if seconds == 0 {return "Not collected".into();}
-    std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds))
-        .map(httpdate::fmt_http_date).unwrap_or_else(|| "Unavailable".into())
+    if seconds == 0 {
+        return "Not collected".into();
+    }
+    std::time::UNIX_EPOCH
+        .checked_add(std::time::Duration::from_secs(seconds))
+        .map(httpdate::fmt_http_date)
+        .unwrap_or_else(|| "Unavailable".into())
 }
 
 #[cfg(test)]
@@ -234,7 +235,9 @@ mod tests {
         assert!(is_time_error("invalid peer certificate: certificate not valid yet: verification time 1"));
         assert!(!is_time_error("invalid peer certificate: UnknownIssuer"));
         // Someone else's certificate is not a clock problem.
-        assert!(!is_time_error("invalid peer certificate: certificate not valid for name \"relay.example\"; certificate is only valid for DnsName(\"attacker.example\")"));
+        assert!(!is_time_error(
+            "invalid peer certificate: certificate not valid for name \"relay.example\"; certificate is only valid for DnsName(\"attacker.example\")"
+        ));
         assert!(!is_time_error("invalid peer certificate: NotValidForName"));
     }
 

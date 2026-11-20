@@ -17,9 +17,7 @@ impl Picker {
     pub fn new(app: &App, ctx: &egui::Context) -> Self {
         let client = app.client.clone();
         Self {
-            job: Some(pending(&app.rt, ctx, async move {
-                client.meeting_displays().await
-            })),
+            job: Some(pending(&app.rt, ctx, async move { client.meeting_displays().await })),
             choices: Vec::new(),
             selected: None,
             error: None,
@@ -34,11 +32,7 @@ impl Picker {
         if let Some(result) = ready(&mut self.job) {
             match result {
                 Ok(choices) => {
-                    self.selected = if choices.len() == 1 {
-                        Some(choices[0].index)
-                    } else {
-                        None
-                    };
+                    self.selected = if choices.len() == 1 { Some(choices[0].index) } else { None };
                     self.choices = choices;
                 }
                 Err(error) => self.error = Some(format!("{error:#}")),
@@ -56,40 +50,31 @@ impl Picker {
                     } else {
                         self.thumbnails.insert(
                             index,
-                            ctx.load_texture(
-                                format!("screen-preview-{index}"),
-                                image,
-                                egui::TextureOptions::LINEAR,
-                            ),
+                            ctx.load_texture(format!("screen-preview-{index}"), image, egui::TextureOptions::LINEAR),
                         );
                     }
                     self.preview_errors.remove(&index);
                 }
                 Err(error) => {
-                    if let Some(display) = self.choices.get(
-                        (self.cursor + self.choices.len().saturating_sub(1))
-                            % self.choices.len().max(1),
-                    ) {
-                        self.preview_errors
-                            .insert(display.index, format!("{error:#}"));
+                    if let Some(display) = self
+                        .choices
+                        .get((self.cursor + self.choices.len().saturating_sub(1)) % self.choices.len().max(1))
+                    {
+                        self.preview_errors.insert(display.index, format!("{error:#}"));
                         self.thumbnails.remove(&display.index);
                     }
                 }
             }
             self.next_preview = Instant::now() + Duration::from_millis(400);
         }
-        if self.preview.is_none() && !self.choices.is_empty() && Instant::now() >= self.next_preview
-        {
+        if self.preview.is_none() && !self.choices.is_empty() && Instant::now() >= self.next_preview {
             let index = self.choices[self.cursor % self.choices.len()].index;
             self.cursor = (self.cursor + 1) % self.choices.len();
             let client = app.client.clone();
             let cancelled = std::sync::Arc::default();
             let worker_cancel = std::sync::Arc::clone(&cancelled);
             let mut job = pending(&app.rt, ctx, async move {
-                Ok((
-                    index,
-                    client.meeting_screen_preview(index, worker_cancel).await?,
-                ))
+                Ok((index, client.meeting_screen_preview(index, worker_cancel).await?))
             });
             job.cancelled = cancelled;
             self.preview = Some(job);
@@ -103,11 +88,7 @@ pub(super) fn label(display: &DisplayInfo) -> String {
         display.name,
         display.width,
         display.height,
-        if display.primary {
-            " · main display"
-        } else {
-            ""
-        }
+        if display.primary { " · main display" } else { "" }
     )
 }
 pub(super) fn ui(meetings: &mut Meetings, app: &App, ctx: &egui::Context) {
@@ -143,32 +124,21 @@ pub(super) fn ui(meetings: &mut Meetings, app: &App, ctx: &egui::Context) {
                     let selected = picker.selected == Some(display.index);
                     let response = egui::Frame::new()
                         .fill(if selected { pal::VIOLET } else { pal::PANEL })
-                        .stroke(egui::Stroke::new(
-                            if selected { 2.0 } else { 1.0 },
-                            pal::BLUE,
-                        ))
+                        .stroke(egui::Stroke::new(if selected { 2.0 } else { 1.0 }, pal::BLUE))
                         .corner_radius(6.0)
                         .inner_margin(8.0)
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             ui.label(label(display));
-                            let (rect, _) = ui.allocate_exact_size(
-                                egui::vec2(ui.available_width(), 110.0),
-                                egui::Sense::hover(),
-                            );
+                            let (rect, _) =
+                                ui.allocate_exact_size(egui::vec2(ui.available_width(), 110.0), egui::Sense::hover());
                             ui.painter().rect_filled(rect, 3.0, egui::Color32::BLACK);
                             if let Some(texture) = picker.thumbnails.get(&display.index) {
-                                let fit = video::fit_rect(
-                                    rect,
-                                    (texture.size()[0] as u32, texture.size()[1] as u32),
-                                );
+                                let fit = video::fit_rect(rect, (texture.size()[0] as u32, texture.size()[1] as u32));
                                 ui.painter().image(
                                     texture.id(),
                                     fit,
-                                    egui::Rect::from_min_max(
-                                        egui::Pos2::ZERO,
-                                        egui::pos2(1.0, 1.0),
-                                    ),
+                                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                                     egui::Color32::WHITE,
                                 );
                             } else {
@@ -209,11 +179,7 @@ pub(super) fn ui(meetings: &mut Meetings, app: &App, ctx: &egui::Context) {
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(picker.selected.is_some(), |ui| {
                 if theme::pill(ui, "Share selected screen", pal::GREEN).clicked() {
-                    chosen = picker
-                        .choices
-                        .iter()
-                        .find(|d| Some(d.index) == picker.selected)
-                        .cloned();
+                    chosen = picker.choices.iter().find(|d| Some(d.index) == picker.selected).cloned();
                 }
             });
             if theme::pill(ui, "Cancel", pal::PEACH).clicked() {
@@ -227,14 +193,7 @@ pub(super) fn ui(meetings: &mut Meetings, app: &App, ctx: &egui::Context) {
     if let Some(display) = chosen {
         if let Some(active) = &mut meetings.active {
             active.next_video_name = label(&display);
-            start_video(
-                active,
-                Source::Screen,
-                display.index,
-                &app.client,
-                &app.rt,
-                ctx,
-            );
+            start_video(active, Source::Screen, display.index, &app.client, &app.rt, ctx);
             active.room.side = room::Side::None;
         }
         close = true;
@@ -248,70 +207,29 @@ fn arrangement(picker: &mut Picker, ui: &mut Ui) {
     if picker.choices.len() < 2 {
         return;
     }
-    let left = picker
-        .choices
-        .iter()
-        .map(|d| d.x as f32)
-        .fold(f32::INFINITY, f32::min);
-    let top = picker
-        .choices
-        .iter()
-        .map(|d| d.y as f32)
-        .fold(f32::INFINITY, f32::min);
-    let right = picker
-        .choices
-        .iter()
-        .map(|d| d.x as f32 + d.width as f32)
-        .fold(f32::NEG_INFINITY, f32::max);
-    let bottom = picker
-        .choices
-        .iter()
-        .map(|d| d.y as f32 + d.height as f32)
-        .fold(f32::NEG_INFINITY, f32::max);
-    let (area, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 132.0),
-        egui::Sense::hover(),
-    );
-    let scale =
-        ((area.width() - 20.0) / (right - left).max(1.0)).min(112.0 / (bottom - top).max(1.0));
+    let left = picker.choices.iter().map(|d| d.x as f32).fold(f32::INFINITY, f32::min);
+    let top = picker.choices.iter().map(|d| d.y as f32).fold(f32::INFINITY, f32::min);
+    let right = picker.choices.iter().map(|d| d.x as f32 + d.width as f32).fold(f32::NEG_INFINITY, f32::max);
+    let bottom = picker.choices.iter().map(|d| d.y as f32 + d.height as f32).fold(f32::NEG_INFINITY, f32::max);
+    let (area, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 132.0), egui::Sense::hover());
+    let scale = ((area.width() - 20.0) / (right - left).max(1.0)).min(112.0 / (bottom - top).max(1.0));
     let origin = area.center() - egui::vec2((right - left) * scale, (bottom - top) * scale) * 0.5;
     for display in &picker.choices {
-        let start = origin
-            + egui::vec2(
-                (display.x as f32 - left) * scale,
-                (display.y as f32 - top) * scale,
-            );
-        let rect = egui::Rect::from_min_size(
-            start,
-            egui::vec2(display.width as f32 * scale, display.height as f32 * scale),
-        )
-        .shrink(3.0);
+        let start = origin + egui::vec2((display.x as f32 - left) * scale, (display.y as f32 - top) * scale);
+        let rect =
+            egui::Rect::from_min_size(start, egui::vec2(display.width as f32 * scale, display.height as f32 * scale))
+                .shrink(3.0);
         let selected = picker.selected == Some(display.index);
-        let response = ui.interact(
-            rect,
-            ui.scope_id().with(("screen-map", display.index)),
-            egui::Sense::click(),
-        );
-        ui.painter()
-            .rect_filled(rect, 5.0, if selected { pal::BLUE } else { pal::PANEL });
+        let response = ui.interact(rect, ui.scope_id().with(("screen-map", display.index)), egui::Sense::click());
+        ui.painter().rect_filled(rect, 5.0, if selected { pal::BLUE } else { pal::PANEL });
         ui.painter().rect_stroke(
             rect,
             5.0,
-            egui::Stroke::new(
-                if selected || response.hovered() {
-                    2.0
-                } else {
-                    1.0
-                },
-                pal::BLUE,
-            ),
+            egui::Stroke::new(if selected || response.hovered() { 2.0 } else { 1.0 }, pal::BLUE),
             egui::StrokeKind::Inside,
         );
         if let Some(texture) = picker.thumbnails.get(&display.index) {
-            let image_rect = video::fit_rect(
-                rect.shrink(2.0),
-                (texture.size()[0] as u32, texture.size()[1] as u32),
-            );
+            let image_rect = video::fit_rect(rect.shrink(2.0), (texture.size()[0] as u32, texture.size()[1] as u32));
             ui.painter().image(
                 texture.id(),
                 image_rect,
@@ -319,19 +237,14 @@ fn arrangement(picker: &mut Picker, ui: &mut Ui) {
                 egui::Color32::WHITE,
             );
         }
-        let badge =
-            egui::Rect::from_min_size(rect.min + egui::vec2(5.0, 5.0), egui::vec2(26.0, 28.0));
+        let badge = egui::Rect::from_min_size(rect.min + egui::vec2(5.0, 5.0), egui::vec2(26.0, 28.0));
         ui.painter().rect_filled(badge, 3.0, pal::PANEL);
         ui.painter().text(
             badge.center(),
             egui::Align2::CENTER_CENTER,
             (display.index + 1).to_string(),
             theme::display(24.0),
-            if selected {
-                egui::Color32::BLACK
-            } else {
-                pal::TAN
-            },
+            if selected { egui::Color32::BLACK } else { pal::TAN },
         );
         let hint = picker
             .preview_errors

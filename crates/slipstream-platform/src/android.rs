@@ -41,10 +41,7 @@ pub fn camera_start(index: u32) -> Result<u64> {
     Ok(epoch)
 }
 pub fn camera_stop(epoch: u64) {
-    if CAMERA_EPOCH
-        .compare_exchange(epoch, epoch + 1, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
-    {
+    if CAMERA_EPOCH.compare_exchange(epoch, epoch + 1, Ordering::AcqRel, Ordering::Acquire).is_ok() {
         camera_stopped();
         let _ = action(12);
     }
@@ -62,9 +59,7 @@ pub fn microphone_ready() -> bool {
     let Ok(class) = env.new_local_ref(b.class.as_obj()).map(JClass::from) else {
         return false;
     };
-    env.call_static_method(class, "microphoneReady", "()Z", &[])
-        .and_then(|v| v.z())
-        .unwrap_or(false)
+    env.call_static_method(class, "microphoneReady", "()Z", &[]).and_then(|v| v.z()).unwrap_or(false)
 }
 type CallHandler = Box<dyn Fn(u64, bool) + Send + Sync>;
 static CALL_HANDLER: OnceLock<CallHandler> = OnceLock::new();
@@ -115,9 +110,7 @@ pub fn device_name() -> Result<String> {
     let b = BRIDGE.get().context("Android bridge not initialized")?;
     let mut env = b.vm.attach_current_thread()?;
     let class = JClass::from(env.new_local_ref(b.class.as_obj())?);
-    let name = env
-        .call_static_method(class, "deviceName", "()Ljava/lang/String;", &[])?
-        .l()?;
+    let name = env.call_static_method(class, "deviceName", "()Ljava/lang/String;", &[])?.l()?;
     Ok(env.get_string(&jni::objects::JString::from(name))?.into())
 }
 pub fn action(action: i32) -> Result<()> {
@@ -132,17 +125,12 @@ pub fn action(action: i32) -> Result<()> {
     Ok(())
 }
 pub fn status() -> (bool, bool, String) {
-    (
-        hub().dimensions().is_some(),
-        ACCESS.load(Ordering::Acquire),
-        MESSAGE.lock().unwrap().clone(),
-    )
+    (hub().dimensions().is_some(), ACCESS.load(Ordering::Acquire), MESSAGE.lock().unwrap().clone())
 }
 pub fn started(width: u32, height: u32, full: bool) {
     FULL_DISPLAY.store(full, Ordering::Release);
     hub().start(width, height);
-    *MESSAGE.lock().unwrap() =
-        "Screen sharing active. Stop sharing here or in Android's notification.".into();
+    *MESSAGE.lock().unwrap() = "Screen sharing active. Stop sharing here or in Android's notification.".into();
 }
 pub fn stopped(message: String) {
     hub().stop(&message);
@@ -183,15 +171,7 @@ impl Backend for AndroidBackend {
         hub()
             .dimensions()
             .map(|(width, height)| {
-                vec![DisplayInfo {
-                    index: 0,
-                    name: "Phone screen".into(),
-                    width,
-                    height,
-                    x: 0,
-                    y: 0,
-                    primary: true,
-                }]
+                vec![DisplayInfo { index: 0, name: "Phone screen".into(), width, height, x: 0, y: 0, primary: true }]
             })
             .unwrap_or_default()
     }
@@ -218,18 +198,12 @@ impl Backend for AndroidBackend {
             return Ok(());
         }
         if !input_allowed() {
-            bail!(
-                "Enable Slipstream Remote in Android Accessibility settings and share the entire screen"
-            );
+            bail!("Enable Slipstream Remote in Android Accessibility settings and share the entire screen");
         }
         let (kind, x, y, key, down) = match event {
-            InputEvent::MouseMove { x, y } if x.is_finite() && y.is_finite() => (
-                0,
-                x.clamp(0.0, 1.0),
-                y.clamp(0.0, 1.0),
-                String::new(),
-                false,
-            ),
+            InputEvent::MouseMove { x, y } if x.is_finite() && y.is_finite() => {
+                (0, x.clamp(0.0, 1.0), y.clamp(0.0, 1.0), String::new(), false)
+            }
             InputEvent::MouseButton { button, down } => {
                 let kind = match button {
                     MouseButton::Left => 1,
@@ -239,13 +213,9 @@ impl Backend for AndroidBackend {
                 };
                 (kind, 0.0, 0.0, String::new(), down)
             }
-            InputEvent::Wheel { dx, dy } if dx.is_finite() && dy.is_finite() => (
-                3,
-                dx.clamp(-8.0, 8.0),
-                dy.clamp(-8.0, 8.0),
-                String::new(),
-                false,
-            ),
+            InputEvent::Wheel { dx, dy } if dx.is_finite() && dy.is_finite() => {
+                (3, dx.clamp(-8.0, 8.0), dy.clamp(-8.0, 8.0), String::new(), false)
+            }
             InputEvent::Key { code, down } if code.len() <= 64 => (4, 0.0, 0.0, code, down),
             _ => return Ok(()),
         };
@@ -261,13 +231,7 @@ fn dispatch(kind: i32, x: f32, y: f32, key: &str, down: bool) -> Result<()> {
         class,
         "remoteInput",
         "(IFFLjava/lang/String;Z)V",
-        &[
-            JValue::Int(kind),
-            JValue::Float(x),
-            JValue::Float(y),
-            JValue::Object(&text),
-            JValue::Bool(u8::from(down)),
-        ],
+        &[JValue::Int(kind), JValue::Float(x), JValue::Float(y), JValue::Object(&text), JValue::Bool(u8::from(down))],
     );
     if result.is_err() {
         let _ = env.exception_clear();
@@ -337,7 +301,16 @@ fn relay_action(action: i32, name: &str, password: &str, band: &str) -> Result<(
 
 /// `RelayBridge.onRelayStatus`: `state` is starting, up, off or failed.
 #[allow(clippy::too_many_arguments)]
-pub fn relay_status(state: &str, name: String, passphrase: String, ip: String, joined: u32, stats: [u64; 4], phone_wifi: bool, message: String) {
+pub fn relay_status(
+    state: &str,
+    name: String,
+    passphrase: String,
+    ip: String,
+    joined: u32,
+    stats: [u64; 4],
+    phone_wifi: bool,
+    message: String,
+) {
     let [linked, connections, up, down] = stats;
     *RELAY.lock().unwrap() = match state {
         "starting" => RelayGroup::Starting,

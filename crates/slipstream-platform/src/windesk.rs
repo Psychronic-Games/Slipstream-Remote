@@ -19,7 +19,9 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{CloseHandle, GENERIC_ALL},
     System::{
-        StationsAndDesktops::{CloseDesktop, GetUserObjectInformationW, HDESK, OpenInputDesktop, SetThreadDesktop, UOI_NAME},
+        StationsAndDesktops::{
+            CloseDesktop, GetUserObjectInformationW, HDESK, OpenInputDesktop, SetThreadDesktop, UOI_NAME,
+        },
         Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent},
     },
 };
@@ -47,7 +49,9 @@ fn desktop_name(desk: HDESK) -> String {
     let mut buf = [0u16; 128];
     let mut needed = 0u32;
     // SAFETY: a live desktop handle and a buffer of the size given.
-    let ok = unsafe { GetUserObjectInformationW(desk, UOI_NAME, buf.as_mut_ptr().cast(), size_of_val(&buf) as u32, &mut needed) };
+    let ok = unsafe {
+        GetUserObjectInformationW(desk, UOI_NAME, buf.as_mut_ptr().cast(), size_of_val(&buf) as u32, &mut needed)
+    };
     if ok == 0 {
         return String::new();
     }

@@ -102,8 +102,7 @@ mod pulse {
             // SAFETY: libpulse's documented C signatures. Keep the library
             // loaded for the process lifetime, like the playback backend.
             unsafe {
-                let library =
-                    libc::dlopen(c"libpulse.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+                let library = libc::dlopen(c"libpulse.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
                 if library.is_null() {
                     return Err("PulseAudio device discovery is unavailable".into());
                 }
@@ -120,14 +119,8 @@ mod pulse {
                     main_new: symbol!("pa_mainloop_new", unsafe extern "C" fn() -> Ptr),
                     main_free: symbol!("pa_mainloop_free", unsafe extern "C" fn(Ptr)),
                     main_api: symbol!("pa_mainloop_get_api", unsafe extern "C" fn(Ptr) -> Ptr),
-                    iterate: symbol!(
-                        "pa_mainloop_iterate",
-                        unsafe extern "C" fn(Ptr, c_int, *mut c_int) -> c_int
-                    ),
-                    context_new: symbol!(
-                        "pa_context_new",
-                        unsafe extern "C" fn(Ptr, *const c_char) -> Ptr
-                    ),
+                    iterate: symbol!("pa_mainloop_iterate", unsafe extern "C" fn(Ptr, c_int, *mut c_int) -> c_int),
+                    context_new: symbol!("pa_context_new", unsafe extern "C" fn(Ptr, *const c_char) -> Ptr),
                     connect: symbol!(
                         "pa_context_connect",
                         unsafe extern "C" fn(Ptr, *const c_char, c_int, Ptr) -> c_int
@@ -188,9 +181,7 @@ mod pulse {
         if pointer.is_null() {
             String::new()
         } else {
-            unsafe { CStr::from_ptr(pointer) }
-                .to_string_lossy()
-                .into_owned()
+            unsafe { CStr::from_ptr(pointer) }.to_string_lossy().into_owned()
         }
     }
     unsafe extern "C" fn source(_context: Ptr, info: *const Source, end: c_int, data: Ptr) {
@@ -241,58 +232,31 @@ mod pulse {
             context: std::ptr::null_mut(),
             operations: Vec::new(),
         };
+        ensure!(!connection.main.is_null(), "Could not open audio device discovery");
+        connection.context =
+            unsafe { (api.context_new)((api.main_api)(connection.main), c"Slipstream microphone choices".as_ptr()) };
+        ensure!(!connection.context.is_null(), "Could not connect to audio device discovery");
         ensure!(
-            !connection.main.is_null(),
-            "Could not open audio device discovery"
-        );
-        connection.context = unsafe {
-            (api.context_new)(
-                (api.main_api)(connection.main),
-                c"Slipstream microphone choices".as_ptr(),
-            )
-        };
-        ensure!(
-            !connection.context.is_null(),
-            "Could not connect to audio device discovery"
-        );
-        ensure!(
-            unsafe {
-                (api.connect)(
-                    connection.context,
-                    std::ptr::null(),
-                    1,
-                    std::ptr::null_mut(),
-                )
-            } >= 0,
+            unsafe { (api.connect)(connection.context, std::ptr::null(), 1, std::ptr::null_mut(),) } >= 0,
             "Could not connect to PulseAudio"
         );
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut requested = false;
         while !(result.server_done && result.sources_done) {
-            ensure!(
-                Instant::now() < deadline,
-                "Microphone discovery timed out; refresh devices to retry"
-            );
-            ensure!(
-                unsafe { (api.iterate)(connection.main, 0, std::ptr::null_mut()) } >= 0,
-                "Audio discovery stopped"
-            );
+            ensure!(Instant::now() < deadline, "Microphone discovery timed out; refresh devices to retry");
+            ensure!(unsafe { (api.iterate)(connection.main, 0, std::ptr::null_mut()) } >= 0, "Audio discovery stopped");
             match unsafe { (api.state)(connection.context) } {
                 4 if !requested => {
                     requested = true;
                     let data = (&mut *result as *mut Discovery).cast();
-                    for operation in [
-                        unsafe { (api.server)(connection.context, server, data) },
-                        unsafe { (api.sources)(connection.context, source, data) },
-                    ] {
+                    for operation in [unsafe { (api.server)(connection.context, server, data) }, unsafe {
+                        (api.sources)(connection.context, source, data)
+                    }] {
                         if !operation.is_null() {
                             connection.operations.push(operation);
                         }
                     }
-                    ensure!(
-                        connection.operations.len() == 2,
-                        "Could not list microphone devices"
-                    );
+                    ensure!(connection.operations.len() == 2, "Could not list microphone devices");
                 }
                 5 | 6 => bail!("Audio service is unavailable"),
                 _ => {}

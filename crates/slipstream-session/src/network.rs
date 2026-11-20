@@ -39,9 +39,12 @@ impl RemoteFs {
     /// Ask the host to launch its own browser, not the viewer's browser.
     pub async fn open_network_web(&self, address: Ipv4Addr, port: u16) -> Result<()> {
         slipstream_core::network::web_url(address, port)?;
-        let reply = tokio::time::timeout(Duration::from_secs(12), self.ask_reply(StreamOpen::OpenNetworkWeb { address, port }))
-            .await.map_err(|_| anyhow::anyhow!("The remote browser request timed out"))?
-            .map_err(|e| anyhow::anyhow!("Remote browser request failed (the host may need an update): {e:#}"))?.2;
+        let reply =
+            tokio::time::timeout(Duration::from_secs(12), self.ask_reply(StreamOpen::OpenNetworkWeb { address, port }))
+                .await
+                .map_err(|_| anyhow::anyhow!("The remote browser request timed out"))?
+                .map_err(|e| anyhow::anyhow!("Remote browser request failed (the host may need an update): {e:#}"))?
+                .2;
         match reply {
             StreamReply::Done => Ok(()),
             StreamReply::Error(message) => bail!("{message}"),
@@ -49,7 +52,11 @@ impl RemoteFs {
         }
     }
 
-    pub async fn network_names(&self, interface: Ipv4Addr, addresses: Vec<Ipv4Addr>) -> Result<Vec<slipstream_core::network::DeviceName>> {
+    pub async fn network_names(
+        &self,
+        interface: Ipv4Addr,
+        addresses: Vec<Ipv4Addr>,
+    ) -> Result<Vec<slipstream_core::network::DeviceName>> {
         match self.ask(StreamOpen::NetworkNames { interface, addresses }).await?.2 {
             StreamReply::NetworkNames(names) => Ok(names),
             other => bail!("Unexpected device-name reply: {other:?}"),
@@ -69,14 +76,10 @@ impl RemoteFs {
         let (tx, events) = mpsc::channel(64);
         let task = tokio::spawn(async move {
             let r = async {
-                let (_send, mut recv, first) = tokio::time::timeout(
-                    Duration::from_secs(10),
-                    fs.ask(StreamOpen::NetworkScan(request)),
-                )
-                .await
-                .map_err(|_| {
-                    anyhow::anyhow!("The remote computer did not answer the scan request")
-                })??;
+                let (_send, mut recv, first) =
+                    tokio::time::timeout(Duration::from_secs(10), fs.ask(StreamOpen::NetworkScan(request)))
+                        .await
+                        .map_err(|_| anyhow::anyhow!("The remote computer did not answer the scan request"))??;
                 let mut reply = first;
                 loop {
                     match reply {
@@ -89,12 +92,9 @@ impl RemoteFs {
                         StreamReply::Error(e) => bail!("{e}"),
                         other => bail!("Unexpected scan reply: {other:?}"),
                     }
-                    reply = tokio::time::timeout(
-                        Duration::from_secs(90),
-                        expect_msg::<StreamReply>(&mut recv),
-                    )
-                    .await
-                    .map_err(|_| anyhow::anyhow!("The remote scan stopped reporting progress"))??;
+                    reply = tokio::time::timeout(Duration::from_secs(90), expect_msg::<StreamReply>(&mut recv))
+                        .await
+                        .map_err(|_| anyhow::anyhow!("The remote scan stopped reporting progress"))??;
                 }
             }
             .await;
@@ -146,10 +146,7 @@ pub(crate) async fn serve(
     }
     // Read after probing: normal TCP/ICMP traffic populated the host's ARP
     // table, even for devices that silently filter every selected TCP port.
-    let interface = interfaces
-        .iter()
-        .find(|i| i.address == request.interface)
-        .expect("validated interface");
+    let interface = interfaces.iter().find(|i| i.address == request.interface).expect("validated interface");
     let neighbors = neighbors(interface).await;
     for (address, mac) in neighbors {
         if !(first..=last).contains(&u32::from(address)) {
@@ -165,15 +162,12 @@ pub(crate) async fn serve(
         write_msg(send, &event(ScanEvent::Device(device))).await?;
     }
     if (first..=last).contains(&u32::from(interface.address)) {
-        let mut local = found
-            .get(&interface.address)
-            .cloned()
-            .unwrap_or(NetworkDevice {
-                address: interface.address,
-                mac: None,
-                open_ports: Vec::new(),
-                responded: true,
-            });
+        let mut local = found.get(&interface.address).cloned().unwrap_or(NetworkDevice {
+            address: interface.address,
+            mac: None,
+            open_ports: Vec::new(),
+            responded: true,
+        });
         local.mac = Some(interface.mac.clone());
         local.responded = true; // This adapter belongs to the running host.
         write_msg(send, &event(ScanEvent::Device(local))).await?;
@@ -193,11 +187,7 @@ async fn tcp_probe(address: Ipv4Addr, source: Ipv4Addr, port: u16) -> (u16, bool
     };
     match tokio::time::timeout(Duration::from_millis(400), result).await {
         Ok(Ok(_)) => (port, true, true),
-        Ok(Err(e)) => (
-            port,
-            false,
-            e.kind() == std::io::ErrorKind::ConnectionRefused,
-        ),
+        Ok(Err(e)) => (port, false, e.kind() == std::io::ErrorKind::ConnectionRefused),
         Err(_) => (port, false, false),
     }
 }
@@ -205,12 +195,7 @@ async fn tcp_probe(address: Ipv4Addr, source: Ipv4Addr, port: u16) -> (u16, bool
 async fn probe(address: Ipv4Addr, source: Ipv4Addr, ports: Arc<Vec<u16>>) -> NetworkDevice {
     let mut jobs = JoinSet::new();
     let mut pending = ports.iter();
-    let mut device = NetworkDevice {
-        address,
-        mac: None,
-        open_ports: Vec::new(),
-        responded: false,
-    };
+    let mut device = NetworkDevice { address, mac: None, open_ports: Vec::new(), responded: false };
     loop {
         // Six port tasks per address, sixteen addresses at once. Keep task
         // memory bounded too, rather than spawning every requested port.
@@ -255,9 +240,7 @@ pub(crate) async fn ping(address: Ipv4Addr, source: Ipv4Addr) -> bool {
         let _permit = permit;
         use windows_sys::Win32::{
             Foundation::INVALID_HANDLE_VALUE,
-            NetworkManagement::IpHelper::{
-                ICMP_ECHO_REPLY, IcmpCloseHandle, IcmpCreateFile, IcmpSendEcho2Ex,
-            },
+            NetworkManagement::IpHelper::{ICMP_ECHO_REPLY, IcmpCloseHandle, IcmpCreateFile, IcmpSendEcho2Ex},
         };
         // SAFETY: the handle is created and closed here; the u64 reply buffer
         // is aligned and larger than ICMP_ECHO_REPLY + payload + ICMP header.
@@ -295,27 +278,9 @@ pub(crate) async fn ping(address: Ipv4Addr, source: Ipv4Addr) -> bool {
 pub(crate) async fn ping(address: Ipv4Addr, source: Ipv4Addr) -> bool {
     let mut cmd = command("ping");
     #[cfg(target_os = "macos")]
-    cmd.args([
-        "-n",
-        "-c",
-        "1",
-        "-W",
-        "500",
-        "-S",
-        &source.to_string(),
-        &address.to_string(),
-    ]);
+    cmd.args(["-n", "-c", "1", "-W", "500", "-S", &source.to_string(), &address.to_string()]);
     #[cfg(not(any(windows, target_os = "macos")))]
-    cmd.args([
-        "-n",
-        "-c",
-        "1",
-        "-W",
-        "1",
-        "-I",
-        &source.to_string(),
-        &address.to_string(),
-    ]);
+    cmd.args(["-n", "-c", "1", "-W", "1", "-I", &source.to_string(), &address.to_string()]);
     // An absent/restricted ping command just means TCP-only discovery. Raw
     // sockets and external scanners are never prerequisites.
     matches!(tokio::time::timeout(Duration::from_millis(900), cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()).await, Ok(Ok(s)) if s.success())
@@ -344,8 +309,7 @@ async fn neighbors(interface: &NetworkInterface) -> BTreeMap<Ipv4Addr, String> {
         cmd.args(["-a", "-N", &interface.address.to_string()]);
         #[cfg(not(windows))]
         cmd.arg("-an");
-        let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(2), cmd.output()).await
-        else {
+        let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(2), cmd.output()).await else {
             return BTreeMap::new();
         };
         parse_neighbors(&String::from_utf8_lossy(&output.stdout), &interface.name)
@@ -357,21 +321,11 @@ fn valid_mac(text: &str) -> Option<String> {
     if parts.len() != 6 {
         return None;
     }
-    let bytes: Vec<u8> = parts
-        .iter()
-        .map(|p| u8::from_str_radix(p, 16))
-        .collect::<Result<_, _>>()
-        .ok()?;
+    let bytes: Vec<u8> = parts.iter().map(|p| u8::from_str_radix(p, 16)).collect::<Result<_, _>>().ok()?;
     if bytes.iter().all(|&b| b == 0) || bytes[0] & 1 != 0 {
         return None;
     }
-    Some(
-        bytes
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<Vec<_>>()
-            .join(":"),
-    )
+    Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":"))
 }
 
 #[cfg(any(not(target_os = "linux"), test))]
@@ -385,9 +339,7 @@ fn parse_neighbors(text: &str, interface: &str) -> BTreeMap<Ipv4Addr, String> {
             {
                 return None;
             }
-            let address = fields
-                .iter()
-                .find_map(|f| f.trim_matches(['(', ')']).parse().ok())?;
+            let address = fields.iter().find_map(|f| f.trim_matches(['(', ')']).parse().ok())?;
             let mac = fields.iter().find_map(|f| valid_mac(f))?;
             Some((address, mac))
         })
@@ -404,12 +356,7 @@ mod tests {
         let closed_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let closed = closed_listener.local_addr().unwrap().port();
         drop(closed_listener);
-        let device = probe(
-            Ipv4Addr::LOCALHOST,
-            Ipv4Addr::LOCALHOST,
-            Arc::new(vec![open, closed]),
-        )
-        .await;
+        let device = probe(Ipv4Addr::LOCALHOST, Ipv4Addr::LOCALHOST, Arc::new(vec![open, closed])).await;
         assert!(device.responded);
         assert_eq!(device.open_ports, vec![open]);
     }

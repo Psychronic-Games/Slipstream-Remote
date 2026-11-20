@@ -19,7 +19,10 @@ include!(concat!(env!("OUT_DIR"), "/softgl.rs"));
 const PINS: &str = include_str!("../../../../packaging/windows/softgl.txt");
 
 fn pinned(name: &str) -> Option<&'static str> {
-    PINS.lines().map(|l| l.split_whitespace().collect::<Vec<_>>()).find(|w| w.len() == 3 && w[0] == "file" && w[1] == name).map(|w| w[2])
+    PINS.lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>())
+        .find(|w| w.len() == 3 && w[0] == "file" && w[1] == name)
+        .map(|w| w[2])
 }
 
 fn version() -> &'static str {

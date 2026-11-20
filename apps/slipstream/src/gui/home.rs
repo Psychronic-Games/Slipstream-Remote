@@ -45,7 +45,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         update_banner(app, ui);
         ui.add_space(10.0);
     }
-    #[cfg(target_os="linux")]
+    #[cfg(target_os = "linux")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some() && app.client.with_settings(|s| s.host.enabled) {
         if let Some(Err(error)) = app.screen_access.result.clone() {
             ui.label(RichText::new(error).color(pal::GOLD));
@@ -53,7 +53,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 if theme::pill(ui, "Retry screen access", pal::GREEN).clicked() {
                     app.screen_access.start(&app.rt, &app.client, ui.ctx(), false);
                 }
-                if theme::pill(ui, "Screen permission…", pal::BLUE).clicked() { app.page = Page::Settings; }
+                if theme::pill(ui, "Screen permission…", pal::BLUE).clicked() {
+                    app.page = Page::Settings;
+                }
             });
             ui.add_space(6.0);
         } else if app.screen_access.busy() {
@@ -98,10 +100,14 @@ fn devices_and_chats(app: &mut App, ui: &mut Ui) {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = GAP;
             let top = ui.cursor().top();
-            beside = ui.allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
-                ui.set_width(left);
-                super::saved::panel(app, ui);
-            }).response.rect.height();
+            beside = ui
+                .allocate_ui_with_layout(vec2(left, 0.0), Layout::top_down(Align::Min), |ui| {
+                    ui.set_width(left);
+                    super::saved::panel(app, ui);
+                })
+                .response
+                .rect
+                .height();
             ui.allocate_ui_with_layout(vec2(right, 0.0), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(right);
                 // As tall as what's visible from its top down (so the
@@ -138,18 +144,26 @@ fn station_tabs(app: &mut App, ui: &mut Ui) {
     let custom = app.client.has_custom_station();
     let station = if custom { app.client.with_settings(|s| s.server.url.clone()) } else { None };
     if app.primary_station != station {
-        if app.selected_public { app.station_draft = Default::default(); }
-        else { app.connect_id.clear(); app.connect_pw.clear(); }
+        if app.selected_public {
+            app.station_draft = Default::default();
+        } else {
+            app.connect_id.clear();
+            app.connect_pw.clear();
+        }
         app.primary_station = station;
         app.select_public(!custom);
     }
     if !custom {
-        if app.client.public_dir_status() != DirStatus::NotConfigured { app.select_public(true); }
+        if app.client.public_dir_status() != DirStatus::NotConfigured {
+            app.select_public(true);
+        }
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("SLIPSTREAM PUBLIC").font(theme::display_bold(18.0)).color(pal::LAVENDER));
             if !app.link_open
                 && theme::pill(ui, "Link to my organisation", pal::BLUE)
-                    .on_hover_text("Use your support provider's own station: its address and setup code are on its download page")
+                    .on_hover_text(
+                        "Use your support provider's own station: its address and setup code are on its download page",
+                    )
                     .clicked()
             {
                 app.link_open = true;
@@ -203,9 +217,15 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         let custom = app.client.has_custom_station();
         let public = app.selected_public || !custom;
         let directory = app.selected_dir_status();
-        ui.label(RichText::new(if public { "public.slipstreamremote.com".to_string() } else {
-            app.client.with_settings(|s| s.server.url.clone()).unwrap_or_default()
-        }).small().color(pal::DIM));
+        ui.label(
+            RichText::new(if public {
+                "public.slipstreamremote.com".to_string()
+            } else {
+                app.client.with_settings(|s| s.server.url.clone()).unwrap_or_default()
+            })
+            .small()
+            .color(pal::DIM),
+        );
         let (status, color) = match &directory {
             DirStatus::Online { .. } => ("ONLINE · READY FOR LINK", pal::GREEN),
             DirStatus::Connecting | DirStatus::Ready => ("CONTACTING SERVER…", pal::GOLD),
@@ -224,7 +244,11 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
 
         ui.label(RichText::new("YOUR ID").font(theme::display(15.0)).color(pal::LAVENDER));
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&id_text).font(theme::mono(if ui.available_width()<420.0 {32.0}else{44.0})).color(pal::TAN));
+            ui.label(
+                RichText::new(&id_text)
+                    .font(theme::mono(if ui.available_width() < 420.0 { 32.0 } else { 44.0 }))
+                    .color(pal::TAN),
+            );
             ui.add_space(8.0);
             if theme::pill_sized(ui, "Copy", pal::LAVENDER, vec2(70.0, 28.0)).clicked() {
                 ui.ctx().copy_text(id_text.replace(' ', ""));
@@ -233,12 +257,18 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
         });
         ui.add_space(4.0);
         if app.via_service {
-            if let DirStatus::Error(error) = &directory { ui.label(RichText::new(error).color(pal::GOLD)); }
+            if let DirStatus::Error(error) = &directory {
+                ui.label(RichText::new(error).color(pal::GOLD));
+            }
             // The service owns both its one-time code and permanent password.
             if cfg!(windows) {
                 one_time_password(app, ui);
             }
-            ui.label(RichText::new("REACHABLE THROUGH THE SLIPSTREAM SERVICE").font(theme::display(15.0)).color(pal::LAVENDER));
+            ui.label(
+                RichText::new("REACHABLE THROUGH THE SLIPSTREAM SERVICE")
+                    .font(theme::display(15.0))
+                    .color(pal::LAVENDER),
+            );
             ui.label(
                 RichText::new(if cfg!(windows) {
                     "Share the one-time code above, or use this computer's unattended password. Both work with the same ID. The service also reaches the login screen and administrator prompts."
@@ -293,7 +323,11 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
             }
             if let Some(why) = &blind {
                 ui.add_space(6.0);
-                let what = if desktop { "The login screen and a locked session can't be shown on this computer" } else { "The screen can't be shown right now" };
+                let what = if desktop {
+                    "The login screen and a locked session can't be shown on this computer"
+                } else {
+                    "The screen can't be shown right now"
+                };
                 ui.label(RichText::new(format!("{what}: {why}.")).color(pal::PEACH));
             }
             #[cfg(any(windows, target_os = "linux"))]
@@ -303,7 +337,9 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
                     ui.label(RichText::new(why).color(pal::PEACH));
                 }
                 ui.add_enabled_ui(!app.service_busy(), |ui| {
-                    if theme::pill(ui, if app.service_busy() { "Starting…" } else { "Start the service" }, pal::GREEN).clicked() {
+                    if theme::pill(ui, if app.service_busy() { "Starting…" } else { "Start the service" }, pal::GREEN)
+                        .clicked()
+                    {
                         let ctx = ui.ctx().clone();
                         app.service_action(&ctx, true, true);
                     }
@@ -331,10 +367,18 @@ fn station_panel(app: &mut App, ui: &mut Ui, t: f64) {
                     .on_hover_text(&log);
             }
         }
-        #[cfg(target_os="android")]
+        #[cfg(target_os = "android")]
         super::android::hosting_panel(ui);
         if app.client.with_settings(|s| s.host.permanent_password_secret.is_some()) {
-            ui.label(RichText::new(if cfg!(target_os="android") {"Your saved password also works while screen sharing is active."}else{"Unattended access enabled — your permanent password also works."}).small().color(pal::DIM));
+            ui.label(
+                RichText::new(if cfg!(target_os = "android") {
+                    "Your saved password also works while screen sharing is active."
+                } else {
+                    "Unattended access enabled — your permanent password also works."
+                })
+                .small()
+                .color(pal::DIM),
+            );
         }
     });
 }
@@ -345,7 +389,11 @@ fn one_time_password(app: &mut App, ui: &mut Ui) {
     ui.label(RichText::new("ONE-TIME CODE").font(theme::display(15.0)).color(pal::LAVENDER));
     if let Some(password) = password {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&password).font(theme::mono(if ui.available_width()<420.0 {26.0}else{34.0})).color(pal::GOLD));
+            ui.label(
+                RichText::new(&password)
+                    .font(theme::mono(if ui.available_width() < 420.0 { 26.0 } else { 34.0 }))
+                    .color(pal::GOLD),
+            );
             ui.add_space(8.0);
             if theme::pill_sized(ui, "Copy", pal::LAVENDER, vec2(70.0, 28.0)).clicked() {
                 ui.ctx().copy_text(password.clone());
@@ -357,11 +405,14 @@ fn one_time_password(app: &mut App, ui: &mut Ui) {
         });
         let help = if app.via_service || app.client.with_settings(|s| s.host.permanent_password_secret.is_some()) {
             "Either this code or the unattended password works. The code changes after a session ends."
-        } else { "The code changes after a session ends." };
+        } else {
+            "The code changes after a session ends."
+        };
         ui.label(RichText::new(help).small().color(pal::DIM));
     } else {
-        ui.label(RichText::new("Waiting for the service's code…").color(pal::GOLD))
-            .on_hover_text("Restart Slipstream to bring an older service up to date. Your unattended password continues to work.");
+        ui.label(RichText::new("Waiting for the service's code…").color(pal::GOLD)).on_hover_text(
+            "Restart Slipstream to bring an older service up to date. Your unattended password continues to work.",
+        );
     }
     ui.add_space(6.0);
 }
@@ -420,9 +471,15 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     theme::panel(ui, "Establish link", pal::ORANGE, |ui| {
         ui.label(RichText::new("Control another device.").color(pal::DIM));
-        ui.label(RichText::new(if app.selected_public || !app.client.has_custom_station() {
-            "Looking up IDs on Slipstream Public"
-        } else { "Looking up IDs on your self-hosted station" }).small().color(pal::LAVENDER));
+        ui.label(
+            RichText::new(if app.selected_public || !app.client.has_custom_station() {
+                "Looking up IDs on Slipstream Public"
+            } else {
+                "Looking up IDs on your self-hosted station"
+            })
+            .small()
+            .color(pal::LAVENDER),
+        );
         ui.add_space(8.0);
         ui.label(RichText::new("PARTNER ID").font(theme::display(15.0)).color(pal::ORANGE));
         let field_font = theme::mono(22.0);
@@ -448,24 +505,33 @@ fn connect_panel(app: &mut App, ui: &mut Ui) {
             pw_resp.request_focus();
         }
         ui.add_space(8.0);
-        ui.allocate_ui_with_layout(vec2(ui.available_width(), if cfg!(target_os="android") {42.0} else {36.0}), Layout::right_to_left(Align::Center), |ui| {
-            let busy = app.attempt.is_some();
-            let engage = ui.add_enabled(!busy, |ui: &mut egui::Ui| theme::pill_sized(ui, "Engage", pal::ORANGE, vec2(120.0, 34.0)));
-            if (engage.clicked() || (enter && !app.connect_pw.is_empty())) && !busy {
-                app.start_connect(&ctx);
-            }
-        });
+        ui.allocate_ui_with_layout(
+            vec2(ui.available_width(), if cfg!(target_os = "android") { 42.0 } else { 36.0 }),
+            Layout::right_to_left(Align::Center),
+            |ui| {
+                let busy = app.attempt.is_some();
+                let engage = ui.add_enabled(!busy, |ui: &mut egui::Ui| {
+                    theme::pill_sized(ui, "Engage", pal::ORANGE, vec2(120.0, 34.0))
+                });
+                if (engage.clicked() || (enter && !app.connect_pw.is_empty())) && !busy {
+                    app.start_connect(&ctx);
+                }
+            },
+        );
     });
 }
 
 fn recent_panel(app: &mut App, ui: &mut Ui) {
-    let recent = app.client.with_settings(|s| s.recent.clone()).into_iter().filter(|r| {
-        match super::quick_connect::recent_station(app, r) {
+    let recent = app
+        .client
+        .with_settings(|s| s.recent.clone())
+        .into_iter()
+        .filter(|r| match super::quick_connect::recent_station(app, r) {
             Some(slipstream_session::StationRef::Public) => app.selected_public,
             Some(slipstream_session::StationRef::Primary) => !app.selected_public || !app.client.has_custom_station(),
             _ => false,
-        }
-    }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
     theme::panel(ui, "Recent links", pal::BLUE, |ui| {
         if recent.is_empty() {
             ui.label(RichText::new("Devices you connect to will appear here.").color(pal::DIM));
@@ -501,7 +567,8 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
                 );
                 // ★: keep it in a signed-in station's list.
                 let star = egui::Rect::from_center_size(rect.right_top() + vec2(-18.0, 18.0), vec2(26.0, 26.0));
-                let star_resp = ui.interact(star, resp.id.with("save"), Sense::click()).on_hover_text("Save in my devices");
+                let star_resp =
+                    ui.interact(star, resp.id.with("save"), Sense::click()).on_hover_text("Save in my devices");
                 theme::star(painter, star.shrink(5.0), if star_resp.hovered() { pal::GOLD } else { pal::DIM });
                 star_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Save in my devices"));
                 if star_resp.clicked() {
@@ -511,7 +578,10 @@ fn recent_panel(app: &mut App, ui: &mut Ui) {
                     match route {
                         Some(slipstream_session::StationRef::Primary) => app.select_public(false),
                         Some(slipstream_session::StationRef::Public) => app.select_public(true),
-                        _ => { app.toast("Open + / New link to connect through this saved station", pal::GOLD); continue; }
+                        _ => {
+                            app.toast("Open + / New link to connect through this saved station", pal::GOLD);
+                            continue;
+                        }
                     }
                     // Saved with its password: no need to ask for it again.
                     if let Some((account, device)) = super::quick_connect::saved_with_password(app, r) {
@@ -558,7 +628,12 @@ pub(super) fn recent_prompt(app: &mut App, ctx: &egui::Context) {
             let chrome = theme::window_header(ui, &title, pal::ORANGE);
             open = !chrome.close;
             ui.label(RichText::new(format!("{} · its one-time or unattended password", p.id)).color(pal::DIM));
-            let field = ui.add(theme::text_input(&mut p.password).hint_text("password").password(true).desired_width(300.0f32.min(ui.available_width())));
+            let field = ui.add(
+                theme::text_input(&mut p.password)
+                    .hint_text("password")
+                    .password(true)
+                    .desired_width(300.0f32.min(ui.available_width())),
+            );
             if !std::mem::replace(&mut p.focused, true) {
                 field.request_focus();
             }
@@ -650,14 +725,22 @@ fn incoming_banner(app: &mut App, ui: &mut Ui, t: f64) {
         let mut chat = None;
         for s in &app.incoming {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(if s.chat_only { "◆ INBOUND CHAT" } else { "◆ INBOUND LINK" }).font(theme::display_bold(18.0)).color(pal::RED));
+                ui.label(
+                    RichText::new(if s.chat_only { "◆ INBOUND CHAT" } else { "◆ INBOUND LINK" })
+                        .font(theme::display_bold(18.0))
+                        .color(pal::RED),
+                );
                 ui.label(
                     RichText::new({
                         let secs = s.started.elapsed().as_secs();
-                        let doing = if s.chat_only { "is linked for chat only (screen not shared)" } else { "is controlling this device" };
+                        let doing = if s.chat_only {
+                            "is linked for chat only (screen not shared)"
+                        } else {
+                            "is controlling this device"
+                        };
                         format!("{} {doing} · {:02}:{:02}", s.peer, secs / 60, secs % 60)
                     })
-                        .font(theme::body(17.0)),
+                    .font(theme::body(17.0)),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if theme::pill(ui, "Terminate", pal::RED).clicked() {
@@ -671,7 +754,11 @@ fn incoming_banner(app: &mut App, ui: &mut Ui, t: f64) {
         }
         if let Some(id) = end {
             #[cfg(windows)]
-            if let Some(bridge)=&app.service_chat {bridge.sender().disconnect(id);} else {app.client.disconnect_host_session(id);}
+            if let Some(bridge) = &app.service_chat {
+                bridge.sender().disconnect(id);
+            } else {
+                app.client.disconnect_host_session(id);
+            }
             #[cfg(not(windows))]
             app.client.disconnect_host_session(id);
         }
@@ -693,36 +780,61 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
             let (chat, client, session, peer) = (s.chat.clone(), app.client.clone(), s.id, s.peer.clone());
             #[cfg(windows)]
             let service_sender = app.service_chat.as_ref().map(|g| g.sender());
-            let builder = egui::ViewportBuilder::default().with_title(format!("Support status · {}", s.peer))
-                .with_decorations(false).with_transparent(theme::transparent_window())
-                .with_window_level(egui::WindowLevel::AlwaysOnTop).with_active(false)
+            let builder = egui::ViewportBuilder::default()
+                .with_title(format!("Support status · {}", s.peer))
+                .with_decorations(false)
+                .with_transparent(theme::transparent_window())
+                .with_window_level(egui::WindowLevel::AlwaysOnTop)
+                .with_active(false)
                 .with_icon(ICON.get_or_init(|| std::sync::Arc::new(theme::icon(64))).clone())
-                .with_inner_size([430.0, 240.0]).with_min_inner_size([330.0, 210.0]);
-            ctx.show_viewport_deferred(egui::ViewportId::from_hash_of(("support-status", session)), builder, move |ui, class| {
-                let ctx = ui.ctx().clone();
-                let mut chat = chat.lock().unwrap();
-                if !chat.status_open {theme::dismiss_tool_viewport(&ctx, class == egui::ViewportClass::Deferred);return;}
-                let (body, close) = theme::tool_frame(ui, "Support in progress", class == egui::ViewportClass::Deferred, pal::CYAN);
-                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(body));
-                egui::ScrollArea::vertical().max_height((body.height() - 60.0).max(40.0)).show(&mut content, |ui| {
-                    ui.label(RichText::new(&peer).color(pal::LAVENDER));
-                    ui.label(RichText::new(&chat.status).size(19.0).color(pal::TAN));
-                });
-                content.add_space(8.0);
-                content.horizontal_wrapped(|ui| {
-                    if theme::pill(ui, "Stop support", pal::RED).clicked() {
-                        #[cfg(windows)]
-                        if let Some(sender) = &service_sender {sender.disconnect(session);} else {client.disconnect_host_session(session);}
-                        #[cfg(not(windows))]
-                        client.disconnect_host_session(session);
+                .with_inner_size([430.0, 240.0])
+                .with_min_inner_size([330.0, 210.0]);
+            ctx.show_viewport_deferred(
+                egui::ViewportId::from_hash_of(("support-status", session)),
+                builder,
+                move |ui, class| {
+                    let ctx = ui.ctx().clone();
+                    let mut chat = chat.lock().unwrap();
+                    if !chat.status_open {
+                        theme::dismiss_tool_viewport(&ctx, class == egui::ViewportClass::Deferred);
+                        return;
+                    }
+                    let (body, close) =
+                        theme::tool_frame(ui, "Support in progress", class == egui::ViewportClass::Deferred, pal::CYAN);
+                    let mut content = ui.new_child(egui::UiBuilder::new().max_rect(body));
+                    egui::ScrollArea::vertical().max_height((body.height() - 60.0).max(40.0)).show(
+                        &mut content,
+                        |ui| {
+                            ui.label(RichText::new(&peer).color(pal::LAVENDER));
+                            ui.label(RichText::new(&chat.status).size(19.0).color(pal::TAN));
+                        },
+                    );
+                    content.add_space(8.0);
+                    content.horizontal_wrapped(|ui| {
+                        if theme::pill(ui, "Stop support", pal::RED).clicked() {
+                            #[cfg(windows)]
+                            if let Some(sender) = &service_sender {
+                                sender.disconnect(session);
+                            } else {
+                                client.disconnect_host_session(session);
+                            }
+                            #[cfg(not(windows))]
+                            client.disconnect_host_session(session);
+                            chat.status_open = false;
+                        }
+                        if theme::pill(ui, "Dismiss", pal::BLUE).clicked() {
+                            chat.status_open = false;
+                        }
+                    });
+                    if close || ctx.input(|i| i.viewport().close_requested()) {
                         chat.status_open = false;
                     }
-                    if theme::pill(ui, "Dismiss", pal::BLUE).clicked() {chat.status_open = false;}
-                });
-                if close || ctx.input(|i| i.viewport().close_requested()) {chat.status_open = false;}
-                if !chat.status_open {theme::dismiss_tool_viewport(&ctx, class == egui::ViewportClass::Deferred);}
-                ctx.request_repaint_after(std::time::Duration::from_millis(250));
-            });
+                    if !chat.status_open {
+                        theme::dismiss_tool_viewport(&ctx, class == egui::ViewportClass::Deferred);
+                    }
+                    ctx.request_repaint_after(std::time::Duration::from_millis(250));
+                },
+            );
         }
         let id = egui::ViewportId::from_hash_of(("incoming-chat", s.id));
         {
@@ -745,24 +857,32 @@ pub fn incoming_windows(app: &mut App, ctx: &egui::Context) {
         let (chat, client, session, peer) = (s.chat.clone(), app.client.clone(), s.id, s.peer.clone());
         let me = app.client.with_settings(|s| s.device_name.clone());
         #[cfg(windows)]
-        let service_sender=app.service_chat.as_ref().map(|g|g.sender());
+        let service_sender = app.service_chat.as_ref().map(|g| g.sender());
         ctx.show_viewport_deferred(id, builder, move |ui, _class| {
             let names = ChatNames { me: &me, them: &peer };
-            let body=theme::native_title_bar_with_rail(ui,&format!("Chat · {peer}"),true);
-            let body=theme::chat_body(ui,body);
-            let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
+            let body = theme::native_title_bar_with_rail(ui, &format!("Chat · {peer}"), true);
+            let body = theme::chat_body(ui, body);
+            let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(body));
             let mut guard = chat.lock().expect("chat lock");
             let chat = &mut *guard;
             if std::mem::take(&mut chat.ping) {
-                ui.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
+                ui.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                    egui::UserAttentionType::Informational,
+                ));
             }
             ui.painter().rect_filled(ui.max_rect(), 0.0, pal::BG);
             let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect()));
             #[cfg(windows)]
-            if let Some(sender)=&service_sender {
-                if !sender.connected() {inner.label(RichText::new("Reconnecting to host service…").color(pal::GOLD));}
-                chat_ui_with_echo(&mut inner,&mut chat.log,&mut chat.input,names,false,|text|sender.chat(session,text));
-            } else {chat_ui(&mut inner,&mut chat.log,&mut chat.input,names,|text|client.host_chat(session,text));}
+            if let Some(sender) = &service_sender {
+                if !sender.connected() {
+                    inner.label(RichText::new("Reconnecting to host service…").color(pal::GOLD));
+                }
+                chat_ui_with_echo(&mut inner, &mut chat.log, &mut chat.input, names, false, |text| {
+                    sender.chat(session, text)
+                });
+            } else {
+                chat_ui(&mut inner, &mut chat.log, &mut chat.input, names, |text| client.host_chat(session, text));
+            }
             #[cfg(not(windows))]
             chat_ui(&mut inner, &mut chat.log, &mut chat.input, names, |text| client.host_chat(session, text));
             if ui.input(|i| i.viewport().close_requested()) {
@@ -782,40 +902,74 @@ pub struct ChatNames<'a> {
 }
 
 /// Shared chat log + input. `send` is called with each outgoing message.
-pub fn chat_ui(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, names: ChatNames, send: impl FnOnce(String)) {
-    chat_ui_with_echo(ui,log,input,names,true,|text|{send(text);true});
+pub fn chat_ui(
+    ui: &mut Ui,
+    log: &mut Vec<(bool, String)>,
+    input: &mut String,
+    names: ChatNames,
+    send: impl FnOnce(String),
+) {
+    chat_ui_with_echo(ui, log, input, names, true, |text| {
+        send(text);
+        true
+    });
 }
 
-fn chat_ui_with_echo(ui: &mut Ui, log: &mut Vec<(bool, String)>, input: &mut String, names: ChatNames, echo:bool, send: impl FnOnce(String)->bool) {
+fn chat_ui_with_echo(
+    ui: &mut Ui,
+    log: &mut Vec<(bool, String)>,
+    input: &mut String,
+    names: ChatNames,
+    echo: bool,
+    send: impl FnOnce(String) -> bool,
+) {
     let log_height = (ui.available_height() - 52.0).max(0.0);
-    egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false])
-        .max_height(log_height).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        for (mine, text) in log.iter() {
-            let (who, color) = if *mine { (names.me, pal::ORANGE) } else { (names.them, pal::BLUE) };
-            let who = if who.trim().is_empty() { if *mine { "This computer" } else { "Remote computer" } } else { who };
-            egui::Frame::new().fill(pal::PANEL).corner_radius(8.0)
-                .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.4)))
-                .inner_margin(10).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        ui.add(egui::Label::new(RichText::new(who.to_uppercase()).font(theme::display_bold(14.0)).color(color)).truncate());
-                        if *mine {
-                            ui.label(RichText::new("(you)").small().color(pal::DIM));
-                        }
+    egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).max_height(log_height).show(
+        ui,
+        |ui| {
+            ui.set_width(ui.available_width());
+            for (mine, text) in log.iter() {
+                let (who, color) = if *mine { (names.me, pal::ORANGE) } else { (names.them, pal::BLUE) };
+                let who =
+                    if who.trim().is_empty() { if *mine { "This computer" } else { "Remote computer" } } else { who };
+                egui::Frame::new()
+                    .fill(pal::PANEL)
+                    .corner_radius(8.0)
+                    .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.4)))
+                    .inner_margin(10)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(who.to_uppercase()).font(theme::display_bold(14.0)).color(color),
+                                )
+                                .truncate(),
+                            );
+                            if *mine {
+                                ui.label(RichText::new("(you)").small().color(pal::DIM));
+                            }
+                        });
+                        ui.label(text);
                     });
-                    ui.label(text);
-                });
-        }
-    });
+            }
+        },
+    );
     ui.horizontal(|ui| {
         let input_width = (ui.available_width() - 108.0).max(40.0);
-        let resp = ui.add(theme::text_input(input)
-            .hint_text("Transmit a message…").desired_width(input_width));
+        let resp = ui.add(theme::text_input(input).hint_text("Transmit a message…").desired_width(input_width));
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if (theme::console_button(ui, "Send", pal::ORANGE, theme::ConsoleIcon::Chat, false).clicked() || enter) && !input.trim().is_empty() {
+        if (theme::console_button(ui, "Send", pal::ORANGE, theme::ConsoleIcon::Chat, false).clicked() || enter)
+            && !input.trim().is_empty()
+        {
             let text = std::mem::take(input);
-            if send(text.clone()) {if echo {log.push((true,text));}} else {*input=text;}
+            if send(text.clone()) {
+                if echo {
+                    log.push((true, text));
+                }
+            } else {
+                *input = text;
+            }
             resp.request_focus();
         }
     });
@@ -840,7 +994,10 @@ pub fn links_ui(app: &mut App, ui: &mut Ui) {
                     Some(r) => (format!("TERMINATED — {r}"), pal::RED),
                     None => (format!("{:.0} FPS · {:.1} MBPS", link.stats.fps, link.stats.kbps / 1000.0), pal::GREEN),
                 };
-                let name = match entry.screen { Some(n) => format!("{} · SCREEN {n}", entry.name.to_uppercase()), None => entry.name.to_uppercase() };
+                let name = match entry.screen {
+                    Some(n) => format!("{} · SCREEN {n}", entry.name.to_uppercase()),
+                    None => entry.name.to_uppercase(),
+                };
                 ui.label(RichText::new(name).font(theme::display(22.0)).color(pal::TAN));
                 ui.label(RichText::new(link.peer.to_string()).font(theme::mono(16.0)).color(pal::BLUE));
                 ui.label(RichText::new(status.0).font(theme::display(16.0)).color(status.1));
@@ -851,7 +1008,10 @@ pub fn links_ui(app: &mut App, ui: &mut Ui) {
                     if theme::pill(ui, "View", pal::BLUE).clicked() {
                         open = Some(tab.id);
                     }
-                    if !ui.ctx().embed_viewports() && theme::pill(ui, if tab.detached {"Focus window"} else {"Open window"}, pal::VIOLET).clicked() {
+                    if !ui.ctx().embed_viewports()
+                        && theme::pill(ui, if tab.detached { "Focus window" } else { "Open window" }, pal::VIOLET)
+                            .clicked()
+                    {
                         window = Some(tab.id);
                     }
                 });
@@ -859,10 +1019,15 @@ pub fn links_ui(app: &mut App, ui: &mut Ui) {
             ui.separator();
         }
         if let Some(id) = open {
-            if app.tab(id).is_some_and(|t| t.lock().unwrap().detached) { app.open_session_window(ui.ctx(), id); }
-            else { app.page = Page::Remote(id); }
+            if app.tab(id).is_some_and(|t| t.lock().unwrap().detached) {
+                app.open_session_window(ui.ctx(), id);
+            } else {
+                app.page = Page::Remote(id);
+            }
         }
-        if let Some(id) = window { app.open_session_window(ui.ctx(), id); }
+        if let Some(id) = window {
+            app.open_session_window(ui.ctx(), id);
+        }
         if let Some(id) = close {
             app.close_tab(id);
         }

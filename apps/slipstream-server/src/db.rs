@@ -5,17 +5,14 @@ use std::{collections::HashMap, path::Path, sync::Mutex};
 use anyhow::Result;
 use rand::Rng;
 use rusqlite::{Connection, OptionalExtension, params};
-use slipstream_core::directory::{DeviceId, DeviceInfo, DevicePresence, PresenceStatus, ONLINE_WINDOW_SECS};
+use slipstream_core::directory::{DeviceId, DeviceInfo, DevicePresence, ONLINE_WINDOW_SECS, PresenceStatus};
 
 pub struct Db {
     conn: Mutex<Connection>,
 }
 
 pub fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or_default()
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or_default()
 }
 
 pub enum Found {
@@ -47,9 +44,8 @@ impl Db {
     /// Records a heartbeat; returns the device's ID (assigning one if new).
     pub fn register(&self, endpoint: &str, info: &DeviceInfo, addr_json: &str) -> Result<DeviceId> {
         let conn = self.conn.lock().unwrap();
-        let existing: Option<u32> = conn
-            .query_row("SELECT device_id FROM devices WHERE endpoint = ?1", [endpoint], |r| r.get(0))
-            .optional()?;
+        let existing: Option<u32> =
+            conn.query_row("SELECT device_id FROM devices WHERE endpoint = ?1", [endpoint], |r| r.get(0)).optional()?;
         if let Some(id) = existing {
             conn.execute(
                 "UPDATE devices SET name = ?2, os = ?3, app_version = ?4, addr = ?5, last_seen = ?6 WHERE endpoint = ?1",
@@ -80,11 +76,9 @@ impl Db {
     pub fn lookup(&self, id: DeviceId) -> Result<Found> {
         let conn = self.conn.lock().unwrap();
         let row: Option<(String, String, String, Option<String>, i64)> = conn
-            .query_row(
-                "SELECT name, os, app_version, addr, last_seen FROM devices WHERE device_id = ?1",
-                [id.0],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            )
+            .query_row("SELECT name, os, app_version, addr, last_seen FROM devices WHERE device_id = ?1", [id.0], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
             .optional()?;
         let Some((name, os, app_version, addr, last_seen)) = row else { return Ok(Found::Unknown) };
         let info = DeviceInfo { name, os, app_version };
@@ -104,29 +98,36 @@ impl Db {
         let mut query = conn.prepare(&format!(
             "SELECT device_id,last_seen,(addr IS NOT NULL AND addr <> '') FROM devices WHERE device_id IN ({placeholders})"
         ))?;
-        let rows = query.query_map(rusqlite::params_from_iter(ids.iter().map(|id| id.0)), |row| {
-            let id: u32 = row.get(0)?;
-            let last_seen: i64 = row.get(1)?;
-            let has_addr: bool = row.get(2)?;
-            let status = if has_addr && now() - last_seen <= ONLINE_WINDOW_SECS as i64 {
-                PresenceStatus::Online
-            } else {
-                PresenceStatus::Offline
-            };
-            Ok((DeviceId(id), status))
-        })?.collect::<rusqlite::Result<HashMap<_, _>>>()?;
-        Ok(ids.iter().map(|id| DevicePresence {
-            id: *id, status: rows.get(id).copied().unwrap_or(PresenceStatus::NotFound),
-        }).collect())
+        let rows = query
+            .query_map(rusqlite::params_from_iter(ids.iter().map(|id| id.0)), |row| {
+                let id: u32 = row.get(0)?;
+                let last_seen: i64 = row.get(1)?;
+                let has_addr: bool = row.get(2)?;
+                let status = if has_addr && now() - last_seen <= ONLINE_WINDOW_SECS as i64 {
+                    PresenceStatus::Online
+                } else {
+                    PresenceStatus::Offline
+                };
+                Ok((DeviceId(id), status))
+            })?
+            .collect::<rusqlite::Result<HashMap<_, _>>>()?;
+        Ok(ids
+            .iter()
+            .map(|id| DevicePresence { id: *id, status: rows.get(id).copied().unwrap_or(PresenceStatus::NotFound) })
+            .collect())
     }
 
     /// (known devices, online now)
     /// Private relay diagnostics: identify an authenticated endpoint without reading vaults.
     pub fn describe_endpoint(&self, endpoint: &str) -> Result<Option<(u32, String)>> {
-        Ok(self.conn.lock().unwrap().query_row(
-            "SELECT device_id, name FROM devices WHERE endpoint = ?1", [endpoint],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).optional()?)
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT device_id, name FROM devices WHERE endpoint = ?1", [endpoint], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?)
     }
 
     pub fn counts(&self) -> Result<(i64, i64)> {

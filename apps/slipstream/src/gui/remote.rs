@@ -18,7 +18,12 @@ use slipstream_core::{
 use slipstream_session::{FrameShared, ViewerCmd, ViewerEvent, ViewerSession, ViewerStats};
 use tokio::sync::mpsc;
 
-use super::{files::FileManager, home, keys, session_tabs, theme, theme::{pal,ConsoleIcon as Icon}, touch, video};
+use super::{
+    files::FileManager,
+    home, keys, session_tabs, theme,
+    theme::{ConsoleIcon as Icon, pal},
+    touch, video,
+};
 
 pub enum CapturedKey {
     Key {
@@ -49,11 +54,15 @@ struct Pasting {
 }
 
 struct Reconnecting {
-    progress:Arc<Mutex<String>>,
-    rx:tokio::sync::oneshot::Receiver<super::ConnectResult>,
-    task:tokio::task::JoinHandle<()>,
+    progress: Arc<Mutex<String>>,
+    rx: tokio::sync::oneshot::Receiver<super::ConnectResult>,
+    task: tokio::task::JoinHandle<()>,
 }
-impl Drop for Reconnecting {fn drop(&mut self) {self.task.abort();}}
+impl Drop for Reconnecting {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
 
 pub enum TabAction {
     None,
@@ -153,8 +162,8 @@ pub struct Link {
     pub via: slipstream_session::StationRef,
     pub stats: ViewerStats,
     pub closed: Option<String>,
-    reconnect_requested:bool,
-    reconnect:Option<Reconnecting>,
+    reconnect_requested: bool,
+    reconnect: Option<Reconnecting>,
     /// Bumped when the link is restored after a reconnect.
     generation: u64,
     /// The display streaming, for hosts that stream one at a time.
@@ -217,8 +226,11 @@ pub struct Link {
 
 impl Drop for Link {
     fn drop(&mut self) {
-        self.reconnect=None;
-        let mut files=self.files.lock().unwrap();files.disconnect();files.open=false;files.progress_open=false;
+        self.reconnect = None;
+        let mut files = self.files.lock().unwrap();
+        files.disconnect();
+        files.open = false;
+        files.progress_open = false;
         self.network.lock().unwrap().close();
     }
 }
@@ -229,7 +241,11 @@ impl RemoteTab {
     }
 
     pub fn viewport_id(&self) -> egui::ViewportId {
-        if self.detached { self.window_group.unwrap_or_else(||Self::window_id(self.id)) } else { egui::ViewportId::ROOT }
+        if self.detached {
+            self.window_group.unwrap_or_else(|| Self::window_id(self.id))
+        } else {
+            egui::ViewportId::ROOT
+        }
     }
 
     /// A tab for `display` of the link.
@@ -293,9 +309,12 @@ impl RemoteTab {
         Arc::ptr_eq(&self.link, other)
     }
 
-    pub fn update_window_repaint(&self,ctx:&egui::Context) {
-        let (wake,viewport)=(ctx.clone(),self.viewport_id());
-        self.screen.frames.set_repaint(move || {wake.request_repaint_of(egui::ViewportId::ROOT);theme::repaint_existing_viewport(&wake,viewport);});
+    pub fn update_window_repaint(&self, ctx: &egui::Context) {
+        let (wake, viewport) = (ctx.clone(), self.viewport_id());
+        self.screen.frames.set_repaint(move || {
+            wake.request_repaint_of(egui::ViewportId::ROOT);
+            theme::repaint_existing_viewport(&wake, viewport);
+        });
     }
 
     pub fn keyboard_captured(&self) -> bool {
@@ -334,7 +353,8 @@ impl RemoteTab {
 fn toggle_fullscreen(sc: &mut Screen, ctx: &egui::Context) -> Option<String> {
     sc.fullscreen = !sc.fullscreen;
     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(sc.fullscreen));
-    sc.fullscreen.then(|| "Full screen: point at the top edge for the bar, or press Ctrl+Alt+Enter to leave".to_string())
+    sc.fullscreen
+        .then(|| "Full screen: point at the top edge for the bar, or press Ctrl+Alt+Enter to leave".to_string())
 }
 
 impl Link {
@@ -361,10 +381,15 @@ impl Link {
     ) -> Self {
         let info = session.info().clone();
         let files = Arc::new(Mutex::new(FileManager::new(session.fs(), info.host_name.clone())));
-        let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(session.fs(), info.capabilities.input, info.capabilities.tunnels)));
+        let network = Arc::new(Mutex::new(super::network::NetworkScanner::new(
+            session.fs(),
+            info.capabilities.input,
+            info.capabilities.tunnels,
+        )));
         // Wayland apps repeat held keys themselves; Windows/macOS need repeats sent.
         let forward_repeats = info.os != "Linux";
-        let streaming = info.displays.iter().find(|d| d.primary).or(info.displays.first()).map(|d| d.index).unwrap_or(0);
+        let streaming =
+            info.displays.iter().find(|d| d.primary).or(info.displays.first()).map(|d| d.index).unwrap_or(0);
         let audio = play_audio && info.capabilities.audio;
         let notice = trackpad.then(|| (TRACKPAD_HINT.to_string(), Instant::now()));
         Self {
@@ -378,7 +403,8 @@ impl Link {
             via: Default::default(),
             stats: ViewerStats::default(),
             closed: None,
-            reconnect_requested:false,reconnect:None,
+            reconnect_requested: false,
+            reconnect: None,
             generation: 0,
             streaming,
             hidden: Default::default(),
@@ -414,7 +440,9 @@ impl Link {
             sysinfo_busy: Arc::default(),
             sysinfo_at: None,
             sysinfo: Arc::default(),
-            public_ip: None, public_ip_rx: None, public_ip_at: None,
+            public_ip: None,
+            public_ip_rx: None,
+            public_ip_at: None,
             report: Default::default(),
             files,
             network,
@@ -423,10 +451,13 @@ impl Link {
 
     /// The displays that get a tab: all of them but those closed.
     pub fn wanted_displays(&self) -> Vec<u32> {
-        let mut displays: Vec<u32> = self.info.displays.iter().map(|d| d.index).filter(|d| !self.hidden.contains(d)).collect();
+        let mut displays: Vec<u32> =
+            self.info.displays.iter().map(|d| d.index).filter(|d| !self.hidden.contains(d)).collect();
         if displays.is_empty() {
             // A chat-only link before its screen opened, or every one closed.
-            displays.push(self.info.displays.iter().map(|d| d.index).find(|d| !self.hidden.contains(d)).unwrap_or(self.streaming));
+            displays.push(
+                self.info.displays.iter().map(|d| d.index).find(|d| !self.hidden.contains(d)).unwrap_or(self.streaming),
+            );
         }
         displays
     }
@@ -445,26 +476,37 @@ impl Link {
     /// Asks the host for the screens drawn in the last moments: hidden
     /// tabs pause after a couple of seconds out of sight.
     pub fn stream_visible(&mut self) {
-        if self.closed.is_some() { return; }
+        if self.closed.is_some() {
+            return;
+        }
         // Several at once: pause a screen once out of sight for a couple of
         // seconds. One at a time: switch as soon as another is the one on view.
         let multi = self.session.multi_display();
         let recent = std::time::Duration::from_millis(if multi { 2000 } else { 400 });
-        let mut shown: Vec<(Instant, u32)> = self.drawn.iter()
+        let mut shown: Vec<(Instant, u32)> = self
+            .drawn
+            .iter()
             .filter(|(d, at)| at.elapsed() < recent && !self.hidden.contains(d))
-            .map(|(&d, &at)| (at, d)).collect();
+            .map(|(&d, &at)| (at, d))
+            .collect();
         // The one looked at most recently first (a host streaming one
         // display at a time switches to it).
         shown.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
         let mut shown: Vec<u32> = shown.into_iter().map(|(_, d)| d).collect();
         let mut sorted = shown.clone();
         sorted.sort_unstable();
-        if self.shown_sent.as_ref() == Some(&sorted) { return; }
+        if self.shown_sent.as_ref() == Some(&sorted) {
+            return;
+        }
         // Nothing on view yet (a new link): leave the host's first picture.
-        if shown.is_empty() && self.shown_sent.is_none() { return; }
+        if shown.is_empty() && self.shown_sent.is_none() {
+            return;
+        }
         if !multi {
             // One display at a time: keep the one streaming if it's on view.
-            if shown.contains(&self.streaming) { shown.retain(|&d| d == self.streaming); }
+            if shown.contains(&self.streaming) {
+                shown.retain(|&d| d == self.streaming);
+            }
             shown.truncate(1);
         }
         self.shown_sent = Some(sorted);
@@ -523,7 +565,7 @@ impl Link {
                     self.show_chat = true;
                 }
                 ViewerEvent::Notice(n) => self.notice = Some((n, Instant::now())),
-                ViewerEvent::Disconnected { reason,retryable } => {
+                ViewerEvent::Disconnected { reason, retryable } => {
                     tracing::info!(peer=%self.peer,retryable,"viewer link ended: {reason}");
                     self.release_keyboard();
                     self.files.lock().unwrap().disconnect();
@@ -531,8 +573,8 @@ impl Link {
                     self.report.cancel_requests();
                     self.tunnels.clear();
                     self.closed = Some(reason);
-                    self.stats=ViewerStats::default();
-                    self.reconnect_requested=retryable && self.peer.0!=0;
+                    self.stats = ViewerStats::default();
+                    self.reconnect_requested = retryable && self.peer.0 != 0;
                     self.repaint_tools(ctx);
                 }
             }
@@ -544,65 +586,122 @@ impl Link {
     }
 
     /// Keep recovery attached to this tab: ending the link drops the job.
-    pub fn maintain_connection(&mut self,ctx:&egui::Context,rt:&tokio::runtime::Runtime,client:&slipstream_session::Client)->bool {
-        let mut restored=false;
+    pub fn maintain_connection(
+        &mut self,
+        ctx: &egui::Context,
+        rt: &tokio::runtime::Runtime,
+        client: &slipstream_session::Client,
+    ) -> bool {
+        let mut restored = false;
         if std::mem::take(&mut self.reconnect_requested) && self.reconnect.is_none() {
             tracing::info!(peer=%self.peer,"reconnecting lost link");
-            let progress=Arc::new(Mutex::new("Waiting for the remote host…".into()));
-            let (tx,rx)=tokio::sync::oneshot::channel();
-            let (client,peer,password,via,wake,status)=(client.clone(),self.peer,self.password.clone(),self.via.clone(),ctx.clone(),progress.clone());
+            let progress = Arc::new(Mutex::new("Waiting for the remote host…".into()));
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let (client, peer, password, via, wake, status) =
+                (client.clone(), self.peer, self.password.clone(), self.via.clone(), ctx.clone(), progress.clone());
             // After a restart this viewer asked for, wait out a slow boot.
-            let window=if self.restart_expected.is_some_and(|t|t.elapsed()<std::time::Duration::from_secs(15*60)) {std::time::Duration::from_secs(10*60)} else {std::time::Duration::from_secs(120)};
-            let task=rt.spawn(async move {
-                let w=wake.clone();
-                let result=client.reconnect_within(peer,&password,&via,window,move |text|{*status.lock().unwrap()=text;w.request_repaint_of(egui::ViewportId::ROOT);}).await.map_err(|e|format!("{e:#}"));
-                let _=tx.send(result);wake.request_repaint_of(egui::ViewportId::ROOT);
+            let window = if self.restart_expected.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(15 * 60))
+            {
+                std::time::Duration::from_secs(10 * 60)
+            } else {
+                std::time::Duration::from_secs(120)
+            };
+            let task = rt.spawn(async move {
+                let w = wake.clone();
+                let result = client
+                    .reconnect_within(peer, &password, &via, window, move |text| {
+                        *status.lock().unwrap() = text;
+                        w.request_repaint_of(egui::ViewportId::ROOT);
+                    })
+                    .await
+                    .map_err(|e| format!("{e:#}"));
+                let _ = tx.send(result);
+                wake.request_repaint_of(egui::ViewportId::ROOT);
             });
-            self.reconnect=Some(Reconnecting{progress,rx,task});
+            self.reconnect = Some(Reconnecting { progress, rx, task });
         }
-        let result=self.reconnect.as_mut().and_then(|retry|match retry.rx.try_recv() {
-            Ok(result)=>Some(result),
-            Err(tokio::sync::oneshot::error::TryRecvError::Empty)=>None,
-            Err(tokio::sync::oneshot::error::TryRecvError::Closed)=>Some(Err("Reconnect ended without an answer".into())),
+        let result = self.reconnect.as_mut().and_then(|retry| match retry.rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                Some(Err("Reconnect ended without an answer".into()))
+            }
         });
-        if let Some(result)=result {
-            self.reconnect=None;
+        if let Some(result) = result {
+            self.reconnect = None;
             match result {
-                Ok((session,events))=>{self.restart_expected=None;self.restore(session,events,ctx,client.settings().viewer.play_audio);restored=true;},
-                Err(error)=>{tracing::warn!(peer=%self.peer,"automatic reconnect stopped: {error}");self.closed=Some(error);},
+                Ok((session, events)) => {
+                    self.restart_expected = None;
+                    self.restore(session, events, ctx, client.settings().viewer.play_audio);
+                    restored = true;
+                }
+                Err(error) => {
+                    tracing::warn!(peer=%self.peer,"automatic reconnect stopped: {error}");
+                    self.closed = Some(error);
+                }
             }
         }
-        if self.reconnect.is_some() {ctx.request_repaint_after(std::time::Duration::from_millis(100));}
+        if self.reconnect.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         restored
     }
 
-    fn restore(&mut self,session:ViewerSession,events:mpsc::UnboundedReceiver<ViewerEvent>,ctx:&egui::Context,default_audio:bool) {
+    fn restore(
+        &mut self,
+        session: ViewerSession,
+        events: mpsc::UnboundedReceiver<ViewerEvent>,
+        ctx: &egui::Context,
+        default_audio: bool,
+    ) {
         tracing::info!(peer=%self.peer,"viewer link restored");
-        self.info=session.info().clone();
-        self.cmds=session.command_sender();
-        self.events=events;self.session=session;
-        self.forward_repeats=self.info.os!="Linux";
-        self.streaming=self.info.displays.iter().find(|d|d.primary).or(self.info.displays.first()).map(|d|d.index).unwrap_or(0);
+        self.info = session.info().clone();
+        self.cmds = session.command_sender();
+        self.events = events;
+        self.session = session;
+        self.forward_repeats = self.info.os != "Linux";
+        self.streaming =
+            self.info.displays.iter().find(|d| d.primary).or(self.info.displays.first()).map(|d| d.index).unwrap_or(0);
         // The screen tabs pick up the new pictures, and the host is asked
         // for the ones on view again.
-        self.generation+=1;self.shown_sent=None;
-        self.closed=None;self.captured=false;self.last_pointer=None;
-        self.held_keys.clear();self.held_buttons.clear();
-        self.privacy=false;self.audio &= self.info.capabilities.audio;
+        self.generation += 1;
+        self.shown_sent = None;
+        self.closed = None;
+        self.captured = false;
+        self.last_pointer = None;
+        self.held_keys.clear();
+        self.held_buttons.clear();
+        self.privacy = false;
+        self.audio &= self.info.capabilities.audio;
         self.send(ViewerCmd::Settings(self.preset_settings(self.preset)));
-        if self.audio!=default_audio {self.send(ViewerCmd::Audio(self.audio));}
-        self.files.lock().unwrap().reconnect(self.session.fs(),self.info.host_name.clone());
-        self.network.lock().unwrap().reconnect(self.session.fs(),self.info.capabilities.input,self.info.capabilities.tunnels);
+        if self.audio != default_audio {
+            self.send(ViewerCmd::Audio(self.audio));
+        }
+        self.files.lock().unwrap().reconnect(self.session.fs(), self.info.host_name.clone());
+        self.network.lock().unwrap().reconnect(
+            self.session.fs(),
+            self.info.capabilities.input,
+            self.info.capabilities.tunnels,
+        );
         self.repaint_tools(ctx);
-        self.pasting=None;self.sysinfo=Arc::default();self.sysinfo_busy=Arc::default();self.sysinfo_at=None;
-        self.sysinfo_fetch=self.show_sysinfo;
-        self.public_ip=None;self.public_ip_rx=None;self.public_ip_at=None;
-        self.notice=Some(("Link restored · click the picture to take control".into(),Instant::now()));
+        self.pasting = None;
+        self.sysinfo = Arc::default();
+        self.sysinfo_busy = Arc::default();
+        self.sysinfo_at = None;
+        self.sysinfo_fetch = self.show_sysinfo;
+        self.public_ip = None;
+        self.public_ip_rx = None;
+        self.public_ip_at = None;
+        self.notice = Some(("Link restored · click the picture to take control".into(), Instant::now()));
     }
 
-    fn repaint_tools(&self,ctx:&egui::Context) {
-        if self.files.lock().unwrap().open {ctx.request_repaint_of(egui::ViewportId::from_hash_of(("file-transfer",self.id)));}
-        if self.network.lock().unwrap().open {ctx.request_repaint_of(egui::ViewportId::from_hash_of(("network-scan",self.id)));}
+    fn repaint_tools(&self, ctx: &egui::Context) {
+        if self.files.lock().unwrap().open {
+            ctx.request_repaint_of(egui::ViewportId::from_hash_of(("file-transfer", self.id)));
+        }
+        if self.network.lock().unwrap().open {
+            ctx.request_repaint_of(egui::ViewportId::from_hash_of(("network-scan", self.id)));
+        }
     }
 
     pub fn release_keyboard(&mut self) {
@@ -680,7 +779,13 @@ impl Link {
         }
     }
 
-    fn forward_keys(&mut self, keys: Vec<CapturedKey>, sc: &mut Screen, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
+    fn forward_keys(
+        &mut self,
+        keys: Vec<CapturedKey>,
+        sc: &mut Screen,
+        rt: &tokio::runtime::Runtime,
+        ctx: &egui::Context,
+    ) {
         for k in keys {
             match k {
                 CapturedKey::Key { key, pressed, repeat } => {
@@ -726,7 +831,15 @@ impl Link {
         super::network::NetworkScanner::show(&self.network, ctx, rt, self.id, &self.info.host_name);
     }
 
-    fn ui(&mut self, ui: &mut Ui, sc: &mut Screen, tab: u64, full: Rect, t: f64, rt: &tokio::runtime::Runtime) -> TabAction {
+    fn ui(
+        &mut self,
+        ui: &mut Ui,
+        sc: &mut Screen,
+        tab: u64,
+        full: Rect,
+        t: f64,
+        rt: &tokio::runtime::Runtime,
+    ) -> TabAction {
         let mut action = TabAction::None;
         let ctx = ui.ctx().clone();
         self.power_ui(&ctx, rt);
@@ -759,17 +872,17 @@ impl Link {
         let chat_w = if self.show_chat && !narrow { 330.0 } else { 0.0 };
         let chat_h = if self.show_chat && narrow { (body.height() * 0.42).max(220.0) } else { 0.0 };
         let keybar_h = if sc.keyboard { KEY_BAR_HEIGHT } else { 0.0 };
-        let video_area = Rect::from_min_max(
-            body.min,
-            pos2(body.right() - chat_w, body.bottom() - chat_h - keybar_h),
-        );
+        let video_area = Rect::from_min_max(body.min, pos2(body.right() - chat_w, body.bottom() - chat_h - keybar_h));
 
         self.drawn.insert(sc.display, Instant::now());
         self.draw_video(ui, sc, tab, video_area, t);
         let rail_width = framed.then(|| theme::session_rails(ui.painter(), full, body));
         self.handle_pointer(ui, sc, video_area);
         if sc.keyboard {
-            let bar = Rect::from_min_max(pos2(video_area.left(), video_area.bottom()), pos2(video_area.right(), video_area.bottom() + keybar_h));
+            let bar = Rect::from_min_max(
+                pos2(video_area.left(), video_area.bottom()),
+                pos2(video_area.right(), video_area.bottom() + keybar_h),
+            );
             self.key_bar(ui, sc, bar);
         }
 
@@ -799,13 +912,23 @@ impl Link {
         self.tunnels_window(&ctx, rt);
         self.sysinfo_window(&ctx, rt);
         if self.report.open {
-            let scanner=self.network.lock().unwrap();
-            let network=format!("{}\n{}",scanner.export(&self.info.host_name),scanner.diagnostic_text());
+            let scanner = self.network.lock().unwrap();
+            let network = format!("{}\n{}", scanner.export(&self.info.host_name), scanner.diagnostic_text());
             drop(scanner);
-            self.report.show(&ctx, rt, super::support_report::Source {
-                id:self.id,host:&self.info.host_name,connected:self.closed.is_none(),can_control:self.info.capabilities.input,
-                fs:self.session.fs(),stats:&self.stats,network,frame:sc.frames.latest().1,
-            });
+            self.report.show(
+                &ctx,
+                rt,
+                super::support_report::Source {
+                    id: self.id,
+                    host: &self.info.host_name,
+                    connected: self.closed.is_none(),
+                    can_control: self.info.capabilities.input,
+                    fs: self.session.fs(),
+                    stats: &self.stats,
+                    network,
+                    frame: sc.frames.latest().1,
+                },
+            );
         }
         self.handle_drops(ui, sc, &ctx, video_area, rt);
 
@@ -817,7 +940,10 @@ impl Link {
                 let p = ui.painter();
                 let pos = pos2(video_area.center().x, video_area.bottom() - 40.0);
                 let g = p.layout(n.clone(), theme::body(17.0), pal::TEXT, (video_area.width() - 56.0).max(120.0));
-                let r = Rect::from_center_size(pos - vec2(0.0, (g.size().y - 20.0).max(0.0) / 2.0), g.size() + vec2(32.0, 14.0));
+                let r = Rect::from_center_size(
+                    pos - vec2(0.0, (g.size().y - 20.0).max(0.0) / 2.0),
+                    g.size() + vec2(32.0, 14.0),
+                );
                 p.rect_filled(r, 14.0, pal::PANEL.gamma_multiply(0.95));
                 p.rect_stroke(r, 14.0, egui::Stroke::new(1.0, pal::GOLD), egui::StrokeKind::Inside);
                 p.galley(r.min + vec2(16.0, 7.0), g, pal::TEXT);
@@ -833,10 +959,20 @@ impl Link {
     /// Files dragged in from the desktop: onto the file window's remote pane
     /// → that folder; onto the remote screen → the remote folder under the
     /// drop point (or its Desktop).
-    fn handle_drops(&mut self, ui: &mut Ui, sc: &Screen, ctx: &egui::Context, video_area: Rect, rt: &tokio::runtime::Runtime) {
-        if self.closed.is_some() { return; }
+    fn handle_drops(
+        &mut self,
+        ui: &mut Ui,
+        sc: &Screen,
+        ctx: &egui::Context,
+        video_area: Rect,
+        rt: &tokio::runtime::Runtime,
+    ) {
+        if self.closed.is_some() {
+            return;
+        }
         let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
-        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        let dropped: Vec<std::path::PathBuf> =
+            ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         if !self.info.capabilities.file_transfer {
             if !dropped.is_empty() {
                 self.notice = Some(("File transfer is turned off on the remote computer".into(), Instant::now()));
@@ -845,32 +981,50 @@ impl Link {
         }
         let pos = ctx.input(|i| i.pointer.hover_pos());
         let pane_target = pos.and_then(|p| self.files.lock().unwrap().remote_drop_target(p, ctx));
-        let screen_pos = pos.filter(|p| video_area.contains(*p)
-            && sc.video_rect.is_some_and(|r| r.contains(*p))
-            && ctx.layer_id_at(*p).is_none_or(|layer| layer == ui.layer_id()));
+        let screen_pos = pos.filter(|p| {
+            video_area.contains(*p)
+                && sc.video_rect.is_some_and(|r| r.contains(*p))
+                && ctx.layer_id_at(*p).is_none_or(|layer| layer == ui.layer_id())
+        });
         if hovering && pane_target.is_none() && screen_pos.is_some() {
             let p = ui.painter();
             p.rect_filled(video_area, 0.0, Color32::BLACK.gamma_multiply(0.45));
             p.text(video_area.center(), Align2::CENTER_CENTER, "DROP TO SEND", theme::display_bold(42.0), pal::ORANGE);
-            p.text(video_area.center() + vec2(0.0, 40.0), Align2::CENTER_CENTER,
-                "Open remote folder or Desktop · files and folders", theme::body(17.0), pal::TAN);
+            p.text(
+                video_area.center() + vec2(0.0, 40.0),
+                Align2::CENTER_CENTER,
+                "Open remote folder or Desktop · files and folders",
+                theme::body(17.0),
+                pal::TAN,
+            );
         }
-        if dropped.is_empty() { return; }
+        if dropped.is_empty() {
+            return;
+        }
         let n = dropped.len();
         if let Some(target) = pane_target {
             self.files.lock().unwrap().upload(dropped, target, rt, ctx);
-        } else if let (Some(p), Some(r), Some(display)) = (screen_pos, sc.video_rect,
-            self.info.displays.iter().find(|d| d.index == sc.display)) {
+        } else if let (Some(p), Some(r), Some(display)) =
+            (screen_pos, sc.video_rect, self.info.displays.iter().find(|d| d.index == sc.display))
+        {
             // Resolve a physical point on the host, independent of keyboard
             // capture or the asynchronously injected remote mouse position.
-            let x = display.x + (((p.x-r.left())/r.width()).clamp(0.0,1.0) * display.width.saturating_sub(1) as f32).round() as i32;
-            let y = display.y + (((p.y-r.top())/r.height()).clamp(0.0,1.0) * display.height.saturating_sub(1) as f32).round() as i32;
-            self.files.lock().unwrap().upload_to_screen(dropped, (x,y), rt, ctx);
+            let x = display.x
+                + (((p.x - r.left()) / r.width()).clamp(0.0, 1.0) * display.width.saturating_sub(1) as f32).round()
+                    as i32;
+            let y = display.y
+                + (((p.y - r.top()) / r.height()).clamp(0.0, 1.0) * display.height.saturating_sub(1) as f32).round()
+                    as i32;
+            self.files.lock().unwrap().upload_to_screen(dropped, (x, y), rt, ctx);
         } else {
-            self.notice = Some(("Drop onto the remote picture or the Files window's remote pane".into(), Instant::now()));
+            self.notice =
+                Some(("Drop onto the remote picture or the Files window's remote pane".into(), Instant::now()));
             return;
         }
-        self.notice = Some((format!("Sending {n} item{} — transfer panel opened", if n == 1 { "" } else { "s" }), Instant::now()));
+        self.notice = Some((
+            format!("Sending {n} item{} — transfer panel opened", if n == 1 { "" } else { "s" }),
+            Instant::now(),
+        ));
     }
 
     fn draw_video(&mut self, ui: &mut Ui, sc: &mut Screen, tab: u64, area: Rect, t: f64) {
@@ -898,12 +1052,19 @@ impl Link {
                 sc.video_fit = None;
                 theme::backdrop(painter, area, t);
                 if elsewhere {
-                    painter.text(area.center() - vec2(0.0, 18.0), Align2::CENTER_CENTER, format!("SCREEN {}", sc.display + 1),
-                        theme::display_bold(30.0), pal::ORANGE);
+                    painter.text(
+                        area.center() - vec2(0.0, 18.0),
+                        Align2::CENTER_CENTER,
+                        format!("SCREEN {}", sc.display + 1),
+                        theme::display_bold(30.0),
+                        pal::ORANGE,
+                    );
                     painter.text(area.center() + vec2(0.0, 18.0), Align2::CENTER_CENTER,
                         "That computer shows one screen at a time · click to show this one, or update Slipstream there to see them together",
                         theme::body(15.0), pal::TAN);
-                    let clicked = ui.ctx().input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|p| area.contains(p)));
+                    let clicked = ui
+                        .ctx()
+                        .input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|p| area.contains(p)));
                     if clicked && self.closed.is_none() {
                         self.streaming = sc.display;
                         self.shown_sent = Some(vec![sc.display]);
@@ -931,11 +1092,14 @@ impl Link {
         // Claim the area so egui widgets underneath don't react.
         let resp = ui.interact(area, ui.scope_id().with(("video", sc.display)), Sense::click_and_drag());
         let Some(rect) = sc.video_rect else { return };
-        if self.closed.is_some() || !ctx.input(|i|i.focused) {
+        if self.closed.is_some() || !ctx.input(|i| i.focused) {
             return;
         }
         let display = sc.display;
-        let hovered = resp.hovered() && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l == ui.layer_id()));
+        let hovered = resp.hovered()
+            && ctx
+                .pointer_hover_pos()
+                .is_some_and(|p| rect.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l == ui.layer_id()));
         // Hide our pointer only when the host's video shows its own.
         if hovered && self.captured && self.info.capabilities.cursor_in_video {
             ctx.set_cursor_icon(egui::CursorIcon::None);
@@ -951,7 +1115,10 @@ impl Link {
         }
 
         let normalize = |pos: egui::Pos2| {
-            (((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0), ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0))
+            (
+                ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0),
+                ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0),
+            )
         };
         // Only the part of the screen not covered by our own windows (file
         // transfer, chat…) belongs to the remote computer.
@@ -966,7 +1133,8 @@ impl Link {
         let gesture = ctx.input(|i| i.multi_touch()).map(|m| touch::Gesture::from_egui(&m));
         let view_before = sc.view;
         let mode = if self.trackpad { touch::Mode::Trackpad } else { touch::Mode::Direct };
-        let (actions, touching) = sc.touch.handle(&events, gesture, Instant::now(), mode, ours, &mut sc.view, (fit, area));
+        let (actions, touching) =
+            sc.touch.handle(&events, gesture, Instant::now(), mode, ours, &mut sc.view, (fit, area));
         if sc.view != view_before {
             ctx.request_repaint();
         }
@@ -977,7 +1145,10 @@ impl Link {
         // following the trackpad pointer).
         let rect = sc.view.rect(fit, area);
         let normalize_now = |pos: egui::Pos2| {
-            (((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0), ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0))
+            (
+                ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0),
+                ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0),
+            )
         };
         for action in actions {
             self.captured = true;
@@ -988,7 +1159,9 @@ impl Link {
                     self.input_on(display, InputEvent::MouseMove { x: n.0, y: n.1 });
                 }
                 touch::Action::Button(button, down) => self.input_on(display, InputEvent::MouseButton { button, down }),
-                touch::Action::Scroll(points) => self.input_on(display, InputEvent::Wheel { dx: points.x / 40.0, dy: points.y / 40.0 }),
+                touch::Action::Scroll(points) => {
+                    self.input_on(display, InputEvent::Wheel { dx: points.x / 40.0, dy: points.y / 40.0 })
+                }
             }
         }
         self.draw_touch_feedback(ui, sc, area, rect);
@@ -1058,19 +1231,37 @@ impl Link {
         if self.trackpad && sc.touch.used() {
             let at = sc.touch.pointer_pos(rect);
             // An arrow, outlined so it shows on light and dark screens.
-            let pts = [at, at + vec2(0.0, 17.0), at + vec2(4.5, 13.0), at + vec2(8.0, 20.0), at + vec2(11.0, 18.5), at + vec2(7.5, 11.5), at + vec2(13.0, 11.5)];
-            p.add(egui::Shape::convex_polygon(vec![pts[0], pts[1], pts[2], pts[5], pts[6]], Color32::WHITE, egui::Stroke::new(1.5, Color32::BLACK)));
-            p.add(egui::Shape::convex_polygon(vec![pts[2], pts[3], pts[4], pts[5]], Color32::WHITE, egui::Stroke::new(1.5, Color32::BLACK)));
+            let pts = [
+                at,
+                at + vec2(0.0, 17.0),
+                at + vec2(4.5, 13.0),
+                at + vec2(8.0, 20.0),
+                at + vec2(11.0, 18.5),
+                at + vec2(7.5, 11.5),
+                at + vec2(13.0, 11.5),
+            ];
+            p.add(egui::Shape::convex_polygon(
+                vec![pts[0], pts[1], pts[2], pts[5], pts[6]],
+                Color32::WHITE,
+                egui::Stroke::new(1.5, Color32::BLACK),
+            ));
+            p.add(egui::Shape::convex_polygon(
+                vec![pts[2], pts[3], pts[4], pts[5]],
+                Color32::WHITE,
+                egui::Stroke::new(1.5, Color32::BLACK),
+            ));
         }
         if let Some((at, progress)) = sc.touch.pressing(Instant::now()) {
             let r = 26.0;
             p.circle_stroke(at, r, egui::Stroke::new(3.0, pal::DIM.gamma_multiply(0.6)));
             let steps = 32;
             let end = (progress.clamp(0.0, 1.0) * steps as f32) as usize;
-            let arc: Vec<_> = (0..=end).map(|i| {
-                let a = -std::f32::consts::FRAC_PI_2 + i as f32 / steps as f32 * std::f32::consts::TAU;
-                at + vec2(a.cos(), a.sin()) * r
-            }).collect();
+            let arc: Vec<_> = (0..=end)
+                .map(|i| {
+                    let a = -std::f32::consts::FRAC_PI_2 + i as f32 / steps as f32 * std::f32::consts::TAU;
+                    at + vec2(a.cos(), a.sin()) * r
+                })
+                .collect();
             if arc.len() > 1 {
                 p.add(egui::Shape::line(arc, egui::Stroke::new(4.0, pal::GOLD)));
             }
@@ -1091,7 +1282,9 @@ impl Link {
     /// Win latch for the next key or typed letter.
     fn key_bar(&mut self, ui: &mut Ui, sc: &mut Screen, bar: Rect) {
         ui.painter().rect_filled(bar, 0.0, pal::PANEL);
-        let mut child = ui.new_child(UiBuilder::new().max_rect(bar.shrink2(vec2(6.0, 4.0))).layout(Layout::left_to_right(Align::Center)));
+        let mut child = ui.new_child(
+            UiBuilder::new().max_rect(bar.shrink2(vec2(6.0, 4.0))).layout(Layout::left_to_right(Align::Center)),
+        );
         // A field to keep the soft keyboard up; what's typed goes straight
         // to the remote computer (see `raw_input_hook`), so it stays empty.
         let mut sink = String::new();
@@ -1108,17 +1301,44 @@ impl Link {
         egui::ScrollArea::horizontal().id_salt(("key-bar", sc.display)).show(&mut child, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let modifiers = [("Ctrl", "ControlLeft"), ("Alt", "AltLeft"), ("Shift", "ShiftLeft"), ("Win", "MetaLeft")];
+                let modifiers =
+                    [("Ctrl", "ControlLeft"), ("Alt", "AltLeft"), ("Shift", "ShiftLeft"), ("Win", "MetaLeft")];
                 for (label, code) in modifiers {
                     let on = sc.latched.contains(&code);
-                    if theme::pill_sized(ui, label, if on { pal::GOLD } else { pal::VIOLET }, vec2(54.0, 32.0)).clicked() {
-                        if on { sc.latched.retain(|c| *c != code); } else { sc.latched.push(code); }
+                    if theme::pill_sized(ui, label, if on { pal::GOLD } else { pal::VIOLET }, vec2(54.0, 32.0))
+                        .clicked()
+                    {
+                        if on {
+                            sc.latched.retain(|c| *c != code);
+                        } else {
+                            sc.latched.push(code);
+                        }
                         self.captured = true;
                     }
                 }
-                for (label, code) in [("Esc", "Escape"), ("Tab", "Tab"), ("←", "ArrowLeft"), ("↑", "ArrowUp"), ("↓", "ArrowDown"), ("→", "ArrowRight"),
-                    ("Del", "Delete"), ("⌫", "Backspace"), ("Enter", "Enter"), ("Home", "Home"), ("End", "End"), ("PgUp", "PageUp"), ("PgDn", "PageDown")] {
-                    if theme::pill_sized(ui, label, pal::BLUE, vec2(if label.chars().count() > 2 { 58.0 } else { 40.0 }, 32.0)).clicked() {
+                for (label, code) in [
+                    ("Esc", "Escape"),
+                    ("Tab", "Tab"),
+                    ("←", "ArrowLeft"),
+                    ("↑", "ArrowUp"),
+                    ("↓", "ArrowDown"),
+                    ("→", "ArrowRight"),
+                    ("Del", "Delete"),
+                    ("⌫", "Backspace"),
+                    ("Enter", "Enter"),
+                    ("Home", "Home"),
+                    ("End", "End"),
+                    ("PgUp", "PageUp"),
+                    ("PgDn", "PageDown"),
+                ] {
+                    if theme::pill_sized(
+                        ui,
+                        label,
+                        pal::BLUE,
+                        vec2(if label.chars().count() > 2 { 58.0 } else { 40.0 }, 32.0),
+                    )
+                    .clicked()
+                    {
                         self.press_latched(sc, code);
                     }
                 }
@@ -1150,44 +1370,68 @@ impl Link {
         for c in text.chars() {
             let Some((code, shift)) = slipstream_core::proto::us_key_for_char(c.to_ascii_lowercase()) else { continue };
             let mut combo = latched.clone();
-            if shift && !combo.contains(&"ShiftLeft") { combo.push("ShiftLeft"); }
+            if shift && !combo.contains(&"ShiftLeft") {
+                combo.push("ShiftLeft");
+            }
             combo.push(code);
             self.send_combo(&combo);
         }
     }
 
-
-    fn toolbar(&mut self, ui: &mut Ui, sc: &mut Screen, bar: Rect, t: f64, rail_width:Option<f32>) -> TabAction {
+    fn toolbar(&mut self, ui: &mut Ui, sc: &mut Screen, bar: Rect, t: f64, rail_width: Option<f32>) -> TabAction {
         let mut action = TabAction::None;
         let painter = ui.painter().clone();
         painter.rect_filled(bar, 0.0, pal::BG);
-        let rail=rail_width.unwrap_or(0.0);
+        let rail = rail_width.unwrap_or(0.0);
         if rail_width.is_some() {
-            let turn=Rect::from_min_max(bar.min,pos2(bar.left()+rail.max(36.0)+32.0,bar.bottom()));
-            painter.rect_filled(turn,egui::CornerRadius{nw:32,..Default::default()},pal::ORANGE);
-            painter.text(pos2(turn.right()-17.0,turn.center().y),Align2::CENTER_CENTER,"LINK",theme::display_bold(14.0),pal::BG);
+            let turn = Rect::from_min_max(bar.min, pos2(bar.left() + rail.max(36.0) + 32.0, bar.bottom()));
+            painter.rect_filled(turn, egui::CornerRadius { nw: 32, ..Default::default() }, pal::ORANGE);
+            painter.text(
+                pos2(turn.right() - 17.0, turn.center().y),
+                Align2::CENTER_CENTER,
+                "LINK",
+                theme::display_bold(14.0),
+                pal::BG,
+            );
         } else {
-            painter.rect_filled(Rect::from_min_size(bar.min+vec2(8.0,6.0),vec2(36.0,bar.height()-12.0)),egui::CornerRadius{nw:10,sw:10,..Default::default()},pal::ORANGE);
+            painter.rect_filled(
+                Rect::from_min_size(bar.min + vec2(8.0, 6.0), vec2(36.0, bar.height() - 12.0)),
+                egui::CornerRadius { nw: 10, sw: 10, ..Default::default() },
+                pal::ORANGE,
+            );
         }
         let ctx = ui.ctx().clone();
-        let start=rail.max(36.0)+36.0;
-        let inner = bar.with_min_x(bar.left()+start);
+        let start = rail.max(36.0) + 36.0;
+        let inner = bar.with_min_x(bar.left() + start);
         let w = inner.width();
-        if w < 780.0 { return self.toolbar_narrow(ui,sc,inner,&ctx,t); }
+        if w < 780.0 {
+            return self.toolbar_narrow(ui, sc, inner, &ctx, t);
+        }
         let compact_stats = w < 1440.0;
         let tight = w < 1050.0;
-
 
         // Right side first, so the buttons know how much room is left.
         let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
         right.spacing_mut().item_spacing.x = 4.0;
-        if theme::console_button(&mut right, if tight {""} else {"End link"}, pal::RED,Icon::End,false).on_hover_text("End this link").clicked() {
+        if theme::console_button(&mut right, if tight { "" } else { "End link" }, pal::RED, Icon::End, false)
+            .on_hover_text("End this link")
+            .clicked()
+        {
             self.send(ViewerCmd::Disconnect);
             action = TabAction::Close;
         }
-        theme::session_stats_frame().show(&mut right,|ui| {ui.set_min_height(34.0);self.stats_readout(ui,if compact_stats {Detail::Compact}else{Detail::Full},t);});
-        let quality = theme::console_button(&mut right, if tight {""} else {PRESETS[self.preset].0}, pal::BLUE, Icon::Performance, true)
-            .on_hover_text(format!("Picture quality · {}", PRESETS[self.preset].0));
+        theme::session_stats_frame().show(&mut right, |ui| {
+            ui.set_min_height(34.0);
+            self.stats_readout(ui, if compact_stats { Detail::Compact } else { Detail::Full }, t);
+        });
+        let quality = theme::console_button(
+            &mut right,
+            if tight { "" } else { PRESETS[self.preset].0 },
+            pal::BLUE,
+            Icon::Performance,
+            true,
+        )
+        .on_hover_text(format!("Picture quality · {}", PRESETS[self.preset].0));
         theme::console_menu(&quality).show(|ui| self.quality_menu(ui));
         let right_left = right.min_rect().left();
 
@@ -1198,14 +1442,33 @@ impl Link {
         ui.spacing_mut().item_spacing.x = 4.0;
         // Measure the actual labels after reserving quality/stats/End. Long
         // presets, several screens and active transfers must not clip tools.
-        let mut nav = vec![("Bridge", false), (if sc.fullscreen {"Window"} else {"Full"}, false)];
-        if !ctx.embed_viewports() { nav.push((if sc.detached {"Dock"} else {"Pop out"}, false)); }
-        if self.info.displays.len() > 1 { nav.push(("Screens", true)); }
-        let mut tools = vec![("Keys", true), (if self.unread {"Chat ◆"} else {"Chat"}, false), (if self.audio {"Sound"} else {"Muted"}, false), ("Tools", true)];
-        if self.info.capabilities.file_transfer { tools.push(("Files", false)); }
+        let mut nav = vec![("Bridge", false), (if sc.fullscreen { "Window" } else { "Full" }, false)];
+        if !ctx.embed_viewports() {
+            nav.push((if sc.detached { "Dock" } else { "Pop out" }, false));
+        }
+        if self.info.displays.len() > 1 {
+            nav.push(("Screens", true));
+        }
+        let mut tools = vec![
+            ("Keys", true),
+            (if self.unread { "Chat ◆" } else { "Chat" }, false),
+            (if self.audio { "Sound" } else { "Muted" }, false),
+            ("Tools", true),
+        ];
+        if self.info.capabilities.file_transfer {
+            tools.push(("Files", false));
+        }
         let count = nav.len() + tools.len();
-        let icons = nav.iter().chain(&tools).map(|(_, menu)| theme::console_button_width(ui, "", *menu)).sum::<f32>() + (count - 1) as f32 * 4.0;
-        let extra = |buttons: &[(&str, bool)]| buttons.iter().map(|(label, menu)| theme::console_button_width(ui, label, *menu) - theme::console_button_width(ui, "", *menu)).sum::<f32>();
+        let icons = nav.iter().chain(&tools).map(|(_, menu)| theme::console_button_width(ui, "", *menu)).sum::<f32>()
+            + (count - 1) as f32 * 4.0;
+        let extra = |buttons: &[(&str, bool)]| {
+            buttons
+                .iter()
+                .map(|(label, menu)| {
+                    theme::console_button_width(ui, label, *menu) - theme::console_button_width(ui, "", *menu)
+                })
+                .sum::<f32>()
+        };
         let tool_labels = left_rect.width() >= icons + extra(&tools) + 4.0;
         let tight = left_rect.width() < icons + extra(&tools) + extra(&nav) + 4.0;
         let icon_only_back = tight;
@@ -1215,39 +1478,84 @@ impl Link {
         }
 
         let back_tip = format!("Back to the Bridge (the link with {} keeps running)", self.info.host_name);
-        if theme::console_button(ui, if icon_only_back { "" } else { "Bridge" }, pal::PEACH,Icon::Back,false).on_hover_text(back_tip).clicked() {
+        if theme::console_button(ui, if icon_only_back { "" } else { "Bridge" }, pal::PEACH, Icon::Back, false)
+            .on_hover_text(back_tip)
+            .clicked()
+        {
             self.release_keyboard();
             action = TabAction::Bridge;
         }
 
-        if !ctx.embed_viewports() && theme::console_button(ui, if tight {""} else if sc.detached {"Dock"} else {"Pop out"}, pal::BLUE, Icon::Window, false)
-            .on_hover_text(if sc.detached {"Move this screen into the main console"} else {"Open this screen in its own window"}).clicked() {
+        if !ctx.embed_viewports()
+            && theme::console_button(
+                ui,
+                if tight {
+                    ""
+                } else if sc.detached {
+                    "Dock"
+                } else {
+                    "Pop out"
+                },
+                pal::BLUE,
+                Icon::Window,
+                false,
+            )
+            .on_hover_text(if sc.detached {
+                "Move this screen into the main console"
+            } else {
+                "Open this screen in its own window"
+            })
+            .clicked()
+        {
             self.release_keyboard();
-            action = if sc.detached {TabAction::Dock} else {TabAction::Detach};
+            action = if sc.detached { TabAction::Dock } else { TabAction::Detach };
         }
 
         if self.info.displays.len() > 1 {
-            let screens=theme::console_button(ui,if tight {""} else {"Screens"},pal::VIOLET,Icon::Screens,true);
+            let screens =
+                theme::console_button(ui, if tight { "" } else { "Screens" }, pal::VIOLET, Icon::Screens, true);
             theme::console_menu(&screens).show(|ui| self.screens_menu(ui));
             screens.on_hover_text("The remote computer's screens: each ticked one has a tab of its own");
         }
 
-        if theme::console_button(ui, if tight {""} else if sc.fullscreen { "Window" } else { "Full" }, pal::BLUE,if sc.fullscreen{Icon::Window}else{Icon::Fullscreen},false)
-            .on_hover_text("Full screen on/off (Ctrl+Alt+Enter)")
-            .clicked()
+        if theme::console_button(
+            ui,
+            if tight {
+                ""
+            } else if sc.fullscreen {
+                "Window"
+            } else {
+                "Full"
+            },
+            pal::BLUE,
+            if sc.fullscreen { Icon::Window } else { Icon::Fullscreen },
+            false,
+        )
+        .on_hover_text("Full screen on/off (Ctrl+Alt+Enter)")
+        .clicked()
         {
             self.toggle_fullscreen(sc, &ctx);
         }
 
-        let keys=theme::console_button(ui,if tool_labels {"Keys"} else {""},pal::LAVENDER,Icon::Keys,true);
-        theme::console_menu(&keys).show(|ui|self.keys_menu(ui));
+        let keys = theme::console_button(ui, if tool_labels { "Keys" } else { "" }, pal::LAVENDER, Icon::Keys, true);
+        theme::console_menu(&keys).show(|ui| self.keys_menu(ui));
 
         let chat_label = if self.unread { "Chat ◆" } else { "Chat" };
-        if theme::console_button(ui,if tool_labels {chat_label} else {""},pal::LAVENDER,Icon::Chat,false).on_hover_text(chat_label).clicked() {
+        if theme::console_button(ui, if tool_labels { chat_label } else { "" }, pal::LAVENDER, Icon::Chat, false)
+            .on_hover_text(chat_label)
+            .clicked()
+        {
             self.show_chat = !self.show_chat;
         }
-        if self.info.capabilities.file_transfer && theme::console_button(ui,if tool_labels {"Files"} else {""},pal::GOLD,Icon::Files,false).on_hover_text("Browse and transfer files").clicked() {
-            { let mut files=self.files.lock().unwrap();files.open = !files.open; }
+        if self.info.capabilities.file_transfer
+            && theme::console_button(ui, if tool_labels { "Files" } else { "" }, pal::GOLD, Icon::Files, false)
+                .on_hover_text("Browse and transfer files")
+                .clicked()
+        {
+            {
+                let mut files = self.files.lock().unwrap();
+                files.open = !files.open;
+            }
             theme::repaint_console(&ctx);
             self.release_keyboard();
         }
@@ -1255,11 +1563,26 @@ impl Link {
         // Sound: gold while playing.
         let can_hear = self.info.capabilities.audio;
         let (label, color, tip) = match (can_hear, self.audio) {
-            (false, _) => ("Sound", pal::DIM, "That computer doesn't share its sound (not supported there yet, or switched off in its Config)"),
+            (false, _) => (
+                "Sound",
+                pal::DIM,
+                "That computer doesn't share its sound (not supported there yet, or switched off in its Config)",
+            ),
             (true, true) => ("Sound", pal::GOLD, "Playing the remote computer's sound. Click to mute"),
             (true, false) => ("Muted", pal::LAVENDER.gamma_multiply(0.6), "Click to hear the remote computer's sound"),
         };
-        let sound = ui.add_enabled(can_hear, |ui: &mut egui::Ui| theme::console_button(ui,if tool_labels {label} else {""},color,if self.audio{Icon::Sound}else{Icon::Muted},false)).on_hover_text(tip).on_disabled_hover_text(tip);
+        let sound = ui
+            .add_enabled(can_hear, |ui: &mut egui::Ui| {
+                theme::console_button(
+                    ui,
+                    if tool_labels { label } else { "" },
+                    color,
+                    if self.audio { Icon::Sound } else { Icon::Muted },
+                    false,
+                )
+            })
+            .on_hover_text(tip)
+            .on_disabled_hover_text(tip);
         if sound.clicked() {
             self.audio = !self.audio;
             self.send(ViewerCmd::Audio(self.audio));
@@ -1267,11 +1590,12 @@ impl Link {
 
         // Tools: privacy mode, port forwarding. Gold while privacy is on.
         let tools_color = if self.privacy { pal::GOLD } else { pal::LAVENDER };
-        let tools=theme::console_button(ui,if tool_labels {"Tools"} else {""},tools_color,Icon::Tools,true);
-        theme::console_menu(&tools).show(|ui|self.tools_menu(ui));
+        let tools = theme::console_button(ui, if tool_labels { "Tools" } else { "" }, tools_color, Icon::Tools, true);
+        theme::console_menu(&tools).show(|ui| self.tools_menu(ui));
 
         if sc.fullscreen || touch_ui() {
-            let gap = Rect::from_min_max(pos2(ui.min_rect().right()+4.0,bar.top()),pos2(right_left-4.0,bar.bottom()));
+            let gap =
+                Rect::from_min_max(pos2(ui.min_rect().right() + 4.0, bar.top()), pos2(right_left - 4.0, bar.bottom()));
             theme::session_rail_label(&painter, gap, &self.info.host_name.to_uppercase());
         }
         action
@@ -1283,12 +1607,14 @@ impl Link {
         let mut action = TabAction::None;
         let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
         right.spacing_mut().item_spacing.x = 4.0;
-        if theme::console_button(&mut right,"",pal::RED,Icon::End,false).on_hover_text("End this link").clicked() {
+        if theme::console_button(&mut right, "", pal::RED, Icon::End, false).on_hover_text("End this link").clicked() {
             self.send(ViewerCmd::Disconnect);
             action = TabAction::Close;
         }
-        theme::session_stats_frame()
-            .show(&mut right,|ui|{ui.set_min_height(34.0);self.stats_readout(ui,if touch_ui() {Detail::Fps} else {Detail::Compact},t)});
+        theme::session_stats_frame().show(&mut right, |ui| {
+            ui.set_min_height(34.0);
+            self.stats_readout(ui, if touch_ui() { Detail::Fps } else { Detail::Compact }, t)
+        });
         if !touch_ui() {
             let quality = theme::console_button(&mut right, "", pal::BLUE, Icon::Performance, true)
                 .on_hover_text(format!("Picture quality · {}", PRESETS[self.preset].0));
@@ -1298,11 +1624,17 @@ impl Link {
         let mut left = ui.new_child(UiBuilder::new().max_rect(left_rect).layout(Layout::left_to_right(Align::Center)));
         left.set_clip_rect(left_rect.expand2(vec2(0.0, 8.0)));
         left.spacing_mut().item_spacing.x = 4.0;
-        if theme::console_button(&mut left,"",pal::PEACH,Icon::Back,false).clicked() {
+        if theme::console_button(&mut left, "", pal::PEACH, Icon::Back, false).clicked() {
             self.release_keyboard();
             action = TabAction::Bridge;
         }
-        let console = theme::console_button(&mut left,if left_rect.width()<300.0 {""} else {"Console"},if self.unread {pal::GOLD}else{pal::LAVENDER},Icon::Console,true);
+        let console = theme::console_button(
+            &mut left,
+            if left_rect.width() < 300.0 { "" } else { "Console" },
+            if self.unread { pal::GOLD } else { pal::LAVENDER },
+            Icon::Console,
+            true,
+        );
         theme::console_menu(&console).show(|ui| {
             ui.set_min_width(230.0);
             if sc.fullscreen || touch_ui() {
@@ -1364,15 +1696,25 @@ impl Link {
         });
         // Touch screens: the keyboard and the way fingers control the pointer, a tap away.
         if touch_ui() || ctx.input(|i| i.any_touches()) {
-            if theme::console_button(&mut left, "", if sc.keyboard { pal::GOLD } else { pal::LAVENDER }, Icon::Keys, false)
-                .on_hover_text("Keyboard: type on the remote computer, with Ctrl, Alt, arrows and F-keys").clicked()
+            if theme::console_button(
+                &mut left,
+                "",
+                if sc.keyboard { pal::GOLD } else { pal::LAVENDER },
+                Icon::Keys,
+                false,
+            )
+            .on_hover_text("Keyboard: type on the remote computer, with Ctrl, Alt, arrows and F-keys")
+            .clicked()
             {
                 sc.keyboard = !sc.keyboard;
                 sc.latched.clear();
                 self.captured |= sc.keyboard;
             }
             let (icon, tip) = if self.trackpad {
-                (Icon::Trackpad, "Trackpad: slide to move the pointer, tap to click, two-finger tap to right-click. Tap for direct touch.")
+                (
+                    Icon::Trackpad,
+                    "Trackpad: slide to move the pointer, tap to click, two-finger tap to right-click. Tap for direct touch.",
+                )
             } else {
                 (Icon::Touch, "Touch: tap where you want to click, hold to right-click. Tap for trackpad.")
             };
@@ -1381,7 +1723,10 @@ impl Link {
             }
         }
         if sc.fullscreen || touch_ui() {
-            let gap = Rect::from_min_max(pos2(left.min_rect().right()+4.0,inner.top()),pos2(right.min_rect().left()-4.0,inner.bottom()));
+            let gap = Rect::from_min_max(
+                pos2(left.min_rect().right() + 4.0, inner.top()),
+                pos2(right.min_rect().left() - 4.0, inner.bottom()),
+            );
             theme::session_rail_label(ui.painter(), gap, &self.info.host_name.to_uppercase());
         }
         action
@@ -1390,11 +1735,14 @@ impl Link {
     /// Switches between trackpad and direct touch, and says what it means.
     fn toggle_trackpad(&mut self) {
         self.trackpad = !self.trackpad;
-        self.notice = Some((if self.trackpad {
-            TRACKPAD_HINT.into()
-        } else {
-            "Touch: tap to click · hold to right-click · drag to drag · two fingers scroll · pinch to zoom".into()
-        }, Instant::now()));
+        self.notice = Some((
+            if self.trackpad {
+                TRACKPAD_HINT.into()
+            } else {
+                "Touch: tap to click · hold to right-click · drag to drag · two fingers scroll · pinch to zoom".into()
+            },
+            Instant::now(),
+        ));
     }
 
     /// The remote computer's screens, ticked when they have a tab. The
@@ -1404,20 +1752,40 @@ impl Link {
         let ticked = displays.iter().filter(|d| !self.hidden.contains(&d.index)).count();
         for d in &displays {
             let mut on = !self.hidden.contains(&d.index);
-            let label = format!("Screen {} · {} · {}×{}{}", d.index + 1, d.name, d.width, d.height, if d.primary { " (main)" } else { "" });
+            let label = format!(
+                "Screen {} · {} · {}×{}{}",
+                d.index + 1,
+                d.name,
+                d.width,
+                d.height,
+                if d.primary { " (main)" } else { "" }
+            );
             if ui.add_enabled(!(on && ticked == 1), egui::Checkbox::new(&mut on, label)).changed() {
-                if on { self.hidden.remove(&d.index); } else { self.hide_display(d.index); }
+                if on {
+                    self.hidden.remove(&d.index);
+                } else {
+                    self.hide_display(d.index);
+                }
             }
         }
-        ui.label(RichText::new("Each ticked screen has a tab: drag one out to see it in a window of its own").small().color(pal::DIM));
+        ui.label(
+            RichText::new("Each ticked screen has a tab: drag one out to see it in a window of its own")
+                .small()
+                .color(pal::DIM),
+        );
     }
 
     /// Key combinations to send.
     fn keys_menu(&mut self, ui: &mut Ui) {
         if self.info.os.eq_ignore_ascii_case("android") {
-            for (label,code) in [("Android · Back","AndroidBack"),("Android · Home","AndroidHome"),("Android · Recents","AndroidRecents")] {
-                if ui.add_enabled(self.info.capabilities.input,egui::Button::new(label)).clicked() {
-                    self.send_combo(&[code]);ui.close();
+            for (label, code) in [
+                ("Android · Back", "AndroidBack"),
+                ("Android · Home", "AndroidHome"),
+                ("Android · Recents", "AndroidRecents"),
+            ] {
+                if ui.add_enabled(self.info.capabilities.input, egui::Button::new(label)).clicked() {
+                    self.send_combo(&[code]);
+                    ui.close();
                 }
             }
             return;
@@ -1441,7 +1809,9 @@ impl Link {
     fn tools_menu(&mut self, ui: &mut Ui) {
         if ui
             .button("System information")
-            .on_hover_text("Its processor, memory, graphics, drives, temperatures, network and Windows/macOS/Linux version")
+            .on_hover_text(
+                "Its processor, memory, graphics, drives, temperatures, network and Windows/macOS/Linux version",
+            )
             .clicked()
         {
             self.show_sysinfo = true;
@@ -1453,10 +1823,12 @@ impl Link {
             self.release_keyboard();
             ui.close();
         }
-        if ui.add_enabled(self.info.capabilities.network_scan, egui::Button::new("Network scan"))
+        if ui
+            .add_enabled(self.info.capabilities.network_scan, egui::Button::new("Network scan"))
             .on_hover_text("Discover devices and open TCP ports on the remote computer's network")
             .on_disabled_hover_text("Not allowed on that computer (Config → Permissions → Network scan)")
-            .clicked() {
+            .clicked()
+        {
             self.release_keyboard();
             self.network.lock().expect("network window").open = true;
             theme::repaint_console(ui.ctx());
@@ -1486,10 +1858,17 @@ impl Link {
         let control = self.info.capabilities.input;
         for (action, hover) in [
             (PowerAction::Restart, "Restart the remote computer and reconnect when it's back"),
-            (PowerAction::RestartSafeMode, "Windows with the Slipstream service: start once in Safe Mode with Networking (the next restart is normal), then reconnect"),
-            (PowerAction::RestartToFirmware, "UEFI computers: restart into the BIOS/firmware setup. You'll only see it through a management controller (Manage on the Bridge)"),
+            (
+                PowerAction::RestartSafeMode,
+                "Windows with the Slipstream service: start once in Safe Mode with Networking (the next restart is normal), then reconnect",
+            ),
+            (
+                PowerAction::RestartToFirmware,
+                "UEFI computers: restart into the BIOS/firmware setup. You'll only see it through a management controller (Manage on the Bridge)",
+            ),
         ] {
-            if ui.add_enabled(control && self.power_reply.is_none(), egui::Button::new(action.label()))
+            if ui
+                .add_enabled(control && self.power_reply.is_none(), egui::Button::new(action.label()))
                 .on_hover_text(hover)
                 .on_disabled_hover_text("Needs Control permission on that computer")
                 .clicked()
@@ -1510,7 +1889,8 @@ impl Link {
             match result {
                 Ok(()) => {
                     self.restart_expected = Some(Instant::now());
-                    self.notice = Some(("Restarting · this tab reconnects when the computer is back".into(), Instant::now()));
+                    self.notice =
+                        Some(("Restarting · this tab reconnects when the computer is back".into(), Instant::now()));
                 }
                 Err(e) => self.notice = Some((format!("Couldn't restart: {e}"), Instant::now())),
             }
@@ -1579,10 +1959,14 @@ impl Link {
         }
         if fresh {
             // Unique across runs too: egui keeps scroll positions between them.
-            self.sysinfo_serial = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+            self.sysinfo_serial = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
             *self.sysinfo.lock().unwrap() = None;
         }
-        let (slot, busy, wake, job) = (self.sysinfo.clone(), self.sysinfo_busy.clone(), ctx.clone(), self.session.system_info());
+        let (slot, busy, wake, job) =
+            (self.sysinfo.clone(), self.sysinfo_busy.clone(), ctx.clone(), self.session.system_info());
         rt.spawn(async move {
             let r = job.await.map_err(|e| format!("{e:#}"));
             {
@@ -1597,14 +1981,17 @@ impl Link {
     }
 
     fn fetch_public_ip(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime, refresh: bool) {
-        if self.public_ip_rx.is_some() || self.closed.is_some() { return; }
-        let (tx,rx) = tokio::sync::oneshot::channel();
-        let (fs,wake) = (self.session.fs(),ctx.clone());
+        if self.public_ip_rx.is_some() || self.closed.is_some() {
+            return;
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (fs, wake) = (self.session.fs(), ctx.clone());
         self.public_ip_rx = Some(rx);
         self.public_ip_at = Some(Instant::now());
         rt.spawn(async move {
-            let result = fs.public_ip(refresh).await.map_err(|e|format!("{e:#}"));
-            let _=tx.send(result);wake.request_repaint_of(egui::ViewportId::ROOT);
+            let result = fs.public_ip(refresh).await.map_err(|e| format!("{e:#}"));
+            let _ = tx.send(result);
+            wake.request_repaint_of(egui::ViewportId::ROOT);
         });
     }
 
@@ -1614,14 +2001,18 @@ impl Link {
         }
         if let Some(rx) = &mut self.public_ip_rx {
             match rx.try_recv() {
-                Ok(result) => { self.public_ip = Some(result); self.public_ip_rx = None; },
+                Ok(result) => {
+                    self.public_ip = Some(result);
+                    self.public_ip_rx = None;
+                }
                 Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                    self.public_ip = Some(Err("Public-IP request ended without an answer".into()));self.public_ip_rx = None;
-                },
-                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {},
+                    self.public_ip = Some(Err("Public-IP request ended without an answer".into()));
+                    self.public_ip_rx = None;
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
             }
         }
-        if self.public_ip_at.is_none_or(|at|at.elapsed() >= std::time::Duration::from_secs(60)) {
+        if self.public_ip_at.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(60)) {
             self.fetch_public_ip(ctx, rt, false);
         }
         if self.sysinfo_fetch {
@@ -1848,7 +2239,8 @@ impl Link {
         let path = if s.relayed { ("RELAY", pal::GOLD) } else { ("DIRECT", pal::GREEN) };
         // A still screen streams at a few dozen kbit/s: "0.0 MBPS" told
         // nothing, so below 1 Mbit/s it's kbit/s.
-        let (rate, rate_unit) = if mbps < 1.0 { (format!("{:.0}", mbps * 1000.0), "KBPS") } else { (format!("{mbps:.1}"), "MBPS") };
+        let (rate, rate_unit) =
+            if mbps < 1.0 { (format!("{:.0}", mbps * 1000.0), "KBPS") } else { (format!("{mbps:.1}"), "MBPS") };
         let mut details = format!(
             "{fps:.0} frames a second · {rate} {} · {rtt:.0} ms round trip · {} · decoding {:.1} ms a frame",
             if rate_unit == "KBPS" { "kbit/s" } else { "Mbit/s" },
@@ -1856,8 +2248,12 @@ impl Link {
             s.decode_ms
         );
         if s.width > 0 && s.height > 0 {
-            details.push_str(&format!("\nEncoded picture: {}×{} · {}", s.width, s.height,
-                if PRESETS[self.preset].1.adaptive_resolution { "adaptive resolution" } else { "full resolution" }));
+            details.push_str(&format!(
+                "\nEncoded picture: {}×{} · {}",
+                s.width,
+                s.height,
+                if PRESETS[self.preset].1.adaptive_resolution { "adaptive resolution" } else { "full resolution" }
+            ));
         }
         if !s.host.is_empty() {
             details.push_str("\n\nOn the remote computer:");
@@ -1878,53 +2274,79 @@ impl Link {
             Detail::Full => format!("{fps:>3.0} FPS · {rate:>4} {rate_unit} · {rtt:>3.0} MS"),
         };
         ui.label(RichText::new(text).font(theme::mono(15.0)).color(pal::BLUE)).on_hover_text(&details);
-        let activity=self.files.lock().unwrap().activity();
+        let activity = self.files.lock().unwrap().activity();
         if let Some((n, frac)) = activity {
             let r = ui
-                .add(egui::Button::new(RichText::new(if detail == Detail::Full {format!("⇅ {n} · {:.0}%", frac * 100.0)} else {"⇅".into()}).font(theme::mono(14.0)).color(pal::GOLD)).frame(false))
+                .add(
+                    egui::Button::new(
+                        RichText::new(if detail == Detail::Full {
+                            format!("⇅ {n} · {:.0}%", frac * 100.0)
+                        } else {
+                            "⇅".into()
+                        })
+                        .font(theme::mono(14.0))
+                        .color(pal::GOLD),
+                    )
+                    .frame(false),
+                )
                 .on_hover_text(format!("Show {n} transfers · {:.0}%", frac * 100.0));
             if r.clicked() {
                 self.files.lock().unwrap().open = true;
             }
         }
         // The lamp shows the path when the label is left out.
-        let lamp = if self.closed.is_some() { pal::RED } else if compact { path.1 } else { pal::GREEN };
+        let lamp = if self.closed.is_some() {
+            pal::RED
+        } else if compact {
+            path.1
+        } else {
+            pal::GREEN
+        };
         let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
         theme::lamp(ui.painter(), r.center(), lamp, t);
         resp.on_hover_text(details);
     }
 
-    fn closed_overlay(&mut self,ui:&mut Ui,area:Rect,reason:&str)->Option<TabAction> {
-        let progress=self.reconnect.as_ref().map(|r|r.progress.lock().unwrap().clone());
-        let recovering=progress.is_some();
-        let color=if recovering {pal::BLUE}else{pal::RED};
-        let painter=ui.painter();
-        painter.rect_filled(area,0.0,Color32::BLACK.gamma_multiply(0.75));
-        let panel=Rect::from_center_size(area.center(),vec2((area.width()-24.0).clamp(260.0,560.0),240.0));
-        theme::glow(painter,panel,16.0,color,1.0);
-        painter.rect_filled(panel,16.0,pal::PANEL);
-        let mut child=ui.new_child(UiBuilder::new().max_rect(panel.shrink(20.0)));
-        let ui=&mut child;
-        theme::header(ui,if recovering {"Re-establishing link"}else{"Link terminated"},color);
+    fn closed_overlay(&mut self, ui: &mut Ui, area: Rect, reason: &str) -> Option<TabAction> {
+        let progress = self.reconnect.as_ref().map(|r| r.progress.lock().unwrap().clone());
+        let recovering = progress.is_some();
+        let color = if recovering { pal::BLUE } else { pal::RED };
+        let painter = ui.painter();
+        painter.rect_filled(area, 0.0, Color32::BLACK.gamma_multiply(0.75));
+        let panel = Rect::from_center_size(area.center(), vec2((area.width() - 24.0).clamp(260.0, 560.0), 240.0));
+        theme::glow(painter, panel, 16.0, color, 1.0);
+        painter.rect_filled(panel, 16.0, pal::PANEL);
+        let mut child = ui.new_child(UiBuilder::new().max_rect(panel.shrink(20.0)));
+        let ui = &mut child;
+        theme::header(ui, if recovering { "Re-establishing link" } else { "Link terminated" }, color);
         ui.add_space(8.0);
         ui.label(RichText::new(reason).font(theme::body(17.0)));
-        if let Some(progress)=progress {
-            ui.add_space(8.0);ui.label(RichText::new(progress).color(pal::BLUE));
-            ui.label(RichText::new("Retrying for up to two minutes. Transfers are not resumed automatically.").small().color(pal::DIM));
+        if let Some(progress) = progress {
+            ui.add_space(8.0);
+            ui.label(RichText::new(progress).color(pal::BLUE));
+            ui.label(
+                RichText::new("Retrying for up to two minutes. Transfers are not resumed automatically.")
+                    .small()
+                    .color(pal::DIM),
+            );
         }
         ui.add_space(16.0);
-        let mut out=None;
+        let mut out = None;
         ui.horizontal_wrapped(|ui| {
             if recovering {
-                if theme::pill(ui,"Cancel reconnect",pal::ORANGE).clicked() {tracing::info!(peer=%self.peer,"automatic reconnect canceled");self.reconnect=None;}
-            } else if theme::pill(ui,"Reconnect",pal::ORANGE).clicked() {
+                if theme::pill(ui, "Cancel reconnect", pal::ORANGE).clicked() {
+                    tracing::info!(peer=%self.peer,"automatic reconnect canceled");
+                    self.reconnect = None;
+                }
+            } else if theme::pill(ui, "Reconnect", pal::ORANGE).clicked() {
                 self.reconnect_requested = true;
             }
-            if theme::pill(ui,"End link",pal::RED).clicked() {out=Some(TabAction::Close);}
+            if theme::pill(ui, "End link", pal::RED).clicked() {
+                out = Some(TabAction::Close);
+            }
         });
         out
     }
-
 }
 
 /// How much of the link's figures the session bar shows.
@@ -1963,38 +2385,42 @@ fn sysinfo_text(host: &str, sections: &[slipstream_core::proto::InfoSection]) ->
 mod window_tests {
     use super::*;
     use slipstream_core::config::Store;
-    use slipstream_session::{Client, ClientOptions, AudioOut};
+    use slipstream_session::{AudioOut, Client, ClientOptions};
 
     #[test]
     fn video_repaint_for_a_docked_or_closed_window_creates_no_native_viewport() {
-        let ctx=egui::Context::default();
+        let ctx = egui::Context::default();
         ctx.set_embed_viewports(false);
-        let floating=RemoteTab::window_id(7);
-        let requests=Arc::new(Mutex::new(Vec::new()));
-        let sink=requests.clone();
-        ctx.set_repaint_observer(move |request|sink.lock().unwrap().push(request.viewport_id));
+        let floating = RemoteTab::window_id(7);
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let sink = requests.clone();
+        ctx.set_repaint_observer(move |request| sink.lock().unwrap().push(request.viewport_id));
         // Video callbacks run between UI passes, too. Requesting an unknown
         // viewport then sends the backend an event for a nonexistent window.
-        theme::repaint_existing_viewport(&ctx,floating);
-        theme::repaint_existing_after(&ctx,floating,std::time::Duration::from_millis(100));
-        let mut output=ctx.run_ui(egui::RawInput::default(),|ui| {
-            theme::repaint_existing_viewport(ui.ctx(),floating);
-            theme::repaint_existing_after(ui.ctx(),floating,std::time::Duration::from_millis(100));
+        theme::repaint_existing_viewport(&ctx, floating);
+        theme::repaint_existing_after(&ctx, floating, std::time::Duration::from_millis(100));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            theme::repaint_existing_viewport(ui.ctx(), floating);
+            theme::repaint_existing_after(ui.ctx(), floating, std::time::Duration::from_millis(100));
         });
         output.textures_delta.clear();
         assert!(!output.viewport_output.contains_key(&floating));
         assert!(!requests.lock().unwrap().contains(&floating));
         // A live floating viewport still receives a repaint request.
-        let mut input=egui::RawInput::default();
-        input.viewports.insert(floating,egui::ViewportInfo::default());
-        let mut output=ctx.run_ui(input,|ui| {
-            ui.ctx().show_viewport_deferred(floating,egui::ViewportBuilder::default().with_title("Workstation"),|_,_|{});
-            theme::repaint_existing_viewport(ui.ctx(),floating);
+        let mut input = egui::RawInput::default();
+        input.viewports.insert(floating, egui::ViewportInfo::default());
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.ctx().show_viewport_deferred(
+                floating,
+                egui::ViewportBuilder::default().with_title("Workstation"),
+                |_, _| {},
+            );
+            theme::repaint_existing_viewport(ui.ctx(), floating);
         });
         output.textures_delta.clear();
-        assert_eq!(output.viewport_output[&floating].repaint_delay,std::time::Duration::ZERO);
+        assert_eq!(output.viewport_output[&floating].repaint_delay, std::time::Duration::ZERO);
         requests.lock().unwrap().clear();
-        theme::repaint_existing_viewport(&ctx,floating);
+        theme::repaint_existing_viewport(&ctx, floating);
         assert!(requests.lock().unwrap().contains(&floating));
     }
 
@@ -2008,19 +2434,27 @@ mod window_tests {
             settings.server.use_public_relays = false;
             settings.host.set_permanent_password(Some("window-test-password"));
             store.save_settings(&settings).unwrap();
-            let (client, _) = Client::start(store, ClientOptions {
-                test_pattern: host, accept_sessions: host,
-                clipboard: slipstream_platform::clipboard::ClipboardSource::Memory(Default::default()),
-                audio_out: AudioOut::Memory(Default::default()),
-                public_station: None, system_screen: false,
-            }).await.unwrap();
+            let (client, _) = Client::start(
+                store,
+                ClientOptions {
+                    test_pattern: host,
+                    accept_sessions: host,
+                    clipboard: slipstream_platform::clipboard::ClipboardSource::Memory(Default::default()),
+                    audio_out: AudioOut::Memory(Default::default()),
+                    public_station: None,
+                    system_screen: false,
+                },
+            )
+            .await
+            .unwrap();
             clients.push(client);
         }
         let ctx = egui::Context::default();
         let mut tabs = Vec::new();
         let mut links = Vec::new();
         for host in &clients[..2] {
-            let (session, events) = clients[2].connect_direct(host.endpoint_addr(), "window-test-password", |_| {}).await.unwrap();
+            let (session, events) =
+                clients[2].connect_direct(host.endpoint_addr(), "window-test-password", |_| {}).await.unwrap();
             let link = Arc::new(Mutex::new(Link::new(session, events, "window-test-password".into(), false, false)));
             let mut tab = RemoteTab::for_screen(&link, 0, &ctx);
             tab.detached = true;
@@ -2034,7 +2468,8 @@ mod window_tests {
             links.push(link);
         }
         let ids: Vec<u64> = tabs.iter().map(|t| t.lock().unwrap().id).collect();
-        let route = |viewport, focused| super::super::route_session_input(&tabs, super::super::Page::Links, viewport, focused);
+        let route =
+            |viewport, focused| super::super::route_session_input(&tabs, super::super::Page::Links, viewport, focused);
         assert!(Arc::ptr_eq(&route(RemoteTab::window_id(ids[0]), true).unwrap(), &tabs[0]));
         assert!(tabs[0].lock().unwrap().keyboard_captured());
         assert!(!tabs[1].lock().unwrap().keyboard_captured());
@@ -2053,14 +2488,23 @@ mod window_tests {
         assert!(!tabs[1].lock().unwrap().keyboard_captured());
         assert!(tabs[1].lock().unwrap().pending_keys.is_empty());
         // Only the selected member of a floating group receives input.
-        let group=RemoteTab::window_id(ids[1]);
-        {let mut first=tabs[0].lock().unwrap();first.window_group=Some(group);first.window_active=false;}
-        assert!(Arc::ptr_eq(&route(group,true).unwrap(),&tabs[1]));
-        {tabs[0].lock().unwrap().window_active=true;tabs[1].lock().unwrap().window_active=false;}
-        assert!(Arc::ptr_eq(&route(group,true).unwrap(),&tabs[0]));
+        let group = RemoteTab::window_id(ids[1]);
+        {
+            let mut first = tabs[0].lock().unwrap();
+            first.window_group = Some(group);
+            first.window_active = false;
+        }
+        assert!(Arc::ptr_eq(&route(group, true).unwrap(), &tabs[1]));
+        {
+            tabs[0].lock().unwrap().window_active = true;
+            tabs[1].lock().unwrap().window_active = false;
+        }
+        assert!(Arc::ptr_eq(&route(group, true).unwrap(), &tabs[0]));
         tabs[0].lock().unwrap().detached = false;
         assert!(route(egui::ViewportId::ROOT, true).is_none());
-        let docked = super::super::route_session_input(&tabs, super::super::Page::Remote(ids[0]), egui::ViewportId::ROOT, true).unwrap();
+        let docked =
+            super::super::route_session_input(&tabs, super::super::Page::Remote(ids[0]), egui::ViewportId::ROOT, true)
+                .unwrap();
         assert!(Arc::ptr_eq(&docked, &tabs[0]));
         drop(docked);
         // A second screen of the same link, in a window of its own: typing
@@ -2071,14 +2515,20 @@ mod window_tests {
         tabs.push(Arc::new(Mutex::new(second)));
         links[0].lock().unwrap().captured = true;
         tabs[0].lock().unwrap().pending_keys.push(CapturedKey::ToggleFullscreen);
-        let routed = super::super::route_session_input(&tabs, super::super::Page::Links, RemoteTab::window_id(second_id), true).unwrap();
+        let routed =
+            super::super::route_session_input(&tabs, super::super::Page::Links, RemoteTab::window_id(second_id), true)
+                .unwrap();
         assert!(Arc::ptr_eq(&routed, &tabs[2]));
         assert!(links[0].lock().unwrap().keyboard_captured());
         assert!(!tabs[0].lock().unwrap().pending_keys.is_empty(), "a screen of the same link keeps its keys");
         drop(routed);
-        for link in &links { link.lock().unwrap().end_link(); }
+        for link in &links {
+            link.lock().unwrap().end_link();
+        }
         drop(tabs);
         drop(links);
-        for client in &clients { client.shutdown().await; }
+        for client in &clients {
+            client.shutdown().await;
+        }
     }
 }

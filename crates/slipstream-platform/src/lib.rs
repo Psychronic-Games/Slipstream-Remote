@@ -24,20 +24,18 @@ pub mod test_pattern;
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 pub mod generic;
-#[cfg(target_os = "windows")]
-mod privacy;
 #[cfg(target_os = "linux")]
 pub mod kms;
 #[cfg(target_os = "linux")]
-mod pw;
-#[cfg(target_os = "linux")]
 mod portal_health;
+#[cfg(target_os = "windows")]
+mod privacy;
+#[cfg(target_os = "linux")]
+mod pw;
 #[cfg(target_os = "linux")]
 pub mod system;
 #[cfg(target_os = "linux")]
 mod uinput;
-#[cfg(target_os = "linux")]
-mod x11;
 #[cfg(target_os = "linux")]
 pub mod wayland;
 #[cfg(target_os = "windows")]
@@ -48,6 +46,8 @@ mod win_dxgi;
 mod win_gdi;
 #[cfg(target_os = "windows")]
 pub mod windesk;
+#[cfg(target_os = "linux")]
+mod x11;
 
 use std::collections::HashSet;
 
@@ -72,7 +72,9 @@ pub trait Backend: Send {
     fn inject(&mut self, display: u32, event: InputEvent) -> Result<()>;
 
     /// Whether this backend can currently accept remote input.
-    fn input_supported(&self) -> bool { true }
+    fn input_supported(&self) -> bool {
+        true
+    }
 
     /// Token that lets the next session skip the permission prompt (Wayland).
     fn restore_token(&self) -> Option<String> {
@@ -129,7 +131,9 @@ pub async fn open(opts: &OpenOptions) -> Result<Box<dyn Backend>> {
         Ok(Box::new(generic::GenericBackend::open()?))
     }
     #[cfg(target_os = "android")]
-    { Ok(Box::new(android::AndroidBackend::open()?)) }
+    {
+        Ok(Box::new(android::AndroidBackend::open()?))
+    }
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos", target_os = "android")))]
     {
         anyhow::bail!("screen capture is not supported on this platform yet")
@@ -192,16 +196,8 @@ impl HeldInputs {
     }
 
     pub fn release_all(&mut self) -> Vec<InputEvent> {
-        let mut out: Vec<InputEvent> = self
-            .keys
-            .drain()
-            .map(|code| InputEvent::Key { code, down: false })
-            .collect();
-        out.extend(
-            self.buttons
-                .drain()
-                .map(|b| InputEvent::MouseButton { button: button_from_key(b), down: false }),
-        );
+        let mut out: Vec<InputEvent> = self.keys.drain().map(|code| InputEvent::Key { code, down: false }).collect();
+        out.extend(self.buttons.drain().map(|b| InputEvent::MouseButton { button: button_from_key(b), down: false }));
         out
     }
 }

@@ -92,11 +92,7 @@ impl Devices {
             .and_then(|id| self.cameras.iter().find(|(index, _)| *index == id))
             .map(|(_, name)| name.clone())
             .unwrap_or_else(|| {
-                if self.camera_job.is_some() {
-                    "Finding cameras…".into()
-                } else {
-                    "No camera available".into()
-                }
+                if self.camera_job.is_some() { "Finding cameras…".into() } else { "No camera available".into() }
             })
     }
 }
@@ -125,30 +121,14 @@ pub(super) fn ui(meetings: &mut Meetings, mut active: Option<&mut Active>, app: 
             egui::ComboBox::from_id_salt("meeting-microphone")
                 .width(ui.available_width().min(480.0))
                 .wrap_mode(egui::TextWrapMode::Truncate)
-                .selected_text(
-                    meetings
-                        .devices
-                        .microphone_name(meetings.microphone_device.as_deref()),
-                )
+                .selected_text(meetings.devices.microphone_name(meetings.microphone_device.as_deref()))
                 .show_ui(ui, |ui| {
                     ui.set_max_width(480.0_f32.min(ui.ctx().content_rect().width() - 40.0));
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                    ui.selectable_value(
-                        &mut meetings.microphone_device,
-                        None,
-                        meetings.devices.microphone_name(None),
-                    );
+                    ui.selectable_value(&mut meetings.microphone_device, None, meetings.devices.microphone_name(None));
                     for device in &meetings.devices.microphones {
-                        let label = format!(
-                            "{}{}",
-                            device.name,
-                            if device.is_default { " · default" } else { "" }
-                        );
-                        ui.selectable_value(
-                            &mut meetings.microphone_device,
-                            Some(device.id.clone()),
-                            label,
-                        );
+                        let label = format!("{}{}", device.name, if device.is_default { " · default" } else { "" });
+                        ui.selectable_value(&mut meetings.microphone_device, Some(device.id.clone()), label);
                     }
                 });
         });
@@ -158,8 +138,7 @@ pub(super) fn ui(meetings: &mut Meetings, mut active: Option<&mut Active>, app: 
             ui.label("No microphone was found. Connect one and refresh devices.");
         }
         if previous != meetings.microphone_device {
-            app.client
-                .update_settings(|s| s.app.meeting_microphone = meetings.microphone_device.clone());
+            app.client.update_settings(|s| s.app.meeting_microphone = meetings.microphone_device.clone());
             if let Some(a) = active.as_deref_mut()
                 && a.microphone.is_some()
             {
@@ -197,8 +176,7 @@ pub(super) fn ui(meetings: &mut Meetings, mut active: Option<&mut Active>, app: 
             ui.label("No camera was found. Connect one and refresh devices.");
         }
         if previous != meetings.camera_index {
-            app.client
-                .update_settings(|s| s.app.meeting_camera = meetings.camera_index);
+            app.client.update_settings(|s| s.app.meeting_camera = meetings.camera_index);
             if let Some(a) = active.as_deref_mut()
                 && a.source == Source::Camera
             {

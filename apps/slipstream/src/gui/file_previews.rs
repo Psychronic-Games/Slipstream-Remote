@@ -81,15 +81,8 @@ impl PreviewCache {
                 self.remote_unavailable = true;
             }
             let preview = match loaded.result.ok().flatten().filter(FilePreview::valid) {
-                Some(FilePreview::Image {
-                    width,
-                    height,
-                    rgba,
-                }) => {
-                    let image = egui::ColorImage::from_rgba_unmultiplied(
-                        [width as usize, height as usize],
-                        &rgba,
-                    );
+                Some(FilePreview::Image { width, height, rgba }) => {
+                    let image = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &rgba);
                     Preview::Image(ctx.load_texture(
                         format!("file-preview-{}-{}", self.generation, loaded.index),
                         image,
@@ -100,11 +93,7 @@ impl PreviewCache {
                 _ => Preview::Missing,
             };
             if self.entries.len() >= 128
-                && let Some(oldest) = self
-                    .entries
-                    .iter()
-                    .min_by_key(|(_, (used, _))| used)
-                    .map(|(&index, _)| index)
+                && let Some(oldest) = self.entries.iter().min_by_key(|(_, (used, _))| used).map(|(&index, _)| index)
             {
                 self.entries.remove(&oldest);
             }
@@ -114,14 +103,7 @@ impl PreviewCache {
     }
 
     /// Returns false while loading or for files with no passive preview.
-    pub fn paint(
-        &mut self,
-        ui: &Ui,
-        rect: Rect,
-        index: usize,
-        path: String,
-        loader: &Loader<'_>,
-    ) -> bool {
+    pub fn paint(&mut self, ui: &Ui, rect: Rect, index: usize, path: String, loader: &Loader<'_>) -> bool {
         if let Some((used, preview)) = self.entries.get_mut(&index) {
             self.clock += 1;
             *used = self.clock;
@@ -146,11 +128,7 @@ impl PreviewCache {
                     return true;
                 }
                 Preview::Text(text) => {
-                    entry_icon(
-                        p,
-                        Rect::from_center_size(rect.center(), vec2(20.0, 20.0)),
-                        false,
-                    );
+                    entry_icon(p, Rect::from_center_size(rect.center(), vec2(20.0, 20.0)), false);
                     // A little actual page content replaces the generic data lines.
                     let page = Rect::from_min_size(rect.min + vec2(11.0, 10.0), vec2(12.0, 13.0));
                     p.rect_filled(page, 0.0, Color32::from_rgb(4, 6, 12));
@@ -175,12 +153,8 @@ impl PreviewCache {
         {
             return false;
         }
-        let (tx, generation, remote, ctx) = (
-            self.tx.clone(),
-            self.generation,
-            loader.remote.cloned(),
-            ui.ctx().clone(),
-        );
+        let (tx, generation, remote, ctx) =
+            (self.tx.clone(), self.generation, loader.remote.cloned(), ui.ctx().clone());
         let viewport = ctx.viewport_id();
         let task = loader.rt.spawn(async move {
             let is_remote = remote.is_some();
@@ -188,13 +162,8 @@ impl PreviewCache {
                 Some(fs) => fs.preview(path).await.map_err(|_| ()),
                 None => Ok(slipstream_session::preview::load(path).await.ok().flatten()),
             };
-            let _ = tx.send(Loaded {
-                generation,
-                index,
-                result,
-                remote: is_remote,
-            });
-            theme::repaint_existing_viewport(&ctx,viewport);
+            let _ = tx.send(Loaded { generation, index, result, remote: is_remote });
+            theme::repaint_existing_viewport(&ctx, viewport);
         });
         self.tasks.insert(index, task);
         false
@@ -213,19 +182,8 @@ impl PreviewCache {
                         .map(|line| line.chars().take(100).collect::<String>())
                         .collect::<Vec<_>>()
                         .join("\n");
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(text)
-                                .font(theme::mono(12.0))
-                                .color(pal::TEXT),
-                        )
-                        .wrap(),
-                    );
-                    ui.label(
-                        egui::RichText::new("Text preview · first 8 KB")
-                            .small()
-                            .color(pal::DIM),
-                    );
+                    ui.add(egui::Label::new(egui::RichText::new(text).font(theme::mono(12.0)).color(pal::TEXT)).wrap());
+                    ui.label(egui::RichText::new("Text preview · first 8 KB").small().color(pal::DIM));
                 }
                 Preview::Missing => {}
             }
@@ -268,46 +226,14 @@ mod tests {
         assert_eq!(cache.entries.len(), 128);
         assert!(!cache.entries.contains_key(&0));
         assert!(cache.entries.contains_key(&139));
-        cache
-            .tx
-            .send(Loaded {
-                generation: cache.generation,
-                index: 200,
-                result: Err(()),
-                remote: true,
-            })
-            .unwrap();
+        cache.tx.send(Loaded { generation: cache.generation, index: 200, result: Err(()), remote: true }).unwrap();
         cache.poll(&ctx);
         assert!(cache.remote_unavailable);
         cache.clear();
-        assert!(
-            cache.remote_unavailable,
-            "older-host fallback persists across folders"
-        );
+        assert!(cache.remote_unavailable, "older-host fallback persists across folders");
         // Invalid dimensions/lengths never reach egui's texture allocator.
-        assert!(
-            !FilePreview::Image {
-                width: 0,
-                height: 2,
-                rgba: vec![]
-            }
-            .valid()
-        );
-        assert!(
-            !FilePreview::Image {
-                width: 128,
-                height: 128,
-                rgba: vec![0; 10]
-            }
-            .valid()
-        );
-        assert!(
-            !FilePreview::Image {
-                width: 129,
-                height: 1,
-                rgba: vec![0; 516]
-            }
-            .valid()
-        );
+        assert!(!FilePreview::Image { width: 0, height: 2, rgba: vec![] }.valid());
+        assert!(!FilePreview::Image { width: 128, height: 128, rgba: vec![0; 10] }.valid());
+        assert!(!FilePreview::Image { width: 129, height: 1, rgba: vec![0; 516] }.valid());
     }
 }

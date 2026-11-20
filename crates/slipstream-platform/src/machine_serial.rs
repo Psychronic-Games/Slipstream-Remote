@@ -47,7 +47,9 @@ fn parse_serial(data: &[u8], wanted: u8) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    fn parse(data: &[u8]) -> Option<String> { super::parse_serial(data, 1) }
+    fn parse(data: &[u8]) -> Option<String> {
+        super::parse_serial(data, 1)
+    }
 
     fn raw(table: &[u8]) -> Vec<u8> {
         let mut data = vec![0, 3, 6, 0];
@@ -58,7 +60,8 @@ mod tests {
 
     #[test]
     fn motherboard_serial_is_read_separately_from_the_system_serial() {
-        let data = raw(b"\x01\x08\x00\x00\x00\x00\x00\x01Default string\0\0\x02\x08\x00\x00\x00\x00\x00\x01BOARD-123\0\0");
+        let data =
+            raw(b"\x01\x08\x00\x00\x00\x00\x00\x01Default string\0\0\x02\x08\x00\x00\x00\x00\x00\x01BOARD-123\0\0");
         assert_eq!(parse(&data).as_deref(), Some("Default string"));
         assert_eq!(super::parse_serial(&data, 2).as_deref(), Some("BOARD-123"));
         for end in 0..data.len() {
@@ -68,24 +71,17 @@ mod tests {
 
     #[test]
     fn reads_system_serial_after_header_and_other_records() {
-        let table =
-            b"\x00\x04\x00\x00BIOS\0\0\x01\x08\x01\x00\x01\x02\x00\x03Maker\0Model\0aBc1234\0\0";
+        let table = b"\x00\x04\x00\x00BIOS\0\0\x01\x08\x01\x00\x01\x02\x00\x03Maker\0Model\0aBc1234\0\0";
         assert_eq!(parse(&raw(table)).as_deref(), Some("aBc1234"));
         // Accept older Type 1 structures; a UUID/SKU/family is not required.
-        assert_eq!(
-            parse(&raw(b"\x01\x08\x00\x00\x00\x00\x00\x01OLD123\0\0")).as_deref(),
-            Some("OLD123")
-        );
+        assert_eq!(parse(&raw(b"\x01\x08\x00\x00\x00\x00\x00\x01OLD123\0\0")).as_deref(), Some("OLD123"));
     }
 
     #[test]
     fn rejects_truncated_headers_records_and_string_sets() {
         let data = raw(b"\x01\x08\x00\x00\x00\x00\x00\x01ABC123\0\0");
         for end in 0..data.len() {
-            assert!(
-                parse(&data[..end]).is_none(),
-                "accepted prefix of length {end}"
-            );
+            assert!(parse(&data[..end]).is_none(), "accepted prefix of length {end}");
         }
         for table in [
             &b"\x01\x00\x00\x00\0\0"[..],
@@ -105,12 +101,7 @@ mod tests {
             table.extend_from_slice(b"Maker\0\0\x02\x08\x00\x00\x00\x00\x00\x01BOARD123\0\0");
             assert!(parse(&raw(&table)).is_none());
         }
-        assert!(
-            parse(&raw(
-                b"\x7f\x04\x00\x00\0\0\x01\x08\x00\x00\x00\x00\x00\x01ABC123\0\0"
-            ))
-            .is_none()
-        );
+        assert!(parse(&raw(b"\x7f\x04\x00\x00\0\0\x01\x08\x00\x00\x00\x00\x00\x01ABC123\0\0")).is_none());
         assert!(parse(&raw(b"\x01\x08\x00\x00\x00\x00\x00\x01\xff\0\0")).is_none());
     }
 }

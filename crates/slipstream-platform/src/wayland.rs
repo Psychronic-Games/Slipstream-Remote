@@ -2,7 +2,15 @@
 //! both screen streams (frames arrive over PipeWire) and input injection.
 //! Works on KDE Plasma, GNOME and wlroots desktops with a portal backend.
 
-use std::{future::poll_fn, os::fd::OwnedFd, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
+use std::{
+    future::poll_fn,
+    os::fd::OwnedFd,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::{Context, Result, anyhow, bail};
 use ashpd::desktop::{
@@ -10,8 +18,8 @@ use ashpd::desktop::{
     remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions},
     screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType},
 };
-use slipstream_core::proto::{DisplayInfo, InputEvent, MouseButton};
 use futures_core::Stream;
+use slipstream_core::proto::{DisplayInfo, InputEvent, MouseButton};
 use tokio::sync::mpsc;
 
 use crate::{Backend, FrameSlot, FrameStream, HeldInputs, keymap, pw};
@@ -34,8 +42,12 @@ struct PendingSession(Option<Arc<Session<RemoteDesktop>>>);
 
 impl Drop for PendingSession {
     fn drop(&mut self) {
-        if let Some(session) = self.0.take() && let Ok(rt) = tokio::runtime::Handle::try_current() {
-            rt.spawn(async move { let _ = tokio::time::timeout(Duration::from_secs(3), session.close()).await; });
+        if let Some(session) = self.0.take()
+            && let Ok(rt) = tokio::runtime::Handle::try_current()
+        {
+            rt.spawn(async move {
+                let _ = tokio::time::timeout(Duration::from_secs(3), session.close()).await;
+            });
         }
     }
 }
@@ -74,12 +86,15 @@ impl WaylandBackend {
                     let mut closed = Box::pin(closed);
                     poll_fn(|cx| closed.as_mut().poll_next(cx)).await;
                     tracing::info!("desktop revoked or closed the screen-sharing session");
-                },
-                Err(error) => { let _ = ready.send(Err(error)); },
+                }
+                Err(error) => {
+                    let _ = ready.send(Err(error));
+                }
             }
             ended.store(false, Ordering::Release);
         });
-        tokio::time::timeout(Duration::from_secs(3), subscribed).await
+        tokio::time::timeout(Duration::from_secs(3), subscribed)
+            .await
             .context("desktop session monitoring timed out")???;
         let (streams, pipewire_fd, token) = tokio::time::timeout(Duration::from_secs(120), async {
 
@@ -152,7 +167,9 @@ impl Backend for WaylandBackend {
     }
 
     fn displays(&self) -> Vec<DisplayInfo> {
-        if !self.live.load(Ordering::Acquire) { return Vec::new(); }
+        if !self.live.load(Ordering::Acquire) {
+            return Vec::new();
+        }
         self.streams.iter().map(|s| s.info.clone()).collect()
     }
 
@@ -201,7 +218,11 @@ const BTN_MIDDLE: i32 = 0x112;
 const BTN_SIDE: i32 = 0x113;
 const BTN_EXTRA: i32 = 0x114;
 
-async fn input_task(rd: RemoteDesktop, session: Arc<Session<RemoteDesktop>>, mut rx: mpsc::UnboundedReceiver<InputCmd>) {
+async fn input_task(
+    rd: RemoteDesktop,
+    session: Arc<Session<RemoteDesktop>>,
+    mut rx: mpsc::UnboundedReceiver<InputCmd>,
+) {
     let mut held = HeldInputs::default();
     let mut wheel = (0.0f32, 0.0f32);
     let mut last_node = 0;

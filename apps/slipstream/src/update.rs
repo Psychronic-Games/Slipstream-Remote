@@ -3,11 +3,7 @@ use anyhow::Result;
 use slipstream_session::{Client, update::UpdateInfo};
 use std::path::PathBuf;
 
-pub async fn install(
-    client: &Client,
-    info: &UpdateInfo,
-    progress: impl FnMut(u64, u64),
-) -> Result<PathBuf> {
+pub async fn install(client: &Client, info: &UpdateInfo, progress: impl FnMut(u64, u64)) -> Result<PathBuf> {
     #[cfg(not(windows))]
     {
         client.install_update(info, progress).await
@@ -16,8 +12,7 @@ pub async fn install(
     {
         let (info, staged) = client.stage_update(info, progress).await?;
         client.notify_restarting().await;
-        tokio::task::spawn_blocking(move || crate::service::install_app_update(&staged, &info))
-            .await?
+        tokio::task::spawn_blocking(move || crate::service::install_app_update(&staged, &info)).await?
     }
 }
 
@@ -66,38 +61,27 @@ pub(crate) mod transaction {
         let mut files = Vec::new();
         for target in targets {
             let directory = target.parent().context("update target has no folder")?;
-            let fresh = tempfile::NamedTempFile::with_prefix_in(".slipstream-new-", directory)?
-                .into_temp_path();
-            std::fs::copy(source, &fresh)
-                .with_context(|| format!("staging {}", target.display()))?;
+            let fresh = tempfile::NamedTempFile::with_prefix_in(".slipstream-new-", directory)?.into_temp_path();
+            std::fs::copy(source, &fresh).with_context(|| format!("staging {}", target.display()))?;
             let previous =
-                tempfile::NamedTempFile::with_prefix_in(".slipstream-previous-", directory)?
-                    .into_temp_path();
+                tempfile::NamedTempFile::with_prefix_in(".slipstream-previous-", directory)?.into_temp_path();
             std::fs::remove_file(&previous)?;
-            files.push(Replacement {
-                target: target.clone(),
-                fresh,
-                previous: Some(previous),
-                moved: false,
-            });
+            files.push(Replacement { target: target.clone(), fresh, previous: Some(previous), moved: false });
         }
         if let Err(error) = stop() {
             // A stop may have succeeded before its status check failed.
             let recovery = start();
             return match recovery {
                 Ok(()) => Err(error),
-                Err(recovery) => Err(error.context(format!(
-                    "the previous service also failed to restart: {recovery:#}"
-                ))),
+                Err(recovery) => {
+                    Err(error.context(format!("the previous service also failed to restart: {recovery:#}")))
+                }
             };
         }
         let result = (|| {
             for file in &mut files {
-                std::fs::rename(
-                    &file.target,
-                    file.previous.as_deref().expect("rollback path"),
-                )
-                .with_context(|| format!("moving {} aside", file.target.display()))?;
+                std::fs::rename(&file.target, file.previous.as_deref().expect("rollback path"))
+                    .with_context(|| format!("moving {} aside", file.target.display()))?;
                 file.moved = true;
                 std::fs::rename(&file.fresh, &file.target)
                     .with_context(|| format!("installing {}", file.target.display()))?;
@@ -119,38 +103,24 @@ pub(crate) mod transaction {
                         // Preserve the only rollback copy if restoration is blocked.
                         let mut previous = file.previous.take().expect("rollback path");
                         previous.disable_cleanup(true);
-                        failures.push(format!(
-                            "previous executable kept at {}",
-                            previous.display()
-                        ));
+                        failures.push(format!("previous executable kept at {}", previous.display()));
                         continue;
                     }
                 }
-                if let Err(error) = std::fs::rename(
-                    file.previous.as_deref().expect("rollback path"),
-                    &file.target,
-                ) {
+                if let Err(error) = std::fs::rename(file.previous.as_deref().expect("rollback path"), &file.target) {
                     failures.push(format!("restoring {}: {error}", file.target.display()));
                     let mut previous = file.previous.take().expect("rollback path");
                     previous.disable_cleanup(true);
-                    failures.push(format!(
-                        "previous executable kept at {}",
-                        previous.display()
-                    ));
+                    failures.push(format!("previous executable kept at {}", previous.display()));
                 }
             }
             if let Err(error) = start() {
                 failures.push(format!("restarting the previous service: {error:#}"));
             }
             if !failures.is_empty() {
-                bail!(
-                    "{error:#}; recovery needs attention: {}",
-                    failures.join("; ")
-                );
+                bail!("{error:#}; recovery needs attention: {}", failures.join("; "));
             }
-            return Err(
-                error.context("the update failed; the previous app and service were restored")
-            );
+            return Err(error.context("the update failed; the previous app and service were restored"));
         }
         for file in &mut files {
             let previous = file.previous.take().expect("rollback path");
@@ -269,12 +239,7 @@ pub(crate) mod transaction {
             let mut backups = std::fs::read_dir(&installed)
                 .unwrap()
                 .flatten()
-                .filter(|entry| {
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with(".slipstream-previous-")
-                })
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".slipstream-previous-"))
                 .map(|entry| std::fs::read(entry.path()).unwrap())
                 .collect::<Vec<_>>();
             backups.sort();

@@ -22,8 +22,7 @@ pub(crate) struct HostTools {
 
 impl RemoteFs {
     pub async fn wake_on_lan(&self, interface: Ipv4Addr, mac: String) -> Result<()> {
-        self.support_done(StreamOpen::WakeOnLan { interface, mac })
-            .await
+        self.support_done(StreamOpen::WakeOnLan { interface, mac }).await
     }
     /// Restarts the remote computer (see `power`); it answers before going.
     pub async fn power(&self, action: slipstream_core::proto::PowerAction) -> Result<()> {
@@ -37,9 +36,7 @@ impl RemoteFs {
         let reply = tokio::time::timeout(Duration::from_secs(12), self.ask_reply(request))
             .await
             .map_err(|_| anyhow::anyhow!("The support request timed out"))?
-            .map_err(|_| {
-                anyhow::anyhow!("Support request unavailable; the host may need an update")
-            })?
+            .map_err(|_| anyhow::anyhow!("Support request unavailable; the host may need an update"))?
             .2;
         match reply {
             StreamReply::Done => Ok(()),
@@ -55,17 +52,11 @@ impl RemoteFs {
     ) -> Result<Vec<InfoSection>> {
         let reply = tokio::time::timeout(
             Duration::from_secs(18),
-            self.ask_reply(StreamOpen::NetworkDiagnostics {
-                interface,
-                name,
-                comparison_dns,
-            }),
+            self.ask_reply(StreamOpen::NetworkDiagnostics { interface, name, comparison_dns }),
         )
         .await
         .map_err(|_| anyhow::anyhow!("Network diagnostics timed out"))?
-        .map_err(|_| {
-            anyhow::anyhow!("Network diagnostics unavailable; the host may need an update")
-        })?
+        .map_err(|_| anyhow::anyhow!("Network diagnostics unavailable; the host may need an update"))?
         .2;
         match reply {
             StreamReply::NetworkDiagnostics(s) => Ok(s),
@@ -73,11 +64,7 @@ impl RemoteFs {
             _ => bail!("Unexpected diagnostic reply"),
         }
     }
-    pub async fn connect_through(
-        &self,
-        host: Ipv4Addr,
-        port: u16,
-    ) -> Result<crate::tunnel::Tunnel> {
+    pub async fn connect_through(&self, host: Ipv4Addr, port: u16) -> Result<crate::tunnel::Tunnel> {
         ensure!(
             port != 0 && !host.is_unspecified() && !host.is_multicast() && !host.is_broadcast(),
             "Choose a unicast device and a TCP port"
@@ -86,10 +73,7 @@ impl RemoteFs {
         // enforces its existing tunnel permission on this and every connection.
         let (_send, _recv, reply) = tokio::time::timeout(
             Duration::from_secs(12),
-            self.ask_reply(StreamOpen::Tunnel {
-                host: host.to_string(),
-                port,
-            }),
+            self.ask_reply(StreamOpen::Tunnel { host: host.to_string(), port }),
         )
         .await
         .map_err(|_| anyhow::anyhow!("The target did not answer through this workstation"))??;
@@ -101,10 +85,7 @@ impl RemoteFs {
         crate::tunnel::open(self.conn.clone(), 0, host.to_string(), port).await
     }
     pub async fn support_inventory(&self) -> Result<Vec<InfoSection>> {
-        match tokio::time::timeout(Duration::from_secs(12), self.ask(StreamOpen::SystemInfo))
-            .await??
-            .2
-        {
+        match tokio::time::timeout(Duration::from_secs(12), self.ask(StreamOpen::SystemInfo)).await??.2 {
             StreamReply::SystemInfo(s) => Ok(s),
             _ => bail!("System inventory unavailable"),
         }
@@ -122,20 +103,11 @@ pub fn status_text(text: &str) -> Result<String> {
 pub fn magic_packet(mac: &str) -> Result<[u8; 102]> {
     let parts: Vec<_> = mac.split([':', '-']).collect();
     ensure!(
-        parts.len() == 6
-            && parts
-                .iter()
-                .all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_hexdigit())),
+        parts.len() == 6 && parts.iter().all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_hexdigit())),
         "Enter a six-byte MAC address, e.g. 00:11:22:33:44:55"
     );
-    let bytes: Vec<u8> = parts
-        .into_iter()
-        .map(|p| u8::from_str_radix(p, 16).unwrap())
-        .collect();
-    ensure!(
-        bytes[0] & 1 == 0 && bytes.iter().any(|b| *b != 0),
-        "Choose a nonzero unicast MAC address"
-    );
+    let bytes: Vec<u8> = parts.into_iter().map(|p| u8::from_str_radix(p, 16).unwrap()).collect();
+    ensure!(bytes[0] & 1 == 0 && bytes.iter().any(|b| *b != 0), "Choose a nonzero unicast MAC address");
     let mut packet = [0xff; 102];
     for chunk in packet[6..].as_chunks_mut::<6>().0.iter_mut() {
         chunk.copy_from_slice(&bytes);
@@ -143,20 +115,13 @@ pub fn magic_packet(mac: &str) -> Result<[u8; 102]> {
     Ok(packet)
 }
 
-pub(crate) async fn wake(
-    source: Ipv4Addr,
-    mac: &str,
-    interfaces: &[NetworkInterface],
-) -> Result<()> {
+pub(crate) async fn wake(source: Ipv4Addr, mac: &str, interfaces: &[NetworkInterface]) -> Result<()> {
     let packet = magic_packet(mac)?;
     let adapter = interfaces
         .iter()
         .find(|i| i.address == source)
         .ok_or_else(|| anyhow::anyhow!("Refresh and choose a connected adapter"))?;
-    ensure!(
-        adapter.prefix <= 30,
-        "This adapter has no broadcast subnet (/31 and /32 cannot send LAN wake packets)"
-    );
+    ensure!(adapter.prefix <= 30, "This adapter has no broadcast subnet (/31 and /32 cannot send LAN wake packets)");
     static LAST: Mutex<Option<Instant>> = Mutex::new(None);
     {
         let mut last = LAST.lock().unwrap();
@@ -166,8 +131,7 @@ pub(crate) async fn wake(
         );
         *last = Some(Instant::now());
     }
-    let broadcast =
-        Ipv4Addr::from(u32::from(source) | !slipstream_core::network::mask(adapter.prefix));
+    let broadcast = Ipv4Addr::from(u32::from(source) | !slipstream_core::network::mask(adapter.prefix));
     send_wake(source, SocketAddr::from((broadcast, 9)), &packet).await
 }
 
@@ -184,16 +148,11 @@ fn validate_name(name: &str) -> Result<()> {
     ensure!(
         !name.is_empty()
             && name.len() <= 253
-            && name
-                .trim_end_matches('.')
-                .split('.')
-                .all(|label| !label.is_empty()
-                    && label.len() <= 63
-                    && !label.starts_with('-')
-                    && !label.ends_with('-')
-                    && label
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')),
+            && name.trim_end_matches('.').split('.').all(|label| !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')),
         "Enter a DNS name such as example.com"
     );
     Ok(())
@@ -203,12 +162,7 @@ async fn dns(source: Ipv4Addr, server: SocketAddr, name: &str) -> Result<String>
     let id = rand::random::<u16>();
     let mut query = Packet::new_query(id);
     query.set_flags(PacketFlag::RECURSION_DESIRED);
-    query.questions.push(Question::new(
-        Name::new(name)?,
-        QTYPE::TYPE(TYPE::A),
-        QCLASS::CLASS(CLASS::IN),
-        false,
-    ));
+    query.questions.push(Question::new(Name::new(name)?, QTYPE::TYPE(TYPE::A), QCLASS::CLASS(CLASS::IN), false));
     let bytes = crate::network_names::exchange(source, server, &query.build_bytes_vec()?)
         .await
         .ok_or_else(|| anyhow::anyhow!("No UDP DNS answer (timeout or blocked)"))?;
@@ -230,15 +184,8 @@ fn dns_answer(bytes: &[u8], id: u16, name: &str) -> Result<String> {
             && response.questions[0].qclass == QCLASS::CLASS(CLASS::IN),
         "DNS answer did not match the query"
     );
-    ensure!(
-        !response.has_flags(PacketFlag::TRUNCATION),
-        "UDP DNS answer was truncated; TCP fallback is not run"
-    );
-    ensure!(
-        response.rcode() == simple_dns::RCODE::NoError,
-        "DNS returned {:?}",
-        response.rcode()
-    );
+    ensure!(!response.has_flags(PacketFlag::TRUNCATION), "UDP DNS answer was truncated; TCP fallback is not run");
+    ensure!(response.rcode() == simple_dns::RCODE::NoError, "DNS returned {:?}", response.rcode());
     // Resolvers can include other records in the answer section. Only the
     // queried name and its CNAME chain describe this diagnostic's result.
     let normalize = |name: &str| name.trim_end_matches('.').to_ascii_lowercase();
@@ -247,12 +194,19 @@ fn dns_answer(bytes: &[u8], id: u16, name: &str) -> Result<String> {
     loop {
         ensure!(visited.insert(target.clone()), "DNS answer contains a CNAME loop");
         let alias = response.answers.iter().find_map(|record| {
-            if record.class == CLASS::IN && normalize(&record.name.to_string()) == target
-                && let RData::CNAME(alias) = &record.rdata {
+            if record.class == CLASS::IN
+                && normalize(&record.name.to_string()) == target
+                && let RData::CNAME(alias) = &record.rdata
+            {
                 Some(normalize(&alias.0.to_string()))
-            } else {None}
+            } else {
+                None
+            }
         });
-        match alias {Some(alias) => target=alias, None => break}
+        match alias {
+            Some(alias) => target = alias,
+            None => break,
+        }
     }
     let mut addresses: Vec<_> = response
         .answers
@@ -265,11 +219,7 @@ fn dns_answer(bytes: &[u8], id: u16, name: &str) -> Result<String> {
         .collect();
     addresses.sort();
     addresses.dedup();
-    Ok(if addresses.is_empty() {
-        "No IPv4 answer".into()
-    } else {
-        addresses.join(", ")
-    })
+    Ok(if addresses.is_empty() { "No IPv4 answer".into() } else { addresses.join(", ") })
 }
 
 pub(crate) async fn diagnose(
@@ -285,17 +235,13 @@ pub(crate) async fn diagnose(
             "Choose a unicast comparison resolver"
         );
     }
-    let interfaces =
-        tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
+    let interfaces = tokio::task::spawn_blocking(slipstream_platform::machine::network_interfaces).await?;
     let adapter = interfaces
         .iter()
         .find(|i| i.address == source)
         .ok_or_else(|| anyhow::anyhow!("Refresh and choose a connected adapter"))?;
     let mut rows = vec![
-        (
-            "Source adapter".into(),
-            format!("{} · {source}", adapter.name),
-        ),
+        ("Source adapter".into(), format!("{} · {source}", adapter.name)),
         ("DNS query".into(), format!("{name} (IPv4/A)")),
     ];
     if let Some(gateway) = adapter.gateway {
@@ -312,8 +258,7 @@ pub(crate) async fn diagnose(
     } else {
         rows.push(("Gateway".into(), "Not reported for this adapter".into()));
     }
-    let (_, resolvers) =
-        tokio::task::spawn_blocking(slipstream_platform::machine::network_name_config).await?;
+    let (_, resolvers) = tokio::task::spawn_blocking(slipstream_platform::machine::network_name_config).await?;
     let mut servers: Vec<_> = resolvers
         .into_iter()
         .filter(|ip| !ip.is_unspecified() && !ip.is_multicast())
@@ -363,10 +308,7 @@ pub(crate) async fn diagnose(
     };
     rows.push(("Station API (host's route)".into(), station_result));
     rows.push(("Scope".into(), "Gateway/DNS probes use the selected adapter where supported; station HTTPS uses normal OS routing. This does not measure relay throughput or prove video-relay health.".into()));
-    Ok(vec![InfoSection {
-        title: "Network diagnostics".into(),
-        rows,
-    }])
+    Ok(vec![InfoSection { title: "Network diagnostics".into(), rows }])
 }
 
 #[cfg(test)]
@@ -374,58 +316,64 @@ mod tests {
     use super::*;
     #[test]
     fn diagnostics_follow_aliases_and_ignore_unrelated_or_wrong_class_addresses() {
-        use simple_dns::{ResourceRecord, rdata::{A,CNAME}};
-        let mut response=Packet::new_reply(17);
-        response.questions.push(Question::new(Name::new("example.com").unwrap(),QTYPE::TYPE(TYPE::A),QCLASS::CLASS(CLASS::IN),false));
-        let address=|name: &'static str,class,ip|ResourceRecord::new(Name::new(name).unwrap(),class,30,RData::A(A {address:u32::from(ip)}));
-        response.answers.push(address("unrelated.example",CLASS::IN,Ipv4Addr::new(203,0,113,9)));
-        response.answers.push(address("example.com",CLASS::CH,Ipv4Addr::new(203,0,113,10)));
-        assert_eq!(dns_answer(&response.build_bytes_vec().unwrap(),17,"EXAMPLE.COM.").unwrap(),"No IPv4 answer");
-        response.answers.push(ResourceRecord::new(Name::new("example.com").unwrap(),CLASS::IN,30,RData::CNAME(CNAME(Name::new("target.example").unwrap()))));
-        response.answers.push(address("target.example",CLASS::IN,Ipv4Addr::new(192,0,2,5)));
-        assert_eq!(dns_answer(&response.build_bytes_vec().unwrap(),17,"example.com").unwrap(),"192.0.2.5");
-        response.questions[0].qclass=QCLASS::CLASS(CLASS::CH);
-        assert!(dns_answer(&response.build_bytes_vec().unwrap(),17,"example.com").is_err());
-        response.questions[0].qclass=QCLASS::CLASS(CLASS::IN);
-        response.answers.push(ResourceRecord::new(Name::new("target.example").unwrap(),CLASS::IN,30,RData::CNAME(CNAME(Name::new("example.com").unwrap()))));
-        assert!(dns_answer(&response.build_bytes_vec().unwrap(),17,"example.com").unwrap_err().to_string().contains("CNAME loop"));
+        use simple_dns::{
+            ResourceRecord,
+            rdata::{A, CNAME},
+        };
+        let mut response = Packet::new_reply(17);
+        response.questions.push(Question::new(
+            Name::new("example.com").unwrap(),
+            QTYPE::TYPE(TYPE::A),
+            QCLASS::CLASS(CLASS::IN),
+            false,
+        ));
+        let address = |name: &'static str, class, ip| {
+            ResourceRecord::new(Name::new(name).unwrap(), class, 30, RData::A(A { address: u32::from(ip) }))
+        };
+        response.answers.push(address("unrelated.example", CLASS::IN, Ipv4Addr::new(203, 0, 113, 9)));
+        response.answers.push(address("example.com", CLASS::CH, Ipv4Addr::new(203, 0, 113, 10)));
+        assert_eq!(dns_answer(&response.build_bytes_vec().unwrap(), 17, "EXAMPLE.COM.").unwrap(), "No IPv4 answer");
+        response.answers.push(ResourceRecord::new(
+            Name::new("example.com").unwrap(),
+            CLASS::IN,
+            30,
+            RData::CNAME(CNAME(Name::new("target.example").unwrap())),
+        ));
+        response.answers.push(address("target.example", CLASS::IN, Ipv4Addr::new(192, 0, 2, 5)));
+        assert_eq!(dns_answer(&response.build_bytes_vec().unwrap(), 17, "example.com").unwrap(), "192.0.2.5");
+        response.questions[0].qclass = QCLASS::CLASS(CLASS::CH);
+        assert!(dns_answer(&response.build_bytes_vec().unwrap(), 17, "example.com").is_err());
+        response.questions[0].qclass = QCLASS::CLASS(CLASS::IN);
+        response.answers.push(ResourceRecord::new(
+            Name::new("target.example").unwrap(),
+            CLASS::IN,
+            30,
+            RData::CNAME(CNAME(Name::new("example.com").unwrap())),
+        ));
+        assert!(
+            dns_answer(&response.build_bytes_vec().unwrap(), 17, "example.com")
+                .unwrap_err()
+                .to_string()
+                .contains("CNAME loop")
+        );
     }
     #[test]
     fn wake_packet_and_status_validation() {
         let packet = magic_packet("00:11:22:33:44:55").unwrap();
         assert_eq!(&packet[..6], &[255; 6]);
-        assert!(
-            packet[6..]
-                .as_chunks::<6>()
-                .0
-                .iter()
-                .all(|c| *c == [0, 17, 34, 51, 68, 85])
-        );
-        for invalid in [
-            "ff:ff:ff:ff:ff:ff",
-            "00:00:00:00:00:00",
-            "01:11:22:33:44:55",
-            "00:11:22:33:44",
-            "00:11:22:33:44:5g",
-        ] {
+        assert!(packet[6..].as_chunks::<6>().0.iter().all(|c| *c == [0, 17, 34, 51, 68, 85]));
+        for invalid in
+            ["ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", "01:11:22:33:44:55", "00:11:22:33:44", "00:11:22:33:44:5g"]
+        {
             assert!(magic_packet(invalid).is_err());
         }
-        assert_eq!(
-            status_text("  Checking the printer  ").unwrap(),
-            "Checking the printer"
-        );
+        assert_eq!(status_text("  Checking the printer  ").unwrap(), "Checking the printer");
         assert!(status_text("hello\nworld").is_err());
         assert!(status_text(&"x".repeat(161)).is_err());
         for name in ["example.com", "printer.local", "example.com."] {
             assert!(validate_name(name).is_ok());
         }
-        for name in [
-            "",
-            "a..b",
-            "-bad.com",
-            "example.com; rm",
-            "http://example.com",
-        ] {
+        for name in ["", "a..b", "-bad.com", "example.com; rm", "http://example.com"] {
             assert!(validate_name(name).is_err());
         }
     }
@@ -433,24 +381,15 @@ mod tests {
     async fn wake_sends_three_exact_packets_from_the_selected_source() {
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let packet = magic_packet("02:11:22:33:44:55").unwrap();
-        send_wake(Ipv4Addr::LOCALHOST, receiver.local_addr().unwrap(), &packet)
-            .await
-            .unwrap();
+        send_wake(Ipv4Addr::LOCALHOST, receiver.local_addr().unwrap(), &packet).await.unwrap();
         for _ in 0..3 {
             let mut bytes = [0; 256];
             let (len, peer) =
-                tokio::time::timeout(Duration::from_secs(1), receiver.recv_from(&mut bytes))
-                    .await
-                    .unwrap()
-                    .unwrap();
+                tokio::time::timeout(Duration::from_secs(1), receiver.recv_from(&mut bytes)).await.unwrap().unwrap();
             assert_eq!(peer.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
             assert_eq!(&bytes[..len], &packet);
         }
-        assert!(
-            tokio::time::timeout(Duration::from_millis(30), receiver.recv_from(&mut [0; 256]))
-                .await
-                .is_err()
-        );
+        assert!(tokio::time::timeout(Duration::from_millis(30), receiver.recv_from(&mut [0; 256])).await.is_err());
     }
 
     #[tokio::test]
@@ -469,14 +408,9 @@ mod tests {
                     Name::new("example.com").unwrap(),
                     CLASS::IN,
                     30,
-                    RData::A(A {
-                        address: u32::from(Ipv4Addr::new(192, 0, 2, 5)),
-                    }),
+                    RData::A(A { address: u32::from(Ipv4Addr::new(192, 0, 2, 5)) }),
                 ));
-                socket
-                    .send_to(&response.build_bytes_vec().unwrap(), peer)
-                    .await
-                    .unwrap();
+                socket.send_to(&response.build_bytes_vec().unwrap(), peer).await.unwrap();
             });
             let result = dns(Ipv4Addr::LOCALHOST, address, "example.com").await;
             task.await.unwrap();

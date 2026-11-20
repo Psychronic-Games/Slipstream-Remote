@@ -31,12 +31,15 @@ impl Drop for Worker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.thread.take() {
-            let start=std::time::Instant::now();
-            while !t.is_finished() && start.elapsed()<std::time::Duration::from_millis(500) {
+            let start = std::time::Instant::now();
+            while !t.is_finished() && start.elapsed() < std::time::Duration::from_millis(500) {
                 thread::sleep(std::time::Duration::from_millis(5));
             }
-            if t.is_finished() {let _=t.join();}
-            else {tracing::warn!("audio device did not stop promptly; its worker will finish in the background");}
+            if t.is_finished() {
+                let _ = t.join();
+            } else {
+                tracing::warn!("audio device did not stop promptly; its worker will finish in the background");
+            }
         }
     }
 }
@@ -50,7 +53,11 @@ pub(crate) fn spawn(
     spawn_with_timeout(name, std::time::Duration::from_secs(5), body)
 }
 
-fn spawn_with_timeout(name:&str,timeout:std::time::Duration,body:impl FnOnce(Arc<AtomicBool>,&dyn Fn(Result<()>))+Send+'static)->Result<Worker> {
+fn spawn_with_timeout(
+    name: &str,
+    timeout: std::time::Duration,
+    body: impl FnOnce(Arc<AtomicBool>, &dyn Fn(Result<()>)) + Send + 'static,
+) -> Result<Worker> {
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = std::sync::mpsc::channel();
     let flag = stop.clone();
@@ -242,12 +249,12 @@ mod cpal_io {
 
     use super::{Worker, spawn};
     use crate::{
-        buffer::{to_i16, to_stereo},
-        opus::FRAME_SAMPLES,
-    };
-    use crate::{
         buffer::{Jitter, Resampler, from_i16, from_stereo},
         opus::SAMPLE_RATE,
+    };
+    use crate::{
+        buffer::{to_i16, to_stereo},
+        opus::FRAME_SAMPLES,
     };
 
     fn output_device() -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
@@ -291,11 +298,7 @@ mod cpal_io {
         })
     }
 
-    fn input<T>(
-        device: &cpal::Device,
-        config: cpal::StreamConfig,
-        mut on_frame: super::OnFrame,
-    ) -> Result<cpal::Stream>
+    fn input<T>(device: &cpal::Device, config: cpal::StreamConfig, mut on_frame: super::OnFrame) -> Result<cpal::Stream>
     where
         T: SizedSample,
         f32: FromSample<T>,
@@ -339,11 +342,13 @@ mod cpal_io {
                 let host = cpal::default_host();
                 let device = if let Some(name) = name {
                     host.input_devices()?
-                        .find(|d| d.id().is_ok_and(|id| id.to_string() == name) || d.description().is_ok_and(|d| d.name() == name))
+                        .find(|d| {
+                            d.id().is_ok_and(|id| id.to_string() == name)
+                                || d.description().is_ok_and(|d| d.name() == name)
+                        })
                         .context("Microphone was not found")?
                 } else {
-                    host.default_input_device()
-                        .context("No microphone is available")?
+                    host.default_input_device().context("No microphone is available")?
                 };
                 let config = device.default_input_config()?;
                 let format = config.sample_format();
@@ -431,18 +436,27 @@ mod tests {
 
     #[test]
     fn stalled_audio_io_does_not_block_shutdown_or_initialization() {
-        use std::time::{Duration,Instant};
-        for initialized in [true,false] {
-            let (release,wait)=std::sync::mpsc::channel();let (done,finished)=std::sync::mpsc::channel();
-            let start=Instant::now();
-            let worker=spawn_with_timeout("stalled-audio-test",Duration::from_millis(30),move |stop,ready| {
-                if initialized {ready(Ok(()));}
+        use std::time::{Duration, Instant};
+        for initialized in [true, false] {
+            let (release, wait) = std::sync::mpsc::channel();
+            let (done, finished) = std::sync::mpsc::channel();
+            let start = Instant::now();
+            let worker = spawn_with_timeout("stalled-audio-test", Duration::from_millis(30), move |stop, ready| {
+                if initialized {
+                    ready(Ok(()));
+                }
                 wait.recv().unwrap();
-                assert!(stop.load(Ordering::Relaxed));done.send(()).unwrap();
+                assert!(stop.load(Ordering::Relaxed));
+                done.send(()).unwrap();
             });
-            if initialized {drop(worker.unwrap());}else{assert!(worker.is_err());}
-            assert!(start.elapsed()<Duration::from_secs(2));
-            release.send(()).unwrap();finished.recv_timeout(Duration::from_secs(2)).unwrap();
+            if initialized {
+                drop(worker.unwrap());
+            } else {
+                assert!(worker.is_err());
+            }
+            assert!(start.elapsed() < Duration::from_secs(2));
+            release.send(()).unwrap();
+            finished.recv_timeout(Duration::from_secs(2)).unwrap();
         }
     }
 

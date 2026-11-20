@@ -48,11 +48,7 @@ impl DeviceId {
 impl fmt::Display for DeviceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = self.0.to_string();
-        if s.len() == 9 {
-            write!(f, "{} {} {}", &s[0..3], &s[3..6], &s[6..9])
-        } else {
-            f.write_str(&s)
-        }
+        if s.len() == 9 { write!(f, "{} {} {}", &s[0..3], &s[3..6], &s[6..9]) } else { f.write_str(&s) }
     }
 }
 
@@ -225,10 +221,7 @@ pub struct DirectoryClient {
 }
 
 fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or_default()
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or_default()
 }
 
 impl DirectoryClient {
@@ -313,11 +306,24 @@ impl DirectoryClient {
         Ok(h)
     }
 
-    fn signed(&self, secret: &SecretKey, op: &str, addr: Option<EndpointAddr>, info: Option<DeviceInfo>) -> Result<serde_json::Value> {
+    fn signed(
+        &self,
+        secret: &SecretKey,
+        op: &str,
+        addr: Option<EndpointAddr>,
+        info: Option<DeviceInfo>,
+    ) -> Result<serde_json::Value> {
         self.signed_with_inventory(secret, op, addr, info, None)
     }
 
-    fn signed_with_inventory(&self, secret: &SecretKey, op: &str, addr: Option<EndpointAddr>, info: Option<DeviceInfo>, inventory: Option<StationInventory>) -> Result<serde_json::Value> {
+    fn signed_with_inventory(
+        &self,
+        secret: &SecretKey,
+        op: &str,
+        addr: Option<EndpointAddr>,
+        info: Option<DeviceInfo>,
+        inventory: Option<StationInventory>,
+    ) -> Result<serde_json::Value> {
         let payload = serde_json::to_string(&RegisterPayload {
             op: op.into(),
             endpoint: secret.public().to_string(),
@@ -367,7 +373,8 @@ impl DirectoryClient {
     /// Signing binds the summary to this endpoint, independently of account
     /// permissions or the password needed to start a support session.
     pub async fn publish_inventory(&self, secret: &SecretKey, inventory: StationInventory) -> Result<()> {
-        let _: serde_json::Value = self.call(self.signed_with_inventory(secret, "inventory", None, None, Some(inventory))?).await?;
+        let _: serde_json::Value =
+            self.call(self.signed_with_inventory(secret, "inventory", None, None, Some(inventory))?).await?;
         Ok(())
     }
 
@@ -477,10 +484,9 @@ fn root_cause(e: &(dyn std::error::Error + 'static)) -> String {
 
 /// Today's date per the system clock, e.g. "2026-09-14".
 fn local_date() -> String {
-    let days = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() / 86_400)
-        .unwrap_or(0) as i64;
+    let days =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 86_400).unwrap_or(0)
+            as i64;
     // Civil-from-days (Howard Hinnant's algorithm).
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -563,7 +569,10 @@ mod tests {
     fn server_urls_normalize() {
         assert_eq!(normalize_server_url("relay.example.com").unwrap().as_str(), "https://relay.example.com/");
         assert_eq!(normalize_server_url(" http://10.0.0.5:8080/sub ").unwrap().as_str(), "http://10.0.0.5:8080/sub/");
-        assert_eq!(normalize_server_url("https://x.org/a/").unwrap().join("api/").unwrap().as_str(), "https://x.org/a/api/");
+        assert_eq!(
+            normalize_server_url("https://x.org/a/").unwrap().join("api/").unwrap().as_str(),
+            "https://x.org/a/api/"
+        );
         assert!(normalize_server_url("").is_err());
         assert!(normalize_server_url("ftp://x").is_err());
     }
@@ -583,9 +592,7 @@ mod tests {
         assert!(verify_signed(&tampered, sig).is_err());
         // Someone else's address can't be registered under our key.
         let other = SecretKey::generate();
-        let body = dc
-            .signed(&secret, "register", Some(EndpointAddr::from_parts(other.public(), [])), None)
-            .unwrap();
+        let body = dc.signed(&secret, "register", Some(EndpointAddr::from_parts(other.public(), [])), None).unwrap();
         assert!(verify_signed(body["payload"].as_str().unwrap(), body["sig"].as_str().unwrap()).is_err());
     }
 
@@ -598,7 +605,15 @@ mod tests {
         assert!(legacy_summary.report.is_empty() && legacy_summary.motherboard_serial.is_none());
         let secret = SecretKey::generate();
         let dc = DirectoryClient::new("example.com", Some("private-key".into())).unwrap();
-        let summary = StationInventory { computer_name: "Office PC".into(), serial_number: Some("ABC123".into()), report: vec![crate::proto::InfoSection { title: "Network".into(), rows: vec![("Address".into(), "192.0.2.42".into())] }], ..Default::default() };
+        let summary = StationInventory {
+            computer_name: "Office PC".into(),
+            serial_number: Some("ABC123".into()),
+            report: vec![crate::proto::InfoSection {
+                title: "Network".into(),
+                rows: vec![("Address".into(), "192.0.2.42".into())],
+            }],
+            ..Default::default()
+        };
         let body = dc.signed_with_inventory(&secret, "inventory", None, None, Some(summary.clone())).unwrap();
         let payload = body["payload"].as_str().unwrap();
         let sig = body["sig"].as_str().unwrap();

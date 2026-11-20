@@ -184,7 +184,8 @@ struct Card {
 
 impl Card {
     fn open(path: &Path) -> Result<Self> {
-        let file = File::options().read(true).write(true).open(path).with_context(|| format!("opening {}", path.display()))?;
+        let file =
+            File::options().read(true).write(true).open(path).with_context(|| format!("opening {}", path.display()))?;
         // The first program to open a card becomes its master, which would
         // keep the login screen from starting if that were us: give it up.
         // SAFETY: an ioctl without an argument.
@@ -203,7 +204,8 @@ impl Card {
         // Counts can change between the two calls (a display plugged in).
         for _ in 0..4 {
             let mut ids = vec![0u32; res.count_crtcs as usize];
-            let mut ask = CardRes { crtc_id_ptr: ids.as_mut_ptr() as u64, count_crtcs: ids.len() as u32, ..Default::default() };
+            let mut ask =
+                CardRes { crtc_id_ptr: ids.as_mut_ptr() as u64, count_crtcs: ids.len() as u32, ..Default::default() };
             ioctl(&self.file, GETRESOURCES, &mut ask)?;
             if ask.count_crtcs as usize <= ids.len() {
                 ids.truncate(ask.count_crtcs as usize);
@@ -234,7 +236,15 @@ impl Card {
                 self.close_handle(extra);
             }
             let modifier = (fb2.flags & FB_MODIFIERS != 0).then_some(fb2.modifier[0]);
-            return Ok(Fb { width: fb2.width, height: fb2.height, pitch: fb2.pitches[0], offset: fb2.offsets[0], format: fb2.pixel_format, modifier, handle });
+            return Ok(Fb {
+                width: fb2.width,
+                height: fb2.height,
+                pitch: fb2.pitches[0],
+                offset: fb2.offsets[0],
+                format: fb2.pixel_format,
+                modifier,
+                handle,
+            });
         }
         // Kernels before 5.7.
         let mut fb = FbCmd { fb_id: id, ..Default::default() };
@@ -242,7 +252,9 @@ impl Card {
             Ok(()) => {}
             // The kernel's answer for a framebuffer whose driver has no
             // way to hand its memory out.
-            Err(e) if e.raw_os_error() == Some(libc::ENODEV) => bail!("{}", sealed_message(&self.driver, &kernel_release())),
+            Err(e) if e.raw_os_error() == Some(libc::ENODEV) => {
+                bail!("{}", sealed_message(&self.driver, &kernel_release()))
+            }
             Err(e) => return Err(e).context("reading the framebuffer's description"),
         }
         let format = match (fb.bpp, fb.depth) {
@@ -251,7 +263,15 @@ impl Card {
             (16, _) => RG16,
             (bpp, _) => bail!("the screen uses {bpp} bits per pixel, which isn't supported"),
         };
-        Ok(Fb { width: fb.width, height: fb.height, pitch: fb.pitch, offset: 0, format, modifier: None, handle: fb.handle })
+        Ok(Fb {
+            width: fb.width,
+            height: fb.height,
+            pitch: fb.pitch,
+            offset: 0,
+            format,
+            modifier: None,
+            handle: fb.handle,
+        })
     }
 
     fn close_handle(&self, handle: u32) {
@@ -270,14 +290,23 @@ impl Card {
     }
 
     fn map_handle(&self, fb: &Fb) -> Result<Mapping> {
-        let bytes = bytes_per_pixel(fb.format).ok_or_else(|| anyhow!("the screen's pixel format ({}) isn't supported", fourcc_name(fb.format)))?;
+        let bytes = bytes_per_pixel(fb.format)
+            .ok_or_else(|| anyhow!("the screen's pixel format ({}) isn't supported", fourcc_name(fb.format)))?;
         if fb.width == 0 || fb.height == 0 || (fb.pitch as u64) < fb.width as u64 * bytes as u64 {
-            bail!("the framebuffer's description makes no sense ({}x{}, {} bytes a row)", fb.width, fb.height, fb.pitch);
+            bail!(
+                "the framebuffer's description makes no sense ({}x{}, {} bytes a row)",
+                fb.width,
+                fb.height,
+                fb.pitch
+            );
         }
         match fb.modifier {
             Some(MOD_LINEAR | MOD_INVALID) => {}
             // No layout stated: these drivers arrange it their own way.
-            None if !matches!(self.driver.as_str(), "i915" | "xe" | "amdgpu" | "radeon" | "nouveau" | "nvidia-drm" | "nvidia") => {}
+            None if !matches!(
+                self.driver.as_str(),
+                "i915" | "xe" | "amdgpu" | "radeon" | "nouveau" | "nvidia-drm" | "nvidia"
+            ) => {}
             _ => bail!(
                 "this computer's graphics driver ({}) keeps the screen in a layout the Slipstream service can't read yet",
                 if self.driver.is_empty() { "unknown" } else { &self.driver }
@@ -285,17 +314,22 @@ impl Card {
         }
         let len = fb.offset as usize + fb.pitch as usize * fb.height as usize;
         let mut dumb = MapDumb { handle: fb.handle, ..Default::default() };
-        let by_offset = ioctl(&self.file, MAP_DUMB, &mut dumb).map_err(anyhow::Error::from).and_then(|()| Mapping::new(&self.file, dumb.offset, len));
+        let by_offset = ioctl(&self.file, MAP_DUMB, &mut dumb)
+            .map_err(anyhow::Error::from)
+            .and_then(|()| Mapping::new(&self.file, dumb.offset, len));
         let by_offset = match by_offset {
             Ok(mapping) => return Ok(mapping),
             Err(e) => e,
         };
         // Otherwise as a shareable buffer.
         let mut prime = PrimeHandle { handle: fb.handle, flags: libc::O_CLOEXEC as u32, fd: -1 };
-        ioctl(&self.file, PRIME_HANDLE_TO_FD, &mut prime).with_context(|| format!("the graphics driver ({}) wouldn't share the screen's memory ({by_offset:#})", self.driver))?;
+        ioctl(&self.file, PRIME_HANDLE_TO_FD, &mut prime).with_context(|| {
+            format!("the graphics driver ({}) wouldn't share the screen's memory ({by_offset:#})", self.driver)
+        })?;
         // SAFETY: the kernel just gave us this descriptor.
         let fd = unsafe { OwnedFd::from_raw_fd(prime.fd) };
-        Mapping::new(&fd, 0, len).with_context(|| format!("the graphics driver ({}) wouldn't let the screen's memory be read", self.driver))
+        Mapping::new(&fd, 0, len)
+            .with_context(|| format!("the graphics driver ({}) wouldn't let the screen's memory be read", self.driver))
     }
 }
 
@@ -313,11 +347,15 @@ fn sealed_message(driver: &str, release: &str) -> String {
     // acceleration, and only hands those out from Linux 6.11.
     let hint = match (driver, version) {
         ("vmwgfx", (0, _)) => "",
-        ("vmwgfx", v) if v < (6, 11) => "; on VMware this needs Linux 6.11 or later (Debian 13, or Debian 12 with the backports kernel)",
+        ("vmwgfx", v) if v < (6, 11) => {
+            "; on VMware this needs Linux 6.11 or later (Debian 13, or Debian 12 with the backports kernel)"
+        }
         _ => "",
     };
     let on = if release.is_empty() { String::new() } else { format!(" on Linux {release}") };
-    format!("this computer's graphics driver ({driver}{on}) doesn't let the screen's memory be read, so the Slipstream service can't show the screen{hint}")
+    format!(
+        "this computer's graphics driver ({driver}{on}) doesn't let the screen's memory be read, so the Slipstream service can't show the screen{hint}"
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,7 +390,16 @@ impl Mapping {
     fn new(fd: &impl AsRawFd, offset: u64, len: usize) -> Result<Self> {
         // SAFETY: a shared read-only mapping; the kernel checks the range
         // against the buffer's size.
-        let ptr = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd.as_raw_fd(), offset as libc::off_t) };
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                fd.as_raw_fd(),
+                offset as libc::off_t,
+            )
+        };
         if ptr == libc::MAP_FAILED {
             return Err(io::Error::last_os_error()).context("mapping the screen's memory");
         }
@@ -387,7 +434,12 @@ fn fourcc_name(format: u32) -> String {
 
 /// Copies the `width`×`height` part of a framebuffer at (`x`, `y`) into
 /// `out` as tightly packed 32-bit pixels, and says which order they're in.
-fn copy_pixels(src: &[u8], fb: &Fb, (x, y, width, height): (u32, u32, u32, u32), out: &mut Vec<u8>) -> Result<PixelFormat> {
+fn copy_pixels(
+    src: &[u8],
+    fb: &Fb,
+    (x, y, width, height): (u32, u32, u32, u32),
+    out: &mut Vec<u8>,
+) -> Result<PixelFormat> {
     let bytes = bytes_per_pixel(fb.format).context("unsupported pixel format")?;
     let (x, y, width, height) = (x as usize, y as usize, width as usize, height as usize);
     let (pitch, base) = (fb.pitch as usize, fb.offset as usize);
@@ -562,7 +614,8 @@ impl Grabber<'_> {
         }
         let (_, fb, mapping) = self.mapped.iter().find(|(id, ..)| *id == crtc.fb).expect("just mapped");
         // The mode can be larger than the framebuffer for a moment.
-        let (width, height) = (crtc.width.min(fb.width.saturating_sub(crtc.x)), crtc.height.min(fb.height.saturating_sub(crtc.y)));
+        let (width, height) =
+            (crtc.width.min(fb.width.saturating_sub(crtc.x)), crtc.height.min(fb.height.saturating_sub(crtc.y)));
         if width == 0 || height == 0 {
             return Ok(None);
         }
@@ -647,7 +700,9 @@ pub fn unreadable_reason() -> Option<String> {
     let mut why = None;
     let mut data = Vec::new();
     for screen in &screens {
-        let grabbed = Card::open(&screen.card).and_then(|card| Grabber { card: &card, crtc: screen.crtc, mapped: Vec::new(), mapped_at: Instant::now() }.grab(&mut data));
+        let grabbed = Card::open(&screen.card).and_then(|card| {
+            Grabber { card: &card, crtc: screen.crtc, mapped: Vec::new(), mapped_at: Instant::now() }.grab(&mut data)
+        });
         match grabbed {
             // Readable, or switched off since it was listed.
             Ok(_) => return None,

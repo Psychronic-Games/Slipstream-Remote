@@ -200,7 +200,9 @@ pub struct Login {
 impl DirectoryClient {
     /// Signs in; needs no access key (it returns the station's).
     pub async fn login(&self, username: &str, password: &str, device: &str) -> Result<Login> {
-        self.call(serde_json::json!({ "op": "login", "username": username, "password": password, "device": device })).await.map_err(no_accounts)
+        self.call(serde_json::json!({ "op": "login", "username": username, "password": password, "device": device }))
+            .await
+            .map_err(no_accounts)
     }
 
     pub async fn account(&self, token: &str) -> Result<AccountState> {
@@ -274,10 +276,14 @@ mod tests {
         let state: AccountState = serde_json::from_value(serde_json::json!({
             "user":{"username":"tech","name":"Tech"}, "vault_salt":"fixture",
             "station":{"server":"station.example"}
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(state.shared_groups.is_empty());
         let mut settings = crate::config::Settings::default();
-        settings.accounts.push(crate::config::StationAccount { shared_groups: vec!["Empty station group".into()], ..Default::default() });
+        settings.accounts.push(crate::config::StationAccount {
+            shared_groups: vec!["Empty station group".into()],
+            ..Default::default()
+        });
         let loaded: crate::config::Settings = toml::from_str(&toml::to_string(&settings).unwrap()).unwrap();
         assert_eq!(loaded.accounts[0].shared_groups, ["Empty station group"]);
     }
@@ -287,10 +293,11 @@ mod tests {
         let device: SavedDevice = serde_json::from_value(serde_json::json!({
             "id":482913077, "name":"Server", "group":"Lab / Servers",
             "notes":"First line\nSecond line", "added_by":"admin"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(serde_json::from_value::<SavedDevice>(serde_json::to_value(&device).unwrap()).unwrap(), device);
         let mut settings = crate::config::Settings::default();
-        settings.accounts.push(crate::config::StationAccount { devices:vec![device.clone()], ..Default::default() });
+        settings.accounts.push(crate::config::StationAccount { devices: vec![device.clone()], ..Default::default() });
         let text = toml::to_string(&settings).unwrap();
         let loaded: crate::config::Settings = toml::from_str(&text).unwrap();
         assert_eq!(loaded.accounts[0].devices[0], device);
@@ -298,7 +305,8 @@ mod tests {
 
     #[test]
     fn controller_addresses_and_macs() {
-        let c = |address: &str, kind| Controller { kind, address: address.into(), username: String::new(), secret: None };
+        let c =
+            |address: &str, kind| Controller { kind, address: address.into(), username: String::new(), secret: None };
         assert_eq!(c("10.0.0.20", ControllerKind::Redfish).target(), Some(("10.0.0.20".into(), 443, true)));
         assert_eq!(c("https://bmc.lan:8443/", ControllerKind::Redfish).target(), Some(("bmc.lan".into(), 8443, true)));
         assert_eq!(c("http://10.0.0.21", ControllerKind::Web).target(), Some(("10.0.0.21".into(), 80, false)));

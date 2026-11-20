@@ -95,10 +95,7 @@ impl FrameSlot {
     /// Consumer: wait up to `timeout` for a frame. `Err` once closed.
     pub fn take(&self, timeout: Duration) -> Result<Option<RawFrame>, String> {
         let s = self.state.lock().unwrap();
-        let (mut s, _) = self
-            .cv
-            .wait_timeout_while(s, timeout, |s| s.frame.is_none() && !s.closed)
-            .unwrap();
+        let (mut s, _) = self.cv.wait_timeout_while(s, timeout, |s| s.frame.is_none() && !s.closed).unwrap();
         if let Some(f) = s.frame.take() {
             return Ok(Some(f));
         }

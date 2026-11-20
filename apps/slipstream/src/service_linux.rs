@@ -108,7 +108,11 @@ fn state() -> Option<String> {
     {
         return state.clone();
     }
-    let state = installed().then(|| systemctl(&["is-active", UNIT]).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default());
+    let state = installed().then(|| {
+        systemctl(&["is-active", UNIT])
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    });
     *seen = Some((Instant::now(), state.clone()));
     state
 }
@@ -152,8 +156,14 @@ pub fn hosted_id(public: bool) -> Option<DeviceId> {
 /// Run by the service's host: tells signed-in users which IDs it
 /// registered as, on the computer's own station and on Slipstream Public.
 pub fn publish_ids(settings: &slipstream_core::config::Settings) {
-    let custom = settings.server.url.as_deref().is_some_and(|url| !url.trim().is_empty() && !slipstream_core::config::is_public_station(url));
-    for (public, id) in [(false, settings.host.last_device_id.filter(|_| custom)), (true, settings.host.public_device_id)] {
+    let custom = settings
+        .server
+        .url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty() && !slipstream_core::config::is_public_station(url));
+    for (public, id) in
+        [(false, settings.host.last_device_id.filter(|_| custom)), (true, settings.host.public_device_id)]
+    {
         let path = id_file(public);
         let text = id.map(|id| id.0.to_string()).unwrap_or_default();
         if std::fs::read_to_string(&path).unwrap_or_default() == text {
@@ -279,7 +289,8 @@ pub fn screen_problem() -> Option<String> {
     {
         return problem.clone();
     }
-    let problem = std::fs::read_to_string(screen_problem_file()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let problem =
+        std::fs::read_to_string(screen_problem_file()).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     *seen = Some((Instant::now(), problem.clone()));
     problem
 }
@@ -392,7 +403,9 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     // hosts (see `service_desktop`). But say what won't be reachable.
     if let Some(why) = slipstream_platform::kms::unreadable_reason() {
         println!("Note: the service can't show this computer's login screen or a locked session: {why}.");
-        println!("It stays reachable while someone is signed in with Slipstream running, through the desktop's own screen sharing.");
+        println!(
+            "It stays reachable while someone is signed in with Slipstream running, through the desktop's own screen sharing."
+        );
     }
 
     // The machine profile, from this computer's settings.
@@ -406,7 +419,9 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
         settings.host.set_permanent_password(Some(pw));
     }
     if settings.host.permanent_secret().is_none() {
-        bail!("set an unattended password first (Config → Unattended password, or --password): it is what lets you in at the login screen");
+        bail!(
+            "set an unattended password first (Config → Unattended password, or --password): it is what lets you in at the login screen"
+        );
     }
     settings.host.enabled = true;
     // Screen-sharing approval belongs to the user's desktop session.
@@ -432,10 +447,12 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     // reinstall keeps the ID it has been reachable as.
     if home.join("identity.key").exists() {
         let old = machine.load_settings();
-        settings.host.last_device_id = if old.server.url == settings.server.url { old.host.last_device_id } else { None };
+        settings.host.last_device_id =
+            if old.server.url == settings.server.url { old.host.last_device_id } else { None };
         settings.host.public_device_id = old.host.public_device_id;
     } else if key.exists() {
-        let bytes = std::fs::read(&key).with_context(|| format!("reading this computer's identity ({})", key.display()))?;
+        let bytes =
+            std::fs::read(&key).with_context(|| format!("reading this computer's identity ({})", key.display()))?;
         place(&bytes, &home.join("identity.key"), 0o600)?;
     } else {
         settings.host.last_device_id = None;
@@ -515,10 +532,26 @@ pub fn check(picture: Option<&Path>) -> Result<()> {
                 // A picture that is all one colour usually means the
                 // driver keeps the real one elsewhere.
                 let flat = rgba.as_chunks::<4>().0.iter().all(|p| p[..3] == rgba[..3]);
-                println!("{}: captured {width}x{height}{}", d.name, if flat { " (all one colour: blank screen, or not the real picture)" } else { "" });
+                println!(
+                    "{}: captured {width}x{height}{}",
+                    d.name,
+                    if flat { " (all one colour: blank screen, or not the real picture)" } else { "" }
+                );
                 if let Some(path) = picture {
-                    let path = if screens.len() > 1 { path.with_file_name(format!("{}-{}.png", path.file_stem().unwrap_or_default().to_string_lossy(), d.index + 1)) } else { path.to_path_buf() };
-                    let mut png = png::Encoder::new(std::fs::File::create(&path).with_context(|| format!("saving {}", path.display()))?, width, height);
+                    let path = if screens.len() > 1 {
+                        path.with_file_name(format!(
+                            "{}-{}.png",
+                            path.file_stem().unwrap_or_default().to_string_lossy(),
+                            d.index + 1
+                        ))
+                    } else {
+                        path.to_path_buf()
+                    };
+                    let mut png = png::Encoder::new(
+                        std::fs::File::create(&path).with_context(|| format!("saving {}", path.display()))?,
+                        width,
+                        height,
+                    );
                     png.set_color(png::ColorType::Rgba);
                     png.set_depth(png::BitDepth::Eight);
                     png.write_header()?.write_image_data(&rgba)?;

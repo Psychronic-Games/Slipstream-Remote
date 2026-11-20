@@ -60,7 +60,9 @@ impl SignedUpdate<'_> {
     /// Checks `sig_hex` against any of `keys`.
     pub fn verify(&self, keys: &[PublicKey], sig_hex: &str) -> Result<()> {
         if keys.is_empty() {
-            bail!("this build of Slipstream has no update key, so it can't verify updates — download new versions from your station");
+            bail!(
+                "this build of Slipstream has no update key, so it can't verify updates — download new versions from your station"
+            );
         }
         if sig_hex.is_empty() {
             bail!("the station's update isn't signed — the station needs a newer scripts/build-station.sh");

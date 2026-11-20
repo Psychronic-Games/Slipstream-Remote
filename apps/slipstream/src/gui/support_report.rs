@@ -53,34 +53,28 @@ impl Drop for Report {
 }
 
 pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
 fn sections(sections: &[slipstream_core::proto::InfoSection]) -> String {
     sections
         .iter()
-        .map(|s| {
-            format!(
-                "{}\n{}\n",
-                s.title,
-                s.rows
-                    .iter()
-                    .map(|(k, v)| format!("{k}: {v}\n"))
-                    .collect::<String>()
-            )
-        })
+        .map(|s| format!("{}\n{}\n", s.title, s.rows.iter().map(|(k, v)| format!("{k}: {v}\n")).collect::<String>()))
         .collect()
 }
 
 impl Report {
     pub fn cancel_requests(&mut self) {
         let pending = self.fetch.take().is_some() | self.status_rx.take().is_some();
-        if let Some(job) = self.fetch_job.take() {job.abort();}
-        if let Some(job) = self.status_job.take() {job.abort();}
-        if pending {self.notice=Some(Err("Pending requests cancelled; a status already sent cannot be recalled".into()));}
+        if let Some(job) = self.fetch_job.take() {
+            job.abort();
+        }
+        if let Some(job) = self.status_job.take() {
+            job.abort();
+        }
+        if pending {
+            self.notice = Some(Err("Pending requests cancelled; a status already sent cannot be recalled".into()));
+        }
     }
 
     pub fn show(&mut self, ctx: &egui::Context, rt: &tokio::runtime::Runtime, source: Source<'_>) {
@@ -118,8 +112,7 @@ impl Report {
                 Ok(result) => {
                     self.save = None;
                     self.save_job = None;
-                    self.notice =
-                        Some(result.map(|p| format!("Saved report folder: {}", p.display())));
+                    self.notice = Some(result.map(|p| format!("Saved report folder: {}", p.display())));
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
                     self.save = None;
@@ -197,7 +190,8 @@ impl Report {
         self.open = open;
         if !open {
             self.cancel_requests();
-            theme::repaint_console(ctx);ctx.request_discard("Support report closed");
+            theme::repaint_console(ctx);
+            ctx.request_discard("Support report closed");
             return;
         }
         if let Some(text) = status_send {
@@ -224,9 +218,7 @@ impl Report {
                     .map(|s| {
                         format!(
                             "Public IP: {}\n\n{}",
-                            public
-                                .map(|ip| ip.to_string())
-                                .unwrap_or_else(|_| "Unavailable".into()),
+                            public.map(|ip| ip.to_string()).unwrap_or_else(|_| "Unavailable".into()),
                             sections(&s)
                         )
                     })
@@ -237,26 +229,19 @@ impl Report {
         }
         if save {
             if self.screenshot && source.frame.is_none() {
-                self.notice = Some(Err(
-                    "No remote frame is available; clear the screenshot option to save text only"
-                        .into(),
-                ));
+                self.notice =
+                    Some(Err("No remote frame is available; clear the screenshot option to save text only".into()));
                 return;
             }
             let (tx, rx) = tokio::sync::oneshot::channel();
             let directory = PathBuf::from(self.directory.trim());
             let text = self.text(&source);
-            let frame = if self.screenshot {
-                source.frame.clone()
-            } else {
-                None
-            };
+            let frame = if self.screenshot { source.frame.clone() } else { None };
             let wake = ctx.clone();
             self.save = Some(rx);
             self.notice = None;
             self.save_job = Some(rt.spawn_blocking(move || {
-                let result = save_report(&directory, &text, frame)
-                    .map_err(|e| format!("Could not save report: {e:#}"));
+                let result = save_report(&directory, &text, frame).map_err(|e| format!("Could not save report: {e:#}"));
                 let _ = tx.send(result);
                 wake.request_repaint();
             }));
@@ -275,25 +260,15 @@ impl Report {
             slipstream_core::clock::format_utc(now()),
             slipstream_core::clock::format_utc(self.inventory_at),
             self.notes,
-            if source.connected {
-                "Connected"
-            } else {
-                "Interrupted"
-            },
-            if s.relayed {
-                "Relayed"
-            } else {
-                "Direct (last known)"
-            },
+            if source.connected { "Connected" } else { "Interrupted" },
+            if s.relayed { "Relayed" } else { "Direct (last known)" },
             s.width,
             s.height,
             s.fps,
             s.rtt_ms,
             s.kbps,
             s.decode_ms,
-            self.inventory
-                .as_deref()
-                .unwrap_or("Inventory not collected"),
+            self.inventory.as_deref().unwrap_or("Inventory not collected"),
             source.network,
             self.screenshot
         )
@@ -302,9 +277,7 @@ impl Report {
 
 fn save_report(parent: &Path, text: &str, frame: Option<Arc<YuvFrame>>) -> anyhow::Result<PathBuf> {
     anyhow::ensure!(parent.is_dir(), "Choose an existing local folder");
-    let folder = tempfile::Builder::new()
-        .prefix(&format!("Slipstream-report-{}-", now()))
-        .tempdir_in(parent)?;
+    let folder = tempfile::Builder::new().prefix(&format!("Slipstream-report-{}-", now())).tempdir_in(parent)?;
     let write_private = |path: &Path, data: &[u8]| -> anyhow::Result<()> {
         use std::io::Write;
         let mut file = std::fs::OpenOptions::new();
@@ -336,42 +309,55 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn closing_cancels_remote_requests_and_keeps_reviewed_data() {
-        let mut report=Report::default();
+        let mut report = Report::default();
         report.inventory.replace("retained inventory".into());
         report.notes.push_str("technician note");
-        let (started,ready)=tokio::sync::oneshot::channel();
-        let (tx,rx)=tokio::sync::oneshot::channel();
-        report.fetch=Some(rx);
-        report.fetch_job=Some(tokio::spawn(async move {
-            let _=started.send(());
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        report.fetch = Some(rx);
+        report.fetch_job = Some(tokio::spawn(async move {
+            let _ = started.send(());
             std::future::pending::<()>().await;
-            let _=tx.send(Ok("stale response".into()));
+            let _ = tx.send(Ok("stale response".into()));
         }));
         ready.await.unwrap();
-        let handle=report.fetch_job.as_ref().unwrap().abort_handle();
+        let handle = report.fetch_job.as_ref().unwrap().abort_handle();
         report.cancel_requests();
-        tokio::time::timeout(std::time::Duration::from_secs(2),async {
-            while !handle.is_finished() {tokio::task::yield_now().await;}
-        }).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !handle.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         assert!(report.fetch.is_none() && report.fetch_job.is_none());
-        assert_eq!(report.inventory.as_deref(),Some("retained inventory"));
-        assert_eq!(report.notes,"technician note");
+        assert_eq!(report.inventory.as_deref(), Some("retained inventory"));
+        assert_eq!(report.notes, "technician note");
     }
 
     #[test]
     fn screenshot_export_contains_the_received_pixels_and_failed_exports_leave_no_folder() {
-        let base=tempfile::tempdir().unwrap();
-        let frame=Arc::new(YuvFrame {width:2,height:2,y:vec![16,235,81,145],u:vec![128],v:vec![128],y_stride:2,uv_stride:1});
-        let saved=save_report(base.path(),"reviewed notes",Some(frame.clone())).unwrap();
-        let decoder=png::Decoder::new(std::io::BufReader::new(std::fs::File::open(saved.join("screen.png")).unwrap()));
-        let mut reader=decoder.read_info().unwrap();
-        let mut pixels=vec![0;reader.output_buffer_size().unwrap()];
-        let info=reader.next_frame(&mut pixels).unwrap();
-        assert_eq!((info.width,info.height),(2,2));
-        assert_eq!(&pixels[..info.buffer_size()],frame.to_rgba());
-        let invalid=Arc::new(YuvFrame {width:0,..(*frame).clone()});
-        assert!(save_report(base.path(),"unfinished",Some(invalid)).is_err());
-        assert_eq!(std::fs::read_dir(base.path()).unwrap().count(),1);
+        let base = tempfile::tempdir().unwrap();
+        let frame = Arc::new(YuvFrame {
+            width: 2,
+            height: 2,
+            y: vec![16, 235, 81, 145],
+            u: vec![128],
+            v: vec![128],
+            y_stride: 2,
+            uv_stride: 1,
+        });
+        let saved = save_report(base.path(), "reviewed notes", Some(frame.clone())).unwrap();
+        let decoder =
+            png::Decoder::new(std::io::BufReader::new(std::fs::File::open(saved.join("screen.png")).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut pixels).unwrap();
+        assert_eq!((info.width, info.height), (2, 2));
+        assert_eq!(&pixels[..info.buffer_size()], frame.to_rgba());
+        let invalid = Arc::new(YuvFrame { width: 0, ..(*frame).clone() });
+        assert!(save_report(base.path(), "unfinished", Some(invalid)).is_err());
+        assert_eq!(std::fs::read_dir(base.path()).unwrap().count(), 1);
     }
     #[test]
     fn report_saves_unique_private_folders_without_overwriting() {
@@ -379,22 +365,12 @@ mod tests {
         let first = save_report(base.path(), "first", None).unwrap();
         let second = save_report(base.path(), "second", None).unwrap();
         assert_ne!(first, second);
-        assert_eq!(
-            std::fs::read_to_string(first.join("report.txt")).unwrap(),
-            "first"
-        );
+        assert_eq!(std::fs::read_to_string(first.join("report.txt")).unwrap(), "first");
         assert!(!first.join("screen.png").exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(first.join("report.txt"))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
+            assert_eq!(std::fs::metadata(first.join("report.txt")).unwrap().permissions().mode() & 0o777, 0o600);
         }
         assert!(save_report(&base.path().join("missing"), "unused", None).is_err());
     }

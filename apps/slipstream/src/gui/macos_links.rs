@@ -53,7 +53,8 @@ pub fn install() {
     // kept for the life of the process (the manager doesn't retain it).
     unsafe {
         let handler: Retained<LinkHandler> = msg_send![LinkHandler::alloc(), init];
-        let manager: Option<Retained<AnyObject>> = msg_send![objc2::class!(NSAppleEventManager), sharedAppleEventManager];
+        let manager: Option<Retained<AnyObject>> =
+            msg_send![objc2::class!(NSAppleEventManager), sharedAppleEventManager];
         let Some(manager) = manager else { return };
         let _: () = msg_send![
             &*manager,

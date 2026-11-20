@@ -75,8 +75,11 @@ impl UpdateInfo {
 fn exe_path() -> Result<PathBuf> {
     let exe = std::env::current_exe().context("cannot locate the app")?;
     let dir = exe.parent().context("app has no folder")?;
-    if tempfile::NamedTempFile::with_prefix_in(".slipstream-write-test-",dir).is_err() {
-        bail!("this copy of Slipstream is installed in a protected folder ({}) — download the new version from your station instead", dir.display());
+    if tempfile::NamedTempFile::with_prefix_in(".slipstream-write-test-", dir).is_err() {
+        bail!(
+            "this copy of Slipstream is installed in a protected folder ({}) — download the new version from your station instead",
+            dir.display()
+        );
     }
     Ok(exe)
 }
@@ -128,7 +131,14 @@ pub async fn download_to(
     download_to_with_keys(station, key, info, staged, &slipstream_core::release::trusted_keys(), &mut progress).await
 }
 
-async fn download_to_with_keys(station: &reqwest::Url, key: Option<&str>, info: &UpdateInfo, staged: &Path, keys: &[iroh::PublicKey], mut progress: impl FnMut(u64, u64)) -> Result<()> {
+async fn download_to_with_keys(
+    station: &reqwest::Url,
+    key: Option<&str>,
+    info: &UpdateInfo,
+    staged: &Path,
+    keys: &[iroh::PublicKey],
+    mut progress: impl FnMut(u64, u64),
+) -> Result<()> {
     info.verify_signature(keys)?;
     let mut url = station.join("download.php")?;
     url.query_pairs_mut().append_pair("os", &info.os).append_pair("sha256", &info.sha256);
@@ -137,31 +147,49 @@ async fn download_to_with_keys(station: &reqwest::Url, key: Option<&str>, info: 
     if let Some(k) = key {
         req = req.header("X-Slipstream-Key", k);
     }
-    let response = tokio::time::timeout(std::time::Duration::from_secs(30),req.send()).await
-        .context("update response timed out")?.context("downloading the update")?;
-    stage_download(response,info,staged,&mut progress).await
+    let response = tokio::time::timeout(std::time::Duration::from_secs(30), req.send())
+        .await
+        .context("update response timed out")?
+        .context("downloading the update")?;
+    stage_download(response, info, staged, &mut progress).await
 }
 
-pub(crate) async fn available(dc: &slipstream_core::directory::DirectoryClient, keys: &[iroh::PublicKey]) -> Result<Option<UpdateInfo>> {
+pub(crate) async fn available(
+    dc: &slipstream_core::directory::DirectoryClient,
+    keys: &[iroh::PublicKey],
+) -> Result<Option<UpdateInfo>> {
     let Some(value) = dc.update_check(&slipstream_core::platform()).await? else { return Ok(None) };
     let info: UpdateInfo = serde_json::from_value(value).context("unreadable update info")?;
     info.verify_signature(keys)?;
     Ok(Some(info))
 }
 
-pub(crate) async fn download_latest(dc: &slipstream_core::directory::DirectoryClient, requested: &UpdateInfo, staged: &Path, keys: &[iroh::PublicKey], mut progress: impl FnMut(u64, u64)) -> Result<UpdateInfo> {
+pub(crate) async fn download_latest(
+    dc: &slipstream_core::directory::DirectoryClient,
+    requested: &UpdateInfo,
+    staged: &Path,
+    keys: &[iroh::PublicKey],
+    mut progress: impl FnMut(u64, u64),
+) -> Result<UpdateInfo> {
     // The visible offer may predate a publication. Always refresh it first.
     let mut info = available(dc, keys).await?.context("the station has no signed update package")?;
-    anyhow::ensure!(info.version_key() >= UpdateInfo::current_version_key(), "the station offers an older app — not installing a downgrade");
-    if info != *requested { tracing::info!(version = %info.label(), "refreshed the update offer before downloading"); }
+    anyhow::ensure!(
+        info.version_key() >= UpdateInfo::current_version_key(),
+        "the station offers an older app — not installing a downgrade"
+    );
+    if info != *requested {
+        tracing::info!(version = %info.label(), "refreshed the update offer before downloading");
+    }
     for attempt in 0..2 {
         match download_to_with_keys(dc.base_url(), dc.key(), &info, staged, keys, &mut progress).await {
             Ok(()) => return Ok(info),
             Err(error) => {
                 // Publication may also race this download. Only retry with a
                 // separately verified, newer signed offer; never skip a hash.
-                if attempt == 0 && let Ok(Some(next)) = available(dc, keys).await
-                    && next.version_key() > info.version_key() {
+                if attempt == 0
+                    && let Ok(Some(next)) = available(dc, keys).await
+                    && next.version_key() > info.version_key()
+                {
                     info = next;
                     continue;
                 }
@@ -178,10 +206,18 @@ pub fn verified_copy(source: &Path, directory: &Path, info: &UpdateInfo) -> Resu
     verified_copy_with_keys(source, directory, info, &slipstream_core::release::trusted_keys())
 }
 
-fn verified_copy_with_keys(source: &Path, directory: &Path, info: &UpdateInfo, keys: &[iroh::PublicKey]) -> Result<tempfile::NamedTempFile> {
+fn verified_copy_with_keys(
+    source: &Path,
+    directory: &Path,
+    info: &UpdateInfo,
+    keys: &[iroh::PublicKey],
+) -> Result<tempfile::NamedTempFile> {
     use std::io::{Read, Seek, Write};
     info.verify_signature(keys)?;
-    let limit = info.size.checked_add(u64::from(slipstream_core::provision::MAX_CONFIG) + 12).context("invalid update length")?;
+    let limit = info
+        .size
+        .checked_add(u64::from(slipstream_core::provision::MAX_CONFIG) + 12)
+        .context("invalid update length")?;
     let mut copy = tempfile::NamedTempFile::with_prefix_in(".slipstream-verified-", directory)?;
     let source = std::fs::File::open(source)?;
     let copied = std::io::copy(&mut source.take(limit.checked_add(1).context("invalid update length")?), &mut copy)?;
@@ -199,35 +235,56 @@ fn verified_copy_with_keys(source: &Path, directory: &Path, info: &UpdateInfo, k
     }
     let mut trailer = Vec::new();
     copy.read_to_end(&mut trailer)?;
-    anyhow::ensure!(slipstream_core::directory::hex(&digest.finalize()).eq_ignore_ascii_case(&info.sha256)
-        && (trailer.is_empty() || base_len(&trailer) == 0), "the downloaded update is damaged (checksum mismatch) — check for updates again");
+    anyhow::ensure!(
+        slipstream_core::directory::hex(&digest.finalize()).eq_ignore_ascii_case(&info.sha256)
+            && (trailer.is_empty() || base_len(&trailer) == 0),
+        "the downloaded update is damaged (checksum mismatch) — check for updates again"
+    );
     copy.rewind()?;
     Ok(copy)
 }
 
-async fn stage_download(mut resp:reqwest::Response,info:&UpdateInfo,staged:&Path,mut progress:impl FnMut(u64,u64))->Result<()> {
-    anyhow::ensure!(resp.status().is_success(),"the station refused the download (HTTP {})",resp.status());
-    let limit=info.size.checked_add(u64::from(slipstream_core::provision::MAX_CONFIG)+12).context("invalid update length")?;
-    anyhow::ensure!(resp.content_length().is_none_or(|len|len<=limit),"update response exceeds the signed size");
-    let parent=staged.parent().context("update path has no parent")?.to_owned();
-    let temp=tokio::task::spawn_blocking(move || tempfile::NamedTempFile::with_prefix_in(".slipstream-update-",parent)).await??;
-    let mut file=tokio::fs::File::from_std(temp.as_file().try_clone()?);
-    let (mut done,mut digest,mut trailer)=(0u64,Sha256::new(),Vec::new());
-    let total=resp.content_length().unwrap_or(info.size);
+async fn stage_download(
+    mut resp: reqwest::Response,
+    info: &UpdateInfo,
+    staged: &Path,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<()> {
+    anyhow::ensure!(resp.status().is_success(), "the station refused the download (HTTP {})", resp.status());
+    let limit = info
+        .size
+        .checked_add(u64::from(slipstream_core::provision::MAX_CONFIG) + 12)
+        .context("invalid update length")?;
+    anyhow::ensure!(resp.content_length().is_none_or(|len| len <= limit), "update response exceeds the signed size");
+    let parent = staged.parent().context("update path has no parent")?.to_owned();
+    let temp =
+        tokio::task::spawn_blocking(move || tempfile::NamedTempFile::with_prefix_in(".slipstream-update-", parent))
+            .await??;
+    let mut file = tokio::fs::File::from_std(temp.as_file().try_clone()?);
+    let (mut done, mut digest, mut trailer) = (0u64, Sha256::new(), Vec::new());
+    let total = resp.content_length().unwrap_or(info.size);
     loop {
-        let chunk=tokio::time::timeout(std::time::Duration::from_secs(30),resp.chunk()).await.context("update download stopped responding")??;
-        let Some(chunk)=chunk else {break};
-        anyhow::ensure!(chunk.len() as u64<=limit-done,"update response exceeds the signed size");
-        let base=(info.size.saturating_sub(done)).min(chunk.len() as u64) as usize;
-        digest.update(&chunk[..base]);trailer.extend_from_slice(&chunk[base..]);
-        file.write_all(&chunk).await?;done+=chunk.len() as u64;progress(done,total);
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(30), resp.chunk())
+            .await
+            .context("update download stopped responding")??;
+        let Some(chunk) = chunk else { break };
+        anyhow::ensure!(chunk.len() as u64 <= limit - done, "update response exceeds the signed size");
+        let base = (info.size.saturating_sub(done)).min(chunk.len() as u64) as usize;
+        digest.update(&chunk[..base]);
+        trailer.extend_from_slice(&chunk[base..]);
+        file.write_all(&chunk).await?;
+        done += chunk.len() as u64;
+        progress(done, total);
     }
-    file.flush().await?;drop(file);
-    let hex=slipstream_core::directory::hex(&digest.finalize());
-    anyhow::ensure!(done>=info.size && (trailer.is_empty() || base_len(&trailer)==0)
-        && hex.eq_ignore_ascii_case(&info.sha256),"the downloaded update is damaged (checksum mismatch) — try again");
-    let staged=staged.to_owned();
-    tokio::task::spawn_blocking(move || temp.persist(staged).map_err(|e|e.error)).await??;
+    file.flush().await?;
+    drop(file);
+    let hex = slipstream_core::directory::hex(&digest.finalize());
+    anyhow::ensure!(
+        done >= info.size && (trailer.is_empty() || base_len(&trailer) == 0) && hex.eq_ignore_ascii_case(&info.sha256),
+        "the downloaded update is damaged (checksum mismatch) — try again"
+    );
+    let staged = staged.to_owned();
+    tokio::task::spawn_blocking(move || temp.persist(staged).map_err(|e| e.error)).await??;
     Ok(())
 }
 
@@ -253,7 +310,10 @@ pub fn install(staged: &Path) -> Result<PathBuf> {
         // copy moved aside by the previous update, which can't be removed
         // or replaced until it exits (`cleanup` removes it later).
         let _ = std::fs::remove_file(exe.with_extension("old"));
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
         let old = exe.with_file_name(format!(".slipstream-previous-{}-{stamp}.old", std::process::id()));
         std::fs::rename(&exe, &old).context("moving the old app aside")?;
         if let Err(e) = std::fs::rename(staged, &exe) {
@@ -311,9 +371,12 @@ pub fn cleanup() {
     }
     if let Ok(exe) = std::env::current_exe() {
         #[cfg(windows)]
-        if let Some(parent) = exe.parent() && let Ok(entries) = std::fs::read_dir(parent) {
+        if let Some(parent) = exe.parent()
+            && let Ok(entries) = std::fs::read_dir(parent)
+        {
             for entry in entries.flatten() {
-                let name = entry.file_name();let name = name.to_string_lossy();
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
                 if name.starts_with(".slipstream-previous-") && name.ends_with(".old") {
                     let _ = std::fs::remove_file(entry.path());
                 }
@@ -334,18 +397,34 @@ mod tests {
     use super::*;
 
     fn signed_info(key: &iroh::SecretKey, build: u64, payload: &[u8]) -> UpdateInfo {
-        let mut info = UpdateInfo { version: "999.0.0".into(), build, commit: "fixture".into(), size: payload.len() as u64,
-            sha256: slipstream_core::directory::hex(&Sha256::digest(payload)), os: "windows".into(), sig: String::new() };
-        info.sig = slipstream_core::release::SignedUpdate { platform: &slipstream_core::platform(), version: &info.version,
-            build, size: info.size, sha256: &info.sha256 }.sign(key);
+        let mut info = UpdateInfo {
+            version: "999.0.0".into(),
+            build,
+            commit: "fixture".into(),
+            size: payload.len() as u64,
+            sha256: slipstream_core::directory::hex(&Sha256::digest(payload)),
+            os: "windows".into(),
+            sig: String::new(),
+        };
+        info.sig = slipstream_core::release::SignedUpdate {
+            platform: &slipstream_core::platform(),
+            version: &info.version,
+            build,
+            size: info.size,
+            sha256: &info.sha256,
+        }
+        .sign(key);
         info
     }
 
     #[test]
     fn privileged_copy_reverifies_the_snapshot_and_cleans_rejected_files() {
-        let key = iroh::SecretKey::generate();let keys = [key.public()];
-        let dir = tempfile::tempdir().unwrap();let trusted = tempfile::tempdir().unwrap();
-        let source = dir.path().join("download.exe");let payload = b"signed executable fixture";
+        let key = iroh::SecretKey::generate();
+        let keys = [key.public()];
+        let dir = tempfile::tempdir().unwrap();
+        let trusted = tempfile::tempdir().unwrap();
+        let source = dir.path().join("download.exe");
+        let payload = b"signed executable fixture";
         let info = signed_info(&key, 1, payload);
         std::fs::write(&source, payload).unwrap();
         let snapshot = verified_copy_with_keys(&source, trusted.path(), &info, &keys).unwrap();
@@ -354,14 +433,23 @@ mod tests {
         drop(snapshot);
         assert!(verified_copy_with_keys(&source, trusted.path(), &info, &keys).is_err());
         std::fs::write(&source, payload).unwrap();
-        assert!(verified_copy_with_keys(&source, trusted.path(), &info, &[iroh::SecretKey::generate().public()]).is_err());
-        let mut bad_trailer = payload.to_vec();bad_trailer.extend_from_slice(b"unexpected appended data");
+        assert!(
+            verified_copy_with_keys(&source, trusted.path(), &info, &[iroh::SecretKey::generate().public()]).is_err()
+        );
+        let mut bad_trailer = payload.to_vec();
+        bad_trailer.extend_from_slice(b"unexpected appended data");
         std::fs::write(&source, bad_trailer).unwrap();
         assert!(verified_copy_with_keys(&source, trusted.path(), &info, &keys).is_err());
-        let mut valid = payload.to_vec();valid.extend(slipstream_core::provision::trailer(&slipstream_core::provision::StationConfig { server: "station.invalid".into(), key: None, org: None }));
+        let mut valid = payload.to_vec();
+        valid.extend(slipstream_core::provision::trailer(&slipstream_core::provision::StationConfig {
+            server: "station.invalid".into(),
+            key: None,
+            org: None,
+        }));
         std::fs::write(&source, &valid).unwrap();
         let snapshot = verified_copy_with_keys(&source, trusted.path(), &info, &keys).unwrap();
-        assert_eq!(std::fs::read(snapshot.path()).unwrap(), valid);drop(snapshot);
+        assert_eq!(std::fs::read(snapshot.path()).unwrap(), valid);
+        drop(snapshot);
         assert_eq!(std::fs::read_dir(trusted.path()).unwrap().count(), 0);
     }
 
@@ -371,32 +459,62 @@ mod tests {
         downloads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
         task: tokio::task::JoinHandle<()>,
     }
-    impl Drop for Offers { fn drop(&mut self) { self.task.abort(); } }
-    async fn offers(key: &iroh::SecretKey, publish_during_download: bool, corrupt: bool, untrusted_next: bool) -> Offers {
+    impl Drop for Offers {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+    async fn offers(
+        key: &iroh::SecretKey,
+        publish_during_download: bool,
+        corrupt: bool,
+        untrusted_next: bool,
+    ) -> Offers {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
         let first = signed_info(key, 1, b"first build");
         let other_key = iroh::SecretKey::generate();
         let second = signed_info(if untrusted_next { &other_key } else { key }, 2, b"second build");
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let dc = slipstream_core::directory::DirectoryClient::new(&format!("http://{}", socket.local_addr().unwrap()), None).unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));let requests = calls.clone();
-        let downloads = Arc::new(AtomicUsize::new(0));let gets = downloads.clone();
+        let dc =
+            slipstream_core::directory::DirectoryClient::new(&format!("http://{}", socket.local_addr().unwrap()), None)
+                .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let requests = calls.clone();
+        let downloads = Arc::new(AtomicUsize::new(0));
+        let gets = downloads.clone();
         let task = tokio::spawn(async move {
             loop {
                 let (mut conn, _) = socket.accept().await.unwrap();
-                let mut request = Vec::new();let mut buf = [0u8; 1024];
+                let mut request = Vec::new();
+                let mut buf = [0u8; 1024];
                 let header_end = loop {
-                    let length = conn.read(&mut buf).await.unwrap();if length == 0 { return; }
+                    let length = conn.read(&mut buf).await.unwrap();
+                    if length == 0 {
+                        return;
+                    }
                     request.extend_from_slice(&buf[..length]);
-                    if let Some(end) = request.windows(4).position(|b| b == b"\r\n\r\n") { break end+4; }
+                    if let Some(end) = request.windows(4).position(|b| b == b"\r\n\r\n") {
+                        break end + 4;
+                    }
                     assert!(request.len() < 16384);
                 };
                 let headers = String::from_utf8_lossy(&request[..header_end]);
-                let length = headers.lines().find_map(|line| line.to_lowercase().strip_prefix("content-length:").map(|v|v.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
                 let post = headers.starts_with("POST ");
-                while request.len() < header_end+length {
-                    let length = conn.read(&mut buf).await.unwrap();if length == 0 { return; }
+                while request.len() < header_end + length {
+                    let length = conn.read(&mut buf).await.unwrap();
+                    if length == 0 {
+                        return;
+                    }
                     request.extend_from_slice(&buf[..length]);
                 }
                 let body = if post {
@@ -405,10 +523,18 @@ mod tests {
                     serde_json::to_vec(&serde_json::json!({"ok":true,"update":info})).unwrap()
                 } else {
                     gets.fetch_add(1, Ordering::SeqCst);
-                    if corrupt { b"damaged build".to_vec() } else if publish_during_download { b"second build".to_vec() } else { b"first build".to_vec() }
+                    if corrupt {
+                        b"damaged build".to_vec()
+                    } else if publish_during_download {
+                        b"second build".to_vec()
+                    } else {
+                        b"first build".to_vec()
+                    }
                 };
-                let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-                conn.write_all(response.as_bytes()).await.unwrap();conn.write_all(&body).await.unwrap();
+                let response =
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                conn.write_all(response.as_bytes()).await.unwrap();
+                conn.write_all(&body).await.unwrap();
             }
         });
         Offers { dc, calls, downloads, task }
@@ -418,52 +544,79 @@ mod tests {
     async fn stale_offers_refresh_and_publication_races_retry_only_verified_newer_builds() {
         slipstream_core::init_crypto();
         use std::sync::atomic::Ordering;
-        let key = iroh::SecretKey::generate();let keys = [key.public()];
+        let key = iroh::SecretKey::generate();
+        let keys = [key.public()];
         let stale = signed_info(&key, 0, b"old cached build");
-        for (races, corrupt, untrusted) in [(false, false, false), (true, false, false), (false, true, false), (true, false, true)] {
+        for (races, corrupt, untrusted) in
+            [(false, false, false), (true, false, false), (false, true, false), (true, false, true)]
+        {
             let station = offers(&key, races, corrupt, untrusted).await;
-            let dir = tempfile::tempdir().unwrap();let staged = dir.path().join("app.update");
+            let dir = tempfile::tempdir().unwrap();
+            let staged = dir.path().join("app.update");
             let result = download_latest(&station.dc, &stale, &staged, &keys, |_, _| {}).await;
             if corrupt || untrusted {
-                assert!(result.is_err());assert!(!staged.exists());
+                assert!(result.is_err());
+                assert!(!staged.exists());
                 assert_eq!(station.downloads.load(Ordering::SeqCst), 1);
             } else {
-                let info = result.unwrap();assert_eq!(info.build, if races {2} else {1});
-                assert_eq!(std::fs::read(staged).unwrap(), if races {b"second build".as_slice()} else {b"first build".as_slice()});
-                assert_eq!(station.downloads.load(Ordering::SeqCst), if races {2} else {1});
+                let info = result.unwrap();
+                assert_eq!(info.build, if races { 2 } else { 1 });
+                assert_eq!(
+                    std::fs::read(staged).unwrap(),
+                    if races { b"second build".as_slice() } else { b"first build".as_slice() }
+                );
+                assert_eq!(station.downloads.load(Ordering::SeqCst), if races { 2 } else { 1 });
             }
-            assert_eq!(station.calls.load(Ordering::SeqCst), if races || corrupt {2} else {1});
+            assert_eq!(station.calls.load(Ordering::SeqCst), if races || corrupt { 2 } else { 1 });
         }
     }
 
     #[tokio::test]
     async fn streamed_updates_are_bounded_verified_and_cleaned_on_failure() {
         slipstream_core::init_crypto();
-        use tokio::io::{AsyncReadExt,AsyncWriteExt};
-        async fn response(body:Vec<u8>,length:Option<usize>)->reqwest::Response {
-            let server=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=server.local_addr().unwrap();
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn response(body: Vec<u8>, length: Option<usize>) -> reqwest::Response {
+            let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = server.local_addr().unwrap();
             tokio::spawn(async move {
-                let (mut socket,_)=server.accept().await.unwrap();let mut request=[0u8;2048];let _=socket.read(&mut request).await;
-                let length=length.map(|n|format!("Content-Length: {n}\r\n")).unwrap_or_default();
-                let _=socket.write_all(format!("HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n").as_bytes()).await;
-                let _=socket.write_all(&body).await;
+                let (mut socket, _) = server.accept().await.unwrap();
+                let mut request = [0u8; 2048];
+                let _ = socket.read(&mut request).await;
+                let length = length.map(|n| format!("Content-Length: {n}\r\n")).unwrap_or_default();
+                let _ =
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n").as_bytes()).await;
+                let _ = socket.write_all(&body).await;
             });
             reqwest::Client::new().get(format!("http://{addr}/")).send().await.unwrap()
         }
-        let payload:Vec<u8>=(0..300_000).map(|n|(n % 251) as u8).collect();
-        let info=UpdateInfo {size:payload.len() as u64,sha256:slipstream_core::directory::hex(&Sha256::digest(&payload)),version:String::new(),build:0,commit:String::new(),os:String::new(),sig:String::new()};
-        let dir=tempfile::tempdir().unwrap();let staged=dir.path().join("app.update");
-        let mut bytes=payload.to_vec();bytes.extend(slipstream_core::provision::trailer(&slipstream_core::provision::StationConfig {server:"example.invalid".into(),key:None,org:None}));
-        stage_download(response(bytes.clone(),Some(bytes.len())).await,&info,&staged,|_,_|{}).await.unwrap();
-        assert_eq!(tokio::fs::read(&staged).await.unwrap(),bytes);
+        let payload: Vec<u8> = (0..300_000).map(|n| (n % 251) as u8).collect();
+        let info = UpdateInfo {
+            size: payload.len() as u64,
+            sha256: slipstream_core::directory::hex(&Sha256::digest(&payload)),
+            version: String::new(),
+            build: 0,
+            commit: String::new(),
+            os: String::new(),
+            sig: String::new(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let staged = dir.path().join("app.update");
+        let mut bytes = payload.to_vec();
+        bytes.extend(slipstream_core::provision::trailer(&slipstream_core::provision::StationConfig {
+            server: "example.invalid".into(),
+            key: None,
+            org: None,
+        }));
+        stage_download(response(bytes.clone(), Some(bytes.len())).await, &info, &staged, |_, _| {}).await.unwrap();
+        assert_eq!(tokio::fs::read(&staged).await.unwrap(), bytes);
         tokio::fs::remove_file(&staged).await.unwrap();
-        stage_download(response(payload.clone(),None).await,&info,&staged,|_,_|{}).await.unwrap();
-        assert_eq!(tokio::fs::read(&staged).await.unwrap(),payload);
+        stage_download(response(payload.clone(), None).await, &info, &staged, |_, _| {}).await.unwrap();
+        assert_eq!(tokio::fs::read(&staged).await.unwrap(), payload);
         tokio::fs::remove_file(&staged).await.unwrap();
-        let oversized=payload.len()+slipstream_core::provision::MAX_CONFIG as usize+13;
-        for (body,length) in [(b"damaged".to_vec(),None),(vec![0;oversized],None),(Vec::new(),Some(1_000_000))] {
-            assert!(stage_download(response(body,length).await,&info,&staged,|_,_|{}).await.is_err());
-            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(),0,"failed update left staging data");
+        let oversized = payload.len() + slipstream_core::provision::MAX_CONFIG as usize + 13;
+        for (body, length) in [(b"damaged".to_vec(), None), (vec![0; oversized], None), (Vec::new(), Some(1_000_000))] {
+            assert!(stage_download(response(body, length).await, &info, &staged, |_, _| {}).await.is_err());
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "failed update left staging data");
         }
     }
 

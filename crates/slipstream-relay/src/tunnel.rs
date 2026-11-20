@@ -134,11 +134,7 @@ pub async fn run(client: Client, opts: TunnelOptions, stop: impl Future<Output =
 /// server (resolv.conf, the Windows adapter, the macOS service): lookups sent
 /// there go to the chosen server through the phone.
 fn destination(target: SocketAddr, dns: IpAddr) -> SocketAddr {
-    if target.ip() == IpAddr::V4(TUN_GATEWAY) && target.port() == 53 {
-        SocketAddr::new(dns, 53)
-    } else {
-        target
-    }
+    if target.ip() == IpAddr::V4(TUN_GATEWAY) && target.port() == 53 { SocketAddr::new(dns, 53) } else { target }
 }
 
 /// A tunnel that was killed (not stopped) leaves its read-only resolv.conf
@@ -147,7 +143,8 @@ fn destination(target: SocketAddr, dns: IpAddr) -> SocketAddr {
 #[cfg(target_os = "linux")]
 fn clear_stale_resolv_conf() {
     let ours = format!("nameserver {TUN_GATEWAY}");
-    let mounted = std::fs::read_to_string("/proc/self/mountinfo").is_ok_and(|m| m.lines().any(|l| l.split(' ').nth(4) == Some("/etc/resolv.conf")));
+    let mounted = std::fs::read_to_string("/proc/self/mountinfo")
+        .is_ok_and(|m| m.lines().any(|l| l.split(' ').nth(4) == Some("/etc/resolv.conf")));
     let content = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
     if mounted && content.trim() == ours {
         match std::process::Command::new("umount").arg("/etc/resolv.conf").status() {

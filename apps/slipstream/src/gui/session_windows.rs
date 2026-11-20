@@ -22,29 +22,18 @@ pub(super) fn show(
     for shared in all {
         let tab = shared.lock().unwrap();
         if tab.detached {
-            groups
-                .entry(tab.viewport_id())
-                .or_default()
-                .push(shared.clone());
+            groups.entry(tab.viewport_id()).or_default().push(shared.clone());
         }
     }
     for (viewport, members) in groups {
-        let active = members
-            .iter()
-            .find(|tab| tab.lock().unwrap().window_active)
-            .cloned()
-            .unwrap_or_else(|| members[0].clone());
+        let active =
+            members.iter().find(|tab| tab.lock().unwrap().window_active).cloned().unwrap_or_else(|| members[0].clone());
         active.lock().unwrap().window_active = true;
         let (host, position) = {
             let mut tab = active.lock().unwrap();
             (tab.host_name(), tab.window_position.take())
         };
-        let (rt, actions, tabs, app_title) = (
-            rt.clone(),
-            actions.clone(),
-            tabs.clone(),
-            app_title.to_owned(),
-        );
+        let (rt, actions, tabs, app_title) = (rt.clone(), actions.clone(), tabs.clone(), app_title.to_owned());
         let registered = std::time::Instant::now();
         let mut builder = egui::ViewportBuilder::default()
             .with_title(format!("{host} · {app_title}"))
@@ -94,8 +83,7 @@ pub(super) fn show(
             };
             let body = theme::native_session_title_bar(ui, &app_title, Some(&host));
             let visible = ctx.input(|i| i.viewport().minimized != Some(true));
-            let (body, tab_actions) =
-                session_tabs::show(&tabs, ui, body, &entries, Some(id), false, visible, None);
+            let (body, tab_actions) = session_tabs::show(&tabs, ui, body, &entries, Some(id), false, visible, None);
             for (id, action) in tab_actions {
                 for tab in &members {
                     tab.lock().unwrap().release_keyboard();
@@ -112,9 +100,11 @@ pub(super) fn show(
                 let _ = actions.send((id, action));
                 ctx.request_repaint_of(egui::ViewportId::ROOT);
             }
-            ctx.request_repaint_after(std::time::Duration::from_millis(
-                if ctx.input(|i| i.focused) { 16 } else { 100 },
-            ));
+            ctx.request_repaint_after(std::time::Duration::from_millis(if ctx.input(|i| i.focused) {
+                16
+            } else {
+                100
+            }));
         });
     }
 }

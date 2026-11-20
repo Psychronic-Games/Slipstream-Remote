@@ -11,23 +11,14 @@ use std::time::Duration;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .context("Pass the profile directory (settings are read only)")?;
+    let path = std::env::args().nth(1).context("Pass the profile directory (settings are read only)")?;
     let mut settings = Store::open(path)?.load_settings();
     settings.server.use_public_relays = false;
     let mut host = Meeting::host(&settings.server, "Meeting check", "Relay check", 20).await?;
     if let Some(key) = &settings.server.key {
-        ensure!(
-            !serde_json::to_string(&host.invitation)?.contains(key),
-            "Invitation contains a station credential"
-        );
+        ensure!(!serde_json::to_string(&host.invitation)?.contains(key), "Invitation contains a station credential");
         for route in host.invitation.address.relay_urls() {
-            if let Some(token) = route
-                .query_pairs()
-                .find(|(k, _)| k == "token")
-                .map(|(_, v)| v.into_owned())
-            {
+            if let Some(token) = route.query_pairs().find(|(k, _)| k == "token").map(|(_, v)| v.into_owned()) {
                 ensure!(
                     slipstream_core::meeting::valid_relay_token(key, &token),
                     "Invitation does not use a guest relay lease"
@@ -35,16 +26,8 @@ async fn main() -> Result<()> {
             }
         }
     }
-    let guest_settings = ServerSettings {
-        use_public_relays: false,
-        ..Default::default()
-    };
-    let mut guest = Meeting::join(
-        host.invitation.clone(),
-        &guest_settings,
-        "Independent guest",
-    )
-    .await?;
+    let guest_settings = ServerSettings { use_public_relays: false, ..Default::default() };
+    let mut guest = Meeting::join(host.invitation.clone(), &guest_settings, "Independent guest").await?;
     tokio::time::timeout(Duration::from_secs(20), async {
         while host.state.borrow().lobby.is_empty() {
             host.state.changed().await?;
@@ -64,8 +47,7 @@ async fn main() -> Result<()> {
     guest.command(Command::Chat("Meeting relay smoke".into()));
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            if let Some(slipstream_session::meetings::Event::Chat(chat)) = host.events.recv().await
-            {
+            if let Some(slipstream_session::meetings::Event::Chat(chat)) = host.events.recv().await {
                 ensure!(chat.text == "Meeting relay smoke", "Meeting chat differed");
                 break;
             }
@@ -73,10 +55,7 @@ async fn main() -> Result<()> {
         anyhow::Ok(())
     })
     .await??;
-    host.command(Command::Media {
-        microphone: true,
-        source: Source::Screen,
-    });
+    host.command(Command::Media { microphone: true, source: Source::Screen });
     guest.command(Command::Subscribe(vec![1]));
     tokio::time::sleep(Duration::from_millis(500)).await;
     let mut audio = slipstream_audio::opus::Encoder::voice()?;
@@ -85,13 +64,9 @@ async fn main() -> Result<()> {
     let mut packet = vec![0, 0];
     packet.extend_from_slice(&encoded);
     host.publisher.audio(packet.into());
-    let received = tokio::time::timeout(Duration::from_secs(10), guest.audio.recv())
-        .await?
-        .context("No meeting audio")?;
-    ensure!(
-        received.participant == 1 && received.data.as_ref() == encoded,
-        "Meeting audio differed"
-    );
+    let received =
+        tokio::time::timeout(Duration::from_secs(10), guest.audio.recv()).await?.context("No meeting audio")?;
+    ensure!(received.participant == 1 && received.data.as_ref() == encoded, "Meeting audio differed");
     let mut decoder = slipstream_audio::opus::Decoder::new()?;
     let mut decoded = [0; slipstream_audio::opus::FRAME_SAMPLES];
     decoder.decode(Some(&received.data), &mut decoded)?;
@@ -116,17 +91,11 @@ async fn main() -> Result<()> {
         }),
         "Video queue was full"
     );
-    let received = tokio::time::timeout(Duration::from_secs(10), guest.video.recv())
-        .await?
-        .context("No meeting video")?;
+    let received =
+        tokio::time::timeout(Duration::from_secs(10), guest.video.recv()).await?.context("No meeting video")?;
     let mut decoder = slipstream_codec::Decoder::new()?;
-    let frame = decoder
-        .decode(&received.data)?
-        .context("Video did not decode")?;
-    ensure!(
-        (frame.width, frame.height) == (64, 64),
-        "Meeting video dimensions differed"
-    );
+    let frame = decoder.decode(&received.data)?.context("Video did not decode")?;
+    ensure!((frame.width, frame.height) == (64, 64), "Meeting video dimensions differed");
     host.command(Command::Leave);
     tokio::time::timeout(Duration::from_secs(10), async {
         while guest.state.borrow().ended.is_none() {
@@ -135,8 +104,6 @@ async fn main() -> Result<()> {
         anyhow::Ok(())
     })
     .await??;
-    println!(
-        "Meeting check passed: guest relay lease, admission, chat, Opus audio, H.264 video and teardown"
-    );
+    println!("Meeting check passed: guest relay lease, admission, chat, Opus audio, H.264 video and teardown");
     Ok(())
 }

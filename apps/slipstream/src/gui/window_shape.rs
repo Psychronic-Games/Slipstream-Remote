@@ -5,15 +5,20 @@ pub(super) fn update() {
     use std::{cell::RefCell, collections::BTreeMap};
     use windows_sys::Win32::{
         Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
-        Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_NCRENDERING_POLICY, DWMNCRP_DISABLED},
-        Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, SetWindowRgn},
+        Graphics::Dwm::{DWMNCRP_DISABLED, DWMWA_NCRENDERING_POLICY, DwmSetWindowAttribute},
+        Graphics::Gdi::{
+            CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+            MonitorFromWindow, SetWindowRgn,
+        },
         System::Threading::GetCurrentThreadId,
         UI::{
             HiDpi::GetDpiForWindow,
             Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass},
-            WindowsAndMessaging::{EnumThreadWindows, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsWindow, IsWindowVisible, IsZoomed,
-                SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-                WM_NCCALCSIZE, WM_NCDESTROY, WM_NCPAINT, WM_NCACTIVATE, WS_CAPTION},
+            WindowsAndMessaging::{
+                EnumThreadWindows, GWL_STYLE, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsWindow,
+                IsWindowVisible, IsZoomed, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+                SetWindowPos, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCPAINT, WS_CAPTION,
+            },
         },
     };
     const FRAME_SUBCLASS: usize = 0x534c4341;
@@ -21,13 +26,24 @@ pub(super) fn update() {
     // leaves a one-pixel native strip at the top, white on older Windows.
     // Cover the whole non-maximized window with our client surface instead.
     // Let winit handle maximized work-area bounds and every other message.
-    unsafe extern "system" fn client_frame(window: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM, id: usize, _data: usize) -> LRESULT {
+    unsafe extern "system" fn client_frame(
+        window: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        id: usize,
+        _data: usize,
+    ) -> LRESULT {
         unsafe {
             if msg == WM_NCCALCSIZE && wparam != 0 && IsZoomed(window) == 0 {
                 return 0;
             }
-            if msg == WM_NCPAINT { return 0; }
-            if msg == WM_NCACTIVATE { return 1; }
+            if msg == WM_NCPAINT {
+                return 0;
+            }
+            if msg == WM_NCACTIVATE {
+                return 1;
+            }
             if msg == WM_NCDESTROY {
                 RemoveWindowSubclass(window, Some(client_frame), id);
             }
@@ -53,11 +69,22 @@ pub(super) fn update() {
                 // Keep caption styles for snapping/resizing, but prevent Windows
                 // from flashing a native caption over our console title strip.
                 let policy = DWMNCRP_DISABLED;
-                DwmSetWindowAttribute(window, DWMWA_NCRENDERING_POLICY as u32,
-                    (&policy as *const i32).cast(), std::mem::size_of_val(&policy) as u32);
+                DwmSetWindowAttribute(
+                    window,
+                    DWMWA_NCRENDERING_POLICY as u32,
+                    (&policy as *const i32).cast(),
+                    std::mem::size_of_val(&policy) as u32,
+                );
                 // No RefCell borrow is held while Windows recalculates the frame.
-                SetWindowPos(window, std::ptr::null_mut(), 0, 0, 0, 0,
-                    SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+                SetWindowPos(
+                    window,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+                );
             }
             let mut rect: RECT = std::mem::zeroed();
             if GetWindowRect(window, &mut rect) == 0 {
@@ -70,11 +97,8 @@ pub(super) fn update() {
                 && rect.top == monitor.rcMonitor.top
                 && rect.right == monitor.rcMonitor.right
                 && rect.bottom == monitor.rcMonitor.bottom;
-            let radius = if full || IsZoomed(window) != 0 {
-                0
-            } else {
-                (18 * GetDpiForWindow(window).max(96) / 96) as i32
-            };
+            let radius =
+                if full || IsZoomed(window) != 0 { 0 } else { (18 * GetDpiForWindow(window).max(96) / 96) as i32 };
             let key = (rect.right - rect.left, rect.bottom - rect.top, radius);
             if LAST.with(|last| last.borrow().get(&(window as usize)) == Some(&key)) {
                 return 1;
@@ -149,14 +173,7 @@ impl X11Shape {
         ]) {
             *slot = conn.intern_atom(false, name.as_bytes())?.reply()?.atom;
         }
-        Ok(Self {
-            conn,
-            root,
-            atoms,
-            windows: Vec::new(),
-            discovered: None,
-            last: Default::default(),
-        })
+        Ok(Self { conn, root, atoms, windows: Vec::new(), discovered: None, last: Default::default() })
     }
     fn update(&mut self) -> anyhow::Result<()> {
         use x11rb::{
@@ -164,10 +181,12 @@ impl X11Shape {
             protocol::xproto::{AtomEnum, ConnectionExt},
         };
         if self.discovered.is_none_or(|t| t.elapsed() > std::time::Duration::from_millis(250)) {
-            let clients = self.conn.get_property(false, self.root, self.atoms[0], AtomEnum::WINDOW, 0, 4096)?.reply()?;
+            let clients =
+                self.conn.get_property(false, self.root, self.atoms[0], AtomEnum::WINDOW, 0, 4096)?.reply()?;
             let mut owned = Vec::new();
             for window in clients.value32().into_iter().flatten() {
-                if let Ok(reply) = self.conn.get_property(false, window, self.atoms[1], AtomEnum::CARDINAL, 0, 1)?.reply()
+                if let Ok(reply) =
+                    self.conn.get_property(false, window, self.atoms[1], AtomEnum::CARDINAL, 0, 1)?.reply()
                     && reply.value32().and_then(|mut v| v.next()) == Some(std::process::id())
                 {
                     owned.push(window);
@@ -192,7 +211,8 @@ impl X11Shape {
         let state = self.conn.get_property(false, window, self.atoms[2], AtomEnum::ATOM, 0, 64)?;
         let geometry = geometry.reply()?;
         let state = state.reply()?.value32().into_iter().flatten().collect::<Vec<_>>();
-        let square = state.contains(&self.atoms[3]) || (state.contains(&self.atoms[4]) && state.contains(&self.atoms[5]));
+        let square =
+            state.contains(&self.atoms[3]) || (state.contains(&self.atoms[4]) && state.contains(&self.atoms[5]));
         let (w, h) = (geometry.width, geometry.height);
         let r = if square { 0 } else { 18.min(w / 2).min(h / 2) };
         let key = (w, h, r);
@@ -201,28 +221,16 @@ impl X11Shape {
         }
         let mut bands = Vec::new();
         if h > 2 * r {
-            bands.push(Rectangle {
-                x: 0,
-                y: r as i16,
-                width: w,
-                height: h - 2 * r,
-            });
+            bands.push(Rectangle { x: 0, y: r as i16, width: w, height: h - 2 * r });
         }
         for y in 0..r {
             let dy = f64::from(r) - f64::from(y) - 0.5;
             let inset = (f64::from(r) - (f64::from(r).powi(2) - dy * dy).sqrt()).ceil() as u16;
             for row in [y, h - y - 1] {
-                bands.push(Rectangle {
-                    x: inset as i16,
-                    y: row as i16,
-                    width: w - 2 * inset,
-                    height: 1,
-                });
+                bands.push(Rectangle { x: inset as i16, y: row as i16, width: w - 2 * inset, height: 1 });
             }
         }
-        self.conn
-            .shape_rectangles(SO::SET, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, &bands)?
-            .check()?;
+        self.conn.shape_rectangles(SO::SET, SK::BOUNDING, ClipOrdering::UNSORTED, window, 0, 0, &bands)?.check()?;
         self.last.insert(window, key);
         Ok(())
     }

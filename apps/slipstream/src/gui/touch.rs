@@ -139,14 +139,25 @@ enum State {
     Idle,
     /// One finger down, not yet a tap, a drag or a long press. `drag`: on
     /// the trackpad, it came right after a tap, so sliding drags.
-    Pending { at: Pos2, since: Instant, on_picture: bool, drag: bool },
+    Pending {
+        at: Pos2,
+        since: Instant,
+        on_picture: bool,
+        drag: bool,
+    },
     /// The left button is down: following the finger (direct touch) or
     /// the pointer it slides (trackpad).
     Dragging,
     /// Trackpad: the finger slides the pointer.
     Moving,
     /// Two or more fingers: zoom or scroll, once it's clear which.
-    Gesture { since: Instant, center: Pos2, lock: Option<Lock>, zoom: f32, pan: Vec2 },
+    Gesture {
+        since: Instant,
+        center: Pos2,
+        lock: Option<Lock>,
+        zoom: f32,
+        pan: Vec2,
+    },
     /// Finished (a tap, a long press, a gesture with fingers still down), or
     /// begun off the session: nothing more until every finger is up.
     Spent,
@@ -220,15 +231,24 @@ impl Touch {
                 egui::TouchPhase::Move => {
                     let prev = self.fingers.insert(id.0, pos).unwrap_or(pos);
                     match self.state {
-                        State::Pending { at, on_picture, drag, .. } if self.fingers.len() == 1 && at.distance(pos) > SLOP => {
+                        State::Pending { at, on_picture, drag, .. }
+                            if self.fingers.len() == 1 && at.distance(pos) > SLOP =>
+                        {
                             if trackpad {
                                 if drag {
-                                    out.extend([self.pointer_move(view, fit, area), Action::Button(MouseButton::Left, true)]);
+                                    out.extend([
+                                        self.pointer_move(view, fit, area),
+                                        Action::Button(MouseButton::Left, true),
+                                    ]);
                                 }
                                 self.state = if drag { State::Dragging } else { State::Moving };
                                 out.push(self.slide(pos - at, view, fit, area));
                             } else if on_picture {
-                                out.extend([Action::Move(at), Action::Button(MouseButton::Left, true), Action::Move(pos)]);
+                                out.extend([
+                                    Action::Move(at),
+                                    Action::Button(MouseButton::Left, true),
+                                    Action::Move(pos),
+                                ]);
                                 self.state = State::Dragging;
                             } else {
                                 self.state = State::Spent;
@@ -254,7 +274,10 @@ impl Touch {
                                 out.push(Action::Move(at));
                             }
                             if trackpad || on_picture {
-                                out.extend([Action::Button(MouseButton::Left, true), Action::Button(MouseButton::Left, false)]);
+                                out.extend([
+                                    Action::Button(MouseButton::Left, true),
+                                    Action::Button(MouseButton::Left, false),
+                                ]);
                             }
                             self.state = State::Spent;
                         }
@@ -272,7 +295,11 @@ impl Touch {
                                 view.rect(fit, area).contains(center).then_some(Action::Move(center))
                             };
                             if let Some(at) = at {
-                                out.extend([at, Action::Button(MouseButton::Right, true), Action::Button(MouseButton::Right, false)]);
+                                out.extend([
+                                    at,
+                                    Action::Button(MouseButton::Right, true),
+                                    Action::Button(MouseButton::Right, false),
+                                ]);
                             }
                             self.state = State::Spent;
                         }
@@ -288,7 +315,11 @@ impl Touch {
         if let State::Pending { at, since, on_picture, .. } = self.state
             && now.duration_since(since) >= LONG_PRESS
         {
-            let at = if trackpad { Some(self.pointer_move(view, fit, area)) } else { on_picture.then_some(Action::Move(at)) };
+            let at = if trackpad {
+                Some(self.pointer_move(view, fit, area))
+            } else {
+                on_picture.then_some(Action::Move(at))
+            };
             if let Some(at) = at {
                 out.extend([at, Action::Button(MouseButton::Right, true), Action::Button(MouseButton::Right, false)]);
             }
@@ -390,27 +421,52 @@ mod tests {
     use super::*;
 
     fn ev(id: u64, phase: egui::TouchPhase, x: f32, y: f32) -> egui::Event {
-        egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(id), phase, pos: pos2(x, y), force: None }
+        egui::Event::Touch {
+            device_id: egui::TouchDeviceId(0),
+            id: egui::TouchId(id),
+            phase,
+            pos: pos2(x, y),
+            force: None,
+        }
     }
 
     const AREA: Rect = Rect { min: pos2(0.0, 0.0), max: pos2(400.0, 800.0) };
     /// A 16:9 picture fitted into the portrait area.
     const FIT: Rect = Rect { min: pos2(0.0, 287.5), max: pos2(400.0, 512.5) };
 
-    fn run_mode(t: &mut Touch, view: &mut View, events: &[egui::Event], gesture: Option<Gesture>, now: Instant, mode: Mode) -> Vec<Action> {
+    fn run_mode(
+        t: &mut Touch,
+        view: &mut View,
+        events: &[egui::Event],
+        gesture: Option<Gesture>,
+        now: Instant,
+        mode: Mode,
+    ) -> Vec<Action> {
         t.handle(events, gesture, now, mode, |p| AREA.contains(p), view, (FIT, AREA)).0
     }
 
-    fn run(t: &mut Touch, view: &mut View, events: &[egui::Event], gesture: Option<Gesture>, now: Instant) -> Vec<Action> {
+    fn run(
+        t: &mut Touch,
+        view: &mut View,
+        events: &[egui::Event],
+        gesture: Option<Gesture>,
+        now: Instant,
+    ) -> Vec<Action> {
         run_mode(t, view, events, gesture, now, Mode::Direct)
     }
 
-    fn pad(t: &mut Touch, view: &mut View, events: &[egui::Event], gesture: Option<Gesture>, now: Instant) -> Vec<Action> {
+    fn pad(
+        t: &mut Touch,
+        view: &mut View,
+        events: &[egui::Event],
+        gesture: Option<Gesture>,
+        now: Instant,
+    ) -> Vec<Action> {
         run_mode(t, view, events, gesture, now, Mode::Trackpad)
     }
 
-    use egui::TouchPhase::{End, Move, Start};
     use MouseButton::{Left, Right};
+    use egui::TouchPhase::{End, Move, Start};
 
     fn pinch(zoom: f32) -> Option<Gesture> {
         Some(Gesture { center: pos2(200.0, 400.0), zoom, pan: Vec2::ZERO })
@@ -443,7 +499,10 @@ mod tests {
         let (mut t, mut v, now) = (Touch::default(), View::default(), Instant::now());
         run(&mut t, &mut v, &[ev(1, Start, 100.0, 400.0)], None, now);
         let out = run(&mut t, &mut v, &[ev(1, Move, 150.0, 400.0)], None, now);
-        assert_eq!(out, [Action::Move(pos2(100.0, 400.0)), Action::Button(Left, true), Action::Move(pos2(150.0, 400.0))]);
+        assert_eq!(
+            out,
+            [Action::Move(pos2(100.0, 400.0)), Action::Button(Left, true), Action::Move(pos2(150.0, 400.0))]
+        );
         let out = run(&mut t, &mut v, &[ev(1, End, 150.0, 400.0)], None, now);
         assert_eq!(out, [Action::Button(Left, false)]);
     }
@@ -511,11 +570,20 @@ mod tests {
     fn two_finger_tap_right_clicks() {
         let (mut t, mut v, now) = (Touch::default(), View::default(), Instant::now());
         run(&mut t, &mut v, &[ev(1, Start, 150.0, 400.0), ev(2, Start, 250.0, 400.0)], None, now);
-        let out = run(&mut t, &mut v, &[ev(1, End, 150.0, 400.0), ev(2, End, 250.0, 400.0)], None, now + Duration::from_millis(120));
+        let out = run(
+            &mut t,
+            &mut v,
+            &[ev(1, End, 150.0, 400.0), ev(2, End, 250.0, 400.0)],
+            None,
+            now + Duration::from_millis(120),
+        );
         assert_eq!(out, [Action::Move(pos2(200.0, 400.0)), Action::Button(Right, true), Action::Button(Right, false)]);
         // A slow one is not a tap.
         run(&mut t, &mut v, &[ev(1, Start, 150.0, 400.0), ev(2, Start, 250.0, 400.0)], None, now);
-        assert!(run(&mut t, &mut v, &[ev(1, End, 150.0, 400.0), ev(2, End, 250.0, 400.0)], None, now + TWO_FINGER_TAP * 2).is_empty());
+        assert!(
+            run(&mut t, &mut v, &[ev(1, End, 150.0, 400.0), ev(2, End, 250.0, 400.0)], None, now + TWO_FINGER_TAP * 2)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -585,7 +653,17 @@ mod tests {
     fn touches_that_start_off_the_session_are_left_alone() {
         let (mut t, mut v, now) = (Touch::default(), View::default(), Instant::now());
         let off = |p: Pos2| p.y > 50.0;
-        let out = t.handle(&[ev(1, Start, 100.0, 20.0), ev(1, End, 100.0, 20.0)], None, now, Mode::Direct, off, &mut v, (FIT, AREA)).0;
+        let out = t
+            .handle(
+                &[ev(1, Start, 100.0, 20.0), ev(1, End, 100.0, 20.0)],
+                None,
+                now,
+                Mode::Direct,
+                off,
+                &mut v,
+                (FIT, AREA),
+            )
+            .0;
         assert!(out.is_empty());
         // Direct touch: a tap on the black bars clicks nothing either.
         let out = run(&mut t, &mut v, &[ev(1, Start, 100.0, 100.0), ev(1, End, 100.0, 100.0)], None, now);

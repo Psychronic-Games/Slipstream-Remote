@@ -21,12 +21,9 @@ enum Kind {
 fn kind(name: &str) -> Option<Kind> {
     let ext = Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "tif" | "tiff" => {
-            Some(Kind::Image)
-        }
-        "txt" | "md" | "log" | "csv" | "json" | "toml" | "yaml" | "yml" | "xml" | "html"
-        | "htm" | "css" | "js" | "ts" | "rs" | "py" | "sh" | "c" | "h" | "cpp" | "ini" | "conf"
-        | "svg" => Some(Kind::Text),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "tif" | "tiff" => Some(Kind::Image),
+        "txt" | "md" | "log" | "csv" | "json" | "toml" | "yaml" | "yml" | "xml" | "html" | "htm" | "css" | "js"
+        | "ts" | "rs" | "py" | "sh" | "c" | "h" | "cpp" | "ini" | "conf" | "svg" => Some(Kind::Text),
         _ => None,
     }
 }
@@ -39,11 +36,7 @@ pub fn supported(name: &str) -> bool {
 /// Across folders and sessions at most two decoders run in this process.
 pub async fn load(path: String) -> Result<Option<FilePreview>> {
     static WORKERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
-    let permit = WORKERS
-        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
-        .clone()
-        .acquire_owned()
-        .await?;
+    let permit = WORKERS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2))).clone().acquire_owned().await?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         read(Path::new(&path))
@@ -66,11 +59,7 @@ fn read(path: &Path) -> Result<Option<FilePreview>> {
     if !file.metadata()?.is_file() {
         bail!("not a regular file");
     }
-    let max = if kind == Kind::Image {
-        IMAGE_BYTES + 1
-    } else {
-        FilePreview::TEXT_BYTES as u64
-    };
+    let max = if kind == Kind::Image { IMAGE_BYTES + 1 } else { FilePreview::TEXT_BYTES as u64 };
     let mut bytes = Vec::new();
     file.take(max).read_to_end(&mut bytes)?;
     if kind == Kind::Text {
@@ -99,15 +88,10 @@ fn read(path: &Path) -> Result<Option<FilePreview>> {
         bail!("image exceeds preview pixel limit");
     }
     let orientation = decoder.orientation()?;
-    let mut image =
-        DynamicImage::from_decoder(decoder)?.thumbnail(FilePreview::EDGE, FilePreview::EDGE);
+    let mut image = DynamicImage::from_decoder(decoder)?.thumbnail(FilePreview::EDGE, FilePreview::EDGE);
     image.apply_orientation(orientation);
     let image = image.to_rgba8();
-    Ok(Some(FilePreview::Image {
-        width: image.width(),
-        height: image.height(),
-        rgba: image.into_raw(),
-    }))
+    Ok(Some(FilePreview::Image { width: image.width(), height: image.height(), rgba: image.into_raw() }))
 }
 
 #[cfg(test)]
@@ -115,24 +99,20 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn bounded_previews_and_fallbacks() {
-        let dir =
-            std::env::temp_dir().join(format!("slipstream-previews-{}", rand::random::<u64>()));
+        let dir = std::env::temp_dir().join(format!("slipstream-previews-{}", rand::random::<u64>()));
         std::fs::create_dir(&dir).unwrap();
         let image = image::RgbaImage::from_pixel(640, 320, image::Rgba([20, 80, 240, 255]));
         image.save(dir.join("photo.png")).unwrap();
-        let p = load(dir.join("photo.png").display().to_string())
-            .await
-            .unwrap()
-            .unwrap();
+        let p = load(dir.join("photo.png").display().to_string()).await.unwrap().unwrap();
         assert!(p.valid());
-        assert!(
-            matches!(p, FilePreview::Image { width:128, height:64, ref rgba } if rgba[..4] == [20,80,240,255])
-        );
+        assert!(matches!(p, FilePreview::Image { width:128, height:64, ref rgba } if rgba[..4] == [20,80,240,255]));
         for ext in ["jpg", "gif", "webp", "bmp", "ico", "tiff"] {
             let image = image::RgbImage::from_pixel(64, 32, image::Rgb([20, 80, 240]));
             if ext == "ico" {
                 image::DynamicImage::ImageRgb8(image).to_rgba8().save(dir.join(format!("format.{ext}"))).unwrap();
-            } else { image.save(dir.join(format!("format.{ext}"))).unwrap(); }
+            } else {
+                image.save(dir.join(format!("format.{ext}"))).unwrap();
+            }
             let preview = read(&dir.join(format!("format.{ext}"))).unwrap().unwrap();
             assert!(preview.valid(), "{ext}");
         }
@@ -140,28 +120,17 @@ mod tests {
         use image::ImageEncoder;
         let mut jpeg = Vec::new();
         let mut encoder = image::codecs::jpeg::JpegEncoder::new(&mut jpeg);
-        let mut exif =
-            b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0".to_vec();
-        encoder
-            .set_exif_metadata(std::mem::take(&mut exif))
-            .unwrap();
+        let mut exif = b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0".to_vec();
+        encoder.set_exif_metadata(std::mem::take(&mut exif)).unwrap();
         let image = image::RgbImage::from_pixel(640, 320, image::Rgb([20, 80, 240]));
-        encoder
-            .write_image(image.as_raw(), 640, 320, image::ExtendedColorType::Rgb8)
-            .unwrap();
+        encoder.write_image(image.as_raw(), 640, 320, image::ExtendedColorType::Rgb8).unwrap();
         std::fs::write(dir.join("rotated.jpg"), jpeg).unwrap();
         assert!(matches!(
             read(&dir.join("rotated.jpg")).unwrap(),
-            Some(FilePreview::Image {
-                width: 64,
-                height: 128,
-                ..
-            })
+            Some(FilePreview::Image { width: 64, height: 128, .. })
         ));
         std::fs::write(dir.join("notes.txt"), "é".repeat(8192)).unwrap();
-        assert!(
-            matches!(read(&dir.join("notes.txt")).unwrap(), Some(FilePreview::Text(t)) if t.len() == 8192)
-        );
+        assert!(matches!(read(&dir.join("notes.txt")).unwrap(), Some(FilePreview::Text(t)) if t.len() == 8192));
         std::fs::write(dir.join("broken.jpg"), b"not an image").unwrap();
         assert!(read(&dir.join("broken.jpg")).is_err());
         std::fs::write(dir.join("binary.txt"), [0, 1, 2]).unwrap();

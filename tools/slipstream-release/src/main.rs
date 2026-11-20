@@ -244,7 +244,8 @@ mod tests {
         fs::write(dir.join("payload.json"), payload).unwrap();
         let key = SecretKey::generate();
         station_update(&key, &dir.join("payload.json"), &dir.join("station-update.json")).unwrap();
-        let env: serde_json::Value = serde_json::from_slice(&fs::read(dir.join("station-update.json")).unwrap()).unwrap();
+        let env: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("station-update.json")).unwrap()).unwrap();
         assert_eq!(env["payload"], payload);
         let sig: [u8; 64] = unhex(env["sig"].as_str().unwrap()).unwrap().try_into().unwrap();
         let message = [STATION_UPDATE_CONTEXT, payload.as_bytes()].concat();

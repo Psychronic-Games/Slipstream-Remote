@@ -28,12 +28,19 @@ fn settings(p: RecordingPrefs) -> Settings {
     let fps = p.fps.clamp(10, 60);
     let base = [3000.0, 5000.0, 8000.0][p.quality.min(2) as usize];
     let kbps = base * (width * height) as f64 / (1280.0 * 720.0) * fps as f64 / 30.0;
-    Settings { width, height, fps, kbps: (kbps as u32).clamp(1000, 40_000), container: if p.mkv { Container::Mkv } else { Container::Mp4 } }
+    Settings {
+        width,
+        height,
+        fps,
+        kbps: (kbps as u32).clamp(1000, 40_000),
+        container: if p.mkv { Container::Mkv } else { Container::Mp4 },
+    }
 }
 
 /// A file name from the meeting's title and the time.
 fn suggested_name(title: &str, mkv: bool) -> String {
-    let title: String = title.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
+    let title: String =
+        title.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
     let now = chrono::Local::now().format("%Y-%m-%d %H%M");
     format!("{} {now}.{}", title.trim(), if mkv { "mkv" } else { "mp4" })
 }
@@ -52,7 +59,9 @@ pub(super) fn button(active: &mut Active, app: &App, ui: &mut Ui) {
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
     } else if r.finishing.is_some() || r.saving.is_some() {
-        ui.add_enabled_ui(false, |ui| theme::console_button(ui, "Record", pal::PEACH, theme::ConsoleIcon::Record, false));
+        ui.add_enabled_ui(false, |ui| {
+            theme::console_button(ui, "Record", pal::PEACH, theme::ConsoleIcon::Record, false)
+        });
     } else if theme::console_button(ui, "Record", pal::PEACH, theme::ConsoleIcon::Record, false)
         .on_hover_text("Record the meeting to a video file")
         .clicked()
@@ -68,7 +77,8 @@ pub(super) fn stop(active: &mut Active, app: &App, ctx: &egui::Context) {
         sound.tap(None);
     }
     // Finishing writes the last second and flushes: off the UI thread.
-    active.recording.finishing = Some(pending(&app.rt, ctx, async move { tokio::task::spawn_blocking(move || recorder.finish()).await? }));
+    active.recording.finishing =
+        Some(pending(&app.rt, ctx, async move { tokio::task::spawn_blocking(move || recorder.finish()).await? }));
 }
 
 /// The settings dialog, "Save as", starting, and feeding a running recorder.
@@ -144,7 +154,12 @@ pub(super) fn poll(active: &mut Active, state: &State, app: &mut App, ctx: &egui
                 if let Some(path) = preset {
                     return Ok(Some(path));
                 }
-                let file = rfd::AsyncFileDialog::new().set_title("Save the meeting recording").set_file_name(&name).add_filter(label, &[extension]).save_file().await;
+                let file = rfd::AsyncFileDialog::new()
+                    .set_title("Save the meeting recording")
+                    .set_file_name(&name)
+                    .add_filter(label, &[extension])
+                    .save_file()
+                    .await;
                 Ok(file.map(|f| f.path().to_path_buf()))
             });
             active.recording.saving = Some(job);

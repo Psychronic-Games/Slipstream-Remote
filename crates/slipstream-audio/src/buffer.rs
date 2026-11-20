@@ -30,10 +30,7 @@ struct JitterState {
 
 impl Jitter {
     pub fn realtime() -> Self {
-        Self {
-            low_latency: true,
-            ..Default::default()
-        }
+        Self { low_latency: true, ..Default::default() }
     }
     pub fn set_render_tap(&self, tap: Option<crate::io::OnFrame>) {
         *self.render_tap.lock().unwrap() = tap;

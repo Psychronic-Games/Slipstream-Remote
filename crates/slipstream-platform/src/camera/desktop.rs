@@ -7,20 +7,14 @@ use nokhwa::{
 
 pub(super) fn devices() -> Result<Vec<(u32, String)>> {
     let mut devices = Vec::new();
-    for (ordinal, info) in nokhwa::query(nokhwa::utils::ApiBackend::Auto)?
-        .into_iter()
-        .enumerate()
-    {
+    for (ordinal, info) in nokhwa::query(nokhwa::utils::ApiBackend::Auto)?.into_iter().enumerate() {
         let index = info.index().as_index().unwrap_or(ordinal as u32);
         // UVC webcams expose a second /dev/videoN for metadata. Nokhwa lists
         // it before the real camera on some boots; it cannot provide pictures.
         #[cfg(target_os = "linux")]
         if !v4l::Device::new(index as usize)
             .and_then(|d| d.query_caps())
-            .is_ok_and(|caps| {
-                caps.capabilities
-                    .contains(v4l::capability::Flags::VIDEO_CAPTURE)
-            })
+            .is_ok_and(|caps| caps.capabilities.contains(v4l::capability::Flags::VIDEO_CAPTURE))
         {
             continue;
         }
@@ -35,10 +29,7 @@ pub(super) fn open(index: u32) -> Result<Camera> {
     {
         let device = v4l::Device::new(index as usize).context("Opening the selected camera")?;
         anyhow::ensure!(
-            device
-                .query_caps()?
-                .capabilities
-                .contains(v4l::capability::Flags::VIDEO_CAPTURE),
+            device.query_caps()?.capabilities.contains(v4l::capability::Flags::VIDEO_CAPTURE),
             "The saved camera is a metadata-only device. Select your camera in Devices."
         );
     }
@@ -46,15 +37,12 @@ pub(super) fn open(index: u32) -> Result<Camera> {
     // the requested resolution's FPS list. Bootstrap with a decodable native
     // mode, then rank advertised modes ourselves, trying safe alternatives.
     let request = RequestedFormat::new::<RgbFormat>(RequestedFormatType::None);
-    let mut camera = Camera::new(CameraIndex::Index(index), request)
-        .context("Finding a supported camera format")?;
+    let mut camera = Camera::new(CameraIndex::Index(index), request).context("Finding a supported camera format")?;
     let formats = ranked(camera.compatible_camera_formats()?);
     let mut errors = Vec::new();
     for format in formats.into_iter().take(16) {
         let opened = camera
-            .set_camera_requset(RequestedFormat::new::<RgbFormat>(
-                RequestedFormatType::Exact(format),
-            ))
+            .set_camera_requset(RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(format)))
             .and_then(|_| camera.open_stream());
         match opened {
             Ok(()) => {
@@ -69,27 +57,19 @@ pub(super) fn open(index: u32) -> Result<Camera> {
     }
     bail!(
         "No supported meeting camera mode could be opened. {}",
-        if errors.is_empty() {
-            "The camera reported no usable picture formats.".into()
-        } else {
-            errors.join("; ")
-        }
+        if errors.is_empty() { "The camera reported no usable picture formats.".into() } else { errors.join("; ") }
     )
 }
 
 fn ranked(mut formats: Vec<CameraFormat>) -> Vec<CameraFormat> {
     formats.retain(|f| {
-        f.width() > 0
-            && f.height() > 0
-            && f.width() <= 1920
-            && f.height() <= 1080
-            && (1..=60).contains(&f.frame_rate())
+        f.width() > 0 && f.height() > 0 && f.width() <= 1920 && f.height() <= 1080 && (1..=60).contains(&f.frame_rate())
     });
     formats.sort_by_key(|f| {
         let x = i64::from(f.width()) - 640;
         let y = i64::from(f.height()) - 480;
         (
-            f.frame_rate()<10,
+            f.frame_rate() < 10,
             x * x + y * y,
             f.frame_rate().abs_diff(15),
             match f.format() {

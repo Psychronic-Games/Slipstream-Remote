@@ -31,7 +31,9 @@ impl ScreenAccess {
                     client.reset_screen_access().await?;
                 }
                 client.prepare_screen_access().await
-            }.await.map_err(|e| format!("{e:#}"));
+            }
+            .await
+            .map_err(|e| format!("{e:#}"));
             let _ = tx.send(result);
             ctx.request_repaint_of(egui::ViewportId::ROOT);
         });
@@ -39,7 +41,9 @@ impl ScreenAccess {
     }
 
     pub fn cancel(&mut self) {
-        if let Some(task) = self.task.take() { task.abort(); }
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
         self.job = None;
         self.result = Some(Err("Screen approval cancelled; choose Approve now to try again".into()));
     }

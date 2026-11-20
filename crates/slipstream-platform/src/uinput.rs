@@ -85,7 +85,10 @@ struct Device(File);
 
 impl Device {
     fn create(name: &str, product: u16, bits: &[(u32, u16)], absolute: &[u16]) -> Result<Self> {
-        let file = File::options().write(true).open("/dev/uinput").context("opening /dev/uinput (the kernel's input-device maker; needs root, and the uinput module)")?;
+        let file = File::options()
+            .write(true)
+            .open("/dev/uinput")
+            .context("opening /dev/uinput (the kernel's input-device maker; needs root, and the uinput module)")?;
         let fd = file.as_raw_fd();
         for (request, code) in bits {
             // SAFETY: these requests take an integer.
@@ -96,7 +99,8 @@ impl Device {
             // SAFETY: the structure this request is defined with.
             check(unsafe { libc::ioctl(fd, ABS_SETUP as _, &mut axis as *mut AbsSetup) }, name)?;
         }
-        let mut setup = Setup { bustype: BUS_VIRTUAL, vendor: 0x534c, product, version: 1, name: [0; 80], ff_effects_max: 0 };
+        let mut setup =
+            Setup { bustype: BUS_VIRTUAL, vendor: 0x534c, product, version: 1, name: [0; 80], ff_effects_max: 0 };
         setup.name[..name.len().min(79)].copy_from_slice(&name.as_bytes()[..name.len().min(79)]);
         // SAFETY: as above; then a request without an argument.
         check(unsafe { libc::ioctl(fd, DEV_SETUP as _, &mut setup as *mut Setup) }, name)?;
@@ -136,7 +140,8 @@ pub struct Devices {
 
 impl Devices {
     pub fn create() -> Result<Self> {
-        let keys: Vec<(u32, u16)> = [(SET_EVBIT, EV_KEY)].into_iter().chain((1..=255).map(|code| (SET_KEYBIT, code))).collect();
+        let keys: Vec<(u32, u16)> =
+            [(SET_EVBIT, EV_KEY)].into_iter().chain((1..=255).map(|code| (SET_KEYBIT, code))).collect();
         let keyboard = Device::create("Slipstream Remote keyboard", 1, &keys, &[])?;
         let pointer = Device::create(
             "Slipstream Remote pointer",
@@ -193,7 +198,9 @@ impl Devices {
             InputEvent::Wheel { dx, dy } => {
                 // Protocol: positive = up/left. Kernel: positive = up/right.
                 let mut events = Vec::new();
-                for (axis, amount, hi_res, notches) in [(0, dy, REL_WHEEL_HI_RES, REL_WHEEL), (1, -dx, REL_HWHEEL_HI_RES, REL_HWHEEL)] {
+                for (axis, amount, hi_res, notches) in
+                    [(0, dy, REL_WHEEL_HI_RES, REL_WHEEL), (1, -dx, REL_HWHEEL_HI_RES, REL_HWHEEL)]
+                {
                     let (fine, coarse) = &mut self.wheel[axis];
                     *fine += amount * NOTCH;
                     let units = fine.trunc();

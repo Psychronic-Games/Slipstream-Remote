@@ -43,78 +43,58 @@ impl VideoSender {
         let keyframe = Arc::new(AtomicBool::new(true));
         let preview = Arc::new(Mutex::new(None));
         let error = Arc::new(Mutex::new(None));
-        let (flag, key, view, err) = (
-            stop.clone(),
-            keyframe.clone(),
-            preview.clone(),
-            error.clone(),
-        );
-        let thread = std::thread::Builder::new()
-            .name("meeting-video-encode".into())
-            .spawn(move || {
-                let work = (|| {
-                    let mut encoder = Encoder::new(EncoderSettings {
-                        bitrate_kbps: 800,
-                        max_fps: 15.0,
-                    });
-                    let mut decoder = Decoder::new()?;
-                    let generation = rand::random::<u64>();
-                    let mut seq = 0;
-                    let mut last_key = std::time::Instant::now() - Duration::from_secs(3);
-                    let mut next = std::time::Instant::now();
-                    while !flag.load(Ordering::Acquire) {
-                        let Some(frame) = capture
-                            .next(Duration::from_millis(100))
-                            .map_err(anyhow::Error::msg)?
-                        else {
-                            continue;
-                        };
-                        if std::time::Instant::now() < next {
-                            capture.recycle(frame);
-                            continue;
-                        }
-                        next = std::time::Instant::now() + Duration::from_millis(66);
-                        let scale = (1280.0 / frame.width.max(frame.height) as f32).min(1.0);
-                        encoder.set_scale(scale);
-                        let force_keyframe = key.swap(false, Ordering::AcqRel)
-                            || last_key.elapsed() > Duration::from_secs(2);
-                        if force_keyframe {
-                            last_key = std::time::Instant::now();
-                        }
-                        let encoded = encoder.encode(&frame, force_keyframe)?;
+        let (flag, key, view, err) = (stop.clone(), keyframe.clone(), preview.clone(), error.clone());
+        let thread = std::thread::Builder::new().name("meeting-video-encode".into()).spawn(move || {
+            let work = (|| {
+                let mut encoder = Encoder::new(EncoderSettings { bitrate_kbps: 800, max_fps: 15.0 });
+                let mut decoder = Decoder::new()?;
+                let generation = rand::random::<u64>();
+                let mut seq = 0;
+                let mut last_key = std::time::Instant::now() - Duration::from_secs(3);
+                let mut next = std::time::Instant::now();
+                while !flag.load(Ordering::Acquire) {
+                    let Some(frame) = capture.next(Duration::from_millis(100)).map_err(anyhow::Error::msg)? else {
+                        continue;
+                    };
+                    if std::time::Instant::now() < next {
                         capture.recycle(frame);
-                        if let Some(encoded) = encoded {
-                            seq += 1;
-                            if let Some(decoded) = decoder.decode(&encoded.data)? {
-                                *view.lock().unwrap() =
-                                    Some((generation.wrapping_add(seq), Arc::new(decoded)));
-                            }
-                            if !publisher.video(Video {
-                                participant: 0,
-                                generation,
-                                seq,
-                                keyframe: encoded.keyframe,
-                                width: encoded.width,
-                                height: encoded.height,
-                                data: encoded.data,
-                            }) {
-                                key.store(true, Ordering::Release);
-                            }
+                        continue;
+                    }
+                    next = std::time::Instant::now() + Duration::from_millis(66);
+                    let scale = (1280.0 / frame.width.max(frame.height) as f32).min(1.0);
+                    encoder.set_scale(scale);
+                    let force_keyframe =
+                        key.swap(false, Ordering::AcqRel) || last_key.elapsed() > Duration::from_secs(2);
+                    if force_keyframe {
+                        last_key = std::time::Instant::now();
+                    }
+                    let encoded = encoder.encode(&frame, force_keyframe)?;
+                    capture.recycle(frame);
+                    if let Some(encoded) = encoded {
+                        seq += 1;
+                        if let Some(decoded) = decoder.decode(&encoded.data)? {
+                            *view.lock().unwrap() = Some((generation.wrapping_add(seq), Arc::new(decoded)));
+                        }
+                        if !publisher.video(Video {
+                            participant: 0,
+                            generation,
+                            seq,
+                            keyframe: encoded.keyframe,
+                            width: encoded.width,
+                            height: encoded.height,
+                            data: encoded.data,
+                        }) {
+                            key.store(true, Ordering::Release);
                         }
                     }
-                    anyhow::Ok(())
-                })();
-                if let Err(e) = work {
-                    *err.lock().unwrap() = Some(format!("{e:#}"));
                 }
-            })?;
-        Ok(Self {
-            stop,
-            keyframe,
-            preview,
-            error,
-            thread: Some(thread),
-        })
+                anyhow::Ok(())
+            })();
+            if let Err(e) = work {
+                *err.lock().unwrap() = Some(format!("{e:#}"));
+            }
+        })?;
+        Ok(Self { stop, keyframe, preview, error, thread: Some(thread) })
     }
 }
 pub struct VideoReceiver {
@@ -129,64 +109,48 @@ impl VideoReceiver {
         let views = frames.clone();
         let members = Arc::new(Mutex::new(Vec::new()));
         let active = members.clone();
-        std::thread::Builder::new()
-            .name("meeting-video-decode".into())
-            .spawn(move || {
-                let mut decoders: HashMap<u64, (u64, u64, Decoder)> = HashMap::new();
-                let mut serial = 0u64;
-                while let Some(frame) = rx.blocking_recv() {
-                    let allowed = active.lock().unwrap().clone();
-                    decoders.retain(|id, _| allowed.contains(id));
-                    views.lock().unwrap().retain(|id, _| allowed.contains(id));
-                    if !allowed.contains(&frame.participant) || frame.validate().is_err() {
+        std::thread::Builder::new().name("meeting-video-decode".into()).spawn(move || {
+            let mut decoders: HashMap<u64, (u64, u64, Decoder)> = HashMap::new();
+            let mut serial = 0u64;
+            while let Some(frame) = rx.blocking_recv() {
+                let allowed = active.lock().unwrap().clone();
+                decoders.retain(|id, _| allowed.contains(id));
+                views.lock().unwrap().retain(|id, _| allowed.contains(id));
+                if !allowed.contains(&frame.participant) || frame.validate().is_err() {
+                    continue;
+                }
+                let continuous = decoders.get(&frame.participant).is_some_and(|(generation, seq, _)| {
+                    *generation == frame.generation && seq.checked_add(1) == Some(frame.seq)
+                });
+                if !continuous {
+                    decoders.remove(&frame.participant);
+                    if !frame.keyframe {
+                        request(frame.participant);
                         continue;
                     }
-                    let continuous =
-                        decoders
-                            .get(&frame.participant)
-                            .is_some_and(|(generation, seq, _)| {
-                                *generation == frame.generation
-                                    && seq.checked_add(1) == Some(frame.seq)
-                            });
-                    if !continuous {
-                        decoders.remove(&frame.participant);
-                        if !frame.keyframe {
-                            request(frame.participant);
-                            continue;
-                        }
-                        let Ok(decoder) = Decoder::new() else {
-                            continue;
-                        };
-                        decoders.insert(
-                            frame.participant,
-                            (frame.generation, frame.seq - 1, decoder),
-                        );
-                    }
-                    let Some((_, seq, decoder)) = decoders.get_mut(&frame.participant) else {
+                    let Ok(decoder) = Decoder::new() else {
                         continue;
                     };
-                    *seq = frame.seq;
-                    match decoder.decode(&frame.data) {
-                        Ok(Some(decoded)) => {
-                            serial += 1;
-                            views
-                                .lock()
-                                .unwrap()
-                                .insert(frame.participant, (serial, Arc::new(decoded)));
-                        }
-                        Ok(None) => {}
-                        Err(_) => {
-                            decoders.remove(&frame.participant);
-                            request(frame.participant);
-                        }
+                    decoders.insert(frame.participant, (frame.generation, frame.seq - 1, decoder));
+                }
+                let Some((_, seq, decoder)) = decoders.get_mut(&frame.participant) else {
+                    continue;
+                };
+                *seq = frame.seq;
+                match decoder.decode(&frame.data) {
+                    Ok(Some(decoded)) => {
+                        serial += 1;
+                        views.lock().unwrap().insert(frame.participant, (serial, Arc::new(decoded)));
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        decoders.remove(&frame.participant);
+                        request(frame.participant);
                     }
                 }
-            })?;
-        Ok(Self {
-            tx,
-            frames,
-            members,
-        })
+            }
+        })?;
+        Ok(Self { tx, frames, members })
     }
     pub fn subscribe(&self, ids: Vec<u64>) {
         self.frames.lock().unwrap().retain(|id, _| ids.contains(id));
@@ -225,90 +189,74 @@ impl Sound {
         let loudness = levels.clone();
         let tap: Arc<Mutex<Option<std::sync::mpsc::SyncSender<Vec<i16>>>>> = Arc::default();
         let recording = tap.clone();
-        std::thread::Builder::new()
-            .name("meeting-audio-mix".into())
-            .spawn(move || {
-                struct Speaker {
-                    decoder: opus::Decoder,
-                    jitter: Jitter,
-                    seq: Option<u16>,
-                }
-                let mut speakers: HashMap<u64, Speaker> = HashMap::new();
-                let mut next = std::time::Instant::now();
-                while !flag.load(Ordering::Acquire) {
-                    let allowed = active.lock().unwrap().clone();
-                    speakers.retain(|id, _| allowed.contains(id));
-                    for packet in rx.try_iter().take(128) {
-                        if !allowed.contains(&packet.participant) {
+        std::thread::Builder::new().name("meeting-audio-mix".into()).spawn(move || {
+            struct Speaker {
+                decoder: opus::Decoder,
+                jitter: Jitter,
+                seq: Option<u16>,
+            }
+            let mut speakers: HashMap<u64, Speaker> = HashMap::new();
+            let mut next = std::time::Instant::now();
+            while !flag.load(Ordering::Acquire) {
+                let allowed = active.lock().unwrap().clone();
+                speakers.retain(|id, _| allowed.contains(id));
+                for packet in rx.try_iter().take(128) {
+                    if !allowed.contains(&packet.participant) {
+                        continue;
+                    }
+                    if let std::collections::hash_map::Entry::Vacant(entry) = speakers.entry(packet.participant) {
+                        let Ok(decoder) = opus::Decoder::new() else {
+                            continue;
+                        };
+                        entry.insert(Speaker { decoder, jitter: Jitter::default(), seq: None });
+                    }
+                    let speaker = speakers.get_mut(&packet.participant).unwrap();
+                    if let Some(seq) = speaker.seq {
+                        let gap = packet.sequence.wrapping_sub(seq);
+                        if gap == 0 || gap > 32768 {
                             continue;
                         }
-                        if let std::collections::hash_map::Entry::Vacant(entry) =
-                            speakers.entry(packet.participant)
-                        {
-                            let Ok(decoder) = opus::Decoder::new() else {
-                                continue;
-                            };
-                            entry.insert(Speaker {
-                                decoder,
-                                jitter: Jitter::default(),
-                                seq: None,
-                            });
-                        }
-                        let speaker = speakers.get_mut(&packet.participant).unwrap();
-                        if let Some(seq) = speaker.seq {
-                            let gap = packet.sequence.wrapping_sub(seq);
-                            if gap == 0 || gap > 32768 {
-                                continue;
-                            }
-                            for _ in 1..gap.min(4) {
-                                let mut pcm = [0; opus::FRAME_SAMPLES];
-                                if speaker.decoder.decode(None, &mut pcm).is_ok() {
-                                    speaker.jitter.push(&pcm);
-                                }
+                        for _ in 1..gap.min(4) {
+                            let mut pcm = [0; opus::FRAME_SAMPLES];
+                            if speaker.decoder.decode(None, &mut pcm).is_ok() {
+                                speaker.jitter.push(&pcm);
                             }
                         }
-                        speaker.seq = Some(packet.sequence);
-                        let mut pcm = [0; opus::FRAME_SAMPLES];
-                        if speaker.decoder.decode(Some(&packet.data), &mut pcm).is_ok() {
-                            speaker.jitter.push(&pcm);
-                        }
                     }
-                    let mut sources = Vec::new();
-                    let mut heard = loudness.lock().unwrap();
-                    heard.retain(|id, _| speakers.contains_key(id));
-                    for (id, speaker) in &speakers {
-                        let mut pcm = vec![0; opus::FRAME_SAMPLES];
-                        speaker.jitter.pull(&mut pcm);
-                        // Quick to rise, slow to fall, so a speaker doesn't flicker between words.
-                        let level = rms(&pcm);
-                        let held = heard.entry(*id).or_insert(0.0);
-                        *held = level.max(*held * 0.9);
-                        sources.push(pcm);
-                    }
-                    drop(heard);
-                    let mut mix = [0i16; opus::FRAME_SAMPLES];
-                    let refs: Vec<_> = sources.iter().map(Vec::as_slice).collect();
-                    slipstream_audio::voice::mix(&refs, &mut mix);
-                    if let Some(tap) = recording.lock().unwrap().as_ref() {
-                        let _ = tap.try_send(mix.to_vec());
-                    }
-                    output.push(&mix);
-                    next += Duration::from_millis(20);
-                    std::thread::sleep(next.saturating_duration_since(std::time::Instant::now()));
-                    if next.elapsed() > Duration::from_millis(100) {
-                        next = std::time::Instant::now();
+                    speaker.seq = Some(packet.sequence);
+                    let mut pcm = [0; opus::FRAME_SAMPLES];
+                    if speaker.decoder.decode(Some(&packet.data), &mut pcm).is_ok() {
+                        speaker.jitter.push(&pcm);
                     }
                 }
-            })?;
-        Ok(Self {
-            player,
-            tx,
-            members,
-            levels,
-            tap,
-            stop,
-            _guard: Default::default(),
-        })
+                let mut sources = Vec::new();
+                let mut heard = loudness.lock().unwrap();
+                heard.retain(|id, _| speakers.contains_key(id));
+                for (id, speaker) in &speakers {
+                    let mut pcm = vec![0; opus::FRAME_SAMPLES];
+                    speaker.jitter.pull(&mut pcm);
+                    // Quick to rise, slow to fall, so a speaker doesn't flicker between words.
+                    let level = rms(&pcm);
+                    let held = heard.entry(*id).or_insert(0.0);
+                    *held = level.max(*held * 0.9);
+                    sources.push(pcm);
+                }
+                drop(heard);
+                let mut mix = [0i16; opus::FRAME_SAMPLES];
+                let refs: Vec<_> = sources.iter().map(Vec::as_slice).collect();
+                slipstream_audio::voice::mix(&refs, &mut mix);
+                if let Some(tap) = recording.lock().unwrap().as_ref() {
+                    let _ = tap.try_send(mix.to_vec());
+                }
+                output.push(&mix);
+                next += Duration::from_millis(20);
+                std::thread::sleep(next.saturating_duration_since(std::time::Instant::now()));
+                if next.elapsed() > Duration::from_millis(100) {
+                    next = std::time::Instant::now();
+                }
+            }
+        })?;
+        Ok(Self { player, tx, members, levels, tap, stop, _guard: Default::default() })
     }
     /// How loud each participant is right now: 0 is silence, about 0.02 is
     /// quiet speech and 0.1 loud.

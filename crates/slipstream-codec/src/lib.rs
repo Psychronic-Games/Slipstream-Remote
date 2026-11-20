@@ -12,20 +12,18 @@ use anyhow::{Context, Result, bail};
 use openh264::{
     OpenH264API, Timestamp,
     decoder::{Decoder as OhDecoder, DecoderConfig},
-    encoder::{
-        BitRate, Complexity, EncoderConfig, FrameRate, FrameType, RateControlMode, SpsPpsStrategy, UsageType,
-    },
+    encoder::{BitRate, Complexity, EncoderConfig, FrameRate, FrameType, RateControlMode, SpsPpsStrategy, UsageType},
     formats::YUVSource,
 };
 use yuv::{YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix};
 
 mod hardware;
-#[cfg(target_os = "linux")]
-mod vaapi;
-#[cfg(all(target_arch = "x86_64", any(windows, target_os = "linux")))]
-mod nvenc;
 #[cfg(windows)]
 mod mf;
+#[cfg(all(target_arch = "x86_64", any(windows, target_os = "linux")))]
+mod nvenc;
+#[cfg(target_os = "linux")]
+mod vaapi;
 /// No NVENC on this platform: the encoder stays in software.
 #[cfg(not(all(target_arch = "x86_64", any(windows, target_os = "linux"))))]
 mod nvenc {
@@ -286,9 +284,7 @@ impl Encoder {
         };
         // SAFETY: a valid encoder handle and a live SBitrateInfo, which is
         // what ENCODER_OPTION_BITRATE expects.
-        let rc = unsafe {
-            enc.raw_api().set_option(openh264_sys2::ENCODER_OPTION_BITRATE, (&raw mut info).cast())
-        };
+        let rc = unsafe { enc.raw_api().set_option(openh264_sys2::ENCODER_OPTION_BITRATE, (&raw mut info).cast()) };
         if rc == 0 {
             tracing::debug!(kbps, "bitrate changed");
         }
@@ -349,9 +345,8 @@ impl Encoder {
         buf.resize(w as usize * h as usize * 4, 0);
         let mut dst = fr::images::Image::from_slice_u8(w, h, &mut buf, fr::PixelType::U8x4)?;
         // Not use_alpha: BGRx's padding byte is no alpha, often 0.
-        let opts = fr::ResizeOptions::new()
-            .use_alpha(false)
-            .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Bilinear));
+        let opts =
+            fr::ResizeOptions::new().use_alpha(false).resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Bilinear));
         self.resizer.resize(&src, &mut dst, &opts)?;
         Ok(RawFrame { width: w, height: h, stride: w * 4, format: frame.format, data: buf })
     }
@@ -406,7 +401,8 @@ impl Encoder {
         if self.hardware_ready(ew, eh, frame.format) {
             let scaled = (ew, eh) != (frame.width & !1, frame.height & !1);
             let src = if scaled { Some(self.scale(frame, ew, eh)?) } else { None };
-            let result = self.hw.as_mut().expect("hardware encoder").encode(src.as_ref().unwrap_or(frame), force_keyframe);
+            let result =
+                self.hw.as_mut().expect("hardware encoder").encode(src.as_ref().unwrap_or(frame), force_keyframe);
             if let Some(src) = src {
                 self.scaled = src.data;
             }
@@ -535,9 +531,17 @@ fn test_one(kind: hardware::Kind, width: u32, height: u32, frames: u32) -> Resul
         data = frame.data;
         bytes += encoded.data.len();
         let first_or_forced = t == 0 || force;
-        anyhow::ensure!(encoded.keyframe == first_or_forced, "frame {t}: keyframe {} where {} was asked", encoded.keyframe, first_or_forced);
+        anyhow::ensure!(
+            encoded.keyframe == first_or_forced,
+            "frame {t}: keyframe {} where {} was asked",
+            encoded.keyframe,
+            first_or_forced
+        );
         let decoded = decoder.decode(&encoded.data).with_context(|| format!("decoding frame {t}"))?;
-        anyhow::ensure!(decoded.is_some_and(|d| (d.width, d.height) == (width, height)), "frame {t} didn't decode to {width}×{height}");
+        anyhow::ensure!(
+            decoded.is_some_and(|d| (d.width, d.height) == (width, height)),
+            "frame {t} didn't decode to {width}×{height}"
+        );
     }
     Ok(format!(
         "{}: opened in {} ms, {:.1} ms a frame at {width}×{height}, {} KB a frame; all {frames} frames decode, keyframes only on request",
@@ -620,8 +624,10 @@ mod tests {
 
     #[test]
     fn oversized_frame_metadata_is_rejected_without_integer_overflow() {
-        for (width,height,stride) in [(u32::MAX,2,u32::MAX),(2,u32::MAX,u32::MAX),(1024,2,4096)] {
-            assert!(RawFrame {width,height,stride,format:PixelFormat::Rgba,data:vec![0;16]}.validate().is_err());
+        for (width, height, stride) in [(u32::MAX, 2, u32::MAX), (2, u32::MAX, u32::MAX), (1024, 2, 4096)] {
+            assert!(
+                RawFrame { width, height, stride, format: PixelFormat::Rgba, data: vec![0; 16] }.validate().is_err()
+            );
         }
     }
 
@@ -629,7 +635,9 @@ mod tests {
     #[test]
     #[ignore]
     fn bench_encode_decode() {
-        for ((w, h), hardware) in [(1920u32, 1080u32), (2560, 1440), (3840, 2160)].into_iter().flat_map(|s| [(s, false), (s, true)]) {
+        for ((w, h), hardware) in
+            [(1920u32, 1080u32), (2560, 1440), (3840, 2160)].into_iter().flat_map(|s| [(s, false), (s, true)])
+        {
             let mut enc = Encoder::with_hardware(EncoderSettings::default(), hardware);
             let mut dec = Decoder::new().unwrap();
             let frames: Vec<RawFrame> = (0..4).map(|t| test_frame(w, h, t * 7)).collect();
@@ -824,5 +832,3 @@ mod tests {
         assert!(err / samples < 25, "mean red error {} too high", err / samples);
     }
 }
-
-

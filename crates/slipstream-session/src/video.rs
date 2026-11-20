@@ -44,13 +44,7 @@ struct FlowState {
 impl Flow {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new(FlowState {
-                next_seq: 1,
-                acked: 0,
-                sent: VecDeque::new(),
-                srtt: None,
-                min_rtt: None,
-            }),
+            state: Mutex::new(FlowState { next_seq: 1, acked: 0, sent: VecDeque::new(), srtt: None, min_rtt: None }),
             cv: Condvar::new(),
         })
     }
@@ -294,7 +288,11 @@ fn encode_loop(
     let mut applied = *settings.lock().unwrap();
     let encoder_settings = EncoderSettings { bitrate_kbps: applied.bitrate_kbps, max_fps: applied.max_fps as f32 };
     // A simulated slow encoder stands for a slow processor: keep it there.
-    let mut encoder = if slow_encode_ms.is_some() { Encoder::with_hardware(encoder_settings, false) } else { Encoder::new(encoder_settings) };
+    let mut encoder = if slow_encode_ms.is_some() {
+        Encoder::with_hardware(encoder_settings, false)
+    } else {
+        Encoder::new(encoder_settings)
+    };
     let mut rate: Option<RateControl> = None;
     let mut last_frame: Option<RawFrame> = None;
     // The newest frame rate control skipped. Damage-driven capture may send
@@ -317,7 +315,8 @@ fn encode_loop(
             // A quality change must restore full size on the very next frame.
             speed = Speed::new();
             keyframe.store(true, Ordering::Relaxed);
-            encoder.set_settings(EncoderSettings { bitrate_kbps: applied.bitrate_kbps, max_fps: applied.max_fps as f32 });
+            encoder
+                .set_settings(EncoderSettings { bitrate_kbps: applied.bitrate_kbps, max_fps: applied.max_fps as f32 });
         }
         let frame_interval = Duration::from_secs_f64(1.0 / applied.max_fps.clamp(1, 240) as f64);
 
@@ -429,19 +428,21 @@ fn encode_loop(
             timestamp_us: start.elapsed().as_micros() as u64,
             data: encoded.data,
         };
-        if !send_interruptibly(&out, msg, &stop) {return;}
+        if !send_interruptibly(&out, msg, &stop) {
+            return;
+        }
     }
 }
 
 /// Blocking sends cannot observe `stop` when the video writer is stalled.
 /// Bound this wait too so a quality change/disconnect can join the encoder.
-fn send_interruptibly(out:&mpsc::Sender<VideoFrame>,mut frame:VideoFrame,stop:&AtomicBool)->bool {
+fn send_interruptibly(out: &mpsc::Sender<VideoFrame>, mut frame: VideoFrame, stop: &AtomicBool) -> bool {
     while !stop.load(Ordering::Relaxed) {
         match out.try_send(frame) {
-            Ok(())=>return true,
-            Err(mpsc::error::TrySendError::Closed(_))=>return false,
-            Err(mpsc::error::TrySendError::Full(pending))=>{
-                frame=pending;
+            Ok(()) => return true,
+            Err(mpsc::error::TrySendError::Closed(_)) => return false,
+            Err(mpsc::error::TrySendError::Full(pending)) => {
+                frame = pending;
                 thread::sleep(Duration::from_millis(5));
             }
         }
@@ -466,7 +467,9 @@ mod tests {
             let mut i = 0u8;
             while !producer.is_closed() {
                 let mut data = producer.buffer((w * h * 4) as usize);
-                for p in 0..w*h { data.extend_from_slice(&[(p as u8).wrapping_add(i), i, 128, 255]); }
+                for p in 0..w * h {
+                    data.extend_from_slice(&[(p as u8).wrapping_add(i), i, 128, 255]);
+                }
                 producer.put(RawFrame { width: w, height: h, stride: w * 4, format: PixelFormat::Bgra, data });
                 i = i.wrapping_add(1);
                 std::thread::sleep(Duration::from_millis(16));
@@ -475,7 +478,14 @@ mod tests {
         let flow = Flow::new();
         let (tx, mut rx) = mpsc::channel(4);
         let (etx, _erx) = mpsc::unbounded_channel();
-        let pipeline = Pipeline::start_with(FrameStream::new(slot.clone()), flow.clone(), StreamSettings::default(), tx, etx, Some(30.0));
+        let pipeline = Pipeline::start_with(
+            FrameStream::new(slot.clone()),
+            flow.clone(),
+            StreamSettings::default(),
+            tx,
+            etx,
+            Some(30.0),
+        );
         let start = Instant::now();
         let mut native_frames = 0;
         while start.elapsed() < Duration::from_secs(2) {
@@ -483,15 +493,21 @@ mod tests {
                 flow.ack(frame.seq);
                 assert_eq!(frame.width, w, "a native-resolution preset shrank a moving frame");
                 native_frames += 1;
-            } else { std::thread::sleep(Duration::from_millis(2)); }
+            } else {
+                std::thread::sleep(Duration::from_millis(2));
+            }
         }
         assert!(native_frames > 5);
         pipeline.set_settings(StreamSettings { adaptive_resolution: true, ..Default::default() });
         let start = Instant::now();
         let mut shrank = false;
         while start.elapsed() < Duration::from_secs(3) {
-            if let Ok(frame) = rx.try_recv() { flow.ack(frame.seq); shrank |= frame.width < w; }
-            else { std::thread::sleep(Duration::from_millis(2)); }
+            if let Ok(frame) = rx.try_recv() {
+                flow.ack(frame.seq);
+                shrank |= frame.width < w;
+            } else {
+                std::thread::sleep(Duration::from_millis(2));
+            }
         }
         assert!(shrank, "speed preset never reduced resolution on a slow host");
         pipeline.set_settings(StreamSettings { bitrate_kbps: 20_000, ..Default::default() });
@@ -500,9 +516,13 @@ mod tests {
         while start.elapsed() < Duration::from_secs(1) {
             if let Ok(frame) = rx.try_recv() {
                 flow.ack(frame.seq);
-                if restored { assert_eq!(frame.width, w, "Quality fell back to its old reduced scale"); }
+                if restored {
+                    assert_eq!(frame.width, w, "Quality fell back to its old reduced scale");
+                }
                 restored |= frame.width == w;
-            } else { std::thread::sleep(Duration::from_millis(2)); }
+            } else {
+                std::thread::sleep(Duration::from_millis(2));
+            }
         }
         assert!(restored, "Quality failed to restore full size during motion");
         drop(pipeline);
@@ -519,8 +539,11 @@ mod tests {
         let (w, h) = (1280u32, 720u32);
         let slot = FrameSlot::new();
         let producer = slot.clone();
-        let frames: Vec<Vec<u8>> =
-            (0..8u32).map(|t| (0..w * h).flat_map(|i| [((i % w + t * 7) % 256) as u8, ((i / w) % 256) as u8, 128, 255]).collect()).collect();
+        let frames: Vec<Vec<u8>> = (0..8u32)
+            .map(|t| {
+                (0..w * h).flat_map(|i| [((i % w + t * 7) % 256) as u8, ((i / w) % 256) as u8, 128, 255]).collect()
+            })
+            .collect();
         let moving = Arc::new(AtomicBool::new(true));
         let motion = moving.clone();
         std::thread::spawn(move || {
@@ -536,13 +559,22 @@ mod tests {
         let flow = Flow::new();
         let (tx, mut rx) = mpsc::channel(4);
         let (etx, _erx) = mpsc::unbounded_channel();
-        let _p = Pipeline::start_with(FrameStream::new(slot), flow.clone(), StreamSettings { adaptive_resolution: true, ..Default::default() }, tx, etx, Some(30.0));
+        let _p = Pipeline::start_with(
+            FrameStream::new(slot),
+            flow.clone(),
+            StreamSettings { adaptive_resolution: true, ..Default::default() },
+            tx,
+            etx,
+            Some(30.0),
+        );
         let start = Instant::now();
         let (mut widths, mut late) = (Vec::new(), 0);
         // Slow machines (CI's Macs) take longer than 3 s to play the motion:
         // wait for it to end, then a second and a half for the sharp frame.
         let mut still_since: Option<Instant> = None;
-        while still_since.is_none_or(|t| t.elapsed() < Duration::from_millis(1500)) && start.elapsed() < Duration::from_secs(30) {
+        while still_since.is_none_or(|t| t.elapsed() < Duration::from_millis(1500))
+            && start.elapsed() < Duration::from_secs(30)
+        {
             if still_since.is_none() && !moving.load(Ordering::Relaxed) {
                 still_since = Some(Instant::now());
             }
@@ -569,14 +601,17 @@ mod tests {
 
     #[test]
     fn a_full_video_queue_can_be_stopped() {
-        let (tx,_rx)=mpsc::channel(1);
-        let frame=VideoFrame {seq:1,keyframe:true,width:2,height:2,timestamp_us:0,data:vec![0]};
+        let (tx, _rx) = mpsc::channel(1);
+        let frame = VideoFrame { seq: 1, keyframe: true, width: 2, height: 2, timestamp_us: 0, data: vec![0] };
         tx.try_send(frame.clone()).unwrap();
-        let stop=Arc::new(AtomicBool::new(false));let flag=stop.clone();
-        let (done,finished)=std::sync::mpsc::channel();
-        let worker=std::thread::spawn(move || {done.send(send_interruptibly(&tx,frame,&flag)).unwrap();});
-        assert!(finished.recv_timeout(Duration::from_millis(50)).is_err(),"full queue should apply backpressure");
-        stop.store(true,Ordering::Relaxed);
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let (done, finished) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            done.send(send_interruptibly(&tx, frame, &flag)).unwrap();
+        });
+        assert!(finished.recv_timeout(Duration::from_millis(50)).is_err(), "full queue should apply backpressure");
+        stop.store(true, Ordering::Relaxed);
         assert!(!finished.recv_timeout(Duration::from_secs(2)).unwrap());
         worker.join().unwrap();
     }
@@ -589,8 +624,12 @@ mod tests {
         flow.take_seq();
         flow.take_seq();
         assert!(!flow.wait_for_credit(2, iv, Duration::from_millis(5)));
-        flow.ack(u64::MAX);flow.ack(3);
-        assert!(!flow.wait_for_credit(2,iv,Duration::ZERO),"future acknowledgements must not grant credit or underflow");
+        flow.ack(u64::MAX);
+        flow.ack(3);
+        assert!(
+            !flow.wait_for_credit(2, iv, Duration::ZERO),
+            "future acknowledgements must not grant credit or underflow"
+        );
         flow.ack(1);
         assert!(flow.wait_for_credit(2, iv, Duration::ZERO));
         flow.ack(2);
@@ -644,7 +683,11 @@ mod tests {
                     flow.ack(f.seq);
                 }
             }
-            println!("{w}x{h}: {:.1} fps through the pipeline, {:.0} KB/frame", n as f64 / 3.0, bytes as f64 / n.max(1) as f64 / 1024.0);
+            println!(
+                "{w}x{h}: {:.1} fps through the pipeline, {:.0} KB/frame",
+                n as f64 / 3.0,
+                bytes as f64 / n.max(1) as f64 / 1024.0
+            );
         }
     }
 

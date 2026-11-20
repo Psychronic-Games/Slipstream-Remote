@@ -35,7 +35,9 @@ impl VaultKey {
     /// From the sign-in password and the account's salt (hex). Deliberately
     /// slow (about a quarter of a second): run it off the UI thread.
     pub fn derive(password: &str, salt_hex: &str) -> Result<Self> {
-        let salt = unhex(salt_hex).filter(|s| s.len() >= 8).ok_or_else(|| anyhow!("the station sent an unusable vault salt"))?;
+        let salt = unhex(salt_hex)
+            .filter(|s| s.len() >= 8)
+            .ok_or_else(|| anyhow!("the station sent an unusable vault salt"))?;
         // OWASP's Argon2id baseline: 19 MiB, 2 passes, 1 lane.
         let params = argon2::Params::new(19 * 1024, 2, 1, Some(32)).map_err(|e| anyhow!("{e}"))?;
         let mut key = [0u8; 32];

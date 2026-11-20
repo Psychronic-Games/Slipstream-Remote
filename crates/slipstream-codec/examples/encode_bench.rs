@@ -71,7 +71,13 @@ fn run(name: &str, cfg: EncoderConfig, w: usize, h: usize, page: &[u8], scroll: 
         }
     }
     let n = (frames - 10) as f64;
-    println!("{name:<28} {:>5.2} ms/frame {:>6} kbit/frame  PSNR avg {:>5.1} dB, last {:>5.1} dB", total * 1000.0 / n, bytes * 8 / 1000 / frames, q / n, last_q);
+    println!(
+        "{name:<28} {:>5.2} ms/frame {:>6} kbit/frame  PSNR avg {:>5.1} dB, last {:>5.1} dB",
+        total * 1000.0 / n,
+        bytes * 8 / 1000 / frames,
+        q / n,
+        last_q
+    );
 }
 
 fn base(w: u32, h: u32, threads: u16) -> EncoderConfig {
@@ -100,6 +106,13 @@ fn main() {
         let b = || base(w as u32, h as u32, threads);
         run("screen (current)", b(), w, h, &page, scroll);
         run("camera", b().usage_type(UsageType::CameraVideoRealTime), w, h, &page, scroll);
-        run("camera, medium complexity", b().usage_type(UsageType::CameraVideoRealTime).complexity(Complexity::Medium), w, h, &page, scroll);
+        run(
+            "camera, medium complexity",
+            b().usage_type(UsageType::CameraVideoRealTime).complexity(Complexity::Medium),
+            w,
+            h,
+            &page,
+            scroll,
+        );
     }
 }

@@ -13,8 +13,8 @@ use slipstream_core::{
     auth::{HostAuth, password_secret},
     framing::{MsgReader, expect_msg_max, expect_msg_with_extras, write_msg},
     proto::{
-        Capabilities, ClipboardData, DisplayInfo, HelloExtras, HostExtras, HostMsg, InputEvent, PROTOCOL_VERSION, SessionInfo,
-        StreamSettings, VideoFrame, ViewerMsg,
+        Capabilities, ClipboardData, DisplayInfo, HelloExtras, HostExtras, HostMsg, InputEvent, PROTOCOL_VERSION,
+        SessionInfo, StreamSettings, VideoFrame, ViewerMsg,
     },
 };
 use slipstream_platform::{
@@ -76,7 +76,9 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
         send.set_priority(slipstream_core::proto::PRIORITY_CONTROL).ok();
         let hello = expect_msg_with_extras::<ViewerMsg, HelloExtras>(&mut recv, PRE_AUTH_MESSAGE).await?;
         anyhow::Ok((send, recv, hello))
-    }).await.context("viewer did not start authentication")??;
+    })
+    .await
+    .context("viewer did not start authentication")??;
     let (ViewerMsg::Hello { version, viewer_name }, extras) = hello else {
         bail!("expected Hello");
     };
@@ -181,11 +183,11 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
 
     let mut capabilities = Capabilities {
         input: settings.host.allow_input && screen.input_supported,
-        clipboard: settings.host.allow_clipboard && !cfg!(target_os="android"),
-        file_transfer: settings.host.allow_file_transfer && !cfg!(target_os="android"),
+        clipboard: settings.host.allow_clipboard && !cfg!(target_os = "android"),
+        file_transfer: settings.host.allow_file_transfer && !cfg!(target_os = "android"),
         audio: settings.host.allow_audio && (inner.opts.test_pattern || slipstream_audio::capture_supported()),
         tunnels: settings.host.allow_tunnels,
-        network_scan: settings.host.allow_network_scan && !cfg!(target_os="android"),
+        network_scan: settings.host.allow_network_scan && !cfg!(target_os = "android"),
         chat: true,
         cursor_in_video: screen.cursor_in_video,
         privacy: screen.privacy,
@@ -211,7 +213,20 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
 
     let viewing = Arc::new(Viewing { flag: Default::default(), inner: inner.clone(), session: id });
     let screen = ScreenState { open: !deferred, displays: screen.displays, allow_input: settings.host.allow_input };
-    let reason = match session_loop(&inner, &conn, id, &viewer_name, send, recv, screen, &mut capabilities, cmd_rx, viewing.clone()).await {
+    let reason = match session_loop(
+        &inner,
+        &conn,
+        id,
+        &viewer_name,
+        send,
+        recv,
+        screen,
+        &mut capabilities,
+        cmd_rx,
+        viewing.clone(),
+    )
+    .await
+    {
         Ok(r) => r,
         // The video writer may observe a peer close before the control reader.
         Err(e) => conn.close_reason().map(|r| crate::closed_reason(&r, "they")).unwrap_or_else(|| format!("{e:#}")),
@@ -219,17 +234,20 @@ pub async fn run_session(inner: Arc<Inner>, conn: Connection, host_id: iroh::End
     // The backend is cached across connections, so dropping a viewer does
     // not drop its held keyboard/mouse state. Release it on every exit path
     // (a chat-only link never controlled anything: leave other sessions be).
-    if capabilities.input && viewing.get() && let Some(backend) = inner.backend.lock().await.as_mut() {
+    if capabilities.input
+        && viewing.get()
+        && let Some(backend) = inner.backend.lock().await.as_mut()
+    {
         let display = backend.displays().first().map(|d| d.index).unwrap_or(0);
         let _ = backend.inject(display, InputEvent::ReleaseAll);
     }
     inner.host_sessions.lock().unwrap().remove(&id);
     info!(%peer, %reason, "session ended");
-    let restarting=reason==slipstream_core::proto::HOST_RESTARTING;
+    let restarting = reason == slipstream_core::proto::HOST_RESTARTING;
     inner.emit(ClientEvent::HostSessionEnded { session: id, reason });
     // A new one-time password after every session, like TeamViewer.
     rotate_password(&inner);
-    conn.close((if restarting {slipstream_core::proto::RESTART_CLOSE_CODE}else{0}).into(), b"bye");
+    conn.close((if restarting { slipstream_core::proto::RESTART_CLOSE_CODE } else { 0 }).into(), b"bye");
     Ok(())
 }
 
@@ -255,7 +273,10 @@ type BackendGuard<'a> = tokio::sync::MutexGuard<'a, Option<Box<dyn slipstream_pl
 /// shows the desktop's "allow screen sharing" dialog on this machine. The
 /// outer error is the control stream failing; the inner one, why the screen
 /// can't be shared (for the viewer).
-async fn open_screen<'a>(inner: &'a Inner, send: &mut SendStream) -> Result<Result<(BackendGuard<'a>, Screen), String>> {
+async fn open_screen<'a>(
+    inner: &'a Inner,
+    send: &mut SendStream,
+) -> Result<Result<(BackendGuard<'a>, Screen), String>> {
     let open = screen_backend(inner);
     tokio::pin!(open);
     // Only mention the prompt if there evidently is one (opening
@@ -274,12 +295,15 @@ async fn open_screen<'a>(inner: &'a Inner, send: &mut SendStream) -> Result<Resu
             return Ok(Err(format!("screen sharing unavailable: {e:#}")));
         }
     };
-    let screen = backend.as_ref().map(|b| Screen {
-        displays: b.displays(),
-        cursor_in_video: b.cursor_in_video(),
-        privacy: b.privacy_supported(),
-        input_supported: b.input_supported(),
-    }).unwrap_or_default();
+    let screen = backend
+        .as_ref()
+        .map(|b| Screen {
+            displays: b.displays(),
+            cursor_in_video: b.cursor_in_video(),
+            privacy: b.privacy_supported(),
+            input_supported: b.input_supported(),
+        })
+        .unwrap_or_default();
     if screen.displays.is_empty() {
         let reason = if cfg!(target_os = "android") {
             "On the phone, tap Start sharing and approve Android's screen-sharing prompt"
@@ -331,7 +355,9 @@ impl ScreenState {
 
 /// Shared by local approval and incoming sessions, so preparing access never
 /// opens a second portal or replaces a backend a viewer is already using.
-pub(crate) async fn screen_backend(inner: &Inner) -> Result<tokio::sync::MutexGuard<'_, Option<Box<dyn slipstream_platform::Backend>>>> {
+pub(crate) async fn screen_backend(
+    inner: &Inner,
+) -> Result<tokio::sync::MutexGuard<'_, Option<Box<dyn slipstream_platform::Backend>>>> {
     let mut backend = inner.backend.lock().await;
     // Android can revoke capture with no viewer left to report its failure.
     if backend.as_ref().is_some_and(|b| b.displays().is_empty()) {
@@ -343,7 +369,8 @@ pub(crate) async fn screen_backend(inner: &Inner) -> Result<tokio::sync::MutexGu
             test_pattern: inner.opts.test_pattern,
             restore_token,
             system: inner.opts.system_screen,
-        }).await?;
+        })
+        .await?;
         if let Some(token) = opened.restore_token() {
             set_restore_token(inner, token);
         }
@@ -452,11 +479,7 @@ fn send_audio(conn: Connection, test_tone: bool) -> Result<slipstream_audio::Cap
 
 /// Starts capturing `display`. The outer error means the backend is gone
 /// (fatal); the inner one that this capture failed.
-async fn open_capture(
-    inner: &Inner,
-    display: u32,
-    max_fps: u32,
-) -> Result<Result<slipstream_platform::FrameStream>> {
+async fn open_capture(inner: &Inner, display: u32, max_fps: u32) -> Result<Result<slipstream_platform::FrameStream>> {
     let mut b = inner.backend.lock().await;
     let b = b.as_mut().context("screen backend gone")?;
     Ok(b.capture(display, max_fps))
@@ -498,7 +521,9 @@ async fn session_loop(
                 }
                 frame = video_rx.recv() => frame,
             };
-            let Some(frame) = frame else { break; };
+            let Some(frame) = frame else {
+                break;
+            };
             write_msg(&mut stream, &frame).await?;
         }
         stream.finish().ok();
@@ -508,7 +533,13 @@ async fn session_loop(
 
     // File browsing and transfer requests from the viewer.
     let files_inner = inner.clone();
-    let policy = files::FilePolicy { browse: caps.file_transfer, receive: caps.file_transfer, tunnels: caps.tunnels, network_scan: caps.network_scan, remote_input: caps.input };
+    let policy = files::FilePolicy {
+        browse: caps.file_transfer,
+        receive: caps.file_transfer,
+        tunnels: caps.tunnels,
+        network_scan: caps.network_scan,
+        remote_input: caps.input,
+    };
     let on_saved: Arc<dyn Fn(std::path::PathBuf) + Send + Sync> =
         Arc::new(move |path| files_inner.emit(ClientEvent::FileReceived { session: id, path }));
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel();
@@ -521,7 +552,14 @@ async fn session_loop(
         allow_wake: support_settings.host.allow_wake_on_lan,
         status: Arc::new(move |text| status_inner.emit(ClientEvent::HostStatus { session: id, text })),
     });
-    let _files_guard = AbortOnDrop(tokio::spawn(files::serve(conn.clone(), policy, on_saved, clipboard.clone(), tools, viewing.clone())));
+    let _files_guard = AbortOnDrop(tokio::spawn(files::serve(
+        conn.clone(),
+        policy,
+        on_saved,
+        clipboard.clone(),
+        tools,
+        viewing.clone(),
+    )));
 
     let flow = Flow::new();
     let (err_tx, mut err_rx) = mpsc::unbounded_channel::<String>();

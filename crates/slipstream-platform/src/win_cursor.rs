@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use windows_sys::Win32::{
     Foundation::POINT,
     Graphics::Gdi::{
-        BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject, GetDC, GetDIBits, GetObjectW, HBITMAP,
-        ReleaseDC,
+        BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject, GetDC, GetDIBits, GetObjectW,
+        HBITMAP, ReleaseDC,
     },
     UI::WindowsAndMessaging::{
         CURSOR_SHOWING, CURSORINFO, GetCursorInfo, GetIconInfo, GetPhysicalCursorPos, HCURSOR, ICONINFO, IDC_ARROW,
@@ -82,7 +82,13 @@ unsafe fn load(handle: HCURSOR) -> Option<Cursor> {
                 let mut out = vec![0u8; bgra.len()];
                 for (i, p) in px.iter().enumerate() {
                     // Without an alpha channel, the AND mask says what's transparent.
-                    let a = if has_alpha { p[3] } else if mask.get(i * 4).copied().unwrap_or(0) > 127 { 0 } else { 255 };
+                    let a = if has_alpha {
+                        p[3]
+                    } else if mask.get(i * 4).copied().unwrap_or(0) > 127 {
+                        0
+                    } else {
+                        255
+                    };
                     out[i * 4..i * 4 + 4].copy_from_slice(&[p[2], p[1], p[0], a]);
                 }
                 (w, h, out)

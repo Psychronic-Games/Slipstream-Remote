@@ -165,7 +165,8 @@ impl Stream {
         let mut err = 0;
         // SAFETY: `pcm` is valid for reads of its byte length; pa_simple_write
         // takes a const pointer despite the shared signature here.
-        let rc = unsafe { (self.api.write)(self.raw, pcm.as_ptr().cast_mut().cast(), std::mem::size_of_val(pcm), &mut err) };
+        let rc =
+            unsafe { (self.api.write)(self.raw, pcm.as_ptr().cast_mut().cast(), std::mem::size_of_val(pcm), &mut err) };
         if rc < 0 {
             bail!("PulseAudio: {}", error(self.api, err));
         }

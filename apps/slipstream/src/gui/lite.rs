@@ -19,13 +19,13 @@ use slipstream_core::{directory::DirectoryClient, provision::StationLink};
 use slipstream_session::{Client, ClientEvent, DirStatus, update::UpdateInfo};
 use tokio::{runtime::Runtime, sync::mpsc};
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, RECT, SIZE, WPARAM,POINT},
+    Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM},
     Graphics::Gdi::{
-        AddFontMemResourceEx, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
-        CreateFontW, CreateSolidBrush, DIB_RGB_COLORS, DT_CENTER, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject,
-        DrawTextW, EndPaint, GetDC, GetDIBits, GetTextExtentPoint32W, HDC, HFONT,
-        InvalidateRect, PAINTSTRUCT, ReleaseDC, SRCCOPY, SelectObject, ScreenToClient, SetBkColor, SetBkMode, SetDIBitsToDevice, SetTextColor,
-        TRANSPARENT,
+        AddFontMemResourceEx, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, BitBlt, CreateCompatibleBitmap,
+        CreateCompatibleDC, CreateFontW, CreateSolidBrush, DIB_RGB_COLORS, DT_CENTER, DT_LEFT, DT_SINGLELINE,
+        DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, EndPaint, GetDC, GetDIBits, GetTextExtentPoint32W, HDC, HFONT,
+        InvalidateRect, PAINTSTRUCT, ReleaseDC, SRCCOPY, ScreenToClient, SelectObject, SetBkColor, SetBkMode,
+        SetDIBitsToDevice, SetTextColor, TRANSPARENT,
     },
     System::{
         DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
@@ -35,11 +35,12 @@ use windows_sys::Win32::{
     UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED, ODT_BUTTON},
     UI::Input::KeyboardAndMouse::EnableWindow,
     UI::WindowsAndMessaging::{
-        AdjustWindowRect, BS_OWNERDRAW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
-        DestroyWindow, DispatchMessageW, GetClientRect, GetDlgCtrlID, GetMessageW, IDC_ARROW, LoadCursorW, LoadIconW, MSG,
-        PostMessageW, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_RESTORE, SW_SHOW, SendMessageW, SetForegroundWindow,
-        SetTimer, SetWindowTextW, ShowWindow, TranslateMessage, WM_APP, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY,
-        GetWindowTextW, WM_NCHITTEST, HTCAPTION, SW_MINIMIZE, WM_DRAWITEM, WM_PAINT, WM_SETFONT, WM_TIMER, WNDCLASSEXW, WS_POPUP, WS_CHILD, WS_MINIMIZEBOX, WS_SYSMENU, WS_VISIBLE,
+        AdjustWindowRect, BS_OWNERDRAW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW,
+        DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetDlgCtrlID, GetMessageW, GetWindowTextW,
+        HTCAPTION, IDC_ARROW, LoadCursorW, LoadIconW, MSG, PostMessageW, PostQuitMessage, RegisterClassExW, SW_HIDE,
+        SW_MINIMIZE, SW_RESTORE, SW_SHOW, SendMessageW, SetForegroundWindow, SetTimer, SetWindowTextW, ShowWindow,
+        TranslateMessage, WM_APP, WM_COMMAND, WM_CREATE, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DRAWITEM, WM_NCHITTEST,
+        WM_PAINT, WM_SETFONT, WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_VISIBLE,
     },
 };
 
@@ -178,7 +179,12 @@ fn confirm_station_switch(current: &str, new: &str) -> bool {
     let title = wide("Slipstream Remote: switch station?");
     // SAFETY: both strings outlive the call.
     let choice = unsafe {
-        MessageBoxW(std::ptr::null_mut(), body.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND)
+        MessageBoxW(
+            std::ptr::null_mut(),
+            body.as_ptr(),
+            title.as_ptr(),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND,
+        )
     };
     choice == IDYES
 }
@@ -218,7 +224,8 @@ pub fn run(
         view.lock().unwrap().installing = true;
         let (client, view) = (client.clone(), view.clone());
         rt.spawn(async move {
-            view.lock().unwrap().note = "Updating the installed Windows service… Windows may ask for administrator approval.".into();
+            view.lock().unwrap().note =
+                "Updating the installed Windows service… Windows may ask for administrator approval.".into();
             let result = async {
                 let info = client.available_update().await?.context("the station has no signed update package")?;
                 let same = info.version_key() == UpdateInfo::current_version_key();
@@ -227,13 +234,20 @@ pub fn run(
                     v.service_only = same;
                     v.update = Some(info.clone());
                 }
-                if same { crate::update::sync_service(&info).await?; }
-                else { bail!("Use Install update to update the app and service together to {}", info.label()); }
+                if same {
+                    crate::update::sync_service(&info).await?;
+                } else {
+                    bail!("Use Install update to update the app and service together to {}", info.label());
+                }
                 anyhow::Ok(())
-            }.await;
+            }
+            .await;
             let mut v = view.lock().unwrap();
             match result {
-                Ok(()) => { v.update = None; v.note = "Windows service updated from this app. This window stays open.".into(); }
+                Ok(()) => {
+                    v.update = None;
+                    v.note = "Windows service updated from this app. This window stays open.".into();
+                }
                 Err(error) => v.note = format!("The service update did not finish: {error:#}"),
             }
             drop(v);
@@ -303,23 +317,40 @@ pub fn run(
     }
     let mut service_sender = None;
     if via_service {
-        let mut bridge=crate::service_chat::Gui::start(&rt,eframe::egui::Context::default());
+        let mut bridge = crate::service_chat::Gui::start(&rt, eframe::egui::Context::default());
         service_sender = Some(bridge.sender());
         let sender = bridge.sender();
-        let view=view.clone();
+        let view = view.clone();
         rt.spawn(async move {
-            while let Some(event)=bridge.events.recv().await {
+            while let Some(event) = bridge.events.recv().await {
                 use crate::service_chat::Event;
                 {
-                    let mut v=view.lock().unwrap();
+                    let mut v = view.lock().unwrap();
                     match event {
                         Event::Password(password) => v.password = password.unwrap_or_default(),
-                        Event::Status{session,text}=>{let show=!text.is_empty();v.support.update(session,text);if show {wake(WM_APP+3);}},
-                        Event::Started{peer,..}=>v.status=format!("{} IS CONNECTED",peer.to_uppercase()),
-                        Event::Ended{session}=>{v.support.remove(session);v.status="ONLINE · READY FOR LINK".into();},
-                        Event::Message{ours:false,text,..}=>{v.note=format!("Message: {text}");wake(WM_APP+3);},
-                        Event::LinkApproval(Some(request))=>{let (sender,id)=(sender.clone(),request.id);ask_link(request,move|allowed|{sender.answer_link(id,allowed);});},
-                        _=>{},
+                        Event::Status { session, text } => {
+                            let show = !text.is_empty();
+                            v.support.update(session, text);
+                            if show {
+                                wake(WM_APP + 3);
+                            }
+                        }
+                        Event::Started { peer, .. } => v.status = format!("{} IS CONNECTED", peer.to_uppercase()),
+                        Event::Ended { session } => {
+                            v.support.remove(session);
+                            v.status = "ONLINE · READY FOR LINK".into();
+                        }
+                        Event::Message { ours: false, text, .. } => {
+                            v.note = format!("Message: {text}");
+                            wake(WM_APP + 3);
+                        }
+                        Event::LinkApproval(Some(request)) => {
+                            let (sender, id) = (sender.clone(), request.id);
+                            ask_link(request, move |allowed| {
+                                sender.answer_link(id, allowed);
+                            });
+                        }
+                        _ => {}
                     }
                 }
                 wake(WM_REFRESH);
@@ -333,7 +364,13 @@ pub fn run(
     unsafe {
         let hinst = GetModuleHandleW(std::ptr::null());
         // The app's own fonts, for this process only.
-        for data in [theme::FONT_ANTONIO, theme::FONT_ANTONIO_BOLD, theme::FONT_BARLOW, theme::FONT_BARLOW_SEMIBOLD, theme::FONT_MONO] {
+        for data in [
+            theme::FONT_ANTONIO,
+            theme::FONT_ANTONIO_BOLD,
+            theme::FONT_BARLOW,
+            theme::FONT_BARLOW_SEMIBOLD,
+            theme::FONT_MONO,
+        ] {
             let n = 0u32; // written by GDI (declared const in windows-sys)
             AddFontMemResourceEx(data.as_ptr().cast(), data.len() as u32, std::ptr::null(), &n);
         }
@@ -395,7 +432,9 @@ pub fn run(
         if let Some((_, delay)) = screenshot {
             SetTimer(hwnd, TIMER_SCREENSHOT, (delay * 1000.0) as u32, None);
         }
-        if via_service { SetTimer(hwnd, TIMER_SERVICE, 1000, None); }
+        if via_service {
+            SetTimer(hwnd, TIMER_SERVICE, 1000, None);
+        }
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
@@ -448,7 +487,24 @@ unsafe fn fit_title(ctrl: HWND, text: &str) {
 unsafe fn font(height: i32, bold: bool, face: &str) -> HFONT {
     let face = wide(face);
     // SAFETY: a valid face name; the other arguments are plain values.
-    unsafe { CreateFontW(-height, 0, 0, 0, if bold { 700 } else { 400 }, 0, 0, 0, 0, 0, 0, 5 /* CLEARTYPE */, 0, face.as_ptr()) }
+    unsafe {
+        CreateFontW(
+            -height,
+            0,
+            0,
+            0,
+            if bold { 700 } else { 400 },
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            5, /* CLEARTYPE */
+            0,
+            face.as_ptr(),
+        )
+    }
 }
 
 /// Creates the controls (WM_CREATE).
@@ -460,7 +516,20 @@ unsafe fn build(hwnd: HWND) -> Vec<(i32, HWND)> {
         let mut out = Vec::new();
         let mut add = |class: &[u16], id: i32, style: u32, (x, y, w, h): (i32, i32, i32, i32), f: HFONT| {
             let empty = wide("");
-            let c = CreateWindowExW(0, class.as_ptr(), empty.as_ptr(), WS_CHILD | WS_VISIBLE | style, x, y+38, w, h, hwnd, id as _, hinst, std::ptr::null());
+            let c = CreateWindowExW(
+                0,
+                class.as_ptr(),
+                empty.as_ptr(),
+                WS_CHILD | WS_VISIBLE | style,
+                x,
+                y + 38,
+                w,
+                h,
+                hwnd,
+                id as _,
+                hinst,
+                std::ptr::null(),
+            );
             SendMessageW(c, WM_SETFONT, f as WPARAM, 1);
             out.push((id, c));
         };
@@ -500,8 +569,8 @@ unsafe fn build(hwnd: HWND) -> Vec<(i32, HWND)> {
         add(&button, BTN_QUIT, pill, (398, 318, 82, 34), btn);
         add(&button, BTN_STOP, pill, (20, 360, 174, 30), btn);
         add(&button, BTN_DISMISS, pill, (202, 360, 110, 30), btn);
-        add(&button,BTN_MIN,pill,(350,-31,62,28),btn);
-        add(&button,BTN_CLOSE,pill,(418,-31,70,28),btn);
+        add(&button, BTN_MIN, pill, (350, -31, 62, 28), btn);
+        add(&button, BTN_CLOSE, pill, (418, -31, 70, 28), btn);
         // Edit boxes pad their text; line it up with the labels.
         const EM_SETMARGINS: u32 = 0xD3;
         for (_, c) in out.iter().filter(|(id, _)| [ID_ID, ID_PW].contains(id)) {
@@ -532,14 +601,26 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
         view.id = crate::service::hosted_id().map(|id| id.to_string()).unwrap_or_else(|| "--- --- ---".into());
         view.online = crate::service::is_running();
         if !view.status.ends_with("IS CONNECTED") {
-            view.status = if view.online {"SERVICE RUNNING".into()} else {format!("SERVICE {}", crate::service::status_text().to_uppercase())};
+            view.status = if view.online {
+                "SERVICE RUNNING".into()
+            } else {
+                format!("SERVICE {}", crate::service::status_text().to_uppercase())
+            };
         }
     }
     let (title, id, pw, status, online, note, update, support, service_only) = {
         let v = ui.view.lock().unwrap();
-        (v.title.clone(), v.id.clone(), v.password.clone(), v.status.clone(), v.online,
-         v.support.current().map(|(_,text)|format!("Support: {text}")).unwrap_or_else(||v.note.clone()),
-         v.update.is_some(), v.support.current().is_some(), v.service_only)
+        (
+            v.title.clone(),
+            v.id.clone(),
+            v.password.clone(),
+            v.status.clone(),
+            v.online,
+            v.support.current().map(|(_, text)| format!("Support: {text}")).unwrap_or_else(|| v.note.clone()),
+            v.update.is_some(),
+            v.support.current().is_some(),
+            v.service_only,
+        )
     };
     // In the update's slot (an update comes first): after the software
     // renderer failed to start, a way to give it another go.
@@ -562,17 +643,23 @@ fn refresh(ui: &mut Ui, hwnd: HWND) {
     set_text(ui, BTN_QUIT, "Quit");
     set_text(ui, BTN_STOP, "Stop support");
     set_text(ui, BTN_DISMISS, "Dismiss");
-    set_text(ui,BTN_MIN,"Minimize");
-    set_text(ui,BTN_CLOSE,"Close");
+    set_text(ui, BTN_MIN, "Minimize");
+    set_text(ui, BTN_CLOSE, "Close");
     // SAFETY: live controls of our window.
     unsafe {
-        EnableWindow(control(ui, BTN_NEW), i32::from(ui.service_sender.as_ref().is_none_or(|s| s.connected()) && !pw.is_empty()));
-        EnableWindow(control(ui, BTN_COPY), i32::from(!pw.is_empty() && id.chars().filter(char::is_ascii_digit).count() == 9));
+        EnableWindow(
+            control(ui, BTN_NEW),
+            i32::from(ui.service_sender.as_ref().is_none_or(|s| s.connected()) && !pw.is_empty()),
+        );
+        EnableWindow(
+            control(ui, BTN_COPY),
+            i32::from(!pw.is_empty() && id.chars().filter(char::is_ascii_digit).count() == 9),
+        );
         ShowWindow(control(ui, BTN_UPDATE), if update { SW_SHOW } else { SW_HIDE });
         ShowWindow(control(ui, BTN_FULL), if full { SW_SHOW } else { SW_HIDE });
         ShowWindow(control(ui, BTN_STOP), if support { SW_SHOW } else { SW_HIDE });
         ShowWindow(control(ui, BTN_DISMISS), if support { SW_SHOW } else { SW_HIDE });
-        EnableWindow(control(ui, BTN_STOP), i32::from(ui.service_sender.as_ref().is_none_or(|s|s.connected())));
+        EnableWindow(control(ui, BTN_STOP), i32::from(ui.service_sender.as_ref().is_none_or(|s| s.connected())));
         if online != ui.online {
             ui.online = online;
             ONLINE.store(online, Ordering::Relaxed);
@@ -647,7 +734,9 @@ fn save_screenshot(hwnd: HWND, path: &std::path::Path) -> Result<()> {
 /// asked (GDI's own shapes are jagged), plus 2 px black seams at `seams`
 /// (x offsets), blended over the background.
 unsafe fn bar(hdc: HDC, at: RECT, color: u32, round: (bool, bool), seams: &[i32]) {
-    unsafe { rounded_bar(hdc, at, color, round, seams, (at.bottom-at.top) as f32/2.0); }
+    unsafe {
+        rounded_bar(hdc, at, color, round, seams, (at.bottom - at.top) as f32 / 2.0);
+    }
 }
 
 unsafe fn rounded_bar(hdc: HDC, at: RECT, color: u32, round: (bool, bool), seams: &[i32], radius: f32) {
@@ -671,7 +760,7 @@ unsafe fn rounded_bar(hdc: HDC, at: RECT, color: u32, round: (bool, bool), seams
             } else {
                 fx
             };
-            let cy = fy.clamp(r, h as f32-r);
+            let cy = fy.clamp(r, h as f32 - r);
             let d = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() - r;
             let cover = (0.5 - d).clamp(0.0, 1.0);
             let ink = if seams.iter().any(|&sx| qx == sx || qx == sx - 1) { [0.0; 3] } else { fg };
@@ -690,14 +779,30 @@ unsafe fn rounded_bar(hdc: HDC, at: RECT, color: u32, round: (bool, bool), seams
         ..unsafe { std::mem::zeroed() }
     };
     // SAFETY: `px` holds w*h 32-bit pixels as described by `info`.
-    unsafe { SetDIBitsToDevice(hdc, at.left, at.top, w as u32, h as u32, 0, 0, 0, h as u32, px.as_ptr().cast(), &info, DIB_RGB_COLORS) };
+    unsafe {
+        SetDIBitsToDevice(
+            hdc,
+            at.left,
+            at.top,
+            w as u32,
+            h as u32,
+            0,
+            0,
+            0,
+            h as u32,
+            px.as_ptr().cast(),
+            &info,
+            DIB_RGB_COLORS,
+        )
+    };
 }
 
 /// A button drawn as the app's pill: colour, black capitals, seams near the
 /// ends (white while pressed).
 unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
     let mut label_buffer = [0u16; 64];
-    let length = unsafe { GetWindowTextW(d.hwndItem, label_buffer.as_mut_ptr(), label_buffer.len() as i32) }.max(0) as usize;
+    let length =
+        unsafe { GetWindowTextW(d.hwndItem, label_buffer.as_mut_ptr(), label_buffer.len() as i32) }.max(0) as usize;
     let update_label = String::from_utf16_lossy(&label_buffer[..length]).to_uppercase();
     let (label, color) = match d.CtlID as i32 {
         BTN_NEW => ("NEW PASSWORD", VIOLET),
@@ -717,14 +822,16 @@ unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
     unsafe {
         let old_font = SelectObject(hdc, BUTTON_FONT.load(Ordering::Relaxed) as HFONT);
         let fill = if d.itemState & ODS_SELECTED != 0 { WHITE } else { color };
-        if [BTN_MIN,BTN_CLOSE].contains(&(d.CtlID as i32)) {
+        if [BTN_MIN, BTN_CLOSE].contains(&(d.CtlID as i32)) {
             bar(hdc, r, fill, (true, true), &[]);
         } else {
             rounded_bar(hdc, r, fill, (true, true), &[], 6.0);
         }
         SetBkMode(hdc, TRANSPARENT as i32);
         SetTextColor(hdc, 0);
-        if [BTN_MIN,BTN_CLOSE].contains(&(d.CtlID as i32)) {draw_window_symbol(hdc,r,d.CtlID as i32,fill);} else {
+        if [BTN_MIN, BTN_CLOSE].contains(&(d.CtlID as i32)) {
+            draw_window_symbol(hdc, r, d.CtlID as i32, fill);
+        } else {
             DrawTextW(hdc, text.as_ptr(), -1, &mut r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         SelectObject(hdc, old_font);
@@ -732,29 +839,60 @@ unsafe fn draw_pill(d: &DRAWITEMSTRUCT) {
 }
 
 /// Rasterize the shared delta mark or close cross on a compact title button.
-unsafe fn draw_window_symbol(hdc:HDC,button:RECT,kind:i32,fill:u32) {
-    const N:usize=20;
-    let mut pixels=vec![0u32;N*N];
-    let channels=|color:u32|[(color&255) as f32,((color>>8)&255) as f32,((color>>16)&255) as f32];
-    let (fg,bg)=(channels(BG),channels(fill));
-    for y in 0..N {for x in 0..N {
-        let mut coverage=0.0;
-        for sy in 0..4 {for sx in 0..4 {
-            let u=(x as f32+(sx as f32+0.5)/4.0)/N as f32;
-            let v=(y as f32+(sy as f32+0.5)/4.0)/N as f32;
-            let ink=if kind==BTN_MIN {theme::logo_shade(1.0-u,1.0-v).is_some()} else {
-                (0.15..0.85).contains(&u)&&(0.15..0.85).contains(&v)&&((u-v).abs()<0.07||(u+v-1.0).abs()<0.07)
-            };
-            if ink {coverage+=1.0/16.0;}
-        }}
-        let c=|i:usize|(bg[i]+(fg[i]-bg[i])*coverage) as u32;
-        pixels[y*N+x]=c(0)<<16|c(1)<<8|c(2);
-    }}
+unsafe fn draw_window_symbol(hdc: HDC, button: RECT, kind: i32, fill: u32) {
+    const N: usize = 20;
+    let mut pixels = vec![0u32; N * N];
+    let channels = |color: u32| [(color & 255) as f32, ((color >> 8) & 255) as f32, ((color >> 16) & 255) as f32];
+    let (fg, bg) = (channels(BG), channels(fill));
+    for y in 0..N {
+        for x in 0..N {
+            let mut coverage = 0.0;
+            for sy in 0..4 {
+                for sx in 0..4 {
+                    let u = (x as f32 + (sx as f32 + 0.5) / 4.0) / N as f32;
+                    let v = (y as f32 + (sy as f32 + 0.5) / 4.0) / N as f32;
+                    let ink = if kind == BTN_MIN {
+                        theme::logo_shade(1.0 - u, 1.0 - v).is_some()
+                    } else {
+                        (0.15..0.85).contains(&u)
+                            && (0.15..0.85).contains(&v)
+                            && ((u - v).abs() < 0.07 || (u + v - 1.0).abs() < 0.07)
+                    };
+                    if ink {
+                        coverage += 1.0 / 16.0;
+                    }
+                }
+            }
+            let c = |i: usize| (bg[i] + (fg[i] - bg[i]) * coverage) as u32;
+            pixels[y * N + x] = c(0) << 16 | c(1) << 8 | c(2);
+        }
+    }
     unsafe {
-        let mut info:BITMAPINFO=std::mem::zeroed();
-        info.bmiHeader=BITMAPINFOHEADER{biSize:size_of::<BITMAPINFOHEADER>() as u32,biWidth:N as i32,biHeight:-(N as i32),biPlanes:1,biBitCount:32,..std::mem::zeroed()};
-        let x=(button.left+button.right-N as i32)/2;let y=(button.top+button.bottom-N as i32)/2;
-        SetDIBitsToDevice(hdc,x,y,N as u32,N as u32,0,0,0,N as u32,pixels.as_ptr().cast(),&info,DIB_RGB_COLORS);
+        let mut info: BITMAPINFO = std::mem::zeroed();
+        info.bmiHeader = BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: N as i32,
+            biHeight: -(N as i32),
+            biPlanes: 1,
+            biBitCount: 32,
+            ..std::mem::zeroed()
+        };
+        let x = (button.left + button.right - N as i32) / 2;
+        let y = (button.top + button.bottom - N as i32) / 2;
+        SetDIBitsToDevice(
+            hdc,
+            x,
+            y,
+            N as u32,
+            N as u32,
+            0,
+            0,
+            0,
+            N as u32,
+            pixels.as_ptr().cast(),
+            &info,
+            DIB_RGB_COLORS,
+        );
     }
 }
 
@@ -768,11 +906,14 @@ unsafe fn paint_frame(hwnd: HWND) {
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
         let hdc = BeginPaint(hwnd, &mut ps);
-        bar(hdc,RECT{left:10,top:6,right:344,bottom:36},LAVENDER,(true,true),&[]);
-        let font=SelectObject(hdc,BUTTON_FONT.load(Ordering::Relaxed) as HFONT);
-        SetTextColor(hdc,BG);SetBkMode(hdc,TRANSPARENT as i32);
-        let text=wide("SLIPSTREAM REMOTE");let mut title=RECT{left:24,top:6,right:336,bottom:36};
-        DrawTextW(hdc,text.as_ptr(),-1,&mut title,DT_LEFT|DT_VCENTER|DT_SINGLELINE);SelectObject(hdc,font);
+        bar(hdc, RECT { left: 10, top: 6, right: 344, bottom: 36 }, LAVENDER, (true, true), &[]);
+        let font = SelectObject(hdc, BUTTON_FONT.load(Ordering::Relaxed) as HFONT);
+        SetTextColor(hdc, BG);
+        SetBkMode(hdc, TRANSPARENT as i32);
+        let text = wide("SLIPSTREAM REMOTE");
+        let mut title = RECT { left: 24, top: 6, right: 336, bottom: 36 };
+        DrawTextW(hdc, text.as_ptr(), -1, &mut title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(hdc, font);
         for (strip, y) in [(&TOP[..], 48), (&BOTTOM[..], HEIGHT - 22)] {
             let n = strip.len();
             for (i, &(l, r, color)) in strip.iter().enumerate() {
@@ -785,12 +926,22 @@ unsafe fn paint_frame(hwnd: HWND) {
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if msg==WM_NCHITTEST {
-        let mut point=POINT{x:(lparam as i16) as i32,y:((lparam>>16) as i16) as i32};
-        unsafe{ScreenToClient(hwnd,&mut point);}
-        if point.y>=0&&point.y<40&&point.x<350{return HTCAPTION as LRESULT;}
+    if msg == WM_NCHITTEST {
+        let mut point = POINT { x: (lparam as i16) as i32, y: ((lparam >> 16) as i16) as i32 };
+        unsafe {
+            ScreenToClient(hwnd, &mut point);
+        }
+        if point.y >= 0 && point.y < 40 && point.x < 350 {
+            return HTCAPTION as LRESULT;
+        }
     }
-    if msg==WM_APP+3 {unsafe{ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);};return 0;}
+    if msg == WM_APP + 3 {
+        unsafe {
+            ShowWindow(hwnd, SW_RESTORE);
+            SetForegroundWindow(hwnd);
+        };
+        return 0;
+    }
     if msg == WM_DRAWITEM {
         // SAFETY: WM_DRAWITEM's lparam is a DRAWITEMSTRUCT.
         let d = unsafe { &*(lparam as *const DRAWITEMSTRUCT) };
@@ -862,8 +1013,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             WM_COMMAND => {
                 match (wparam & 0xffff) as i32 {
-                    BTN_MIN=>unsafe{ShowWindow(hwnd,SW_MINIMIZE);},
-                    BTN_CLOSE=>unsafe{DestroyWindow(hwnd);},
+                    BTN_MIN => unsafe {
+                        ShowWindow(hwnd, SW_MINIMIZE);
+                    },
+                    BTN_CLOSE => unsafe {
+                        DestroyWindow(hwnd);
+                    },
                     BTN_NEW => {
                         if let Some(sender) = &ui.service_sender {
                             sender.regenerate_password();
@@ -878,11 +1033,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         copy(hwnd, &format!("ID: {}\r\nPassword: {}", v.id, v.password));
                     }
                     BTN_DISMISS | BTN_STOP => {
-                        let mut v=ui.view.lock().unwrap();
-                        if let Some((session,_))=v.support.current() {
+                        let mut v = ui.view.lock().unwrap();
+                        if let Some((session, _)) = v.support.current() {
                             if (wparam & 0xffff) as i32 == BTN_STOP {
-                                if let Some(sender)=&ui.service_sender {sender.disconnect(session);}
-                                else {ui.client.disconnect_host_session(session);}
+                                if let Some(sender) = &ui.service_sender {
+                                    sender.disconnect(session);
+                                } else {
+                                    ui.client.disconnect_host_session(session);
+                                }
                             }
                             v.support.remove(session);
                         }
@@ -898,7 +1056,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 }
                 Some(0)
             }
-            WM_TIMER if wparam == TIMER_SERVICE => { refresh(ui, hwnd); Some(0) }
+            WM_TIMER if wparam == TIMER_SERVICE => {
+                refresh(ui, hwnd);
+                Some(0)
+            }
             WM_TIMER if wparam == TIMER_SCREENSHOT => {
                 if let Some(path) = ui.screenshot.take()
                     && let Err(e) = save_screenshot(hwnd, &path)
@@ -932,8 +1093,14 @@ fn link(ui: &Ui, url: &str) {
                 let allowed = match current {
                     None => true,
                     Some(current) => {
-                        let new = cfg.org.as_deref().map(|org| format!("{org} ({})", cfg.server)).unwrap_or_else(|| cfg.server.clone());
-                        tokio::task::spawn_blocking(move || confirm_station_switch(&current, &new)).await.unwrap_or(false)
+                        let new = cfg
+                            .org
+                            .as_deref()
+                            .map(|org| format!("{org} ({})", cfg.server))
+                            .unwrap_or_else(|| cfg.server.clone());
+                        tokio::task::spawn_blocking(move || confirm_station_switch(&current, &new))
+                            .await
+                            .unwrap_or(false)
                     }
                 };
                 if allowed {
@@ -967,13 +1134,19 @@ fn retry_full_window(ui: &Ui) {
 fn install_update(ui: &Ui) {
     let (info, service_only) = {
         let mut view = ui.view.lock().unwrap();
-        if view.installing { return; }
+        if view.installing {
+            return;
+        }
         let Some(info) = view.update.clone() else { return };
         view.installing = true;
         (info, view.service_only)
     };
     let (client, view) = (ui.client.clone(), ui.view.clone());
-    view.lock().unwrap().note = if service_only { "Updating Windows service from this app…".into() } else { format!("Installing {}…", info.label()) };
+    view.lock().unwrap().note = if service_only {
+        "Updating Windows service from this app…".into()
+    } else {
+        format!("Installing {}…", info.label())
+    };
     wake(WM_REFRESH);
     ui.rt.spawn(async move {
         let result = if service_only {
@@ -986,7 +1159,10 @@ fn install_update(ui: &Ui) {
             v.installing = false;
             match result {
                 Ok(Some(exe)) => v.relaunch = Some(exe),
-                Ok(None) => { v.update = None; v.note = "Windows service updated. This window stays open.".into(); }
+                Ok(None) => {
+                    v.update = None;
+                    v.note = "Windows service updated. This window stays open.".into();
+                }
                 Err(e) => v.note = format!("The update failed: {e:#}"),
             }
         }

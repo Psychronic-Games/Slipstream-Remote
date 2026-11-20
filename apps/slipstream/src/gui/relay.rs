@@ -62,7 +62,12 @@ fn fold_button(open: bool) -> eframe::egui::Button<'static> {
 /// The network's name after `DIRECT-ss-`: Android allows 32 bytes in all.
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 fn clean_name(name: &str) -> String {
-    name.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_')).take(22).collect::<String>().trim().to_string()
+    name.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+        .take(22)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
@@ -96,7 +101,8 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
     let group = phone::relay_group();
     let band = app.client.with_settings(|s| s.app.relay_band.clone());
     if !app.relay.phone.loaded {
-        let (mut name, mut password) = app.client.with_settings(|s| (s.app.relay_name.clone(), s.app.relay_password.clone()));
+        let (mut name, mut password) =
+            app.client.with_settings(|s| (s.app.relay_name.clone(), s.app.relay_password.clone()));
         // The first time only: a name and a password to start from.
         if name.is_empty() {
             name = "Slipstream".into();
@@ -142,7 +148,9 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
         });
         let (name, password) = (clean_name(&app.relay.phone.name), app.relay.phone.password.clone());
         if !password_ok(&password) {
-            ui.label(RichText::new("The password needs 8 to 63 characters (letters, digits, symbols).").color(pal::RED));
+            ui.label(
+                RichText::new("The password needs 8 to 63 characters (letters, digits, symbols).").color(pal::RED),
+            );
         }
 
         // Advanced: the Wi-Fi band.
@@ -162,9 +170,13 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
                     }
                 }
             });
-            ui.label(RichText::new("Automatic matches this phone's own Wi-Fi channel. 2.4 GHz reaches every device; 5 GHz is faster.")
+            ui.label(
+                RichText::new(
+                    "Automatic matches this phone's own Wi-Fi channel. 2.4 GHz reaches every device; 5 GHz is faster.",
+                )
                 .small()
-                .color(pal::DIM));
+                .color(pal::DIM),
+            );
         }
         ui.add_space(8.0);
         match &group {
@@ -189,9 +201,13 @@ fn phone_ui(app: &mut App, ui: &mut Ui) {
             RelayGroup::Up { name, passphrase, joined, linked, connections, up, down, phone_wifi, .. } => {
                 ui.label(RichText::new("RELAY ACTIVE").font(theme::display_bold(18.0)).color(pal::GREEN));
                 if *phone_wifi {
-                    ui.label(RichText::new("This phone is also connected to a Wi-Fi network. If computers can't join or keep \
-                                            dropping, disconnect the phone from that network (keep Wi-Fi on).")
-                        .color(pal::GOLD));
+                    ui.label(
+                        RichText::new(
+                            "This phone is also connected to a Wi-Fi network. If computers can't join or keep \
+                                            dropping, disconnect the phone from that network (keep Wi-Fi on).",
+                        )
+                        .color(pal::GOLD),
+                    );
                 }
                 ui.label(RichText::new(format!("Wi-Fi network: {name}")).font(theme::mono(16.0)).color(pal::TEXT));
                 ui.label(RichText::new(format!("Password: {passphrase}")).font(theme::mono(16.0)).color(pal::TEXT));
@@ -271,7 +287,9 @@ fn on_phone_network(phone: std::net::IpAddr) -> bool {
         return false;
     }
     match (socket.local_addr().map(|a| a.ip()), phone) {
-        (Ok(std::net::IpAddr::V4(me)), std::net::IpAddr::V4(phone)) => me.octets()[..3] == phone.octets()[..3] && me != phone,
+        (Ok(std::net::IpAddr::V4(me)), std::net::IpAddr::V4(phone)) => {
+            me.octets()[..3] == phone.octets()[..3] && me != phone
+        }
         _ => false,
     }
 }
@@ -281,11 +299,15 @@ fn computer_tick(app: &mut App, ctx: &egui::Context) {
     use std::sync::atomic::Ordering;
     let now = std::time::Instant::now();
     let idle = app.relay.computer.state.lock().unwrap().idle();
-    if idle && !app.relay.computer.probing.load(Ordering::Relaxed) && app.relay.computer.next_probe.is_none_or(|t| now >= t) {
+    if idle
+        && !app.relay.computer.probing.load(Ordering::Relaxed)
+        && app.relay.computer.next_probe.is_none_or(|t| now >= t)
+    {
         app.relay.computer.next_probe = Some(now + std::time::Duration::from_secs(3));
         app.relay.computer.probing.store(true, Ordering::Relaxed);
         let (phone, _) = addresses(app);
-        let (found, probing, wake) = (app.relay.computer.found.clone(), app.relay.computer.probing.clone(), ctx.clone());
+        let (found, probing, wake) =
+            (app.relay.computer.found.clone(), app.relay.computer.probing.clone(), ctx.clone());
         app.rt.spawn(async move {
             let id = if on_phone_network(phone) {
                 let hello = std::net::SocketAddr::new(phone, slipstream_relay::proto::PORT);
@@ -340,15 +362,29 @@ fn computer_ui(app: &mut App, ui: &mut Ui) {
         match &state {
             State::Idle | State::Ended(_) | State::Failed(_) => {
                 match &found {
-                    Some(_) => ui.label(RichText::new("◆ PHONE RELAY FOUND ON THIS NETWORK").font(theme::display(16.0)).color(pal::GREEN)),
-                    None => ui.label(RichText::new("No phone relay on this network yet: join the phone's DIRECT-ss-… Wi-Fi network.").color(pal::DIM)),
+                    Some(_) => ui.label(
+                        RichText::new("◆ PHONE RELAY FOUND ON THIS NETWORK")
+                            .font(theme::display(16.0))
+                            .color(pal::GREEN),
+                    ),
+                    None => ui.label(
+                        RichText::new(
+                            "No phone relay on this network yet: join the phone's DIRECT-ss-… Wi-Fi network.",
+                        )
+                        .color(pal::DIM),
+                    ),
                 };
                 if theme::pill(ui, "Connect", pal::GREEN).clicked() {
                     connect(app, ui.ctx());
                 }
                 match &state {
                     State::Ended(why) => {
-                        ui.label(RichText::new(format!("Disconnected: {why}. This computer's network settings are back as they were.")).color(pal::DIM));
+                        ui.label(
+                            RichText::new(format!(
+                                "Disconnected: {why}. This computer's network settings are back as they were."
+                            ))
+                            .color(pal::DIM),
+                        );
                     }
                     State::Failed(why) => {
                         ui.label(RichText::new(why).color(pal::RED));
@@ -372,7 +408,9 @@ fn computer_ui(app: &mut App, ui: &mut Ui) {
                 }
             }
             State::Up(s) => {
-                ui.label(RichText::new("CONNECTED THROUGH THE PHONE").font(theme::display_bold(18.0)).color(pal::GREEN));
+                ui.label(
+                    RichText::new("CONNECTED THROUGH THE PHONE").font(theme::display_bold(18.0)).color(pal::GREEN),
+                );
                 ui.label(RichText::new(traffic(s.flows as u64, s.up, s.down)).color(pal::BLUE));
                 if theme::pill(ui, "Disconnect", pal::RED).clicked() {
                     disconnect(app);
@@ -391,7 +429,10 @@ fn computer_ui(app: &mut App, ui: &mut Ui) {
         if app.relay.computer.advanced {
             let editable = state.idle();
             let mut automatic = !app.client.with_settings(|s| s.app.relay_manual);
-            if ui.checkbox(&mut automatic, "Connect by itself when this computer joins a phone it has connected through").changed() {
+            if ui
+                .checkbox(&mut automatic, "Connect by itself when this computer joins a phone it has connected through")
+                .changed()
+            {
                 app.client.update_settings(move |s| s.app.relay_manual = !automatic);
             }
             let (phone, dns) = app.client.with_settings(|s| (s.app.relay_phone.clone(), s.app.relay_dns.clone()));
@@ -399,18 +440,26 @@ fn computer_ui(app: &mut App, ui: &mut Ui) {
                 ui.label(RichText::new("PHONE").font(theme::display(15.0)).color(pal::LAVENDER));
                 let mut edit = phone.clone();
                 let hint = slipstream_relay::proto::PHONE_IP.to_string();
-                if ui.add_enabled(editable, theme::text_input(&mut edit).hint_text(hint).desired_width(180.0)).changed() {
+                if ui.add_enabled(editable, theme::text_input(&mut edit).hint_text(hint).desired_width(180.0)).changed()
+                {
                     app.client.update_settings(move |s| s.app.relay_phone = edit.trim().to_string());
                 }
                 ui.end_row();
                 ui.label(RichText::new("DNS").font(theme::display(15.0)).color(pal::LAVENDER));
                 let mut edit = dns.clone();
-                if ui.add_enabled(editable, theme::text_input(&mut edit).hint_text("1.1.1.1").desired_width(180.0)).changed() {
+                if ui
+                    .add_enabled(editable, theme::text_input(&mut edit).hint_text("1.1.1.1").desired_width(180.0))
+                    .changed()
+                {
                     app.client.update_settings(move |s| s.app.relay_dns = edit.trim().to_string());
                 }
                 ui.end_row();
             });
-            ui.label(RichText::new("Leave these empty for Android's usual address and Cloudflare's DNS.").small().color(pal::DIM));
+            ui.label(
+                RichText::new("Leave these empty for Android's usual address and Cloudflare's DNS.")
+                    .small()
+                    .color(pal::DIM),
+            );
             let bad = |v: &str| !v.is_empty() && v.parse::<std::net::IpAddr>().is_err();
             if bad(&phone) || bad(&dns) {
                 ui.label(RichText::new("Not an IP address: the usual one is used instead.").color(pal::RED));
@@ -474,7 +523,9 @@ async fn run_helper(
     let hello = std::net::SocketAddr::new(phone, slipstream_relay::proto::PORT);
     let phone_id = match slipstream_relay::find_phone(hello).await {
         Ok((id, _)) => id.to_string(),
-        Err(_) => bail!("No phone relay answered at {phone}. Start the relay on the phone and join its DIRECT-ss-… Wi-Fi network first."),
+        Err(_) => bail!(
+            "No phone relay answered at {phone}. Start the relay on the phone and join its DIRECT-ss-… Wi-Fi network first."
+        ),
     };
     set(State::Elevating);
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
@@ -608,7 +659,10 @@ async fn launch_elevated(args: Vec<String>) -> anyhow::Result<()> {
             line.push_str(&quote(a));
         }
         line.push_str(" >/dev/null 2>&1 &");
-        let script = format!("do shell script \"{}\" with administrator privileges", line.replace('\\', "\\\\").replace('"', "\\\""));
+        let script = format!(
+            "do shell script \"{}\" with administrator privileges",
+            line.replace('\\', "\\\\").replace('"', "\\\"")
+        );
         let status = tokio::process::Command::new("osascript").arg("-e").arg(script).status().await?;
         if !status.success() {
             bail!("Administrator approval was cancelled.");

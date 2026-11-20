@@ -83,7 +83,8 @@ pub fn pick_adapter(adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'
             Ok(a.clone())
         }
         None => {
-            let found: Vec<String> = adapters.iter().map(|a| format!("{} ({:?})", a.get_info().name, a.get_info().backend)).collect();
+            let found: Vec<String> =
+                adapters.iter().map(|a| format!("{} ({:?})", a.get_info().name, a.get_info().backend)).collect();
             Err(format!(
                 "no graphics adapter can draw the window (found: {}). Update the graphics driver, or use `slipstream host` on this machine instead.",
                 if found.is_empty() { "none".to_string() } else { found.join(", ") }
@@ -95,7 +96,9 @@ pub fn pick_adapter(adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'
 /// A renderer that runs on the processor (Mesa llvmpipe, Windows' WARP).
 pub fn draws_on_processor(info: &wgpu::AdapterInfo) -> bool {
     info.device_type == wgpu::DeviceType::Cpu
-        || ["llvmpipe", "softpipe", "swiftshader", "microsoft basic render"].iter().any(|n| info.name.to_lowercase().contains(n))
+        || ["llvmpipe", "softpipe", "swiftshader", "microsoft basic render"]
+            .iter()
+            .any(|n| info.name.to_lowercase().contains(n))
 }
 
 /// "Direct3D 12 · Intel(R) HD Graphics 4600 (driver 20.19.15.4531)": what
@@ -230,11 +233,8 @@ impl VideoPipeline {
         }
         s.serial = cb.serial;
         let (cw, ch) = (f.width.div_ceil(2), f.height.div_ceil(2));
-        let planes: [(&[u8], u32, u32, u32); 3] = [
-            (&f.y, f.y_stride, f.width, f.height),
-            (&f.u, f.uv_stride, cw, ch),
-            (&f.v, f.uv_stride, cw, ch),
-        ];
+        let planes: [(&[u8], u32, u32, u32); 3] =
+            [(&f.y, f.y_stride, f.width, f.height), (&f.u, f.uv_stride, cw, ch), (&f.v, f.uv_stride, cw, ch)];
         for (tex, (data, stride, w, h)) in s.textures.iter().zip(planes) {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {

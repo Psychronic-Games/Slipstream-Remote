@@ -19,66 +19,57 @@ pub fn devices() -> Result<Vec<(u32, String)>> {
 pub fn start(index: u32) -> Result<FrameStream> {
     #[cfg(windows)]
     media_foundation()?;
-    use nokhwa::{
-        pixel_format::RgbFormat,
-        utils::FrameFormat,
-    };
+    use nokhwa::{pixel_format::RgbFormat, utils::FrameFormat};
     let slot = crate::FrameSlot::new();
     let producer = slot.clone();
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    std::thread::Builder::new()
-        .name("meeting-camera".into())
-        .spawn(move || {
-            let opened = desktop::open(index);
-            let mut camera = match opened {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = tx.send(Err(format!("Camera: {e:#}")));
-                    return;
-                }
-            };
-            if tx.send(Ok(())).is_err() {
+    std::thread::Builder::new().name("meeting-camera".into()).spawn(move || {
+        let opened = desktop::open(index);
+        let mut camera = match opened {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx.send(Err(format!("Camera: {e:#}")));
                 return;
             }
-            while !producer.is_closed() {
-                let next = (|| {
-                    let buffer = camera.frame()?;
-                    let size = buffer.resolution();
-                    anyhow::ensure!(
-                        size.width() <= 3840
-                            && size.height() <= 3840
-                            && u64::from(size.width()) * u64::from(size.height()) <= 3840 * 2160,
-                        "Camera resolution is too large"
-                    );
-                    let rgba = if buffer.source_frame_format() == FrameFormat::MJPEG {
-                        image::load_from_memory_with_format(
-                            buffer.buffer(),
-                            image::ImageFormat::Jpeg,
-                        )?
-                        .to_rgba8()
-                    } else {
-                        let rgb = buffer.decode_image::<RgbFormat>()?;
-                        image::DynamicImage::ImageRgb8(rgb).into_rgba8()
-                    };
-                    let (width, height) = rgba.dimensions();
-                    Ok(crate::RawFrame {
-                        width,
-                        height,
-                        stride: width * 4,
-                        format: crate::PixelFormat::Rgba,
-                        data: rgba.into_raw(),
-                    })
-                })();
-                match next {
-                    Ok(frame) => producer.put(frame),
-                    Err(e) => {
-                        producer.fail(format!("Camera stopped: {e:#}"));
-                        break;
-                    }
+        };
+        if tx.send(Ok(())).is_err() {
+            return;
+        }
+        while !producer.is_closed() {
+            let next = (|| {
+                let buffer = camera.frame()?;
+                let size = buffer.resolution();
+                anyhow::ensure!(
+                    size.width() <= 3840
+                        && size.height() <= 3840
+                        && u64::from(size.width()) * u64::from(size.height()) <= 3840 * 2160,
+                    "Camera resolution is too large"
+                );
+                let rgba = if buffer.source_frame_format() == FrameFormat::MJPEG {
+                    image::load_from_memory_with_format(buffer.buffer(), image::ImageFormat::Jpeg)?.to_rgba8()
+                } else {
+                    let rgb = buffer.decode_image::<RgbFormat>()?;
+                    image::DynamicImage::ImageRgb8(rgb).into_rgba8()
+                };
+                let (width, height) = rgba.dimensions();
+                Ok(crate::RawFrame {
+                    width,
+                    height,
+                    stride: width * 4,
+                    format: crate::PixelFormat::Rgba,
+                    data: rgba.into_raw(),
+                })
+            })();
+            match next {
+                Ok(frame) => producer.put(frame),
+                Err(e) => {
+                    producer.fail(format!("Camera stopped: {e:#}"));
+                    break;
                 }
             }
-            let _ = camera.stop_stream();
-        })?;
+        }
+        let _ = camera.stop_stream();
+    })?;
     match rx.recv_timeout(std::time::Duration::from_secs(5)) {
         Ok(Ok(())) => Ok(FrameStream::new(slot)),
         Ok(Err(e)) => {
@@ -95,22 +86,13 @@ pub fn start(index: u32) -> Result<FrameStream> {
 pub fn start(index: u32) -> Result<FrameStream> {
     start_cancellable(index, std::sync::Arc::default())
 }
-pub fn start_cancellable(
-    index: u32,
-    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> Result<FrameStream> {
+pub fn start_cancellable(index: u32, cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<FrameStream> {
     use std::sync::atomic::Ordering;
-    anyhow::ensure!(
-        !cancelled.load(Ordering::Acquire),
-        "Camera sharing cancelled"
-    );
+    anyhow::ensure!(!cancelled.load(Ordering::Acquire), "Camera sharing cancelled");
     #[cfg(not(target_os = "android"))]
     {
         let capture = start(index)?;
-        anyhow::ensure!(
-            !cancelled.load(Ordering::Acquire),
-            "Camera sharing cancelled"
-        );
+        anyhow::ensure!(!cancelled.load(Ordering::Acquire), "Camera sharing cancelled");
         Ok(capture)
     }
     #[cfg(target_os = "android")]
@@ -118,9 +100,7 @@ pub fn start_cancellable(
         let epoch = crate::android::camera_start(index)?;
         let started = std::time::Instant::now();
         while crate::android::camera_dimensions().is_none() {
-            if cancelled.load(Ordering::Acquire)
-                || started.elapsed() > std::time::Duration::from_secs(60)
-            {
+            if cancelled.load(Ordering::Acquire) || started.elapsed() > std::time::Duration::from_secs(60) {
                 crate::android::camera_stop(epoch);
                 anyhow::bail!("Camera permission was cancelled or did not arrive in time");
             }
@@ -130,8 +110,7 @@ pub fn start_cancellable(
             crate::android::camera_stop(epoch);
             anyhow::bail!("Camera sharing cancelled");
         }
-        Ok(crate::android::camera_stream()?
-            .with_cleanup(move || crate::android::camera_stop(epoch)))
+        Ok(crate::android::camera_stream()?.with_cleanup(move || crate::android::camera_stop(epoch)))
     }
 }
 pub fn default_camera() -> Result<FrameStream> {
@@ -147,8 +126,7 @@ fn media_foundation() -> Result<()> {
         Foundation::FreeLibrary,
         System::LibraryLoader::{LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW},
     };
-    static AVAILABLE: std::sync::OnceLock<std::result::Result<(), String>> =
-        std::sync::OnceLock::new();
+    static AVAILABLE: std::sync::OnceLock<std::result::Result<(), String>> = std::sync::OnceLock::new();
     AVAILABLE.get_or_init(|| {
         let mut loaded = Vec::new();
         for name in ["mf.dll", "mfplat.dll", "mfreadwrite.dll"] {
@@ -203,11 +181,7 @@ pub fn yuv420(
             && v.len() >= uv_row * (chroma_height - 1) + chroma_last,
         "Camera planes are shorter than their strides"
     );
-    let (out_w, out_h) = if rotation == 90 || rotation == 270 {
-        (height, width)
-    } else {
-        (width, height)
-    };
+    let (out_w, out_h) = if rotation == 90 || rotation == 270 { (height, width) } else { (width, height) };
     let mut output = vec![0; out_w * out_h * 4];
     for row in 0..height {
         for col in 0..width {

@@ -25,8 +25,10 @@ key kept on the build machine. Android is currently built locally.
 
 - [x] Create the GitHub repository, configure its remote, and push `main`.
 - [x] Get all three CI jobs green (2026-10-23).
-- [ ] Add `cargo clippy --workspace --all-targets --locked -- -D warnings`
-      to CI and verify it on all three OSes.
+- [x] Add `cargo clippy --workspace --all-targets --locked -- -D warnings`
+      and `cargo fmt --all --check` to CI (Linux runner; 2026-11-19).
+- [ ] Run Clippy on the Windows and macOS runners too, once their
+      platform-only code is Clippy-clean.
 - [x] Prepare the tag release workflow and local station assembly from
       downloaded CI artifacts.
 - [ ] Configure the update public key and, after acceptance, SignPath

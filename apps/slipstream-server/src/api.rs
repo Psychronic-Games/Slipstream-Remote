@@ -131,11 +131,7 @@ pub async fn handle(
             }
             let nonce = slipstream_core::meeting::random_secret();
             let token = app.access_key.as_ref().map(|key| {
-                slipstream_core::meeting::relay_token(
-                    key,
-                    slipstream_core::meeting::now() + 4 * 3600,
-                    &nonce[..32],
-                )
+                slipstream_core::meeting::relay_token(key, slipstream_core::meeting::now() + 4 * 3600, &nonce[..32])
             });
             Json(json!({"ok":true,"token":token})).into_response()
         }
@@ -186,7 +182,9 @@ pub async fn handle(
                     let addr: Value = serde_json::from_str(&addr_json).unwrap_or(Value::Null);
                     Json(json!({ "ok": true, "status": "online", "addr": addr, "info": info })).into_response()
                 }
-                Ok(Found::Offline { info }) => Json(json!({ "ok": true, "status": "offline", "info": info })).into_response(),
+                Ok(Found::Offline { info }) => {
+                    Json(json!({ "ok": true, "status": "offline", "info": info })).into_response()
+                }
                 Ok(Found::Unknown) => Json(json!({ "ok": true, "status": "not_found" })).into_response(),
                 Err(e) => {
                     warn!("lookup failed: {e:#}");
@@ -255,17 +253,26 @@ pub async fn handle(
     }
 }
 
-fn fresh_timestamp(timestamp:i64,current:i64)->bool {timestamp.abs_diff(current)<=MAX_SKEW as u64}
+fn fresh_timestamp(timestamp: i64, current: i64) -> bool {
+    timestamp.abs_diff(current) <= MAX_SKEW as u64
+}
 
 fn presence_ids(request: &Value) -> Result<Vec<DeviceId>, &'static str> {
-    let ids = request.get("ids").and_then(Value::as_array)
+    let ids = request
+        .get("ids")
+        .and_then(Value::as_array)
         .filter(|ids| ids.len() <= PRESENCE_BATCH_SIZE)
         .ok_or("presence needs a list of at most 500 device IDs")?;
-    ids.iter().map(|id| {
-        id.as_u64().and_then(|id| u32::try_from(id).ok())
-            .filter(|id| (DeviceId::MIN..=DeviceId::MAX).contains(id))
-            .map(DeviceId).ok_or("invalid presence device ID")
-    }).collect::<Result<BTreeSet<_>, _>>().map(|ids| ids.into_iter().collect())
+    ids.iter()
+        .map(|id| {
+            id.as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                .filter(|id| (DeviceId::MIN..=DeviceId::MAX).contains(id))
+                .map(DeviceId)
+                .ok_or("invalid presence device ID")
+        })
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map(|ids| ids.into_iter().collect())
 }
 
 #[cfg(test)]
@@ -307,28 +314,31 @@ mod tests {
         assert_eq!(presence_ids(&json!({"ids": [123456789, 123456789]})).unwrap(), vec![DeviceId(123456789)]);
         assert!(presence_ids(&json!({"ids": []})).unwrap().is_empty());
         assert!(presence_ids(&json!({"ids": vec![123456789; 501]})).is_err());
-        for invalid in [json!(null), json!("123456789"), json!(true), json!(42), json!(-123456789), json!(123456789.5)] {
+        for invalid in [json!(null), json!("123456789"), json!(true), json!(42), json!(-123456789), json!(123456789.5)]
+        {
             assert!(presence_ids(&json!({"ids": [invalid]})).is_err());
         }
     }
 
     #[test]
     fn client_addresses_ignore_spoofed_forwarding_prefixes() {
-        let proxy:SocketAddr="127.0.0.1:8000".parse().unwrap();
-        let direct:SocketAddr="198.51.100.10:8000".parse().unwrap();
-        let mut headers=HeaderMap::new();
-        headers.append("x-forwarded-for","203.0.113.99".parse().unwrap());
-        headers.append("x-forwarded-for","203.0.113.77, 198.51.100.20".parse().unwrap());
-        assert_eq!(client_ip(proxy,&headers),"198.51.100.20".parse::<IpAddr>().unwrap());
-        assert_eq!(client_ip(direct,&headers),direct.ip());
-        headers.insert("x-forwarded-for","203.0.113.77, invalid".parse().unwrap());
-        assert_eq!(client_ip(proxy,&headers),proxy.ip());
+        let proxy: SocketAddr = "127.0.0.1:8000".parse().unwrap();
+        let direct: SocketAddr = "198.51.100.10:8000".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.append("x-forwarded-for", "203.0.113.99".parse().unwrap());
+        headers.append("x-forwarded-for", "203.0.113.77, 198.51.100.20".parse().unwrap());
+        assert_eq!(client_ip(proxy, &headers), "198.51.100.20".parse::<IpAddr>().unwrap());
+        assert_eq!(client_ip(direct, &headers), direct.ip());
+        headers.insert("x-forwarded-for", "203.0.113.77, invalid".parse().unwrap());
+        assert_eq!(client_ip(proxy, &headers), proxy.ip());
     }
 
     #[test]
     fn timestamp_bounds_do_not_overflow() {
-        assert!(fresh_timestamp(1_000,1_000));assert!(fresh_timestamp(1_600,1_000));
-        assert!(!fresh_timestamp(1_601,1_000));assert!(!fresh_timestamp(i64::MIN,1_000));
-        assert!(!fresh_timestamp(i64::MAX,1_000));
+        assert!(fresh_timestamp(1_000, 1_000));
+        assert!(fresh_timestamp(1_600, 1_000));
+        assert!(!fresh_timestamp(1_601, 1_000));
+        assert!(!fresh_timestamp(i64::MIN, 1_000));
+        assert!(!fresh_timestamp(i64::MAX, 1_000));
     }
 }

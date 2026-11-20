@@ -12,10 +12,7 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     println!("cargo:rustc-env=SLIPSTREAM_BUILD_UNIX={now}");
     let number = git(&["rev-list", "--count", "HEAD"]).unwrap_or_else(|| "0".into());
     let commit = git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "dev".into());

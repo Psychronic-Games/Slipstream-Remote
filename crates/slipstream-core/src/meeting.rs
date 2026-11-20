@@ -37,53 +37,32 @@ pub struct Invitation {
 }
 impl std::fmt::Debug for Invitation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Invitation")
-            .field("host", &self.address.id)
-            .field("title", &self.title)
-            .finish_non_exhaustive()
+        f.debug_struct("Invitation").field("host", &self.address.id).field("title", &self.title).finish_non_exhaustive()
     }
 }
 impl Invitation {
     pub fn encode(&self) -> Result<String> {
         self.validate()?;
-        Ok(format!(
-            "slipstream://meeting?i={}",
-            crate::directory::hex(&serde_json::to_vec(self)?)
-        ))
+        Ok(format!("slipstream://meeting?i={}", crate::directory::hex(&serde_json::to_vec(self)?)))
     }
     pub fn parse(text: &str) -> Result<Self> {
         ensure!(text.len() <= 16384, "Meeting invitation is too long");
-        let url = reqwest::Url::parse(text.trim())
-            .context("Paste a complete Slipstream meeting invitation")?;
-        ensure!(
-            url.scheme() == "slipstream" && url.host_str() == Some("meeting"),
-            "This is not a meeting invitation"
-        );
-        let encoded = url
-            .query_pairs()
-            .find(|(k, _)| k == "i")
-            .context("Meeting invitation is incomplete")?
-            .1
-            .into_owned();
+        let url = reqwest::Url::parse(text.trim()).context("Paste a complete Slipstream meeting invitation")?;
+        ensure!(url.scheme() == "slipstream" && url.host_str() == Some("meeting"), "This is not a meeting invitation");
+        let encoded =
+            url.query_pairs().find(|(k, _)| k == "i").context("Meeting invitation is incomplete")?.1.into_owned();
         let data = crate::directory::unhex(&encoded).context("Meeting invitation is damaged")?;
-        let invite: Self =
-            serde_json::from_slice(&data).context("Meeting invitation is damaged")?;
+        let invite: Self = serde_json::from_slice(&data).context("Meeting invitation is damaged")?;
         invite.validate()?;
         Ok(invite)
     }
     pub fn validate(&self) -> Result<()> {
-        ensure!(
-            self.version == VERSION,
-            "Update Slipstream to join this meeting"
-        );
+        ensure!(self.version == VERSION, "Update Slipstream to join this meeting");
         ensure!(
             self.token.len() == 64 && self.token.bytes().all(|b| b.is_ascii_hexdigit()),
             "Meeting invitation is damaged"
         );
-        ensure!(
-            self.expires > now() && self.expires <= now() + 24 * 3600,
-            "Meeting invitation has expired"
-        );
+        ensure!(self.expires > now() && self.expires <= now() + 24 * 3600, "Meeting invitation has expired");
         ensure!(
             self.title.chars().count() <= 80 && !self.title.chars().any(char::is_control),
             "Meeting title is too long"
@@ -147,17 +126,28 @@ pub enum ClientMessage {
     },
     Leave,
     /// Toggle this participant's reaction (an index below [`REACTIONS`]).
-    React { chat: u64, reaction: u8 },
+    React {
+        chat: u64,
+        reaction: u8,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
     State(State),
     Chat(Chat),
     Keyframe,
-    VideoAck { generation: u64, seq: u64 },
+    VideoAck {
+        generation: u64,
+        seq: u64,
+    },
     Ended(String),
     /// `participant` added (`on`) or took back a reaction to chat message `chat`.
-    Reaction { chat: u64, reaction: u8, participant: u64, on: bool },
+    Reaction {
+        chat: u64,
+        reaction: u8,
+        participant: u64,
+        on: bool,
+    },
 }
 #[derive(Serialize, Deserialize)]
 pub struct Video {
@@ -195,8 +185,7 @@ pub fn call_proof(
     target: EndpointId,
     invite: &Invitation,
 ) -> Result<[u8; 32]> {
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(key.unwrap_or("").as_bytes()).expect("HMAC accepts any key");
+    let mut mac = Hmac::<Sha256>::new_from_slice(key.unwrap_or("").as_bytes()).expect("HMAC accepts any key");
     mac.update(b"slipstream-call-v1\n");
     mac.update(nonce);
     mac.update(caller.as_bytes());
@@ -211,11 +200,7 @@ pub fn equal(a: &[u8], b: &[u8]) -> bool {
 pub enum CallMessage {
     Hello,
     Challenge([u8; 32]),
-    Offer {
-        name: String,
-        invitation: Invitation,
-        proof: [u8; 32],
-    },
+    Offer { name: String, invitation: Invitation, proof: [u8; 32] },
     Ringing,
     Answered,
     Declined(String),
@@ -227,10 +212,7 @@ pub fn relay_token(key: &str, expires: u64, nonce: &str) -> String {
     let body = format!("meeting1.{expires}.{nonce}");
     let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key");
     mac.update(body.as_bytes());
-    format!(
-        "{body}.{}",
-        crate::directory::hex(&mac.finalize().into_bytes())
-    )
+    format!("{body}.{}", crate::directory::hex(&mac.finalize().into_bytes()))
 }
 pub fn valid_relay_token(key: &str, token: &str) -> bool {
     if token.len() > 220 {
@@ -250,10 +232,7 @@ pub fn valid_relay_token(key: &str, token: &str) -> bool {
     if expires <= now() || expires > now() + 5 * 3600 {
         return false;
     }
-    equal(
-        relay_token(key, expires, fields[2]).as_bytes(),
-        token.as_bytes(),
-    )
+    equal(relay_token(key, expires, fields[2]).as_bytes(), token.as_bytes())
 }
 pub fn clean_name(name: &str) -> Result<String> {
     let name = name.trim();
@@ -272,14 +251,8 @@ mod tests {
         let token = relay_token("private", now() + 300, nonce);
         assert!(valid_relay_token("private", &token));
         assert!(!valid_relay_token("other", &token));
-        assert!(!valid_relay_token(
-            "private",
-            &relay_token("private", now() - 1, nonce)
-        ));
-        assert!(!valid_relay_token(
-            "private",
-            &relay_token("private", now() + 86400, nonce)
-        ));
+        assert!(!valid_relay_token("private", &relay_token("private", now() - 1, nonce)));
+        assert!(!valid_relay_token("private", &relay_token("private", now() + 86400, nonce)));
         assert!(!valid_relay_token("private", "private"));
     }
     #[test]
@@ -292,10 +265,7 @@ mod tests {
             expires: now() + 3600,
             public_relays: false,
         };
-        assert_eq!(
-            Invitation::parse(&invite.encode().unwrap()).unwrap().token,
-            invite.token
-        );
+        assert_eq!(Invitation::parse(&invite.encode().unwrap()).unwrap().token, invite.token);
         assert!(!format!("{invite:?}").contains(&invite.token));
         let mut expired = invite;
         expired.expires = now() - 1;

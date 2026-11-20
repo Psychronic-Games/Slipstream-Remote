@@ -2,9 +2,9 @@
 //! ScreenCaptureKit on macOS) or our pure-Rust X11 capture on Linux, and
 //! `enigo` for input.
 
-use std::{sync::mpsc, thread};
 #[cfg(not(target_os = "linux"))]
 use std::time::{Duration, Instant};
+use std::{sync::mpsc, thread};
 
 use anyhow::{Context, Result, anyhow};
 use enigo::{Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
@@ -16,9 +16,9 @@ use xcap::Monitor;
 
 #[cfg(not(target_os = "linux"))]
 use crate::FrameSlot;
-use crate::{Backend, FrameStream, HeldInputs, keymap};
 #[cfg(target_os = "windows")]
 use crate::win_cursor::{current as pointer_now, draw as draw_pointer};
+use crate::{Backend, FrameStream, HeldInputs, keymap};
 
 // macOS capture already shows the pointer.
 #[cfg(target_os = "macos")]
@@ -192,7 +192,12 @@ impl Backend for GenericBackend {
 /// Windows, a desktop switch ends DXGI duplication), false once the
 /// session closed the stream.
 #[cfg(target_os = "macos")]
-fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interval: Duration, origin: (i32, i32)) -> bool {
+fn record(
+    producer: &FrameSlot,
+    frames: &mpsc::Receiver<xcap::Frame>,
+    min_interval: Duration,
+    origin: (i32, i32),
+) -> bool {
     let poll = (min_interval / 2).max(Duration::from_millis(4));
     let mut last = Instant::now() - min_interval;
     let mut clean = None;
@@ -221,7 +226,13 @@ fn record(producer: &FrameSlot, frames: &mpsc::Receiver<xcap::Frame>, min_interv
         if let Some(p) = pointer {
             draw_pointer(&mut data, f.width, f.height, f.width * 4, origin, p, false);
         }
-        producer.put(RawFrame { width: f.width, height: f.height, stride: f.width * 4, format: PixelFormat::Rgba, data });
+        producer.put(RawFrame {
+            width: f.width,
+            height: f.height,
+            stride: f.width * 4,
+            format: PixelFormat::Rgba,
+            data,
+        });
         pace.add(last.elapsed());
     }
     false
@@ -273,7 +284,12 @@ fn windows_capture(producer: &FrameSlot, min_interval: Duration, origin: (i32, i
 /// pointer moves on a still screen go out too. True once duplication ended,
 /// false when the session closed the stream.
 #[cfg(target_os = "windows")]
-fn dxgi_frames(producer: &FrameSlot, dup: &mut crate::win_dxgi::Duplication, min_interval: Duration, origin: (i32, i32)) -> bool {
+fn dxgi_frames(
+    producer: &FrameSlot,
+    dup: &mut crate::win_dxgi::Duplication,
+    min_interval: Duration,
+    origin: (i32, i32),
+) -> bool {
     let poll = (min_interval / 2).max(Duration::from_millis(4)).as_millis() as u32;
     let mut last = Instant::now() - min_interval;
     let mut clean = Vec::new();
@@ -325,7 +341,13 @@ fn gdi_once(producer: &FrameSlot, origin: (i32, i32), (w, h): (u32, u32)) {
 /// GDI capture following the input desktop, until `switch` says to try
 /// something else (true) or the stream closes or fails (false).
 #[cfg(target_os = "windows")]
-fn gdi_until(producer: &FrameSlot, min_interval: Duration, origin: (i32, i32), size: (u32, u32), switch: impl Fn() -> bool) -> bool {
+fn gdi_until(
+    producer: &FrameSlot,
+    min_interval: Duration,
+    origin: (i32, i32),
+    size: (u32, u32),
+    switch: impl Fn() -> bool,
+) -> bool {
     let mut gdi: Option<crate::win_gdi::GdiCapture> = None;
     let mut failures = 0;
     let mut pace = crate::pace::Pace::new("screen capture (GDI)");
@@ -379,7 +401,6 @@ fn gdi_until(producer: &FrameSlot, min_interval: Duration, origin: (i32, i32), s
     }
     false
 }
-
 
 /// Fallback: polls screenshots at the frame rate.
 #[cfg(target_os = "macos")]

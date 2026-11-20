@@ -42,27 +42,14 @@ impl relay::AccessControl for KeyAccess {
     async fn on_connect(&self, req: &relay::ClientRequest) -> relay::Access {
         let endpoint = req.endpoint_id().to_string();
         let connection = req.connection_id().to_string();
-        let tunnel = req
-            .headers()
-            .get(TUNNEL_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse().ok());
+        let tunnel = req.headers().get(TUNNEL_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
         if let Some(key) = &self.key
-            && !req.auth_token().is_some_and(|t| {
-                crate::api::same_key(&t, key)
-                    || slipstream_core::meeting::valid_relay_token(key, &t)
-            })
+            && !req
+                .auth_token()
+                .is_some_and(|t| crate::api::same_key(&t, key) || slipstream_core::meeting::valid_relay_token(key, &t))
         {
-            self.log.deny(
-                &endpoint,
-                &connection,
-                tunnel,
-                "access_key_missing_or_invalid",
-                self.maximum,
-            );
-            return relay::Access::Deny {
-                reason: Some("this relay requires an access key".into()),
-            };
+            self.log.deny(&endpoint, &connection, tunnel, "access_key_missing_or_invalid", self.maximum);
+            return relay::Access::Deny { reason: Some("this relay requires an access key".into()) };
         }
         // Resolve before reserving capacity: cancellation during file/DB I/O
         // must not leak a slot before upstream creates its disconnect guard.
@@ -75,16 +62,8 @@ impl relay::AccessControl for KeyAccess {
             name: host.map(|h| h.1),
         };
         if self.log.admit(identity, tunnel, self.maximum).is_err() {
-            self.log.deny(
-                &endpoint,
-                &connection,
-                tunnel,
-                "connection_capacity_reached",
-                self.maximum,
-            );
-            return relay::Access::Deny {
-                reason: Some("relay is at capacity; try again shortly".into()),
-            };
+            self.log.deny(&endpoint, &connection, tunnel, "connection_capacity_reached", self.maximum);
+            return relay::Access::Deny { reason: Some("relay is at capacity; try again shortly".into()) };
         }
         relay::Access::Allow
     }
@@ -102,11 +81,7 @@ pub async fn spawn(
 ) -> Result<(relay::Server, SocketAddr)> {
     let mut cfg = relay::ServerConfig::default();
     let mut relay_cfg = relay::RelayConfig::new(SocketAddr::from(([127, 0, 0, 1], 0)));
-    relay_cfg.access = Arc::new(KeyAccess {
-        key: access_key,
-        maximum: max_connections,
-        log,
-    });
+    relay_cfg.access = Arc::new(KeyAccess { key: access_key, maximum: max_connections, log });
     relay_cfg.limits.client_rx = NonZeroU32::new(bytes_per_second).map(relay::ClientRateLimit::new);
     cfg.relay = Some(relay_cfg);
     let server = relay::Server::spawn(cfg).await.context("starting relay")?;
@@ -137,10 +112,7 @@ pub async fn proxy(State(app): State<Arc<App>>, mut req: Request) -> Response {
     // Replace external correlation headers, including when no ConnectInfo exists.
     req.headers_mut().remove(TUNNEL_HEADER);
     if let Some(tunnel) = tunnel {
-        req.headers_mut().insert(
-            TUNNEL_HEADER,
-            HeaderValue::from_str(&tunnel.to_string()).unwrap(),
-        );
+        req.headers_mut().insert(TUNNEL_HEADER, HeaderValue::from_str(&tunnel.to_string()).unwrap());
     }
     // Dropping this request future (the client disconnected while we waited
     // on the relay) must not leave its tunnel entry behind for ever.
@@ -154,26 +126,18 @@ pub async fn proxy(State(app): State<Arc<App>>, mut req: Request) -> Response {
     }
     let mut pending = Abandon(app.relay_log.clone(), tunnel);
     let Some(upstream) = app.relay_addr else {
-        app.relay_log
-            .request_failed(tunnel, &path, "relay_disabled", None, Some(404));
+        app.relay_log.request_failed(tunnel, &path, "relay_disabled", None, Some(404));
         return StatusCode::NOT_FOUND.into_response();
     };
     let client_upgrade = hyper::upgrade::on(&mut req);
     let stream = match tokio::net::TcpStream::connect(upstream).await {
         Ok(s) => s,
         Err(e) => {
-            app.relay_log.request_failed(
-                tunnel,
-                &path,
-                "upstream_connect_failed",
-                Some(e.to_string()),
-                Some(502),
-            );
+            app.relay_log.request_failed(tunnel, &path, "upstream_connect_failed", Some(e.to_string()), Some(502));
             return StatusCode::BAD_GATEWAY.into_response();
         }
     };
-    let (mut sender, conn) = match hyper::client::conn::http1::handshake(TokioIo::new(stream)).await
-    {
+    let (mut sender, conn) = match hyper::client::conn::http1::handshake(TokioIo::new(stream)).await {
         Ok(x) => x,
         Err(e) => {
             app.relay_log.request_failed(
@@ -191,22 +155,12 @@ pub async fn proxy(State(app): State<Arc<App>>, mut req: Request) -> Response {
             tracing::warn!(target: "slipstream_relay", event="relay_upstream_http_failed", tunnel, error=%e, "Relay upstream HTTP connection failed");
         }
     });
-    let path_and_query = req
-        .uri()
-        .path_and_query()
-        .map(|p| p.as_str().to_string())
-        .unwrap_or_else(|| "/".into());
+    let path_and_query = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
     *req.uri_mut() = path_and_query.parse().unwrap_or_default();
     let mut resp = match sender.send_request(req).await {
         Ok(r) => r,
         Err(e) => {
-            app.relay_log.request_failed(
-                tunnel,
-                &path,
-                "upstream_request_failed",
-                Some(e.to_string()),
-                Some(502),
-            );
+            app.relay_log.request_failed(tunnel, &path, "upstream_request_failed", Some(e.to_string()), Some(502));
             return StatusCode::BAD_GATEWAY.into_response();
         }
     };
@@ -219,23 +173,11 @@ pub async fn proxy(State(app): State<Arc<App>>, mut req: Request) -> Response {
             let (client, server) = match (client, server) {
                 (Ok(c), Ok(s)) => (c, s),
                 (Err(e), _) => {
-                    app.relay_log.request_failed(
-                        tunnel,
-                        &path,
-                        "client_upgrade_failed",
-                        Some(e.to_string()),
-                        None,
-                    );
+                    app.relay_log.request_failed(tunnel, &path, "client_upgrade_failed", Some(e.to_string()), None);
                     return;
                 }
                 (_, Err(e)) => {
-                    app.relay_log.request_failed(
-                        tunnel,
-                        &path,
-                        "upstream_upgrade_failed",
-                        Some(e.to_string()),
-                        None,
-                    );
+                    app.relay_log.request_failed(tunnel, &path, "upstream_upgrade_failed", Some(e.to_string()), None);
                     return;
                 }
             };
@@ -249,13 +191,7 @@ pub async fn proxy(State(app): State<Arc<App>>, mut req: Request) -> Response {
             }
         });
     } else if tunnel.is_some() {
-        app.relay_log.request_failed(
-            tunnel,
-            &path,
-            "websocket_upgrade_rejected",
-            None,
-            Some(resp.status().as_u16()),
-        );
+        app.relay_log.request_failed(tunnel, &path, "websocket_upgrade_rejected", None, Some(resp.status().as_u16()));
     }
     resp.map(Body::new)
 }
@@ -266,16 +202,9 @@ mod tests {
     use relay::AccessControl;
 
     fn request(token: &str) -> relay::ClientRequest {
-        let (parts, _) = axum::http::Request::builder()
-            .uri(format!("/relay?token={token}"))
-            .body(())
-            .unwrap()
-            .into_parts();
-        relay::ClientRequest::new(
-            iroh::SecretKey::generate().public(),
-            iroh_relay::http::ProtocolVersion::V2,
-            parts,
-        )
+        let (parts, _) =
+            axum::http::Request::builder().uri(format!("/relay?token={token}")).body(()).unwrap().into_parts();
+        relay::ClientRequest::new(iroh::SecretKey::generate().public(), iroh_relay::http::ProtocolVersion::V2, parts)
     }
     #[test]
     fn peer_addresses_use_the_socket_or_last_trusted_proxy_hop() {
@@ -287,61 +216,34 @@ mod tests {
                 .body(Body::empty())
                 .unwrap()
         };
-        assert_eq!(
-            peer_address(&request("192.0.2.5:1234", "198.51.100.99")),
-            Some("192.0.2.5".parse().unwrap())
-        );
+        assert_eq!(peer_address(&request("192.0.2.5:1234", "198.51.100.99")), Some("192.0.2.5".parse().unwrap()));
         assert_eq!(
             peer_address(&request("127.0.0.1:1234", "198.51.100.99, 192.0.2.5")),
             Some("192.0.2.5".parse().unwrap())
         );
-        assert_eq!(
-            peer_address(&request("127.0.0.1:1234", "not an address")),
-            Some("127.0.0.1".parse().unwrap())
-        );
+        assert_eq!(peer_address(&request("127.0.0.1:1234", "not an address")), Some("127.0.0.1".parse().unwrap()));
     }
     #[tokio::test]
     async fn capacity_preserves_key_checks_and_releases_slots() {
-        let access = KeyAccess {
-            key: Some("correct".into()),
-            maximum: 1,
-            log: Arc::new(RelayLog::default()),
-        };
+        let access = KeyAccess { key: Some("correct".into()), maximum: 1, log: Arc::new(RelayLog::default()) };
         let capture = crate::relay_log::tests::Capture::default();
-        let _guard = tracing::subscriber::set_default(crate::relay_log::tests::subscriber(
-            access.log.clone(),
-            capture.clone(),
-        ));
+        let _guard =
+            tracing::subscriber::set_default(crate::relay_log::tests::subscriber(access.log.clone(), capture.clone()));
         assert!(!format!("{access:?}").contains("correct"));
         let denied = request("wrong");
-        assert!(matches!(
-            access.on_connect(&denied).await,
-            relay::Access::Deny { .. }
-        ));
+        assert!(matches!(access.on_connect(&denied).await, relay::Access::Deny { .. }));
         let first = request("correct");
         let second = request("correct");
-        assert!(matches!(
-            access.on_connect(&first).await,
-            relay::Access::Allow
-        ));
-        assert!(matches!(
-            access.on_connect(&second).await,
-            relay::Access::Deny { .. }
-        ));
+        assert!(matches!(access.on_connect(&first).await, relay::Access::Allow));
+        assert!(matches!(access.on_connect(&second).await, relay::Access::Deny { .. }));
         access.on_disconnect(first.endpoint_id(), first.connection_id());
-        assert!(matches!(
-            access.on_connect(&second).await,
-            relay::Access::Allow
-        ));
+        assert!(matches!(access.on_connect(&second).await, relay::Access::Allow));
         access.on_disconnect(first.endpoint_id(), first.connection_id());
         assert_eq!(access.log.active_count(), 1);
         access.on_disconnect(second.endpoint_id(), second.connection_id());
         assert_eq!(access.log.active_count(), 0);
         let text = capture.text();
-        assert!(
-            text.contains("access_key_missing_or_invalid")
-                && text.contains("connection_capacity_reached")
-        );
+        assert!(text.contains("access_key_missing_or_invalid") && text.contains("connection_capacity_reached"));
         assert!(!text.contains("correct") && !text.contains("wrong"));
     }
 }

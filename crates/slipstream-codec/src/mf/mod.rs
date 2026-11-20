@@ -39,13 +39,13 @@ use windows::{
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
             Direct3D11::{
-                D3D11_BIND_VIDEO_ENCODER, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
-                D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device,
-                ID3D11DeviceContext, ID3D11Multithread, ID3D11Texture2D,
+                D3D11_BIND_VIDEO_ENCODER, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA,
+                D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
+                ID3D11Multithread, ID3D11Texture2D,
             },
             Dxgi::{
-                CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1,
                 Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC},
+                CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1,
             },
         },
         Media::MediaFoundation::*,
@@ -539,7 +539,9 @@ impl MfEncoder {
             out.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1))?;
             out.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
             out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base.0 as u32)?;
-            self.transform.SetOutputType(self.output_id, &out, 0).context("setting the output type (H.264 Baseline)")?;
+            self.transform
+                .SetOutputType(self.output_id, &out, 0)
+                .context("setting the output type (H.264 Baseline)")?;
 
             let describe = |t: &IMFMediaType| -> windows::core::Result<()> {
                 t.SetUINT64(&MF_MT_FRAME_RATE, pack(num, den))?;

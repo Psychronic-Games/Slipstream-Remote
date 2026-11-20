@@ -88,7 +88,8 @@ impl Client {
 /// Sends Wake-on-LAN packets for `mac` from each of the gateway's local
 /// network adapters. Returns how many adapters sent them.
 pub async fn wake_via(gateway: &ViewerSession, mac: &str) -> Result<usize> {
-    let mac = slipstream_core::account::normalize_mac(mac).context("enter the Wake-on-LAN address like 00:11:22:33:44:55")?;
+    let mac =
+        slipstream_core::account::normalize_mac(mac).context("enter the Wake-on-LAN address like 00:11:22:33:44:55")?;
     let fs = gateway.fs();
     let interfaces = fs.network_interfaces().await.context("listing the gateway's network adapters")?;
     let (mut sent, mut last) = (0, None);
@@ -134,7 +135,12 @@ async fn forward(gateway: &ViewerSession, controller: &Controller) -> Result<(Tu
 
 /// Asks a Redfish controller to change the computer's power, through the
 /// gateway. Returns a short report ("Power on sent (it was off)").
-pub async fn controller_power(gateway: &ViewerSession, controller: &Controller, password: &str, action: ControllerPower) -> Result<String> {
+pub async fn controller_power(
+    gateway: &ViewerSession,
+    controller: &Controller,
+    password: &str,
+    action: ControllerPower,
+) -> Result<String> {
     if controller.kind != ControllerKind::Redfish {
         bail!("Power control works with Redfish controllers; use the management console for this one");
     }
@@ -143,12 +149,16 @@ pub async fn controller_power(gateway: &ViewerSession, controller: &Controller, 
     let system = redfish.system().await?;
     let before = system["PowerState"].as_str().unwrap_or("unknown").to_string();
     let reset = &system["Actions"]["#ComputerSystem.Reset"];
-    let target = reset["target"].as_str().map(str::to_string)
-        .unwrap_or_else(|| format!("{}/Actions/ComputerSystem.Reset", system["@odata.id"].as_str().unwrap_or("").trim_end_matches('/')));
-    let allowed: Vec<&str> = reset["ResetType@Redfish.AllowableValues"].as_array()
-        .map(|v| v.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-    let kind = action.reset_types().iter().find(|t| allowed.is_empty() || allowed.contains(t))
-        .with_context(|| format!("this controller doesn't offer {} (it offers {})", action.label().to_lowercase(), allowed.join(", ")))?;
+    let target = reset["target"].as_str().map(str::to_string).unwrap_or_else(|| {
+        format!("{}/Actions/ComputerSystem.Reset", system["@odata.id"].as_str().unwrap_or("").trim_end_matches('/'))
+    });
+    let allowed: Vec<&str> = reset["ResetType@Redfish.AllowableValues"]
+        .as_array()
+        .map(|v| v.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let kind = action.reset_types().iter().find(|t| allowed.is_empty() || allowed.contains(t)).with_context(|| {
+        format!("this controller doesn't offer {} (it offers {})", action.label().to_lowercase(), allowed.join(", "))
+    })?;
     redfish.post(&target, json!({ "ResetType": kind })).await?;
     Ok(format!("{} sent ({kind}; the computer was {})", action.label(), before.to_lowercase()))
 }
@@ -182,13 +192,24 @@ impl Redfish {
     }
 
     async fn get(&self, path: &str) -> Result<Value> {
-        let response = self.http.get(format!("{}{path}", self.base)).basic_auth(&self.user, Some(&self.password)).send().await
+        let response = self
+            .http
+            .get(format!("{}{path}", self.base))
+            .basic_auth(&self.user, Some(&self.password))
+            .send()
+            .await
             .map_err(|e| anyhow!("can't reach the controller through the gateway: {e}"))?;
         Self::check(response).await?.json().await.context("the controller's answer isn't Redfish")
     }
 
     async fn post(&self, path: &str, body: Value) -> Result<()> {
-        let response = self.http.post(format!("{}{path}", self.base)).basic_auth(&self.user, Some(&self.password)).json(&body).send().await
+        let response = self
+            .http
+            .post(format!("{}{path}", self.base))
+            .basic_auth(&self.user, Some(&self.password))
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| anyhow!("can't reach the controller through the gateway: {e}"))?;
         Self::check(response).await.map(drop)
     }
@@ -200,7 +221,8 @@ impl Redfish {
             404 => bail!("the controller has no Redfish API at this address"),
             code => {
                 let text = response.text().await.unwrap_or_default();
-                let message = serde_json::from_str::<Value>(&text).ok()
+                let message = serde_json::from_str::<Value>(&text)
+                    .ok()
                     .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
                     .unwrap_or_else(|| format!("HTTP {code}"));
                 bail!("the controller answered: {message}")
@@ -211,8 +233,11 @@ impl Redfish {
     /// The (first) computer the controller manages.
     async fn system(&self) -> Result<Value> {
         let systems = self.get("/redfish/v1/Systems").await?;
-        let path = systems["Members"].get(0).and_then(|m| m["@odata.id"].as_str())
-            .context("the controller lists no computer")?.to_string();
+        let path = systems["Members"]
+            .get(0)
+            .and_then(|m| m["@odata.id"].as_str())
+            .context("the controller lists no computer")?
+            .to_string();
         if !path.starts_with('/') {
             bail!("the controller gave an unexpected address");
         }

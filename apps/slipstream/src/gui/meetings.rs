@@ -34,8 +34,7 @@ struct Pending<T> {
 }
 impl<T> Drop for Pending<T> {
     fn drop(&mut self) {
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.cancelled.store(true, std::sync::atomic::Ordering::Release);
         self.task.abort();
     }
 }
@@ -50,11 +49,7 @@ fn pending<T: Send + 'static>(
         let _ = tx.send(work.await);
         wake.request_repaint();
     });
-    Pending {
-        rx,
-        task,
-        cancelled: Default::default(),
-    }
+    Pending { rx, task, cancelled: Default::default() }
 }
 fn ready<T>(job: &mut Option<Pending<T>>) -> Option<Result<T>> {
     let result = match job.as_mut()?.rx.try_recv() {
@@ -148,10 +143,7 @@ impl Active {
         self.meeting.state.borrow().clone()
     }
     fn announce(&self) {
-        self.meeting.command(Command::Media {
-            microphone: self.microphone.is_some(),
-            source: self.source,
-        });
+        self.meeting.command(Command::Media { microphone: self.microphone.is_some(), source: self.source });
     }
     fn stop_media(&mut self) {
         self.mic_job = None;
@@ -192,9 +184,7 @@ impl Meetings {
         let title = self.title.clone();
         let capacity = self.capacity.max(2);
         self.error = None;
-        self.joining = Some(pending(rt, ctx, async move {
-            Meeting::host(&settings, &name, &title, capacity).await
-        }));
+        self.joining = Some(pending(rt, ctx, async move { Meeting::host(&settings, &name, &title, capacity).await }));
     }
     fn join(&mut self, invite: Invitation, client: &Client, rt: &Runtime, ctx: &egui::Context) {
         if self.active.is_some() || self.joining.is_some() {
@@ -204,9 +194,7 @@ impl Meetings {
         let settings = client.station_settings();
         let name = self.name.clone();
         self.error = None;
-        self.joining = Some(pending(rt, ctx, async move {
-            Meeting::join(invite, &settings, &name).await
-        }));
+        self.joining = Some(pending(rt, ctx, async move { Meeting::join(invite, &settings, &name).await }));
     }
     fn poll(&mut self, app: &mut App, ctx: &egui::Context) {
         if !self.preferences_loaded {
@@ -216,21 +204,20 @@ impl Meetings {
             self.camera_index = settings.app.meeting_camera;
         }
         self.devices.poll();
-        if let Some(saved)=self.camera_index
-            && let [(index,_)]=self.devices.cameras.as_slice()
-            && *index!=saved
+        if let Some(saved) = self.camera_index
+            && let [(index, _)] = self.devices.cameras.as_slice()
+            && *index != saved
         {
-            self.camera_index=Some(*index);
-            app.client.update_settings(|s|s.app.meeting_camera=self.camera_index);
+            self.camera_index = Some(*index);
+            app.client.update_settings(|s| s.app.meeting_camera = self.camera_index);
         }
-        if app.page != Page::Meetings {self.screen_picker=None;}
+        if app.page != Page::Meetings {
+            self.screen_picker = None;
+        }
         if let Some(picker) = &mut self.screen_picker {
             picker.poll(app, ctx);
         }
-        let progress = self
-            .outgoing
-            .as_ref()
-            .map(|call| call.state.borrow().clone());
+        let progress = self.outgoing.as_ref().map(|call| call.state.borrow().clone());
         match progress {
             Some(calls::Progress::Answered) => {
                 self.outgoing = None;
@@ -257,11 +244,7 @@ impl Meetings {
         if !app.via_service {
             self.incoming = app.client.call_broker().incoming();
         }
-        if self
-            .incoming
-            .as_ref()
-            .is_some_and(|call| call.expires <= slipstream_core::meeting::now())
-        {
+        if self.incoming.as_ref().is_some_and(|call| call.expires <= slipstream_core::meeting::now()) {
             self.incoming = None;
         }
         if let Some(call) = self.incoming.clone()
@@ -315,9 +298,8 @@ impl Meetings {
             } else {
                 if !state.waiting && !active.sound_attempted {
                     active.sound_attempted = true;
-                    active.sound_job = Some(pending(&app.rt, ctx, async {
-                        tokio::task::spawn_blocking(Sound::start).await?
-                    }));
+                    active.sound_job =
+                        Some(pending(&app.rt, ctx, async { tokio::task::spawn_blocking(Sound::start).await? }));
                 }
                 if let Some(result) = ready(&mut active.sound_job) {
                     match result {
@@ -325,10 +307,8 @@ impl Meetings {
                         Err(e) => self.error = Some(format!("Speakers: {e:#}")),
                     }
                 }
-                let cancelled = active
-                    .mic_job
-                    .as_ref()
-                    .is_some_and(|job| job.cancelled.load(std::sync::atomic::Ordering::Acquire));
+                let cancelled =
+                    active.mic_job.as_ref().is_some_and(|job| job.cancelled.load(std::sync::atomic::Ordering::Acquire));
                 if let Some(result) = ready(&mut active.mic_job)
                     && !cancelled
                 {
@@ -358,16 +338,11 @@ impl Meetings {
                     }
                 }
                 #[cfg(target_os = "android")]
-                if active.microphone.is_some() && !slipstream_platform::android::microphone_ready()
-                {
+                if active.microphone.is_some() && !slipstream_platform::android::microphone_ready() {
                     active.microphone = None;
                     active.announce();
                 }
-                if let Some(error) = active
-                    .sender
-                    .as_ref()
-                    .and_then(|sender| sender.error.lock().unwrap().clone())
-                {
+                if let Some(error) = active.sender.as_ref().and_then(|sender| sender.error.lock().unwrap().clone()) {
                     active.sender = None;
                     active.source = Source::None;
                     active.announce();
@@ -388,9 +363,7 @@ impl Meetings {
                         }
                         Event::Keyframe => {
                             if let Some(sender) = &active.sender {
-                                sender
-                                    .keyframe
-                                    .store(true, std::sync::atomic::Ordering::Release);
+                                sender.keyframe.store(true, std::sync::atomic::Ordering::Release);
                             }
                         }
                         Event::Reaction { chat, reaction, participant, on } => {
@@ -410,9 +383,7 @@ impl Meetings {
                 let subscriptions: Vec<u64> =
                     active.room.video_priority(&state).into_iter().take(MAX_SUBSCRIPTIONS).collect();
                 if subscriptions != active.subscriptions {
-                    active
-                        .meeting
-                        .command(Command::Subscribe(subscriptions.clone()));
+                    active.meeting.command(Command::Subscribe(subscriptions.clone()));
                     active.video.subscribe(subscriptions.clone());
                     active.subscriptions = subscriptions;
                 }
@@ -420,23 +391,14 @@ impl Meetings {
                     active.video.push(frame);
                 }
                 if let Some(sound) = &active.sound {
-                    sound.members(
-                        state
-                            .participants
-                            .iter()
-                            .filter(|p| p.id != state.local)
-                            .map(|p| p.id)
-                            .collect(),
-                    );
+                    sound.members(state.participants.iter().filter(|p| p.id != state.local).map(|p| p.id).collect());
                     while let Ok(packet) = active.meeting.audio.try_recv() {
                         sound.push(packet);
                     }
                 } else {
                     while active.meeting.audio.try_recv().is_ok() {}
                 }
-                if self.target.is_some()
-                    && (state.locked || state.participants.len() >= state.capacity)
-                {
+                if self.target.is_some() && (state.locked || state.participants.len() >= state.capacity) {
                     self.target = None;
                     self.error = Some(
                         if state.locked {
@@ -460,8 +422,7 @@ impl Meetings {
                         Ok(calls::Outgoing::start(client, server, id, invite))
                     }));
                 } else if !state.host && self.target.take().is_some() {
-                    self.error =
-                        Some("Only the organizer can call people into this meeting".into());
+                    self.error = Some("Only the organizer can call people into this meeting".into());
                 }
             }
         }
@@ -486,10 +447,7 @@ pub(super) fn poll(app: &mut App, ctx: &egui::Context) {
 fn answer(app: &App, id: u64, accepted: bool) -> bool {
     #[cfg(windows)]
     if app.via_service {
-        return app
-            .service_chat
-            .as_ref()
-            .is_some_and(|s| s.sender().answer_call(id, accepted));
+        return app.service_chat.as_ref().is_some_and(|s| s.sender().answer_call(id, accepted));
     }
     app.client.call_broker().answer(id, accepted);
     true
@@ -499,14 +457,21 @@ fn incoming(meetings: &mut Meetings, app: &mut App, ctx: &egui::Context) {
         return;
     };
     let mut accepted = None;
-    theme::modal("incoming-meeting-call",pal::GREEN).show(ctx,|ui|{
-        ui.set_width(theme::dialog_width(ctx,440.0));if theme::window_header(ui,"Incoming transmission",pal::GREEN).close{accepted=Some(false);}
+    theme::modal("incoming-meeting-call", pal::GREEN).show(ctx, |ui| {
+        ui.set_width(theme::dialog_width(ctx, 440.0));
+        if theme::window_header(ui, "Incoming transmission", pal::GREEN).close {
+            accepted = Some(false);
+        }
         ui.label(RichText::new(&call.name).font(theme::display(24.0)).color(pal::TAN));
-        ui.label(format!("Inviting you to {}",call.invitation.title));
+        ui.label(format!("Inviting you to {}", call.invitation.title));
         ui.label("Answer with your microphone muted. You can unmute or share your camera in the meeting.");
-        ui.horizontal_wrapped(|ui|{
-            if theme::pill(ui,"Answer",pal::GREEN).clicked(){accepted=Some(true);}
-            if theme::pill(ui,"Decline",pal::RED).clicked(){accepted=Some(false);}
+        ui.horizontal_wrapped(|ui| {
+            if theme::pill(ui, "Answer", pal::GREEN).clicked() {
+                accepted = Some(true);
+            }
+            if theme::pill(ui, "Decline", pal::RED).clicked() {
+                accepted = Some(false);
+            }
         });
     });
     if let Some(accepted) = accepted {
@@ -517,8 +482,7 @@ fn incoming(meetings: &mut Meetings, app: &mut App, ctx: &egui::Context) {
                 app.page = Page::Meetings;
             }
         } else {
-            meetings.error =
-                Some("The service disconnected; the call could not be answered".into());
+            meetings.error = Some("The service disconnected; the call could not be answered".into());
         }
     }
 }
@@ -530,27 +494,18 @@ fn start_microphone(active: &mut Active, meetings: &mut Meetings, app: &App, ctx
         meetings.error = Some("Speakers are not ready. Retry speakers before unmuting.".into());
         return;
     };
-    active.microphone_name = meetings
-        .devices
-        .microphone_name(meetings.microphone_device.as_deref());
+    active.microphone_name = meetings.devices.microphone_name(meetings.microphone_device.as_deref());
     let player = sound.player.clone();
     let publisher = active.meeting.publisher.clone();
-    let device = meetings.microphone_device.clone().or_else(|| {
-        meetings
-            .devices
-            .microphones
-            .iter()
-            .find(|d| d.is_default)
-            .map(|d| d.id.clone())
-    });
+    let device = meetings
+        .microphone_device
+        .clone()
+        .or_else(|| meetings.devices.microphones.iter().find(|d| d.is_default).map(|d| d.id.clone()));
     let cancelled: std::sync::Arc<std::sync::atomic::AtomicBool> = Default::default();
     let worker_cancel = cancelled.clone();
     let mut job = pending(&app.rt, ctx, async move {
         tokio::task::spawn_blocking(move || {
-            anyhow::ensure!(
-                !worker_cancel.load(std::sync::atomic::Ordering::Acquire),
-                "Microphone cancelled"
-            );
+            anyhow::ensure!(!worker_cancel.load(std::sync::atomic::Ordering::Acquire), "Microphone cancelled");
             #[cfg(target_os = "android")]
             {
                 slipstream_platform::android::action(14)?;
@@ -566,16 +521,9 @@ fn start_microphone(active: &mut Active, meetings: &mut Meetings, app: &App, ctx
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }
-            anyhow::ensure!(
-                !worker_cancel.load(std::sync::atomic::Ordering::Acquire),
-                "Microphone cancelled"
-            );
-            let microphone =
-                Microphone::start(player, device, move |packet| publisher.audio(packet.into()))?;
-            anyhow::ensure!(
-                !worker_cancel.load(std::sync::atomic::Ordering::Acquire),
-                "Microphone cancelled"
-            );
+            anyhow::ensure!(!worker_cancel.load(std::sync::atomic::Ordering::Acquire), "Microphone cancelled");
+            let microphone = Microphone::start(player, device, move |packet| publisher.audio(packet.into()))?;
+            anyhow::ensure!(!worker_cancel.load(std::sync::atomic::Ordering::Acquire), "Microphone cancelled");
             Ok(microphone)
         })
         .await?
@@ -583,14 +531,7 @@ fn start_microphone(active: &mut Active, meetings: &mut Meetings, app: &App, ctx
     job.cancelled = cancelled;
     active.mic_job = Some(job);
 }
-fn start_video(
-    active: &mut Active,
-    source: Source,
-    index: u32,
-    client: &Client,
-    rt: &Runtime,
-    ctx: &egui::Context,
-) {
+fn start_video(active: &mut Active, source: Source, index: u32, client: &Client, rt: &Runtime, ctx: &egui::Context) {
     if active.video_job.is_some() {
         return;
     }
@@ -609,10 +550,7 @@ fn start_video(
         } else {
             client.capture_for_meeting(index).await?
         };
-        anyhow::ensure!(
-            !worker_cancel.load(std::sync::atomic::Ordering::Acquire),
-            "Sharing cancelled"
-        );
+        anyhow::ensure!(!worker_cancel.load(std::sync::atomic::Ordering::Acquire), "Sharing cancelled");
         VideoSender::start(capture, publisher)
     });
     job.cancelled = cancelled;
@@ -623,11 +561,11 @@ fn call_form(meetings: &mut Meetings, app: &App, ui: &mut Ui, allow: bool) {
     let narrow = ui.available_width() < 340.0;
     ui.horizontal(|ui| {
         ui.label("System ID");
-        ui.add(
-            theme::text_input(&mut meetings.call_id)
-                .hint_text("9-digit ID")
-                .desired_width(if narrow { (ui.available_width() - 8.0).max(90.0) } else { 150.0 }),
-        );
+        ui.add(theme::text_input(&mut meetings.call_id).hint_text("9-digit ID").desired_width(if narrow {
+            (ui.available_width() - 8.0).max(90.0)
+        } else {
+            150.0
+        }));
         if !narrow {
             call_button(meetings, app, ui, allow);
         }
@@ -638,11 +576,7 @@ fn call_form(meetings: &mut Meetings, app: &App, ui: &mut Ui, allow: bool) {
 }
 fn call_button(meetings: &mut Meetings, app: &App, ui: &mut Ui, allow: bool) {
     let available = allow && meetings.calling.is_none() && meetings.outgoing.is_none();
-    if ui
-        .add_enabled_ui(available, |ui| theme::pill(ui, "Call system", pal::GREEN))
-        .inner
-        .clicked()
-    {
+    if ui.add_enabled_ui(available, |ui| theme::pill(ui, "Call system", pal::GREEN)).inner.clicked() {
         match meetings.call_id.parse::<DeviceId>() {
             Ok(id) => meetings.call_target(id, app.client.station_settings()),
             Err(e) => meetings.error = Some(format!("{e:#}")),
@@ -668,8 +602,7 @@ fn start_camera(active: &mut Active, meetings: &mut Meetings, app: &App, ctx: &e
         active.next_video_name = meetings.devices.camera_name(meetings.camera_index);
         start_video(active, Source::Camera, index, &app.client, &app.rt, ctx);
     } else {
-        meetings.error =
-            Some("No camera is available. Open Devices to refresh or select a camera.".into());
+        meetings.error = Some("No camera is available. Open Devices to refresh or select a camera.".into());
     }
 }
 pub(super) fn ui(app: &mut App, ui: &mut Ui) {
@@ -701,10 +634,7 @@ pub(super) fn ui(app: &mut App, ui: &mut Ui) {
     }
     if let Some(call) = &meetings.outgoing {
         let progress = call.state.borrow().clone();
-        if matches!(
-            progress,
-            calls::Progress::Calling | calls::Progress::Ringing
-        ) {
+        if matches!(progress, calls::Progress::Calling | calls::Progress::Ringing) {
             ui.horizontal_wrapped(|ui| {
                 ui.spinner();
                 ui.label(if matches!(progress, calls::Progress::Ringing) {
@@ -734,30 +664,11 @@ pub(super) fn ui(app: &mut App, ui: &mut Ui) {
         });
     } else if meetings.active.is_none() {
         ui.horizontal_wrapped(|ui| {
-            if theme::pill(
-                ui,
-                "Start or join",
-                if !meetings.setup_devices {
-                    pal::GREEN
-                } else {
-                    pal::BLUE
-                },
-            )
-            .clicked()
+            if theme::pill(ui, "Start or join", if !meetings.setup_devices { pal::GREEN } else { pal::BLUE }).clicked()
             {
                 meetings.setup_devices = false;
             }
-            if theme::pill(
-                ui,
-                "Devices",
-                if meetings.setup_devices {
-                    pal::GREEN
-                } else {
-                    pal::BLUE
-                },
-            )
-            .clicked()
-            {
+            if theme::pill(ui, "Devices", if meetings.setup_devices { pal::GREEN } else { pal::BLUE }).clicked() {
                 meetings.setup_devices = true;
             }
         });
@@ -792,22 +703,27 @@ pub(super) fn ui(app: &mut App, ui: &mut Ui) {
         meetings.active = Some(active);
     }
     if meetings.confirm_end {
-        theme::modal("end-meeting-confirm",pal::RED).show(&ctx,|ui| {
-            ui.set_width(theme::dialog_width(&ctx,430.0));
-            if theme::window_header(ui,"End meeting for everyone?",pal::RED).close {meetings.confirm_end=false;}
+        theme::modal("end-meeting-confirm", pal::RED).show(&ctx, |ui| {
+            ui.set_width(theme::dialog_width(&ctx, 430.0));
+            if theme::window_header(ui, "End meeting for everyone?", pal::RED).close {
+                meetings.confirm_end = false;
+            }
             ui.label("Everyone will be disconnected from this meeting. Remote support links stay connected.");
             ui.horizontal_wrapped(|ui| {
-                if theme::pill(ui,"End for everyone",pal::RED).clicked(){meetings.confirm_end=false;leave=true;}
-                if theme::pill(ui,"Keep meeting open",pal::BLUE).clicked(){meetings.confirm_end=false;}
+                if theme::pill(ui, "End for everyone", pal::RED).clicked() {
+                    meetings.confirm_end = false;
+                    leave = true;
+                }
+                if theme::pill(ui, "Keep meeting open", pal::BLUE).clicked() {
+                    meetings.confirm_end = false;
+                }
             });
         });
     }
     if let Some((id, name)) = meetings.confirm_remove.clone() {
         theme::modal("remove-meeting-participant", pal::PEACH).show(&ctx, |ui| {
             ui.set_width(theme::dialog_width(&ctx, 400.0));
-            if theme::window_header(ui, "Remove participant?", pal::PEACH)
-                .close
-            {
+            if theme::window_header(ui, "Remove participant?", pal::PEACH).close {
                 meetings.confirm_remove = None;
             }
             ui.label(format!("Remove {name} from this meeting?"));
@@ -898,15 +814,13 @@ fn setup(meetings: &mut Meetings, app: &App, ui: &mut Ui) {
     });
     ui.add_space(10.0);
     theme::panel(ui, "Call a system", pal::LAVENDER, |ui| {
-        ui.label(RichText::new("Ring someone by their Slipstream ID, or use Meeting beside a saved system.").color(pal::DIM));
+        ui.label(
+            RichText::new("Ring someone by their Slipstream ID, or use Meeting beside a saved system.").color(pal::DIM),
+        );
         call_form(meetings, app, ui, true);
         let mut allowed = !app.client.settings().app.block_meeting_calls;
-        if ui
-            .checkbox(&mut allowed, "Allow incoming meeting calls")
-            .changed()
-        {
-            app.client
-                .update_settings(|s| s.app.block_meeting_calls = !allowed);
+        if ui.checkbox(&mut allowed, "Allow incoming meeting calls").changed() {
+            app.client.update_settings(|s| s.app.block_meeting_calls = !allowed);
             #[cfg(windows)]
             if app.via_service
                 && let Some(bridge) = &app.service_chat
@@ -916,41 +830,26 @@ fn setup(meetings: &mut Meetings, app: &App, ui: &mut Ui) {
         }
     });
 }
-fn toolbar(
-    meetings: &mut Meetings,
-    active: &mut Active,
-    state: &State,
-    app: &App,
-    ui: &mut Ui,
-    leave: &mut bool,
-) {
+fn toolbar(meetings: &mut Meetings, active: &mut Active, state: &State, app: &App, ui: &mut Ui, leave: &mut bool) {
     ui.horizontal_wrapped(|ui| {
-        ui.add_enabled_ui(
-            active.mic_job.is_none() && (active.microphone.is_some() || active.sound.is_some()),
-            |ui| {
-                let on = active.microphone.is_some();
-                let (label, icon, color) = if on {
-                    ("Mute", theme::ConsoleIcon::Microphone, pal::GREEN)
+        ui.add_enabled_ui(active.mic_job.is_none() && (active.microphone.is_some() || active.sound.is_some()), |ui| {
+            let on = active.microphone.is_some();
+            let (label, icon, color) = if on {
+                ("Mute", theme::ConsoleIcon::Microphone, pal::GREEN)
+            } else {
+                ("Unmute", theme::ConsoleIcon::MicrophoneOff, pal::BLUE)
+            };
+            if theme::console_button(ui, label, color, icon, false).clicked() {
+                if active.microphone.is_some() {
+                    stop_microphone(active);
                 } else {
-                    ("Unmute", theme::ConsoleIcon::MicrophoneOff, pal::BLUE)
-                };
-                if theme::console_button(ui, label, color, icon, false).clicked()
-                {
-                    if active.microphone.is_some() {
-                        stop_microphone(active);
-                    } else {
-                        start_microphone(active, meetings, app, ui.ctx());
-                    }
+                    start_microphone(active, meetings, app, ui.ctx());
                 }
-            },
-        );
+            }
+        });
         ui.add_enabled_ui(active.video_job.is_none(), |ui| {
             let label = if cfg!(target_os = "android") {
-                if active.source == Source::Camera {
-                    "Stop Show me"
-                } else {
-                    "Show me"
-                }
+                if active.source == Source::Camera { "Stop Show me" } else { "Show me" }
             } else if active.source == Source::Camera {
                 "Stop camera"
             } else {
@@ -973,8 +872,14 @@ fn toolbar(
         {
             stop_video(active);
         }
-        if theme::console_button(ui, if state.host { "End meeting" } else { "Leave meeting" }, pal::RED, theme::ConsoleIcon::End, false)
-            .clicked()
+        if theme::console_button(
+            ui,
+            if state.host { "End meeting" } else { "Leave meeting" },
+            pal::RED,
+            theme::ConsoleIcon::End,
+            false,
+        )
+        .clicked()
         {
             if state.host {
                 meetings.confirm_end = true;
@@ -989,8 +894,7 @@ fn toolbar(
             ui.label("Starting microphone…");
             if theme::pill(ui, "Cancel microphone", pal::PEACH).clicked() {
                 if let Some(job) = &active.mic_job {
-                    job.cancelled
-                        .store(true, std::sync::atomic::Ordering::Release);
+                    job.cancelled.store(true, std::sync::atomic::Ordering::Release);
                 }
                 #[cfg(target_os = "android")]
                 {
@@ -1005,8 +909,7 @@ fn toolbar(
             ui.label("Preparing sharing…");
             if theme::pill(ui, "Cancel sharing", pal::PEACH).clicked() {
                 if let Some(job) = &active.video_job {
-                    job.cancelled
-                        .store(true, std::sync::atomic::Ordering::Release);
+                    job.cancelled.store(true, std::sync::atomic::Ordering::Release);
                 }
                 #[cfg(target_os = "android")]
                 {
@@ -1019,18 +922,9 @@ fn toolbar(
         RichText::new(if active.microphone.is_some() {
             format!("Microphone on · {}", active.microphone_name)
         } else {
-            format!(
-                "Microphone muted · {}",
-                meetings
-                    .devices
-                    .microphone_name(meetings.microphone_device.as_deref())
-            )
+            format!("Microphone muted · {}", meetings.devices.microphone_name(meetings.microphone_device.as_deref()))
         })
-        .color(if active.microphone.is_some() {
-            pal::GREEN
-        } else {
-            pal::GOLD
-        }),
+        .color(if active.microphone.is_some() { pal::GREEN } else { pal::GOLD }),
     );
     if active.source != Source::None {
         ui.label(format!("Sharing: {}", active.video_name));
@@ -1041,13 +935,7 @@ fn toolbar(
         active.sound_attempted = false;
     }
 }
-fn participants(
-    meetings: &mut Meetings,
-    active: &mut Active,
-    state: &State,
-    app: &mut App,
-    ui: &mut Ui,
-) {
+fn participants(meetings: &mut Meetings, active: &mut Active, state: &State, app: &mut App, ui: &mut Ui) {
     if state.host {
         theme::panel(ui, "Invite and admission", pal::LAVENDER, |ui| {
             if theme::pill(ui, "Copy invitation", pal::LAVENDER).clicked() {
@@ -1059,12 +947,7 @@ fn participants(
                     Err(error) => meetings.error = Some(format!("{error:#}")),
                 }
             }
-            call_form(
-                meetings,
-                app,
-                ui,
-                !state.locked && state.participants.len() < state.capacity,
-            );
+            call_form(meetings, app, ui, !state.locked && state.participants.len() < state.capacity);
             let mut allow = !state.locked;
             if ui.checkbox(&mut allow,"Allow new join requests").on_hover_text("Closing admission blocks new arrivals. People already connected stay in the meeting, and you can still admit people already waiting.").changed(){active.meeting.command(Command::Lock(!allow));}
             ui.label(if state.locked {
@@ -1104,20 +987,12 @@ fn participants(
                         RichText::new(format!(
                             "{}{}{}",
                             member.name,
-                            if member.id == state.local {
-                                " (you)"
-                            } else {
-                                ""
-                            },
+                            if member.id == state.local { " (you)" } else { "" },
                             if member.id == 1 { " · organizer" } else { "" }
                         ))
                         .color(pal::TAN),
                     );
-                    ui.label(if member.microphone {
-                        "Microphone on"
-                    } else {
-                        "Muted"
-                    });
+                    ui.label(if member.microphone { "Microphone on" } else { "Muted" });
                     ui.label(match member.source {
                         Source::None => "Camera off",
                         Source::Camera => "Camera on",
@@ -1127,11 +1002,7 @@ fn participants(
                         && member.id != state.local
                         && theme::pill(
                             ui,
-                            if active.room.pin == Some(member.id) {
-                                "Pinned"
-                            } else {
-                                "Pin video"
-                            },
+                            if active.room.pin == Some(member.id) { "Pinned" } else { "Pin video" },
                             pal::BLUE,
                         )
                         .clicked()
@@ -1139,10 +1010,7 @@ fn participants(
                         active.room.pin = Some(member.id);
                         active.room.layout = room::Layout::Speaker;
                     }
-                    if state.host
-                        && member.id != state.local
-                        && theme::pill(ui, "Remove", pal::PEACH).clicked()
-                    {
+                    if state.host && member.id != state.local && theme::pill(ui, "Remove", pal::PEACH).clicked() {
                         meetings.confirm_remove = Some((member.id, member.name.clone()));
                     }
                 });

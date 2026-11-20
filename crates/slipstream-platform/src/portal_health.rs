@@ -8,15 +8,19 @@ use ashpd::zbus::{Connection, fdo::IntrospectableProxy};
 const KDE: &str = "plasma-xdg-desktop-portal-kde.service";
 
 async fn systemctl(args: &[&str]) -> Result<String> {
-    let output = tokio::time::timeout(Duration::from_secs(10),
-        tokio::process::Command::new("systemctl").arg("--user").args(args)
-            .kill_on_drop(true).output()).await.context("desktop service command timed out")??;
+    let output = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::process::Command::new("systemctl").arg("--user").args(args).kill_on_drop(true).output(),
+    )
+    .await
+    .context("desktop service command timed out")??;
     ensure!(output.status.success(), "desktop service command failed");
     Ok(String::from_utf8(output.stdout)?)
 }
 
 fn loaded_qt_core(maps: &str) -> Option<&Path> {
-    maps.lines().filter(|line| line.ends_with(" (deleted)"))
+    maps.lines()
+        .filter(|line| line.ends_with(" (deleted)"))
         .filter_map(|line| line.split_whitespace().nth(5))
         .map(Path::new)
         .find(|path| path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("libQt6Core.so.")))
@@ -31,7 +35,10 @@ async fn portal_idle() -> Result<bool> {
     let connection = Connection::session().await?;
     for path in ["/org/freedesktop/portal/desktop/session", "/org/freedesktop/portal/desktop/request"] {
         let proxy = IntrospectableProxy::builder(&connection)
-            .destination("org.freedesktop.portal.Desktop")?.path(path)?.build().await?;
+            .destination("org.freedesktop.portal.Desktop")?
+            .path(path)?
+            .build()
+            .await?;
         let xml = proxy.introspect().await?;
         // Any child may belong to another application. Fail closed instead of
         // interrupting its screen share, dialog, or other portal interaction.
@@ -44,7 +51,9 @@ async fn portal_idle() -> Result<bool> {
 
 fn portal_has_children(xml: &str) -> bool {
     xml.split('<').any(|tag| {
-        let Some(tail) = tag.strip_prefix("node").and_then(|s| s.trim_start().strip_prefix("name")) else { return false };
+        let Some(tail) = tag.strip_prefix("node").and_then(|s| s.trim_start().strip_prefix("name")) else {
+            return false;
+        };
         let Some(value) = tail.trim_start().strip_prefix('=').map(str::trim_start) else { return true };
         let Some(quote) = value.chars().next().filter(|c| *c == '\'' || *c == '"') else { return true };
         let name = value[1..].split(quote).next().unwrap_or_default();
@@ -61,7 +70,10 @@ async fn repair_if_idle(
     let idle = tokio::time::timeout(Duration::from_secs(3), check).await
         .context("The desktop needs refreshing after a system update; its active sharing sessions could not be checked. Sign out and back in")?
         .context("The desktop needs refreshing after a system update; its active sharing sessions could not be checked. Sign out and back in")?;
-    ensure!(idle, "Screen sharing needs refreshing after a system update. Close other screen-sharing apps/dialogs and choose Approve now, or sign out and back in");
+    ensure!(
+        idle,
+        "Screen sharing needs refreshing after a system update. Close other screen-sharing apps/dialogs and choose Approve now, or sign out and back in"
+    );
     tracing::warn!("refreshing idle KDE screen-sharing services after a Qt upgrade");
     restart.await.context("Could not refresh desktop screen sharing after a system update; sign out and back in")
 }
@@ -74,15 +86,20 @@ pub(crate) async fn prepare() -> Result<()> {
     // narrowly scoped repair; ordinary portal access still works as before.
     let Ok(pid) = systemctl(&["show", KDE, "--property=MainPID", "--value"]).await else { return Ok(()) };
     let Ok(pid) = pid.trim().parse::<u32>() else { return Ok(()) };
-    if pid == 0 { return Ok(()) }
+    if pid == 0 {
+        return Ok(());
+    }
     let Ok(maps) = std::fs::read_to_string(format!("/proc/{pid}/maps")) else { return Ok(()) };
     let Some(loaded) = loaded_qt_core(&maps) else { return Ok(()) };
     let Some(parent) = loaded.parent() else { return Ok(()) };
     let Ok(installed) = parent.join("libQt6Core.so.6").canonicalize() else { return Ok(()) };
-    if !version_changed(loaded, &installed) { return Ok(()) }
+    if !version_changed(loaded, &installed) {
+        return Ok(());
+    }
     repair_if_idle(portal_idle(), async {
         systemctl(&["restart", KDE, "xdg-desktop-portal.service"]).await.map(|_| ())
-    }).await
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -107,7 +124,11 @@ mod tests {
         let restarts = Cell::new(0);
         for state in [Ok(false), Err(anyhow::anyhow!("unavailable bus")), Ok(true)] {
             let allowed = state.as_ref().is_ok_and(|idle| *idle);
-            let result = repair_if_idle(async {state}, async { restarts.set(restarts.get()+1); Ok(()) }).await;
+            let result = repair_if_idle(async { state }, async {
+                restarts.set(restarts.get() + 1);
+                Ok(())
+            })
+            .await;
             assert_eq!(result.is_ok(), allowed);
             assert_eq!(restarts.get(), usize::from(allowed));
         }

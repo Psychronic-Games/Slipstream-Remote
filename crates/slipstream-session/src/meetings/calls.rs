@@ -65,28 +65,23 @@ impl Broker {
         }
     }
 }
-pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection, local: iroh::EndpointId, public: bool) -> Result<()> {
+pub(crate) async fn receive(
+    inner: Arc<Inner>,
+    conn: iroh::endpoint::Connection,
+    local: iroh::EndpointId,
+    public: bool,
+) -> Result<()> {
     let broker = &inner.calls;
-    let permit = broker
-        .slot
-        .try_acquire()
-        .context("Another call is already ringing")?;
-    let (mut send, mut recv) =
-        tokio::time::timeout(Duration::from_secs(5), conn.accept_bi()).await??;
+    let permit = broker.slot.try_acquire().context("Another call is already ringing")?;
+    let (mut send, mut recv) = tokio::time::timeout(Duration::from_secs(5), conn.accept_bi()).await??;
     ensure!(
         matches!(
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                wire::read::<CallMessage>(&mut recv, MAX_CONTROL)
-            )
-            .await??,
+            tokio::time::timeout(Duration::from_secs(5), wire::read::<CallMessage>(&mut recv, MAX_CONTROL)).await??,
             CallMessage::Hello
         ),
         "Expected call hello"
     );
-    if broker.receivers.load(Ordering::Acquire) == 0
-        || inner.settings.lock().unwrap().app.block_meeting_calls
-    {
+    if broker.receivers.load(Ordering::Acquire) == 0 || inner.settings.lock().unwrap().app.block_meeting_calls {
         wire::write(
             &mut send,
             &CallMessage::Declined("Nobody is available to answer on that device".into()),
@@ -105,11 +100,8 @@ pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection,
     }
     let nonce = rand::random();
     wire::write(&mut send, &CallMessage::Challenge(nonce), MAX_CONTROL).await?;
-    let CallMessage::Offer {
-        name,
-        invitation,
-        proof,
-    } = tokio::time::timeout(Duration::from_secs(5), wire::read(&mut recv, MAX_CONTROL)).await??
+    let CallMessage::Offer { name, invitation, proof } =
+        tokio::time::timeout(Duration::from_secs(5), wire::read(&mut recv, MAX_CONTROL)).await??
     else {
         bail!("Expected call offer");
     };
@@ -117,26 +109,12 @@ pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection,
     let name = clean_name(&name)?;
     let key = if public { None } else { inner.settings.lock().unwrap().server.key.clone() };
     ensure!(
-        equal(
-            &proof,
-            &call_proof(
-                key.as_deref(),
-                &nonce,
-                conn.remote_id(),
-                local,
-                &invitation
-            )?
-        ),
+        equal(&proof, &call_proof(key.as_deref(), &nonce, conn.remote_id(), local, &invitation)?),
         "Caller is not authorized for this station"
     );
     *broker.last.lock().unwrap() = Some(Instant::now());
     let id = rand::random::<u64>();
-    let call = IncomingCall {
-        id,
-        name,
-        invitation,
-        expires: now() + 35,
-    };
+    let call = IncomingCall { id, name, invitation, expires: now() + 35 };
     let (tx, rx) = oneshot::channel();
     *broker.answer.lock().unwrap() = Some((id, tx));
     broker.incoming.send_replace(Some(call));
@@ -167,11 +145,8 @@ pub(crate) async fn receive(inner: Arc<Inner>, conn: iroh::endpoint::Connection,
     inner.emit(ClientEvent::CallChanged);
     #[cfg(target_os = "android")]
     slipstream_platform::android::notify_call(None, 0);
-    let message = if accepted {
-        CallMessage::Answered
-    } else {
-        CallMessage::Declined("Call declined or unanswered".into())
-    };
+    let message =
+        if accepted { CallMessage::Answered } else { CallMessage::Declined("Call declined or unanswered".into()) };
     let _ = wire::write(&mut send, &message, MAX_CONTROL).await;
     send.finish().ok();
     let _ = tokio::time::timeout(Duration::from_millis(500), send.stopped()).await;
@@ -197,21 +172,13 @@ impl Drop for Outgoing {
     }
 }
 impl Outgoing {
-    pub fn start(
-        client: Client,
-        server: ServerSettings,
-        id: DeviceId,
-        invitation: Invitation,
-    ) -> Self {
+    pub fn start(client: Client, server: ServerSettings, id: DeviceId, invitation: Invitation) -> Self {
         let server = client.call_settings(server);
         let (tx, state) = watch::channel(Progress::Calling);
         let (cancel, mut cancelled) = oneshot::channel();
         tokio::spawn(async move {
             let work = async {
-                let url = server
-                    .url
-                    .as_deref()
-                    .context("Configure a station before calling a device")?;
+                let url = server.url.as_deref().context("Configure a station before calling a device")?;
                 let mut directory = DirectoryClient::new(url, server.key.clone())?;
                 let hello = directory.hello().await?;
                 let Lookup::Online { addr, .. } = directory.lookup(id).await? else {
@@ -219,13 +186,10 @@ impl Outgoing {
                 };
                 let endpoint = client.endpoint_for_address(server.url.as_deref());
                 slipstream_core::net::add_relays(&endpoint, &hello.relays).await;
-                let conn = tokio::time::timeout(
-                    Duration::from_secs(15),
-                    endpoint.connect(addr, CALL_ALPN),
-                )
-                .await
-                .context("That device did not answer")?
-                .context("Cannot call that device; it may need an update")?;
+                let conn = tokio::time::timeout(Duration::from_secs(15), endpoint.connect(addr, CALL_ALPN))
+                    .await
+                    .context("That device did not answer")?
+                    .context("Cannot call that device; it may need an update")?;
                 struct Close(iroh::endpoint::Connection);
                 impl Drop for Close {
                     fn drop(&mut self) {
@@ -235,30 +199,17 @@ impl Outgoing {
                 let _close = Close(conn.clone());
                 let (mut send, mut recv) = conn.open_bi().await?;
                 wire::write(&mut send, &CallMessage::Hello, MAX_CONTROL).await?;
-                let message: CallMessage = tokio::time::timeout(
-                    Duration::from_secs(5),
-                    wire::read(&mut recv, MAX_CONTROL),
-                )
-                .await??;
+                let message: CallMessage =
+                    tokio::time::timeout(Duration::from_secs(5), wire::read(&mut recv, MAX_CONTROL)).await??;
                 let nonce = match message {
                     CallMessage::Challenge(nonce) => nonce,
                     CallMessage::Declined(reason) => bail!(reason),
                     _ => bail!("Unexpected call reply"),
                 };
-                let proof = call_proof(
-                    server.key.as_deref(),
-                    &nonce,
-                    endpoint.id(),
-                    conn.remote_id(),
-                    &invitation,
-                )?;
+                let proof = call_proof(server.key.as_deref(), &nonce, endpoint.id(), conn.remote_id(), &invitation)?;
                 wire::write(
                     &mut send,
-                    &CallMessage::Offer {
-                        name: client.settings().device_name,
-                        invitation,
-                        proof,
-                    },
+                    &CallMessage::Offer { name: client.settings().device_name, invitation, proof },
                     MAX_CONTROL,
                 )
                 .await?;
@@ -274,9 +225,8 @@ impl Outgoing {
                         }
                     }
                 };
-                let result = tokio::time::timeout(Duration::from_secs(40), result)
-                    .await
-                    .context("Call was not answered")?;
+                let result =
+                    tokio::time::timeout(Duration::from_secs(40), result).await.context("Call was not answered")?;
                 conn.close(0u32.into(), b"call completed");
                 result
             };
@@ -296,10 +246,7 @@ impl Outgoing {
                 }
             }
         });
-        Self {
-            state,
-            cancel: Some(cancel),
-        }
+        Self { state, cancel: Some(cancel) }
     }
 }
 
@@ -314,21 +261,11 @@ mod tests {
         settings.server.use_public_relays = false;
         settings.server.key = Some("call-station-key".into());
         store.save_settings(&settings).unwrap();
-        let (callee, _events) = Client::start(
-            store,
-            crate::ClientOptions {
-                accept_sessions: true,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
+        let (callee, _events) =
+            Client::start(store, crate::ClientOptions { accept_sessions: true, ..Default::default() }).await.unwrap();
         let caller = slipstream_core::net::bind_client(
             iroh::SecretKey::generate(),
-            &ServerSettings {
-                use_public_relays: false,
-                ..Default::default()
-            },
+            &ServerSettings { use_public_relays: false, ..Default::default() },
             false,
         )
         .await
@@ -345,59 +282,31 @@ mod tests {
         };
         for action in 0..3 {
             *broker.last.lock().unwrap() = None;
-            let conn = caller
-                .connect(callee.endpoint_addr(), CALL_ALPN)
-                .await
-                .unwrap();
+            let conn = caller.connect(callee.endpoint_addr(), CALL_ALPN).await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
-            wire::write(&mut send, &CallMessage::Hello, MAX_CONTROL)
-                .await
-                .unwrap();
-            let CallMessage::Challenge(nonce) = wire::read(&mut recv, MAX_CONTROL).await.unwrap()
-            else {
+            wire::write(&mut send, &CallMessage::Hello, MAX_CONTROL).await.unwrap();
+            let CallMessage::Challenge(nonce) = wire::read(&mut recv, MAX_CONTROL).await.unwrap() else {
                 panic!("Expected challenge");
             };
-            let proof = call_proof(
-                Some("call-station-key"),
-                &nonce,
-                caller.id(),
-                callee.endpoint_id(),
-                &invite,
-            )
-            .unwrap();
+            let proof =
+                call_proof(Some("call-station-key"), &nonce, caller.id(), callee.endpoint_id(), &invite).unwrap();
             wire::write(
                 &mut send,
-                &CallMessage::Offer {
-                    name: "Technician".into(),
-                    invitation: invite.clone(),
-                    proof,
-                },
+                &CallMessage::Offer { name: "Technician".into(), invitation: invite.clone(), proof },
                 MAX_CONTROL,
             )
             .await
             .unwrap();
-            assert!(matches!(
-                wire::read::<CallMessage>(&mut recv, MAX_CONTROL)
-                    .await
-                    .unwrap(),
-                CallMessage::Ringing
-            ));
+            assert!(matches!(wire::read::<CallMessage>(&mut recv, MAX_CONTROL).await.unwrap(), CallMessage::Ringing));
             let call = broker.incoming().unwrap();
             assert!(callee.inner.backend.lock().await.is_none());
             assert!(callee.inner.host_sessions.lock().unwrap().is_empty());
             if action < 2 {
                 broker.answer(call.id, action == 1);
-                let result = wire::read::<CallMessage>(&mut recv, MAX_CONTROL)
-                    .await
-                    .unwrap();
-                assert!(matches!(
-                    (action, result),
-                    (0, CallMessage::Declined(_)) | (1, CallMessage::Answered)
-                ));
+                let result = wire::read::<CallMessage>(&mut recv, MAX_CONTROL).await.unwrap();
+                assert!(matches!((action, result), (0, CallMessage::Declined(_)) | (1, CallMessage::Answered)));
             } else {
-                wire::write(&mut send, &CallMessage::Cancel, MAX_CONTROL)
-                    .await
-                    .unwrap();
+                wire::write(&mut send, &CallMessage::Cancel, MAX_CONTROL).await.unwrap();
             }
             tokio::time::timeout(Duration::from_secs(2), async {
                 while broker.incoming().is_some() {
@@ -409,33 +318,16 @@ mod tests {
             conn.close(0u32.into(), b"test completed");
         }
         *broker.last.lock().unwrap() = None;
-        let conn = caller
-            .connect(callee.endpoint_addr(), CALL_ALPN)
-            .await
-            .unwrap();
+        let conn = caller.connect(callee.endpoint_addr(), CALL_ALPN).await.unwrap();
         let (mut send, mut recv) = conn.open_bi().await.unwrap();
-        wire::write(&mut send, &CallMessage::Hello, MAX_CONTROL)
-            .await
-            .unwrap();
-        let CallMessage::Challenge(nonce) = wire::read(&mut recv, MAX_CONTROL).await.unwrap()
-        else {
+        wire::write(&mut send, &CallMessage::Hello, MAX_CONTROL).await.unwrap();
+        let CallMessage::Challenge(nonce) = wire::read(&mut recv, MAX_CONTROL).await.unwrap() else {
             panic!("Expected challenge");
         };
-        let proof = call_proof(
-            Some("wrong-station"),
-            &nonce,
-            caller.id(),
-            callee.endpoint_id(),
-            &invite,
-        )
-        .unwrap();
+        let proof = call_proof(Some("wrong-station"), &nonce, caller.id(), callee.endpoint_id(), &invite).unwrap();
         wire::write(
             &mut send,
-            &CallMessage::Offer {
-                name: "Untrusted".into(),
-                invitation: invite,
-                proof,
-            },
+            &CallMessage::Offer { name: "Untrusted".into(), invitation: invite, proof },
             MAX_CONTROL,
         )
         .await

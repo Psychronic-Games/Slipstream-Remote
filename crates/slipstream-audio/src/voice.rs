@@ -72,8 +72,7 @@ impl Microphone {
             let mut render_output = [0i16; 480];
             let mut sequence = 0u16;
             ready(Ok(()));
-            while !stop.load(Ordering::Relaxed) && MICROPHONE_EPOCH.load(Ordering::Acquire) == epoch
-            {
+            while !stop.load(Ordering::Relaxed) && MICROPHONE_EPOCH.load(Ordering::Acquire) == epoch {
                 let frame = match capture_rx.recv_timeout(std::time::Duration::from_millis(30)) {
                     Ok(frame) => frame,
                     Err(mpsc::RecvTimeoutError::Timeout) => continue,
@@ -100,11 +99,8 @@ impl Microphone {
                     if processor.process_capture_i16(&mono, &mut output).is_err() {
                         output.copy_from_slice(&mono);
                     }
-                    for (stereo, sample) in cleaned[part * 960..(part + 1) * 960]
-                        .as_chunks_mut::<2>()
-                        .0
-                        .iter_mut()
-                        .zip(output)
+                    for (stereo, sample) in
+                        cleaned[part * 960..(part + 1) * 960].as_chunks_mut::<2>().0.iter_mut().zip(output)
                     {
                         stereo.fill(sample);
                     }
@@ -127,11 +123,7 @@ impl Microphone {
         player.set_render_tap(Some(Box::new(move |pcm| {
             let _ = render_tx.try_send(pcm.to_vec());
         })));
-        Ok(Self {
-            _capture: capture,
-            _worker: worker,
-            player,
-        })
+        Ok(Self { _capture: capture, _worker: worker, player })
     }
 }
 
@@ -139,10 +131,7 @@ impl Microphone {
 pub fn mix(sources: &[&[i16]], out: &mut [i16]) {
     out.fill(0);
     for (i, sample) in out.iter_mut().enumerate() {
-        let sum: i32 = sources
-            .iter()
-            .map(|s| i32::from(s.get(i).copied().unwrap_or(0)))
-            .sum();
+        let sum: i32 = sources.iter().map(|s| i32::from(s.get(i).copied().unwrap_or(0))).sum();
         *sample = sum.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
     }
 }

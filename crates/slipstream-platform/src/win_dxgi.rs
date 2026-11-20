@@ -103,7 +103,12 @@ impl Duplication {
     }
 
     /// The frame's picture (if it has a new one) into `out`.
-    unsafe fn copy_out(&mut self, info: &DXGI_OUTDUPL_FRAME_INFO, resource: Option<IDXGIResource>, out: &mut Vec<u8>) -> Result<Option<(u32, u32)>> {
+    unsafe fn copy_out(
+        &mut self,
+        info: &DXGI_OUTDUPL_FRAME_INFO,
+        resource: Option<IDXGIResource>,
+        out: &mut Vec<u8>,
+    ) -> Result<Option<(u32, u32)>> {
         if info.LastPresentTime == 0 {
             return Ok(None); // only the pointer changed
         }
@@ -136,7 +141,8 @@ impl Duplication {
             out.clear();
             out.reserve(row * h as usize);
             for y in 0..h as usize {
-                let src = std::slice::from_raw_parts((mapped.pData as *const u8).add(y * mapped.RowPitch as usize), row);
+                let src =
+                    std::slice::from_raw_parts((mapped.pData as *const u8).add(y * mapped.RowPitch as usize), row);
                 out.extend_from_slice(src);
             }
             self.context.Unmap(staging, 0);

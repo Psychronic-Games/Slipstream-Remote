@@ -10,7 +10,9 @@ use crate::{config::ServerSettings, proto::ALPN_REMOTE};
 /// Station relays, with Slipstream's public relay as an optional backup.
 pub fn relay_map(server: &ServerSettings) -> RelayMap {
     let map = if server.public_relays_enabled() {
-        RelayMap::from_iter([RelayConfig::from(crate::config::PUBLIC_STATION_URL.parse::<RelayUrl>().expect("public relay URL"))])
+        RelayMap::from_iter([RelayConfig::from(
+            crate::config::PUBLIC_STATION_URL.parse::<RelayUrl>().expect("public relay URL"),
+        )])
     } else {
         RelayMap::empty()
     };
@@ -23,30 +25,21 @@ pub fn relay_map(server: &ServerSettings) -> RelayMap {
 /// Binds the endpoint every Slipstream client uses, both to host and to view.
 pub async fn bind_client(secret: SecretKey, server: &ServerSettings, accept_sessions: bool) -> Result<Endpoint> {
     let map = relay_map(server);
-    let mode = if map.is_empty() {
-        RelayMode::Disabled
-    } else {
-        RelayMode::Custom(map)
-    };
-    let alpns = if accept_sessions {
-        vec![ALPN_REMOTE.to_vec(), crate::meeting::CALL_ALPN.to_vec()]
-    } else {
-        vec![]
-    };
+    let mode = if map.is_empty() { RelayMode::Disabled } else { RelayMode::Custom(map) };
+    let alpns = if accept_sessions { vec![ALPN_REMOTE.to_vec(), crate::meeting::CALL_ALPN.to_vec()] } else { vec![] };
     // Relay TLS uses our clock-corrected verifier too (see `clock`).
     let ca = iroh::tls::CaTlsConfig::custom_server_cert_verifier(Arc::new(|provider| {
         crate::clock::verifier(provider).map_err(std::io::Error::other)
     }));
-    let mut builder = Endpoint::builder(presets::Minimal)
-        .secret_key(secret)
-        .alpns(alpns)
-        .relay_mode(mode)
-        .ca_tls_config(ca);
+    let mut builder =
+        Endpoint::builder(presets::Minimal).secret_key(secret).alpns(alpns).relay_mode(mode).ca_tls_config(ca);
     // Some Android UDP stacks advertise segmentation offload but stall
     // when a connection first sends a batch. Use individual datagrams on
     // phones to avoid that first-keyframe fallback failure (iroh issue 4555).
     if cfg!(target_os = "android") || std::env::var_os("SLIPSTREAM_DISABLE_GSO").is_some() {
-        builder = builder.transport_config(iroh::endpoint::QuicTransportConfig::builder().enable_segmentation_offload(false).build());
+        builder = builder.transport_config(
+            iroh::endpoint::QuicTransportConfig::builder().enable_segmentation_offload(false).build(),
+        );
         tracing::info!("UDP segmentation offload disabled for compatibility");
     }
     // Troubleshooting aid: force every connection through the relay.

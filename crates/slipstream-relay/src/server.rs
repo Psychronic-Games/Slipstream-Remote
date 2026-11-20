@@ -77,7 +77,9 @@ pub struct Server {
 
 impl Server {
     pub async fn start(opts: ServerOptions) -> Result<Self> {
-        let hello = TcpListener::bind((opts.ip, opts.port)).await.with_context(|| format!("listening on {}:{}", opts.ip, opts.port))?;
+        let hello = TcpListener::bind((opts.ip, opts.port))
+            .await
+            .with_context(|| format!("listening on {}:{}", opts.ip, opts.port))?;
         let hello_addr = hello.local_addr()?;
         let mut builder = Endpoint::builder(presets::Minimal);
         if let Some(key) = opts.secret_key.clone() {
@@ -129,7 +131,8 @@ async fn answer_hellos(listener: TcpListener, line: String) {
             let _ = tokio::time::timeout(Duration::from_secs(5), async {
                 socket.write_all(line.as_bytes()).await?;
                 socket.shutdown().await
-            }).await;
+            })
+            .await;
         });
     }
 }
@@ -226,7 +229,9 @@ async fn serve_flow(mut send: SendStream, mut recv: RecvStream, stats: &Stats, a
                 let s = UdpSocket::bind(local).await?;
                 s.connect(addr).await?;
                 std::io::Result::Ok(s)
-            }.await {
+            }
+            .await
+            {
                 Ok(s) => s,
                 Err(e) => return refuse(&mut send, format!("{addr}: {e}")).await,
             };
@@ -245,7 +250,13 @@ async fn refuse(send: &mut SendStream, reason: String) -> Result<()> {
     Ok(())
 }
 
-async fn relay_udp(socket: UdpSocket, mut send: SendStream, mut recv: RecvStream, stats: &Stats, idle: Duration) -> Result<()> {
+async fn relay_udp(
+    socket: UdpSocket,
+    mut send: SendStream,
+    mut recv: RecvStream,
+    stats: &Stats,
+    idle: Duration,
+) -> Result<()> {
     use std::sync::atomic::Ordering;
     let mut from_computer = Vec::with_capacity(2048);
     let mut from_net = vec![0u8; 65536];

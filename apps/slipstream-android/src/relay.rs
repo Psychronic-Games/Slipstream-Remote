@@ -15,7 +15,9 @@ static SERVER: Mutex<Option<slipstream_relay::Server>> = Mutex::new(None);
 static CONTEXT: OnceLock<jni::objects::GlobalRef> = OnceLock::new();
 
 fn runtime() -> &'static tokio::runtime::Runtime {
-    RUNTIME.get_or_init(|| tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("relay runtime"))
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("relay runtime")
+    })
 }
 
 /// iroh reads network details through Android's APIs (ndk-context), which
@@ -28,7 +30,9 @@ fn prepare(env: &mut JNIEnv, context: &JObject, home: String) -> jni::errors::Re
     let vm = env.get_java_vm()?;
     // SAFETY: once per process, with the VM and a context kept alive by
     // the global reference for the life of the process.
-    unsafe { ndk_context::initialize_android_context(vm.get_java_vm_pointer().cast(), global.as_obj().as_raw().cast()) };
+    unsafe {
+        ndk_context::initialize_android_context(vm.get_java_vm_pointer().cast(), global.as_obj().as_raw().cast())
+    };
     let _ = CONTEXT.set(global);
     // SAFETY: before this process starts any other threads of ours.
     unsafe {
@@ -64,7 +68,8 @@ extern "system" fn Java_com_slipstreamremote_app_RelayNative_startServer<'a>(
                     old.stop().await;
                 }
                 // A lasting identity, so computers recognise this phone.
-                let key_path = std::path::Path::new(&std::env::var_os("SLIPSTREAM_HOME").unwrap_or_default()).join("relay.key");
+                let key_path =
+                    std::path::Path::new(&std::env::var_os("SLIPSTREAM_HOME").unwrap_or_default()).join("relay.key");
                 let secret_key = match slipstream_relay::load_or_create_key(&key_path) {
                     Ok(k) => Some(k),
                     Err(e) => {
@@ -75,7 +80,8 @@ extern "system" fn Java_com_slipstreamremote_app_RelayNative_startServer<'a>(
                 // The group's address can take a moment to appear.
                 let mut last = String::new();
                 for _ in 0..20 {
-                    let opts = slipstream_relay::ServerOptions { ip, secret_key: secret_key.clone(), ..Default::default() };
+                    let opts =
+                        slipstream_relay::ServerOptions { ip, secret_key: secret_key.clone(), ..Default::default() };
                     match slipstream_relay::Server::start(opts).await {
                         Ok(server) => {
                             *SERVER.lock().unwrap() = Some(server);

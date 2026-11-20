@@ -124,7 +124,11 @@ pub mod windows {
     /// next time, so a Safe Mode restart never sticks.
     pub fn leave_safe_mode_next_time() {
         // SAFETY: GetSystemMetrics has no preconditions.
-        let safe = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows_sys::Win32::UI::WindowsAndMessaging::SM_CLEANBOOT) } != 0;
+        let safe = unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
+                windows_sys::Win32::UI::WindowsAndMessaging::SM_CLEANBOOT,
+            )
+        } != 0;
         if safe {
             match run(&system32("bcdedit.exe"), &["/deletevalue", "{current}", "safeboot"]) {
                 Ok(()) => tracing::info!("started in Safe Mode; the next restart is normal again"),

@@ -30,7 +30,14 @@ unsafe extern "C" {
     fn opus_encoder_ctl(st: *mut RawEncoder, request: c_int, ...) -> c_int;
     fn opus_decoder_create(fs: i32, channels: c_int, error: *mut c_int) -> *mut RawDecoder;
     fn opus_decoder_destroy(st: *mut RawDecoder);
-    fn opus_decode(st: *mut RawDecoder, data: *const u8, len: i32, pcm: *mut i16, frame_size: c_int, fec: c_int) -> c_int;
+    fn opus_decode(
+        st: *mut RawDecoder,
+        data: *const u8,
+        len: i32,
+        pcm: *mut i16,
+        frame_size: c_int,
+        fec: c_int,
+    ) -> c_int;
     fn opus_strerror(error: c_int) -> *const c_char;
 }
 
@@ -75,7 +82,9 @@ impl Encoder {
     pub fn encode(&mut self, pcm: &[i16]) -> Result<&[u8]> {
         assert_eq!(pcm.len(), FRAME_SAMPLES);
         // SAFETY: a live encoder, a full frame, and a buffer of the size given.
-        let n = unsafe { opus_encode(self.raw, pcm.as_ptr(), FRAME as c_int, self.packet.as_mut_ptr(), self.packet.len() as i32) };
+        let n = unsafe {
+            opus_encode(self.raw, pcm.as_ptr(), FRAME as c_int, self.packet.as_mut_ptr(), self.packet.len() as i32)
+        };
         if n < 0 {
             bail!("Opus encode: {}", error(n));
         }
@@ -143,7 +152,8 @@ mod tests {
             let chord = [261.6f32, 329.6, 392.0].iter().map(|f| (tau * f * t).sin()).sum::<f32>() / 3.0;
             let sweep = (tau * (200.0 + 2000.0 * t) * t).sin();
             seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-            let noise = ((seed >> 16) as f32 / 32768.0 - 1.0) * if ((t * 4.0) as u32).is_multiple_of(2) { 0.1 } else { 0.0 };
+            let noise =
+                ((seed >> 16) as f32 / 32768.0 - 1.0) * if ((t * 4.0) as u32).is_multiple_of(2) { 0.1 } else { 0.0 };
             pcm[i * 2] = ((chord * 0.5 + noise) * 12000.0) as i16;
             pcm[i * 2 + 1] = ((sweep * 0.4 + noise) * 12000.0) as i16;
         }

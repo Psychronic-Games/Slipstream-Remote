@@ -43,14 +43,14 @@ use windows_sys::Win32::{
     },
     System::{
         JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JobObjectExtendedLimitInformation, SetInformationJobObject,
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
         },
         LibraryLoader::{GetProcAddress, LoadLibraryW},
         RemoteDesktop::WTSGetActiveConsoleSessionId,
         Threading::{
-            CREATE_NO_WINDOW, CreateEventW, CreateProcessAsUserW, GetCurrentProcess, GetExitCodeProcess, OpenProcessToken,
-            PROCESS_INFORMATION, STARTUPINFOW, TerminateProcess, WaitForSingleObject,
+            CREATE_NO_WINDOW, CreateEventW, CreateProcessAsUserW, GetCurrentProcess, GetExitCodeProcess,
+            OpenProcessToken, PROCESS_INFORMATION, STARTUPINFOW, TerminateProcess, WaitForSingleObject,
         },
     },
 };
@@ -60,7 +60,9 @@ const DISPLAY_NAME: &str = "Slipstream Remote";
 
 #[path = "service_update.rs"]
 mod updates;
-pub use updates::{UpdateGuard, apply_app_update, install_app_update, needs_app_update, sync_app_service, update_in_progress};
+pub use updates::{
+    UpdateGuard, apply_app_update, install_app_update, needs_app_update, sync_app_service, update_in_progress,
+};
 
 /// The machine profile the service's host uses.
 pub fn machine_home() -> PathBuf {
@@ -84,7 +86,8 @@ pub fn log_path() -> PathBuf {
 /// but needn't be: then partners need this one). Looked up at most every
 /// two seconds.
 pub fn hosted_id() -> Option<slipstream_core::directory::DeviceId> {
-    static SEEN: std::sync::Mutex<Option<(Instant, Option<slipstream_core::directory::DeviceId>)>> = std::sync::Mutex::new(None);
+    static SEEN: std::sync::Mutex<Option<(Instant, Option<slipstream_core::directory::DeviceId>)>> =
+        std::sync::Mutex::new(None);
     let mut seen = SEEN.lock().unwrap();
     if let Some((at, id)) = *seen
         && at.elapsed() < Duration::from_secs(2)
@@ -119,7 +122,11 @@ pub(crate) fn ensure_public_dir() -> PathBuf {
 fn publish_id(last: &mut Option<slipstream_core::directory::DeviceId>) {
     let Ok(store) = Store::open(machine_home()) else { return };
     let settings = store.load_settings();
-    let custom = settings.server.url.as_deref().is_some_and(|url| !url.trim().is_empty() && !slipstream_core::config::is_public_station(url));
+    let custom = settings
+        .server
+        .url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty() && !slipstream_core::config::is_public_station(url));
     let id = if custom { settings.host.last_device_id } else { settings.host.public_device_id };
     if id.is_some() && id != *last {
         let dir = public_dir();
@@ -245,7 +252,9 @@ pub fn log_to_show() -> PathBuf {
 /// without administrator rights once [`install`] has let users start it.
 pub fn start() -> Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-    let service = manager.open_service(NAME, ServiceAccess::QUERY_STATUS | ServiceAccess::START).context("opening the Slipstream service")?;
+    let service = manager
+        .open_service(NAME, ServiceAccess::QUERY_STATUS | ServiceAccess::START)
+        .context("opening the Slipstream service")?;
     if service.query_status()?.current_state != ServiceState::Running
         && let Err(e) = service.start::<&str>(&[])
     {
@@ -255,7 +264,12 @@ pub fn start() -> Result<()> {
     std::thread::sleep(Duration::from_secs(3));
     let now = service.query_status()?;
     if now.current_state != ServiceState::Running {
-        bail!("the service started but stopped again ({:?}, exit {:?})\n{}", now.current_state, now.exit_code, diagnose());
+        bail!(
+            "the service started but stopped again ({:?}, exit {:?})\n{}",
+            now.current_state,
+            now.exit_code,
+            diagnose()
+        );
     }
     Ok(())
 }
@@ -263,7 +277,8 @@ pub fn start() -> Result<()> {
 /// Windows' default service permissions, plus: signed-in users may start
 /// this one (not stop or change it), so the app can bring it back up
 /// without the administrator prompt.
-const SERVICE_SDDL: &str = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)";
+const SERVICE_SDDL: &str =
+    "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)";
 
 /// The last few lines of the service's log, to explain a failed start.
 fn log_tail(lines: usize) -> String {
@@ -285,7 +300,11 @@ fn quiet(program: &str) -> Command {
 /// messages about it in the last hour (the System event log).
 pub fn diagnose() -> String {
     let run = |args: &[&str]| {
-        quiet(args[0]).args(&args[1..]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+        quiet(args[0])
+            .args(&args[1..])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
     };
     let pick = |text: &str, keys: &[&str]| {
         text.lines()
@@ -324,14 +343,24 @@ fn wide(s: &str) -> Vec<u16> {
 /// Runs this program with `args` as administrator (the UAC prompt) and
 /// waits for it. Returns its exit code. For the GUI's install button.
 pub fn run_elevated(args: &str) -> Result<u32> {
-    use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
+    use windows_sys::Win32::System::Com::{
+        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
+    };
     use windows_sys::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
     struct Apartment(bool);
     impl Drop for Apartment {
-        fn drop(&mut self) { if self.0 { unsafe { CoUninitialize(); } } }
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe {
+                    CoUninitialize();
+                }
+            }
+        }
     }
     // ShellExecute may use COM shell extensions on this worker thread.
-    let _apartment = Apartment(unsafe { CoInitializeEx(std::ptr::null(), (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32) } >= 0);
+    let _apartment = Apartment(
+        unsafe { CoInitializeEx(std::ptr::null(), (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32) } >= 0,
+    );
     let exe = wide(&std::env::current_exe()?.display().to_string());
     let (verb, params) = (wide("runas"), wide(args));
     // SAFETY: ShellExecuteExW with valid strings; the process handle it
@@ -373,12 +402,18 @@ const RUN_VALUE: &str = "Slipstream Remote tray";
 
 /// `slipstream service install`: needs administrator rights.
 pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
-    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)
-        .context("installing the service needs administrator rights (run it as administrator)")?;
+    let manager = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )
+    .context("installing the service needs administrator rights (run it as administrator)")?;
 
     // An existing service is stopped and reconfigured.
     let existing = manager
-        .open_service(NAME, ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)
+        .open_service(
+            NAME,
+            ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::CHANGE_CONFIG | ServiceAccess::START,
+        )
         .ok();
     if let Some(s) = &existing
         && s.query_status().is_ok_and(|st| st.current_state != ServiceState::Stopped)
@@ -410,7 +445,9 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
         settings.host.set_permanent_password(Some(pw));
     }
     if settings.host.permanent_secret().is_none() {
-        bail!("set an unattended password first (Config → Unattended password, or --password) for access before sign-in; signed-in users can also share the service's one-time code");
+        bail!(
+            "set an unattended password first (Config → Unattended password, or --password) for access before sign-in; signed-in users can also share the service's one-time code"
+        );
     }
     settings.host.enabled = true;
     let home = machine_home();
@@ -447,12 +484,13 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
     if home.join("identity.key").exists() {
         machine.identity()?;
         let old = machine.load_settings();
-        settings.host.last_device_id = if old.server.url == settings.server.url { old.host.last_device_id } else { None };
+        settings.host.last_device_id =
+            if old.server.url == settings.server.url { old.host.last_device_id } else { None };
         settings.host.public_device_id = old.host.public_device_id;
     } else {
         hand_over_identity(&user.dir().join("identity.key"), &home.join("identity.key"))?;
-        settings.host.last_device_id=None;
-        settings.host.public_device_id=None;
+        settings.host.last_device_id = None;
+        settings.host.public_device_id = None;
     }
     machine.save_settings(&settings)?;
     machine.identity()?; // Establish the machine binding before image capture.
@@ -497,7 +535,8 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
             s.change_config(&info)?;
             s
         }
-        None => manager.create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START | ServiceAccess::QUERY_STATUS)?,
+        None => manager
+            .create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START | ServiceAccess::QUERY_STATUS)?,
     };
     // Nice to have, so not fatal (Wine, for one, lacks some of these).
     match quiet("sc").args(["sdset", NAME, SERVICE_SDDL]).output() {
@@ -505,7 +544,9 @@ pub fn install(password: Option<&str>, from: Option<&Path>) -> Result<()> {
         Ok(o) => tracing::warn!("letting users start the service: {}", String::from_utf8_lossy(&o.stdout).trim()),
         Err(e) => tracing::warn!("letting users start the service: {e}"),
     }
-    if let Err(e) = service.set_description("Lets your support provider reach this computer, including the login screen and administrator prompts.") {
+    if let Err(e) = service.set_description(
+        "Lets your support provider reach this computer, including the login screen and administrator prompts.",
+    ) {
         tracing::warn!("service description: {:#}", anyhow::Error::from(e));
     }
     // Restart after crashes, and after it exits to load an updated program.
@@ -573,7 +614,9 @@ fn hand_over_identity(key: &Path, dest: &Path) -> Result<()> {
         let _ = quiet("takeown").arg("/F").arg(dest).arg("/A").output();
         let _ = quiet("icacls").arg(dest).args(["/grant", "*S-1-5-32-544:F", "/Q"]).output();
         let _ = std::fs::remove_file(dest);
-        std::fs::rename(&tmp, dest).map_err(|_| e).with_context(|| format!("replacing the service's identity ({})", dest.display()))?;
+        std::fs::rename(&tmp, dest)
+            .map_err(|_| e)
+            .with_context(|| format!("replacing the service's identity ({})", dest.display()))?;
     }
     if std::fs::read(dest).ok().as_deref() != Some(bytes.as_slice()) {
         bail!("the service's copy of this computer's identity doesn't match (it would get a new ID)");
@@ -640,7 +683,13 @@ pub fn uninstall() -> Result<()> {
         let _ = std::fs::remove_dir(install_dir());
     }
     let _ = quiet("reg")
-        .args(["delete", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "/v", "SoftwareSASGeneration", "/f"])
+        .args([
+            "delete",
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
+            "/v",
+            "SoftwareSASGeneration",
+            "/f",
+        ])
         .status();
     let _ = quiet("reg").args(["delete", RUN_KEY, "/v", RUN_VALUE, "/f"]).status();
     println!("Slipstream service removed.");
@@ -653,7 +702,8 @@ define_windows_service!(ffi_service_main, service_main);
 
 /// `slipstream service run`: hands over to the service control manager.
 pub fn run() -> Result<()> {
-    service_dispatcher::start(NAME, ffi_service_main).context("not started by the service manager (use `slipstream service install`)")?;
+    service_dispatcher::start(NAME, ffi_service_main)
+        .context("not started by the service manager (use `slipstream service install`)")?;
     Ok(())
 }
 
@@ -696,7 +746,10 @@ fn run_service() -> Result<()> {
     ensure_public_dir();
     tracing::info!("service started (build {})", slipstream_core::BUILD_NUMBER);
     let exit = supervise(&stop_rx);
-    tracing::info!("service stopped{}", if exit == 0 { ": Windows or an administrator asked it to" } else { ", to restart" });
+    tracing::info!(
+        "service stopped{}",
+        if exit == 0 { ": Windows or an administrator asked it to" } else { ", to restart" }
+    );
     report(ServiceState::Stopped, exit);
     Ok(())
 }
@@ -813,7 +866,12 @@ fn kill_on_close_job() -> HANDLE {
         }
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(job, JobObjectExtendedLimitInformation, (&raw const info).cast(), size_of_val(&info) as u32);
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            (&raw const info).cast(),
+            size_of_val(&info) as u32,
+        );
         job
     }
 }
@@ -830,7 +888,8 @@ fn spawn_host(exe: &Path, session: u32) -> Result<HANDLE> {
             bail!("OpenProcessToken failed");
         }
         let mut dup: HANDLE = std::ptr::null_mut();
-        let ok = DuplicateTokenEx(token, TOKEN_ALL_ACCESS, std::ptr::null(), SecurityImpersonation, TokenPrimary, &mut dup);
+        let ok =
+            DuplicateTokenEx(token, TOKEN_ALL_ACCESS, std::ptr::null(), SecurityImpersonation, TokenPrimary, &mut dup);
         CloseHandle(token);
         if ok == 0 {
             bail!("DuplicateTokenEx failed");
@@ -890,22 +949,51 @@ fn send_sas() {
 /// Open the chat app as the signed-in user, with that user's environment/profile.
 /// The service's SYSTEM profile and privileges must never reach this window.
 pub(crate) fn launch_user_chat(session: u32) -> Result<()> {
-    use windows_sys::Win32::System::{RemoteDesktop::WTSQueryUserToken, Environment::{CreateEnvironmentBlock,DestroyEnvironmentBlock},Threading::CREATE_UNICODE_ENVIRONMENT};
-    let exe=std::env::current_exe()?;
-    let application=wide(&exe.to_string_lossy());
-    let mut command=wide(&format!("\"{}\" --minimized --service-chat",exe.display()));
-    let desktop=wide("winsta0\\default");
+    use windows_sys::Win32::System::{
+        Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock},
+        RemoteDesktop::WTSQueryUserToken,
+        Threading::CREATE_UNICODE_ENVIRONMENT,
+    };
+    let exe = std::env::current_exe()?;
+    let application = wide(&exe.to_string_lossy());
+    let mut command = wide(&format!("\"{}\" --minimized --service-chat", exe.display()));
+    let desktop = wide("winsta0\\default");
     unsafe {
-        let mut token=std::ptr::null_mut();
-        if WTSQueryUserToken(session,&mut token)==0 {bail!("no signed-in user for chat: {}",std::io::Error::last_os_error());}
-        let mut environment=std::ptr::null_mut();
-        if CreateEnvironmentBlock(&mut environment,token,0)==0 {let error=std::io::Error::last_os_error();CloseHandle(token);return Err(error.into());}
-        let mut startup:STARTUPINFOW=std::mem::zeroed();startup.cb=size_of::<STARTUPINFOW>() as u32;startup.lpDesktop=desktop.as_ptr().cast_mut();
-        let mut process:PROCESS_INFORMATION=std::mem::zeroed();
-        let ok=CreateProcessAsUserW(token,application.as_ptr(),command.as_mut_ptr(),std::ptr::null(),std::ptr::null(),0,CREATE_UNICODE_ENVIRONMENT|CREATE_NO_WINDOW,environment,std::ptr::null(),&startup,&mut process);
-        let error=std::io::Error::last_os_error();DestroyEnvironmentBlock(environment);CloseHandle(token);
-        if ok==0 {return Err(error.into());}
-        CloseHandle(process.hThread);CloseHandle(process.hProcess);
+        let mut token = std::ptr::null_mut();
+        if WTSQueryUserToken(session, &mut token) == 0 {
+            bail!("no signed-in user for chat: {}", std::io::Error::last_os_error());
+        }
+        let mut environment = std::ptr::null_mut();
+        if CreateEnvironmentBlock(&mut environment, token, 0) == 0 {
+            let error = std::io::Error::last_os_error();
+            CloseHandle(token);
+            return Err(error.into());
+        }
+        let mut startup: STARTUPINFOW = std::mem::zeroed();
+        startup.cb = size_of::<STARTUPINFOW>() as u32;
+        startup.lpDesktop = desktop.as_ptr().cast_mut();
+        let mut process: PROCESS_INFORMATION = std::mem::zeroed();
+        let ok = CreateProcessAsUserW(
+            token,
+            application.as_ptr(),
+            command.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
+            environment,
+            std::ptr::null(),
+            &startup,
+            &mut process,
+        );
+        let error = std::io::Error::last_os_error();
+        DestroyEnvironmentBlock(environment);
+        CloseHandle(token);
+        if ok == 0 {
+            return Err(error.into());
+        }
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
     }
     Ok(())
 }

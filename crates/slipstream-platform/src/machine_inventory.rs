@@ -42,20 +42,32 @@ fn platform() -> Vec<InfoSection> {
     // SetupAPI reports present devices, with the manufacturer's actual model
     // description. No PowerShell, external utility, or network RPC is needed.
     unsafe {
-        let set = SetupDiGetClassDevsW(std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), DIGCF_PRESENT | DIGCF_ALLCLASSES);
+        let set = SetupDiGetClassDevsW(
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            DIGCF_PRESENT | DIGCF_ALLCLASSES,
+        );
         if set != -1 {
             for index in 0..4096 {
-                let mut info = SP_DEVINFO_DATA {
-                    cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32,
-                    ..Default::default()
-                };
+                let mut info =
+                    SP_DEVINFO_DATA { cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32, ..Default::default() };
                 if SetupDiEnumDeviceInfo(set, index, &mut info) == 0 {
                     break;
                 }
                 let prop = |property| {
                     let mut bytes = vec![0u8; 4096];
                     let mut size = 0;
-                    if SetupDiGetDeviceRegistryPropertyW(set, &info, property, std::ptr::null_mut(), bytes.as_mut_ptr(), bytes.len() as u32, &mut size) == 0 {
+                    if SetupDiGetDeviceRegistryPropertyW(
+                        set,
+                        &info,
+                        property,
+                        std::ptr::null_mut(),
+                        bytes.as_mut_ptr(),
+                        bytes.len() as u32,
+                        &mut size,
+                    ) == 0
+                    {
                         return None;
                     }
                     bytes.truncate((size as usize).min(bytes.len()));
@@ -172,7 +184,9 @@ fn platform() -> Vec<InfoSection> {
 #[cfg(windows)]
 fn utf16(bytes: &[u8]) -> Option<String> {
     let units = bytes
-        .as_chunks::<2>().0.iter()
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|p| u16::from_le_bytes([p[0], p[1]]))
         .take_while(|&u| u != 0)
         .collect::<Vec<_>>();
@@ -259,7 +273,8 @@ fn platform() -> Vec<InfoSection> {
         } else {
             format!("{maker} {product}").trim().to_string()
         };
-        let detail = format!("USB · {}:{}", read("idVendor").unwrap_or_default(), read("idProduct").unwrap_or_default());
+        let detail =
+            format!("USB · {}:{}", read("idVendor").unwrap_or_default(), read("idProduct").unwrap_or_default());
         // The USB interface class identifies printer and imaging functions.
         let path = entry.path();
         let imaging = std::fs::read_dir(&path)
@@ -333,7 +348,10 @@ fn parse_mounts(text: &str) -> Vec<(String, String)> {
             let (before, after) = line.split_once(" - ")?;
             let fields = before.split_whitespace().collect::<Vec<_>>();
             let fs = after.split_whitespace().collect::<Vec<_>>();
-            if fields.len() < 5 || fs.len() < 2 || !["cifs", "smb3", "nfs", "nfs4", "fuse.sshfs", "fuse.rclone", "davfs", "fuse.davfs"].contains(&fs[0]) {
+            if fields.len() < 5
+                || fs.len() < 2
+                || !["cifs", "smb3", "nfs", "nfs4", "fuse.sshfs", "fuse.rclone", "davfs", "fuse.davfs"].contains(&fs[0])
+            {
                 return None;
             }
             Some((mount_unescape(fields[4]), format!("{} ({})", redact_uri(&mount_unescape(fs[1])), fs[0])))

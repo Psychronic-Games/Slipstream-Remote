@@ -31,16 +31,13 @@ impl Cache {
         (at.elapsed() < ttl).then(|| result.clone())
     }
 
-    async fn lookup(
-        &mut self,
-        client: &reqwest::Client,
-        endpoints: &[&str],
-        refresh: bool,
-    ) -> Answer {
+    async fn lookup(&mut self, client: &reqwest::Client, endpoints: &[&str], refresh: bool) -> Answer {
         if let Some(answer) = self.recent(refresh) {
             return answer;
         }
-        let answer = lookup(client,endpoints).await.map_err(|_| "Public IP unavailable; check the remote computer's internet connection or try Refresh".to_string());
+        let answer = lookup(client, endpoints).await.map_err(|_| {
+            "Public IP unavailable; check the remote computer's internet connection or try Refresh".to_string()
+        });
         self.answer = Some((Instant::now(), answer.clone()));
         answer
     }
@@ -48,15 +45,12 @@ impl Cache {
 
 pub(crate) async fn get(refresh: bool) -> Answer {
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
-    let mut cache = CACHE
-        .get_or_init(|| Mutex::new(Cache::default()))
-        .lock()
-        .await;
+    let mut cache = CACHE.get_or_init(|| Mutex::new(Cache::default())).lock().await;
     if let Some(answer) = cache.recent(refresh) {
         return answer;
     }
-    let client = slipstream_core::directory::http_client()
-        .map_err(|_| "Public IP lookup could not start".to_string())?;
+    let client =
+        slipstream_core::directory::http_client().map_err(|_| "Public IP lookup could not start".to_string())?;
     cache.lookup(&client, &ENDPOINTS, refresh).await
 }
 
@@ -71,32 +65,18 @@ async fn lookup(client: &reqwest::Client, endpoints: &[&str]) -> Result<IpAddr> 
 
 async fn fetch(client: &reqwest::Client, endpoint: &str) -> Result<IpAddr> {
     let url = reqwest::Url::parse(endpoint)?;
-    let mut response = client
-        .get(url.clone())
-        .timeout(Duration::from_secs(4))
-        .send()
-        .await?
-        .error_for_status()?;
-    ensure!(
-        response.url().origin() == url.origin(),
-        "Public-IP lookup redirected to another origin"
-    );
+    let mut response = client.get(url.clone()).timeout(Duration::from_secs(4)).send().await?.error_for_status()?;
+    ensure!(response.url().origin() == url.origin(), "Public-IP lookup redirected to another origin");
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await? {
-        ensure!(
-            body.len() + chunk.len() <= 64,
-            "Public-IP response too large"
-        );
+        ensure!(body.len() + chunk.len() <= 64, "Public-IP response too large");
         body.extend_from_slice(&chunk);
     }
     parse(&body)
 }
 
 fn parse(body: &[u8]) -> Result<IpAddr> {
-    let ip: IpAddr = std::str::from_utf8(body)?
-        .trim()
-        .parse()
-        .context("Invalid public-IP reply")?;
+    let ip: IpAddr = std::str::from_utf8(body)?.trim().parse().context("Invalid public-IP reply")?;
     if let IpAddr::V6(v6) = ip
         && let Some(mapped) = v6.to_ipv4_mapped()
     {
@@ -151,14 +131,8 @@ mod tests {
 
     #[test]
     fn public_addresses_only() {
-        assert_eq!(
-            parse(b" 93.184.216.34\n").unwrap().to_string(),
-            "93.184.216.34"
-        );
-        assert_eq!(
-            parse(b"2606:4700:4700::1111").unwrap().to_string(),
-            "2606:4700:4700::1111"
-        );
+        assert_eq!(parse(b" 93.184.216.34\n").unwrap().to_string(), "93.184.216.34");
+        assert_eq!(parse(b"2606:4700:4700::1111").unwrap().to_string(), "2606:4700:4700::1111");
         for body in [
             "10.0.0.1",
             "127.0.0.1",
@@ -185,10 +159,8 @@ mod tests {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let mut request = [0; 2048];
                 let _ = socket.read(&mut request).await;
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let response =
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                 let _ = socket.write_all(response.as_bytes()).await;
             }
         });
@@ -202,10 +174,7 @@ mod tests {
         let invalid = endpoint("not an IP").await;
         let valid = endpoint("93.184.216.34\n").await;
         let mut cache = Cache::default();
-        let first = cache
-            .lookup(&client, &[&invalid, &valid], false)
-            .await
-            .unwrap();
+        let first = cache.lookup(&client, &[&invalid, &valid], false).await.unwrap();
         // The fixture servers are gone; automatic and immediate manual reads use cache.
         assert_eq!(cache.lookup(&client, &[], false).await.unwrap(), first);
         assert_eq!(cache.lookup(&client, &[], true).await.unwrap(), first);
@@ -213,18 +182,11 @@ mod tests {
         let next = endpoint("2606:4700:4700::1111").await;
         assert_ne!(cache.lookup(&client, &[&next], true).await.unwrap(), first);
         cache.answer.as_mut().unwrap().0 = Instant::now() - Duration::from_secs(61);
-        let large =
-            endpoint("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").await;
+        let large = endpoint("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").await;
         assert!(cache.lookup(&client, &[&large], false).await.is_err());
         let recovered = endpoint("93.184.216.34").await;
-        assert!(
-            cache.lookup(&client, &[&recovered], false).await.is_err(),
-            "Back off after failure"
-        );
+        assert!(cache.lookup(&client, &[&recovered], false).await.is_err(), "Back off after failure");
         cache.answer.as_mut().unwrap().0 = Instant::now() - Duration::from_secs(16);
-        assert_eq!(
-            cache.lookup(&client, &[&recovered], false).await.unwrap(),
-            first
-        );
+        assert_eq!(cache.lookup(&client, &[&recovered], false).await.unwrap(), first);
     }
 }

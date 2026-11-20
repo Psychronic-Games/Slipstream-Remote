@@ -4,9 +4,9 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use clap::{Parser, Subcommand};
-use slipstream::{cli, gui};
 #[cfg(any(windows, target_os = "linux"))]
 use slipstream::service;
+use slipstream::{cli, gui};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -182,7 +182,11 @@ enum Command {
     },
     /// Write the app icon as a PNG (used by packaging scripts).
     #[command(hide = true)]
-    ExportIcon { path: std::path::PathBuf, #[arg(long, default_value_t = 256)] size: u32 },
+    ExportIcon {
+        path: std::path::PathBuf,
+        #[arg(long, default_value_t = 256)]
+        size: u32,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -347,7 +351,11 @@ fn main() -> anyhow::Result<()> {
     #[cfg(windows)]
     // Machine profiles are authoritative; unsigned station trailers must
     // not reconfigure the SYSTEM host or privileged update helper.
-    let provision = provision && !matches!(args.command, Some(Command::Service { action: ServiceCmd::Run | ServiceCmd::Host | ServiceCmd::ApplyUpdate { .. } }));
+    let provision = provision
+        && !matches!(
+            args.command,
+            Some(Command::Service { action: ServiceCmd::Run | ServiceCmd::Host | ServiceCmd::ApplyUpdate { .. } })
+        );
     if provision {
         slipstream::apply_station_config();
     }
@@ -356,15 +364,22 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Host { password }) => rt.block_on(cli::host(args.test_pattern, password, false)),
         #[cfg(windows)]
         Some(Command::Service { action }) => match action {
-            ServiceCmd::ApplyUpdate { staged, info, report_id, service_only } => service::apply_app_update(&staged, &info, &report_id, service_only),
-            ServiceCmd::Install { password, from, report } => reported(report, service::install(password.as_deref(), from.as_deref())),
+            ServiceCmd::ApplyUpdate { staged, info, report_id, service_only } => {
+                service::apply_app_update(&staged, &info, &report_id, service_only)
+            }
+            ServiceCmd::Install { password, from, report } => {
+                reported(report, service::install(password.as_deref(), from.as_deref()))
+            }
             ServiceCmd::Uninstall { report } => reported(report, service::uninstall()),
             ServiceCmd::Start => service::start(),
             ServiceCmd::Status => {
-                println!("{}", match service::state() {
-                    None => "not installed".to_string(),
-                    Some(s) => format!("{s:?}"),
-                });
+                println!(
+                    "{}",
+                    match service::state() {
+                        None => "not installed".to_string(),
+                        Some(s) => format!("{s:?}"),
+                    }
+                );
                 Ok(())
             }
             ServiceCmd::Run => {
@@ -378,7 +393,9 @@ fn main() -> anyhow::Result<()> {
         },
         #[cfg(target_os = "linux")]
         Some(Command::Service { action }) => match action {
-            ServiceCmd::Install { password, from, report } => reported(report, service::install(password.as_deref(), from.as_deref())),
+            ServiceCmd::Install { password, from, report } => {
+                reported(report, service::install(password.as_deref(), from.as_deref()))
+            }
             ServiceCmd::Uninstall { report } => reported(report, service::uninstall()),
             ServiceCmd::Start => service::start(),
             ServiceCmd::Status => {
@@ -395,7 +412,9 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Connect { id, password, station, seconds, ls, put, to, get, forward }) => {
             rt.block_on(cli::connect(&id, password, station, seconds, cli::FileOps { ls, put, to, get }, forward))
         }
-        Some(Command::SignIn { station, username, password }) => rt.block_on(cli::sign_in(&station, &username, password)),
+        Some(Command::SignIn { station, username, password }) => {
+            rt.block_on(cli::sign_in(&station, &username, password))
+        }
         Some(Command::SignOut { station }) => rt.block_on(cli::sign_out(&station)),
         Some(Command::Saved) => rt.block_on(cli::saved()),
         Some(Command::Save { id, station, name, notes, group, password, shared, remove }) => {
@@ -407,10 +426,12 @@ fn main() -> anyhow::Result<()> {
         Some(Command::EncodeTest { size }) => cli::encode_test(&size),
         Some(Command::Update) => rt.block_on(cli::update()),
         Some(Command::ExportIcon { path, size }) => gui::export_icon(&path, size),
-        Some(Command::Relay { action: RelayCmd::Connect { phone, port, dns, control: Some(control), token: Some(token) } }) => {
-            rt.block_on(cli::relay_helper(phone, port, dns, control, token))
+        Some(Command::Relay {
+            action: RelayCmd::Connect { phone, port, dns, control: Some(control), token: Some(token) },
+        }) => rt.block_on(cli::relay_helper(phone, port, dns, control, token)),
+        Some(Command::Relay { action: RelayCmd::Connect { phone, port, dns, .. } }) => {
+            rt.block_on(cli::relay_connect(phone, port, dns))
         }
-        Some(Command::Relay { action: RelayCmd::Connect { phone, port, dns, .. } }) => rt.block_on(cli::relay_connect(phone, port, dns)),
         Some(Command::Relay { action: RelayCmd::Serve { ip, port } }) => rt.block_on(cli::relay_serve(ip, port)),
         None => {
             drop(rt);
@@ -465,7 +486,10 @@ fn report_crashes() {
             if gui::graphics_start_failed(&info.to_string()) {
                 // SAFETY: ends this process; nothing runs after it.
                 unsafe {
-                    windows_sys::Win32::System::Threading::TerminateProcess(windows_sys::Win32::System::Threading::GetCurrentProcess(), 1);
+                    windows_sys::Win32::System::Threading::TerminateProcess(
+                        windows_sys::Win32::System::Threading::GetCurrentProcess(),
+                        1,
+                    );
                 }
             }
             fatal(&format!("Slipstream Remote stopped unexpectedly:\n\n{info}"));
@@ -493,11 +517,7 @@ fn fatal(text: &str) {
 
 /// Only `slipstream://` URLs, so a mistyped command still gets an error.
 fn parse_link(s: &str) -> Result<String, String> {
-    if s.starts_with("slipstream://") {
-        Ok(s.to_string())
-    } else {
-        Err(format!("unknown command {s:?} (see --help)"))
-    }
+    if s.starts_with("slipstream://") { Ok(s.to_string()) } else { Err(format!("unknown command {s:?} (see --help)")) }
 }
 
 fn parse_size(s: &str) -> Result<[f32; 2], String> {

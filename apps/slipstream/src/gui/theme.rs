@@ -96,9 +96,9 @@ pub fn install(ctx: &egui::Context) {
             (Small, body(13.0)),
         ]
         .into();
-        style.spacing.item_spacing = if cfg!(target_os="android") {vec2(8.0,8.0)} else {vec2(6.0,5.0)};
-        style.spacing.button_padding = if cfg!(target_os="android") {vec2(14.0,6.0)} else {vec2(10.0,4.0)};
-        style.spacing.interact_size.y = if cfg!(target_os="android") {32.0} else {28.0};
+        style.spacing.item_spacing = if cfg!(target_os = "android") { vec2(8.0, 8.0) } else { vec2(6.0, 5.0) };
+        style.spacing.button_padding = if cfg!(target_os = "android") { vec2(14.0, 6.0) } else { vec2(10.0, 4.0) };
+        style.spacing.interact_size.y = if cfg!(target_os = "android") { 32.0 } else { 28.0 };
 
         let v = &mut style.visuals;
         *v = egui::Visuals::dark();
@@ -209,13 +209,12 @@ pub fn elbow(painter: &egui::Painter, rect: Rect, arm_w: f32, arm_h: f32, corner
             fillet(painter, pos2(rect.min.x + arm_w, rect.min.y + arm_h), inner, 1.0, 1.0, color);
         }
         Corner::BottomLeft => {
-            let block = Rect::from_min_max(pos2(rect.min.x, rect.max.y - arm_h.max(outer)), pos2(rect.min.x + arm_w, rect.max.y));
-            painter.rect_filled(block, CornerRadius { sw: r_outer, ..Default::default() }, color);
-            painter.rect_filled(
-                Rect::from_min_max(rect.min, pos2(rect.min.x + arm_w, block.min.y + 1.0)),
-                0.0,
-                color,
+            let block = Rect::from_min_max(
+                pos2(rect.min.x, rect.max.y - arm_h.max(outer)),
+                pos2(rect.min.x + arm_w, rect.max.y),
             );
+            painter.rect_filled(block, CornerRadius { sw: r_outer, ..Default::default() }, color);
+            painter.rect_filled(Rect::from_min_max(rect.min, pos2(rect.min.x + arm_w, block.min.y + 1.0)), 0.0, color);
             painter.rect_filled(
                 Rect::from_min_max(pos2(rect.min.x + arm_w - 1.0, rect.max.y - arm_h), rect.max),
                 0.0,
@@ -259,7 +258,15 @@ pub fn block_button(ui: &mut Ui, rect: Rect, label: &str, code: &str, color: Col
 
 /// A [`block_button`] whose active arrow points up (`up`: a row of them
 /// below the content, on a phone) instead of right.
-pub fn block_button_pointing(ui: &mut Ui, rect: Rect, label: &str, code: &str, color: Color32, active: bool, up: bool) -> Response {
+pub fn block_button_pointing(
+    ui: &mut Ui,
+    rect: Rect,
+    label: &str,
+    code: &str,
+    color: Color32,
+    active: bool,
+    up: bool,
+) -> Response {
     let resp = ui.interact(rect, ui.scope_id().with(label), Sense::click());
     let painter = ui.painter();
     let mut fill = if active { lighten(color, 0.15) } else { mix(color, Color32::BLACK, 0.28) };
@@ -296,12 +303,30 @@ pub fn block_button_pointing(ui: &mut Ui, rect: Rect, label: &str, code: &str, c
         let at = pos2(rect.center().x - text.size().x / 2.0, rect.bottom() - 4.0 - text.size().y);
         painter.galley(at, text, Color32::BLACK);
         if !code.is_empty() && rect.width() >= 72.0 {
-            painter.text(rect.center_top() + vec2(0.0, 4.0), Align2::CENTER_TOP, code, mono(11.0), Color32::BLACK.gamma_multiply(0.6));
+            painter.text(
+                rect.center_top() + vec2(0.0, 4.0),
+                Align2::CENTER_TOP,
+                code,
+                mono(11.0),
+                Color32::BLACK.gamma_multiply(0.6),
+            );
         }
     } else {
-        painter.text(rect.right_bottom() + vec2(-8.0, -4.0), Align2::RIGHT_BOTTOM, label.to_uppercase(), font(17.0), Color32::BLACK);
+        painter.text(
+            rect.right_bottom() + vec2(-8.0, -4.0),
+            Align2::RIGHT_BOTTOM,
+            label.to_uppercase(),
+            font(17.0),
+            Color32::BLACK,
+        );
         if !code.is_empty() {
-            painter.text(rect.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, code, mono(11.0), Color32::BLACK.gamma_multiply(0.6));
+            painter.text(
+                rect.left_top() + vec2(8.0, 4.0),
+                Align2::LEFT_TOP,
+                code,
+                mono(11.0),
+                Color32::BLACK.gamma_multiply(0.6),
+            );
         }
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -318,7 +343,8 @@ pub fn progress(ui: &mut Ui, fraction: f32, width: f32, color: Color32, text: &s
         p.rect_filled(rect, r, Color32::from_rgb(16, 20, 34));
         p.rect_stroke(rect, r, Stroke::new(1.0, color.gamma_multiply(0.5)), egui::StrokeKind::Inside);
         let split = rect.left() + rect.width() * fraction.clamp(0.0, 1.0);
-        let filled = Rect::from_min_max(rect.min, pos2(split.max(rect.left() + 2.0 * r).min(rect.right()), rect.bottom()));
+        let filled =
+            Rect::from_min_max(rect.min, pos2(split.max(rect.left() + 2.0 * r).min(rect.right()), rect.bottom()));
         if fraction > 0.0 {
             p.rect_filled(filled, r, color);
         }
@@ -337,7 +363,7 @@ pub fn progress(ui: &mut Ui, fraction: f32, width: f32, color: Color32, text: &s
 
 /// A compact rounded action button sized to its label.
 pub fn pill(ui: &mut Ui, label: &str, color: Color32) -> Response {
-    pill_sized(ui, label, color, vec2(0.0, if cfg!(target_os="android") {32.0} else {29.0}))
+    pill_sized(ui, label, color, vec2(0.0, if cfg!(target_os = "android") { 32.0 } else { 29.0 }))
 }
 
 pub fn pill_sized(ui: &mut Ui, label: &str, color: Color32, min: Vec2) -> Response {
@@ -351,7 +377,7 @@ pub fn back_pill(ui: &mut Ui, label: &str, color: Color32) -> Response {
 }
 
 pub fn transfer_pill(ui: &mut Ui, label: &str, color: Color32, send: bool) -> Response {
-    pill_with(ui, label, color, vec2(0.0, 30.0), Some(if send {forward_delta} else {back_delta}))
+    pill_with(ui, label, color, vec2(0.0, 30.0), Some(if send { forward_delta } else { back_delta }))
 }
 
 fn forward_delta(painter: &egui::Painter, rect: Rect, ink: Color32, bg: Color32) {
@@ -367,7 +393,7 @@ fn back_delta(painter: &egui::Painter, rect: Rect, ink: Color32, bg: Color32) {
 pub fn delta(painter: &egui::Painter, rect: Rect, ink: Color32, bg: Color32, right: bool) {
     // Logo space (pointing up) → pointing left: (x, y) ↦ (y, 1 − x).
     let at = |(x, y): (f32, f32)| {
-        let (x,y) = if right {(1.0-y,x)} else {(y,1.0-x)};
+        let (x, y) = if right { (1.0 - y, x) } else { (y, 1.0 - x) };
         pos2(rect.left() + x * rect.width(), rect.top() + y * rect.height())
     };
     for half in [&LOGO_LEFT, &LOGO_RIGHT] {
@@ -383,10 +409,12 @@ pub fn star(painter: &egui::Painter, rect: Rect, color: Color32) {
     mesh.colored_vertex(rect.center(), color);
     for i in 0..10 {
         let angle = -FRAC_PI_2 + i as f32 * PI / 5.0;
-        let radius = rect.width().min(rect.height()) * if i % 2 == 0 {0.5} else {0.23};
-        mesh.colored_vertex(rect.center() + vec2(angle.cos(),angle.sin()) * radius, color);
+        let radius = rect.width().min(rect.height()) * if i % 2 == 0 { 0.5 } else { 0.23 };
+        mesh.colored_vertex(rect.center() + vec2(angle.cos(), angle.sin()) * radius, color);
     }
-    for i in 0..10 { mesh.add_triangle(0, i+1, (i+1)%10+1); }
+    for i in 0..10 {
+        mesh.add_triangle(0, i + 1, (i + 1) % 10 + 1);
+    }
     painter.add(Shape::mesh(mesh));
 }
 
@@ -398,7 +426,10 @@ fn pill_with(ui: &mut Ui, label: &str, color: Color32, min: Vec2, icon: Option<P
     let icon_w = if icon.is_some() { 22.0 } else { 0.0 };
     let navigation = icon.is_some();
     let pad = 2.0 * ui.spacing().button_padding.x + if navigation { 12.0 } else { 0.0 };
-    let size = vec2((galley.size().x + pad + icon_w).max(min.x), min.y.max(if cfg!(target_os="android") {40.0} else {28.0}));
+    let size = vec2(
+        (galley.size().x + pad + icon_w).max(min.x),
+        min.y.max(if cfg!(target_os = "android") { 40.0 } else { 28.0 }),
+    );
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
@@ -419,7 +450,8 @@ fn pill_with(ui: &mut Ui, label: &str, color: Color32, min: Vec2, icon: Option<P
         let cap = rect.height() * 0.55;
         if navigation && rect.width() - 2.0 * cap > galley.size().x + icon_w + 12.0 {
             // With an icon in front, only the far seam (the icon takes the near one's place).
-            let seams = if icon.is_some() { &[rect.right() - cap][..] } else { &[rect.left() + cap, rect.right() - cap][..] };
+            let seams =
+                if icon.is_some() { &[rect.right() - cap][..] } else { &[rect.left() + cap, rect.right() - cap][..] };
             for &x in seams {
                 painter.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, Color32::BLACK));
             }
@@ -533,7 +565,9 @@ pub fn console_button(ui: &mut Ui, label: &str, color: Color32, icon: ConsoleIco
             Stroke::new(1.5, pal::BG),
         ));
     }
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, if label.is_empty() { icon.label() } else { label }));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::Button, enabled, if label.is_empty() { icon.label() } else { label })
+    });
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -544,24 +578,32 @@ pub fn console_menu(response: &Response) -> egui::Popup<'_> {
         .align(egui::emath::RectAlign::BOTTOM_START)
         .gap(4.0)
         .width(response.rect.width().max(180.0))
-        .frame(egui::Frame::new().fill(pal::PANEL)
-            .stroke(Stroke::new(1.0, pal::VIOLET))
-            .corner_radius(6.0).inner_margin(6))
+        .frame(
+            egui::Frame::new()
+                .fill(pal::PANEL)
+                .stroke(Stroke::new(1.0, pal::VIOLET))
+                .corner_radius(6.0)
+                .inner_margin(6),
+        )
         .style(console_menu_style)
 }
 
 /// Shared selection and spacing for console menus and form choice lists.
 pub fn console_menu_style(style: &mut egui::Style) {
     egui::containers::menu::menu_style(style);
-    style.spacing.button_padding = if cfg!(target_os="android") {vec2(10.0,5.0)} else {vec2(8.0,3.0)};
+    style.spacing.button_padding = if cfg!(target_os = "android") { vec2(10.0, 5.0) } else { vec2(8.0, 3.0) };
     style.spacing.item_spacing = vec2(4.0, 4.0);
-    style.spacing.interact_size.y = if cfg!(target_os="android") {32.0} else {28.0};
+    style.spacing.interact_size.y = if cfg!(target_os = "android") { 32.0 } else { 28.0 };
     style.visuals.override_text_color = Some(pal::BLUE);
     style.visuals.selection.bg_fill = Color32::from_rgb(24, 44, 64);
     style.visuals.selection.stroke = Stroke::new(1.0, pal::BLUE);
     style.visuals.widgets.active.bg_fill = Color32::from_rgb(30, 54, 76);
-    for widget in [&mut style.visuals.widgets.inactive, &mut style.visuals.widgets.hovered,
-        &mut style.visuals.widgets.active, &mut style.visuals.widgets.open] {
+    for widget in [
+        &mut style.visuals.widgets.inactive,
+        &mut style.visuals.widgets.hovered,
+        &mut style.visuals.widgets.active,
+        &mut style.visuals.widgets.open,
+    ] {
         widget.corner_radius = CornerRadius::same(6);
     }
 }
@@ -577,8 +619,12 @@ pub fn chat_body(ui: &Ui, area: Rect) -> Rect {
     let symbol = Rect::from_center_size(pos2(area.left() + 19.0, band.center().y), vec2(18.0, 18.0));
     console_icon(p, symbol, ConsoleIcon::Chat, pal::BG, pal::PEACH);
     p.with_clip_rect(band.shrink2(vec2(8.0, 0.0))).text(
-        pos2(symbol.right() + 8.0, band.center().y), Align2::LEFT_CENTER,
-        "SUBSPACE COMMS", display_bold(18.0), pal::BG);
+        pos2(symbol.right() + 8.0, band.center().y),
+        Align2::LEFT_CENTER,
+        "SUBSPACE COMMS",
+        display_bold(18.0),
+        pal::BG,
+    );
     let top = band.bottom();
     let foot_top = area.bottom() - 12.0;
     let middle = top + (foot_top - top) * 0.55;
@@ -616,11 +662,7 @@ pub fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color
         ConsoleIcon::Back => back_delta(p, rect, ink, fill),
         ConsoleIcon::Chat => {
             p.rect_stroke(box_at((0.08, 0.12), (0.92, 0.74)), 3.0, stroke, egui::StrokeKind::Inside);
-            p.add(Shape::convex_polygon(
-                vec![at((0.25, 0.66)), at((0.25, 0.93)), at((0.52, 0.7))],
-                ink,
-                Stroke::NONE,
-            ));
+            p.add(Shape::convex_polygon(vec![at((0.25, 0.66)), at((0.25, 0.93)), at((0.52, 0.7))], ink, Stroke::NONE));
             for x in [0.3, 0.5, 0.7] {
                 p.circle_filled(at((x, 0.43)), 0.9, ink);
             }
@@ -722,10 +764,22 @@ pub fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color
             // The large picture, filled, and three small ones along an edge.
             type Box4 = (f32, f32, f32, f32);
             let (main, small): (Box4, [Box4; 3]) = match icon {
-                ConsoleIcon::StripTop => ((0.04, 0.36, 0.96, 0.94), [(0.04, 0.06, 0.32, 0.27), (0.36, 0.06, 0.64, 0.27), (0.68, 0.06, 0.96, 0.27)]),
-                ConsoleIcon::StripLeft => ((0.32, 0.06, 0.96, 0.94), [(0.04, 0.06, 0.24, 0.32), (0.04, 0.37, 0.24, 0.63), (0.04, 0.68, 0.24, 0.94)]),
-                ConsoleIcon::StripRight => ((0.04, 0.06, 0.68, 0.94), [(0.76, 0.06, 0.96, 0.32), (0.76, 0.37, 0.96, 0.63), (0.76, 0.68, 0.96, 0.94)]),
-                _ => ((0.04, 0.06, 0.96, 0.64), [(0.04, 0.73, 0.32, 0.94), (0.36, 0.73, 0.64, 0.94), (0.68, 0.73, 0.96, 0.94)]),
+                ConsoleIcon::StripTop => (
+                    (0.04, 0.36, 0.96, 0.94),
+                    [(0.04, 0.06, 0.32, 0.27), (0.36, 0.06, 0.64, 0.27), (0.68, 0.06, 0.96, 0.27)],
+                ),
+                ConsoleIcon::StripLeft => (
+                    (0.32, 0.06, 0.96, 0.94),
+                    [(0.04, 0.06, 0.24, 0.32), (0.04, 0.37, 0.24, 0.63), (0.04, 0.68, 0.24, 0.94)],
+                ),
+                ConsoleIcon::StripRight => (
+                    (0.04, 0.06, 0.68, 0.94),
+                    [(0.76, 0.06, 0.96, 0.32), (0.76, 0.37, 0.96, 0.63), (0.76, 0.68, 0.96, 0.94)],
+                ),
+                _ => (
+                    (0.04, 0.06, 0.96, 0.64),
+                    [(0.04, 0.73, 0.32, 0.94), (0.36, 0.73, 0.64, 0.94), (0.68, 0.73, 0.96, 0.94)],
+                ),
             };
             p.rect_filled(box_at((main.0, main.1), (main.2, main.3)), 2.0, ink);
             for b in small {
@@ -772,11 +826,13 @@ pub fn console_icon(p: &egui::Painter, rect: Rect, icon: ConsoleIcon, ink: Color
 
 /// Complete the horizontal rail between controls and connection figures.
 pub fn session_rail_label(p: &egui::Painter, rect: Rect, label: &str) {
-    if rect.width()<12.0 {return;}
-    p.rect_filled(rect,6.0,pal::TAN);
-    if rect.width()>80.0 {
-        let text=rect.shrink2(vec2(10.0,0.0));
-        p.with_clip_rect(text).text(text.left_center(),Align2::LEFT_CENTER,label,display_bold(17.0),pal::BG);
+    if rect.width() < 12.0 {
+        return;
+    }
+    p.rect_filled(rect, 6.0, pal::TAN);
+    if rect.width() > 80.0 {
+        let text = rect.shrink2(vec2(10.0, 0.0));
+        p.with_clip_rect(text).text(text.left_center(), Align2::LEFT_CENTER, label, display_bold(17.0), pal::BG);
     }
 }
 
@@ -784,10 +840,7 @@ pub fn session_rail_label(p: &egui::Painter, rect: Rect, label: &str) {
 /// scaling. Both fitting and input use this body, so even a zoomed picture
 /// cannot cover the rails or lose its bottom row beneath the footer.
 pub fn session_body(full: Rect, toolbar_height: f32) -> Rect {
-    Rect::from_min_max(
-        full.min + vec2(80.0, toolbar_height),
-        full.max - vec2(16.0, 16.0),
-    )
+    Rect::from_min_max(full.min + vec2(80.0, toolbar_height), full.max - vec2(16.0, 16.0))
 }
 
 /// A dark instrument panel with a quiet blue outline, including on narrow bars.
@@ -811,12 +864,9 @@ pub fn session_rails(p: &egui::Painter, full: Rect, body: Rect) -> f32 {
     // The elbows extend into the reserved left gutter, never into the video.
     let side = Rect::from_min_max(pos2(left, top), pos2(body.left() - 4.0, bottom));
     let side_p = p.with_clip_rect(side.intersect(p.clip_rect()));
-    for (start, end, color) in [
-        (0.0, 0.28, pal::ORANGE),
-        (0.28, 0.5, pal::PEACH),
-        (0.5, 0.78, pal::LAVENDER),
-        (0.78, 1.0, pal::BLUE),
-    ] {
+    for (start, end, color) in
+        [(0.0, 0.28, pal::ORANGE), (0.28, 0.5, pal::PEACH), (0.5, 0.78, pal::LAVENDER), (0.78, 1.0, pal::BLUE)]
+    {
         let segment_top = top + h * start + if start > 0.0 { 4.0 } else { 0.0 };
         side_p.rect_filled(Rect::from_min_max(pos2(left, segment_top), pos2(right, top + h * end)), 0.0, color);
     }
@@ -832,7 +882,7 @@ pub fn session_rails(p: &egui::Painter, full: Rect, body: Rect) -> f32 {
         CornerRadius { sw: 12, se: 6, ..Default::default() },
         pal::BLUE,
     );
-    rail_outer_corner(p,pos2(left,bottom),18.0,pal::BLUE,Color32::BLACK);
+    rail_outer_corner(p, pos2(left, bottom), 18.0, pal::BLUE, Color32::BLACK);
 
     // A black break separates the right edge from the End Link control.
     let x = full.right() - 8.0;
@@ -857,12 +907,18 @@ pub fn header(ui: &mut Ui, title: &str, color: Color32) {
     let cap = Rect::from_min_size(rect.min, vec2(26.0, 26.0));
     painter.rect_filled(cap, CornerRadius { nw: 13, sw: 13, ..Default::default() }, color);
     let title_pos = pos2(cap.right() + 10.0, rect.center().y);
-    let mut job=egui::text::LayoutJob::simple(title.to_uppercase(),display_bold(20.0),color,(rect.right()-title_pos.x).max(1.0));
-    job.wrap.max_rows=1;
+    let mut job = egui::text::LayoutJob::simple(
+        title.to_uppercase(),
+        display_bold(20.0),
+        color,
+        (rect.right() - title_pos.x).max(1.0),
+    );
+    job.wrap.max_rows = 1;
     let galley = painter.layout_job(job);
     let tw = galley.size().x;
     painter.with_clip_rect(rect).galley(pos2(title_pos.x, rect.center().y - galley.size().y / 2.0), galley, color);
-    let bar = Rect::from_min_max(pos2(title_pos.x + tw + 12.0, rect.top() + 7.0), pos2(rect.right(), rect.bottom() - 7.0));
+    let bar =
+        Rect::from_min_max(pos2(title_pos.x + tw + 12.0, rect.top() + 7.0), pos2(rect.right(), rect.bottom() - 7.0));
     if bar.width() > 8.0 {
         painter.rect_filled(bar, CornerRadius { ne: 6, se: 6, ..Default::default() }, color.gamma_multiply(0.85));
     }
@@ -916,20 +972,20 @@ pub const FOOTER_SPACE: f32 = FOOT + 4.0 + 8.0 + 2.0;
 // A side rail and thin footer overlap at this corner. Round their union,
 // rather than limiting the outer radius to the footer's height. Keep the
 // cutout inside the frame gutter, clear of scrolling content and controls.
-fn rail_outer_corner(p:&egui::Painter,bottom_left:Pos2,radius:f32,color:Color32,background:Color32) {
-    let rect=Rect::from_min_size(bottom_left-vec2(0.0,radius),vec2(radius,radius));
-    let p=p.with_clip_rect(rect.intersect(p.clip_rect()));
-    p.rect_filled(rect,0.0,background);
-    p.circle_filled(rect.right_top(),radius,color);
+fn rail_outer_corner(p: &egui::Painter, bottom_left: Pos2, radius: f32, color: Color32, background: Color32) {
+    let rect = Rect::from_min_size(bottom_left - vec2(0.0, radius), vec2(radius, radius));
+    let p = p.with_clip_rect(rect.intersect(p.clip_rect()));
+    p.rect_filled(rect, 0.0, background);
+    p.circle_filled(rect.right_top(), radius, color);
 }
 
 /// Desktop window chrome in the console palette. Returns the content area
 /// below the draggable title strip; full screen and mobile use the whole UI.
 pub fn native_title_bar(ui: &mut Ui, title: &str) -> Rect {
-    native_title_bar_with_rail(ui,title,false)
+    native_title_bar_with_rail(ui, title, false)
 }
 
-pub fn native_title_bar_with_rail(ui: &mut Ui, title: &str, linked:bool) -> Rect {
+pub fn native_title_bar_with_rail(ui: &mut Ui, title: &str, linked: bool) -> Rect {
     native_title_bar_inner(ui, title, linked, None)
 }
 
@@ -939,136 +995,248 @@ pub fn native_session_title_bar(ui: &mut Ui, title: &str, workstation: Option<&s
 
 fn native_title_bar_inner(ui: &mut Ui, title: &str, linked: bool, workstation: Option<&str>) -> Rect {
     super::window_shape::update();
-    let area=ui.max_rect();
-    let square=cfg!(target_os="android") || ui.input(|i|i.viewport().fullscreen==Some(true)||i.viewport().maximized==Some(true));
-    ui.painter().rect_filled(area,if square{0.0}else{18.0},pal::BG);
-    if cfg!(target_os="android") || ui.input(|i|i.viewport().fullscreen==Some(true)) {return area;}
-    let maximized=ui.input(|i|i.viewport().maximized==Some(true));
-    let bar=Rect::from_min_max(area.min+vec2(5.0,4.0),pos2(area.right()-5.0,area.top()+38.0));
-    let p=ui.painter();
-    if linked {
-        p.rect_filled(bar,CornerRadius{nw:18,ne:16,..Default::default()},pal::LAVENDER);
-    } else {
-        p.rect_filled(bar,16.0,pal::PANEL);
-        p.rect_stroke(bar,16.0,Stroke::new(1.0,pal::VIOLET),egui::StrokeKind::Inside);
-        p.rect_filled(Rect::from_min_size(bar.min,vec2(14.0,bar.height())),CornerRadius {nw:16,sw:16,..Default::default()},pal::LAVENDER);
+    let area = ui.max_rect();
+    let square = cfg!(target_os = "android")
+        || ui.input(|i| i.viewport().fullscreen == Some(true) || i.viewport().maximized == Some(true));
+    ui.painter().rect_filled(area, if square { 0.0 } else { 18.0 }, pal::BG);
+    if cfg!(target_os = "android") || ui.input(|i| i.viewport().fullscreen == Some(true)) {
+        return area;
     }
-    let (right,close)=native_window_controls(ui,bar,linked,maximized,true);
-    if close {ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);}
-    let title_rect=Rect::from_min_max(bar.min+vec2(22.0,0.0),pos2(right-4.0,bar.bottom()));
+    let maximized = ui.input(|i| i.viewport().maximized == Some(true));
+    let bar = Rect::from_min_max(area.min + vec2(5.0, 4.0), pos2(area.right() - 5.0, area.top() + 38.0));
+    let p = ui.painter();
+    if linked {
+        p.rect_filled(bar, CornerRadius { nw: 18, ne: 16, ..Default::default() }, pal::LAVENDER);
+    } else {
+        p.rect_filled(bar, 16.0, pal::PANEL);
+        p.rect_stroke(bar, 16.0, Stroke::new(1.0, pal::VIOLET), egui::StrokeKind::Inside);
+        p.rect_filled(
+            Rect::from_min_size(bar.min, vec2(14.0, bar.height())),
+            CornerRadius { nw: 16, sw: 16, ..Default::default() },
+            pal::LAVENDER,
+        );
+    }
+    let (right, close) = native_window_controls(ui, bar, linked, maximized, true);
+    if close {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+    let title_rect = Rect::from_min_max(bar.min + vec2(22.0, 0.0), pos2(right - 4.0, bar.bottom()));
     if let Some(workstation) = workstation {
         let app_width = (title_rect.width() * 0.32).min(240.0);
         let app_rect = title_rect.with_max_x(title_rect.left() + app_width);
-        p.with_clip_rect(app_rect).text(app_rect.left_center(), Align2::LEFT_CENTER, "SLIPSTREAM REMOTE", display(15.0), pal::BG);
+        p.with_clip_rect(app_rect).text(
+            app_rect.left_center(),
+            Align2::LEFT_CENTER,
+            "SLIPSTREAM REMOTE",
+            display(15.0),
+            pal::BG,
+        );
         let host_rect = title_rect.with_min_x(app_rect.right() + 12.0);
-        p.with_clip_rect(host_rect).text(host_rect.center(), Align2::CENTER_CENTER, workstation.to_uppercase(), display_bold(21.0), pal::BG);
+        p.with_clip_rect(host_rect).text(
+            host_rect.center(),
+            Align2::CENTER_CENTER,
+            workstation.to_uppercase(),
+            display_bold(21.0),
+            pal::BG,
+        );
         ui.interact(host_rect, ui.scope_id().with("workstation-title"), Sense::hover()).on_hover_text(workstation);
     } else {
-        p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title,display_bold(17.0),if linked{pal::BG}else{pal::LAVENDER});
+        p.with_clip_rect(title_rect).text(
+            title_rect.left_center(),
+            Align2::LEFT_CENTER,
+            title,
+            display_bold(17.0),
+            if linked { pal::BG } else { pal::LAVENDER },
+        );
     }
-    native_window_interactions(ui,area,title_rect,maximized);
-    Rect::from_min_max(pos2(area.left()+5.0,bar.bottom()+3.0),area.max-vec2(5.0,5.0))
+    native_window_interactions(ui, area, title_rect, maximized);
+    Rect::from_min_max(pos2(area.left() + 5.0, bar.bottom() + 3.0), area.max - vec2(5.0, 5.0))
 }
 
 // Shared symbols and hit targets keep detached tools consistent with the app.
-fn native_window_controls(ui:&Ui,bar:Rect,linked:bool,maximized:bool,desktop:bool)->(f32,bool) {
-    let p=ui.painter();
-    let mut close=false;
-    let mut right=bar.right()-9.0;
-    for (symbol,hint,color,command) in [
-        (0,"Close",pal::PEACH,egui::ViewportCommand::Close),
-        (if maximized{3}else{1},if maximized{"Restore window"}else{"Maximize"},pal::LAVENDER,egui::ViewportCommand::Maximized(!maximized)),
-        (2,"Minimize",pal::BLUE,egui::ViewportCommand::Minimized(true)),
+fn native_window_controls(ui: &Ui, bar: Rect, linked: bool, maximized: bool, desktop: bool) -> (f32, bool) {
+    let p = ui.painter();
+    let mut close = false;
+    let mut right = bar.right() - 9.0;
+    for (symbol, hint, color, command) in [
+        (0, "Close", pal::PEACH, egui::ViewportCommand::Close),
+        (
+            if maximized { 3 } else { 1 },
+            if maximized { "Restore window" } else { "Maximize" },
+            pal::LAVENDER,
+            egui::ViewportCommand::Maximized(!maximized),
+        ),
+        (2, "Minimize", pal::BLUE, egui::ViewportCommand::Minimized(true)),
     ] {
-        if !desktop && symbol != 0 { continue; }
-        let width=44.0;
-        let rect=Rect::from_min_max(pos2(right-width,bar.top()+3.0),pos2(right,bar.bottom()-3.0));
-        let response=ui.interact(rect,ui.scope_id().with(("native-window",hint)),Sense::click());
-        let fill=if response.hovered(){pal::TAN}else{color};
-        if linked {p.rect_filled(rect.expand(2.0),11.0,pal::BG);}
-        p.rect_filled(rect,9.0,fill);
-        let icon=Rect::from_center_size(rect.center(),vec2(18.0,19.0));
-        let stroke=Stroke::new(2.0,pal::BG);
+        if !desktop && symbol != 0 {
+            continue;
+        }
+        let width = 44.0;
+        let rect = Rect::from_min_max(pos2(right - width, bar.top() + 3.0), pos2(right, bar.bottom() - 3.0));
+        let response = ui.interact(rect, ui.scope_id().with(("native-window", hint)), Sense::click());
+        let fill = if response.hovered() { pal::TAN } else { color };
+        if linked {
+            p.rect_filled(rect.expand(2.0), 11.0, pal::BG);
+        }
+        p.rect_filled(rect, 9.0, fill);
+        let icon = Rect::from_center_size(rect.center(), vec2(18.0, 19.0));
+        let stroke = Stroke::new(2.0, pal::BG);
         match symbol {
-            0=>{p.line_segment([icon.left_top()+vec2(2.0,2.0),icon.right_bottom()-vec2(2.0,2.0)],stroke);p.line_segment([icon.right_top()+vec2(-2.0,2.0),icon.left_bottom()+vec2(2.0,-2.0)],stroke);},
-            1|2=>{
-                let at=|(x,y):(f32,f32)|{let(x,y)=if symbol==2{(1.0-x,1.0-y)}else{(x,y)};icon.min+vec2(x*icon.width(),y*icon.height())};
-                for half in [&LOGO_LEFT,&LOGO_RIGHT]{p.add(Shape::convex_polygon(half.iter().copied().map(at).collect(),pal::BG,Stroke::NONE));}
-                let(a,b,half)=LOGO_SLASH;p.line_segment([at(a),at(b)],Stroke::new(half*2.0*icon.width(),fill));
-            },
-            _=>{
-                p.rect_stroke(Rect::from_min_max(icon.min+vec2(5.0,0.0),icon.max-vec2(0.0,5.0)),2.0,stroke,egui::StrokeKind::Inside);
-                let front=Rect::from_min_max(icon.min+vec2(0.0,5.0),icon.max-vec2(5.0,0.0));
-                p.rect_filled(front,2.0,fill);p.rect_stroke(front,2.0,stroke,egui::StrokeKind::Inside);
-            },
+            0 => {
+                p.line_segment([icon.left_top() + vec2(2.0, 2.0), icon.right_bottom() - vec2(2.0, 2.0)], stroke);
+                p.line_segment([icon.right_top() + vec2(-2.0, 2.0), icon.left_bottom() + vec2(2.0, -2.0)], stroke);
+            }
+            1 | 2 => {
+                let at = |(x, y): (f32, f32)| {
+                    let (x, y) = if symbol == 2 { (1.0 - x, 1.0 - y) } else { (x, y) };
+                    icon.min + vec2(x * icon.width(), y * icon.height())
+                };
+                for half in [&LOGO_LEFT, &LOGO_RIGHT] {
+                    p.add(Shape::convex_polygon(half.iter().copied().map(at).collect(), pal::BG, Stroke::NONE));
+                }
+                let (a, b, half) = LOGO_SLASH;
+                p.line_segment([at(a), at(b)], Stroke::new(half * 2.0 * icon.width(), fill));
+            }
+            _ => {
+                p.rect_stroke(
+                    Rect::from_min_max(icon.min + vec2(5.0, 0.0), icon.max - vec2(0.0, 5.0)),
+                    2.0,
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
+                let front = Rect::from_min_max(icon.min + vec2(0.0, 5.0), icon.max - vec2(5.0, 0.0));
+                p.rect_filled(front, 2.0, fill);
+                p.rect_stroke(front, 2.0, stroke, egui::StrokeKind::Inside);
+            }
         }
-        response.widget_info(||egui::WidgetInfo::labeled(egui::Role::Button,true,hint));
-        if response.on_hover_text(hint).clicked(){
-            if symbol==0 {close=true;} else {ui.ctx().send_viewport_cmd(command);}
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, hint));
+        if response.on_hover_text(hint).clicked() {
+            if symbol == 0 {
+                close = true;
+            } else {
+                ui.ctx().send_viewport_cmd(command);
+            }
         }
-        right=rect.left()-8.0;
+        right = rect.left() - 8.0;
     }
-    (right,close)
+    (right, close)
 }
 
-fn native_window_interactions(ui:&Ui,area:Rect,title_rect:Rect,maximized:bool) {
-    let drag=ui.interact(title_rect,ui.scope_id().with("native-title-drag"),Sense::click_and_drag());
-    if drag.double_clicked(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));}
-    else if drag.drag_started(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);}
+fn native_window_interactions(ui: &Ui, area: Rect, title_rect: Rect, maximized: bool) {
+    let drag = ui.interact(title_rect, ui.scope_id().with("native-title-drag"), Sense::click_and_drag());
+    if drag.double_clicked() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    } else if drag.drag_started() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
     if !maximized {
-        use egui::{ResizeDirection as D,CursorIcon as C};
-        let e=5.0;let corner=12.0;
-        for (rect,direction,cursor) in [
-            (Rect::from_min_size(area.min,vec2(corner,corner)),D::NorthWest,C::ResizeNwSe),
-            (Rect::from_min_size(pos2(area.right()-corner,area.top()),vec2(corner,corner)),D::NorthEast,C::ResizeNeSw),
-            (Rect::from_min_size(pos2(area.left(),area.bottom()-corner),vec2(corner,corner)),D::SouthWest,C::ResizeNeSw),
-            (Rect::from_min_size(area.max-vec2(corner,corner),vec2(corner,corner)),D::SouthEast,C::ResizeNwSe),
-            (Rect::from_min_max(pos2(area.left()+corner,area.top()),pos2(area.right()-corner,area.top()+e)),D::North,C::ResizeVertical),
-            (Rect::from_min_max(pos2(area.left()+corner,area.bottom()-e),pos2(area.right()-corner,area.bottom())),D::South,C::ResizeVertical),
-            (Rect::from_min_max(pos2(area.left(),area.top()+corner),pos2(area.left()+e,area.bottom()-corner)),D::West,C::ResizeHorizontal),
-            (Rect::from_min_max(pos2(area.right()-e,area.top()+corner),pos2(area.right(),area.bottom()-corner)),D::East,C::ResizeHorizontal),
+        use egui::{CursorIcon as C, ResizeDirection as D};
+        let e = 5.0;
+        let corner = 12.0;
+        for (rect, direction, cursor) in [
+            (Rect::from_min_size(area.min, vec2(corner, corner)), D::NorthWest, C::ResizeNwSe),
+            (
+                Rect::from_min_size(pos2(area.right() - corner, area.top()), vec2(corner, corner)),
+                D::NorthEast,
+                C::ResizeNeSw,
+            ),
+            (
+                Rect::from_min_size(pos2(area.left(), area.bottom() - corner), vec2(corner, corner)),
+                D::SouthWest,
+                C::ResizeNeSw,
+            ),
+            (Rect::from_min_size(area.max - vec2(corner, corner), vec2(corner, corner)), D::SouthEast, C::ResizeNwSe),
+            (
+                Rect::from_min_max(pos2(area.left() + corner, area.top()), pos2(area.right() - corner, area.top() + e)),
+                D::North,
+                C::ResizeVertical,
+            ),
+            (
+                Rect::from_min_max(
+                    pos2(area.left() + corner, area.bottom() - e),
+                    pos2(area.right() - corner, area.bottom()),
+                ),
+                D::South,
+                C::ResizeVertical,
+            ),
+            (
+                Rect::from_min_max(
+                    pos2(area.left(), area.top() + corner),
+                    pos2(area.left() + e, area.bottom() - corner),
+                ),
+                D::West,
+                C::ResizeHorizontal,
+            ),
+            (
+                Rect::from_min_max(
+                    pos2(area.right() - e, area.top() + corner),
+                    pos2(area.right(), area.bottom() - corner),
+                ),
+                D::East,
+                C::ResizeHorizontal,
+            ),
         ] {
-            let response=ui.interact(rect,ui.scope_id().with(("native-resize",format!("{direction:?}"))),Sense::drag()).on_hover_cursor(cursor);
-            if response.drag_started(){ui.ctx().send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));}
+            let response = ui
+                .interact(rect, ui.scope_id().with(("native-resize", format!("{direction:?}"))), Sense::drag())
+                .on_hover_cursor(cursor);
+            if response.drag_started() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+            }
         }
     }
 }
 
 /// A single title rail joined to a detached tool's left frame. The frame stays
 /// fixed while its contents scroll, including at the minimum window size.
-pub fn tool_frame(ui:&mut Ui,title:&str,desktop:bool,color:Color32)->(Rect,bool) {
+pub fn tool_frame(ui: &mut Ui, title: &str, desktop: bool, color: Color32) -> (Rect, bool) {
     super::window_shape::update();
-    let area=ui.max_rect();
-    let maximized=ui.input(|i|i.viewport().maximized==Some(true));
-    let square=!desktop || maximized || ui.input(|i|i.viewport().fullscreen==Some(true));
-    let p=ui.painter();
-    p.rect_filled(area,if square{0.0}else{18.0},pal::BG);
-    let frame=area.shrink(5.0);
-    p.rect_filled(frame,16.0,pal::PANEL);
-    let bar=Rect::from_min_max(frame.min,pos2(frame.right(),frame.top()+34.0));
-    let rail_right=frame.left()+14.0;
-    let foot_top=frame.bottom()-12.0;
-    let split=bar.bottom()+(foot_top-bar.bottom())*0.65;
-    p.rect_filled(bar,CornerRadius{nw:18,ne:18,..Default::default()},color);
-    p.rect_filled(Rect::from_min_max(pos2(frame.left(),bar.bottom()),pos2(rail_right,split-2.0)),0.0,color);
-    p.rect_filled(Rect::from_min_max(pos2(frame.left(),split+2.0),pos2(rail_right,foot_top)),0.0,pal::BLUE);
-    let foot=Rect::from_min_max(pos2(frame.left(),foot_top),frame.max);
-    p.rect_filled(foot,CornerRadius{sw:12,se:6,..Default::default()},pal::BLUE);
-    rail_outer_corner(p,frame.left_bottom(),18.0,pal::BLUE,pal::BG);
+    let area = ui.max_rect();
+    let maximized = ui.input(|i| i.viewport().maximized == Some(true));
+    let square = !desktop || maximized || ui.input(|i| i.viewport().fullscreen == Some(true));
+    let p = ui.painter();
+    p.rect_filled(area, if square { 0.0 } else { 18.0 }, pal::BG);
+    let frame = area.shrink(5.0);
+    p.rect_filled(frame, 16.0, pal::PANEL);
+    let bar = Rect::from_min_max(frame.min, pos2(frame.right(), frame.top() + 34.0));
+    let rail_right = frame.left() + 14.0;
+    let foot_top = frame.bottom() - 12.0;
+    let split = bar.bottom() + (foot_top - bar.bottom()) * 0.65;
+    p.rect_filled(bar, CornerRadius { nw: 18, ne: 18, ..Default::default() }, color);
+    p.rect_filled(Rect::from_min_max(pos2(frame.left(), bar.bottom()), pos2(rail_right, split - 2.0)), 0.0, color);
+    p.rect_filled(Rect::from_min_max(pos2(frame.left(), split + 2.0), pos2(rail_right, foot_top)), 0.0, pal::BLUE);
+    let foot = Rect::from_min_max(pos2(frame.left(), foot_top), frame.max);
+    p.rect_filled(foot, CornerRadius { sw: 12, se: 6, ..Default::default() }, pal::BLUE);
+    rail_outer_corner(p, frame.left_bottom(), 18.0, pal::BLUE, pal::BG);
     // Restrict each concave cutout to the elbow, clear of all content.
-    for (color,corner,center) in [
-        (color,Rect::from_min_size(pos2(rail_right,bar.bottom()),vec2(22.0,22.0)),pos2(rail_right+22.0,bar.bottom()+22.0)),
-        (pal::BLUE,Rect::from_min_size(pos2(rail_right,foot_top-18.0),vec2(18.0,18.0)),pos2(rail_right+18.0,foot_top-18.0)),
+    for (color, corner, center) in [
+        (
+            color,
+            Rect::from_min_size(pos2(rail_right, bar.bottom()), vec2(22.0, 22.0)),
+            pos2(rail_right + 22.0, bar.bottom() + 22.0),
+        ),
+        (
+            pal::BLUE,
+            Rect::from_min_size(pos2(rail_right, foot_top - 18.0), vec2(18.0, 18.0)),
+            pos2(rail_right + 18.0, foot_top - 18.0),
+        ),
     ] {
-        let elbow=p.with_clip_rect(corner.intersect(p.clip_rect()));
-        elbow.rect_filled(corner,0.0,color);
-        elbow.circle_filled(center,corner.width(),pal::PANEL);
+        let elbow = p.with_clip_rect(corner.intersect(p.clip_rect()));
+        elbow.rect_filled(corner, 0.0, color);
+        elbow.circle_filled(center, corner.width(), pal::PANEL);
     }
-    let (right,close)=native_window_controls(ui,bar,true,maximized,desktop);
-    let title_rect=Rect::from_min_max(bar.min+vec2(42.0,0.0),pos2(right-8.0,bar.bottom()));
-    p.with_clip_rect(title_rect).text(title_rect.left_center(),Align2::LEFT_CENTER,title.to_uppercase(),display_bold(19.0),pal::BG);
-    if desktop {native_window_interactions(ui,area,title_rect,maximized);}
-    (Rect::from_min_max(pos2(rail_right+16.0,bar.bottom()+8.0),pos2(frame.right()-10.0,foot_top-8.0)),close)
+    let (right, close) = native_window_controls(ui, bar, true, maximized, desktop);
+    let title_rect = Rect::from_min_max(bar.min + vec2(42.0, 0.0), pos2(right - 8.0, bar.bottom()));
+    p.with_clip_rect(title_rect).text(
+        title_rect.left_center(),
+        Align2::LEFT_CENTER,
+        title.to_uppercase(),
+        display_bold(19.0),
+        pal::BG,
+    );
+    if desktop {
+        native_window_interactions(ui, area, title_rect, maximized);
+    }
+    (Rect::from_min_max(pos2(rail_right + 16.0, bar.bottom() + 8.0), pos2(frame.right() - 10.0, foot_top - 8.0)), close)
 }
 
 /// A floating window in the console style: no grey title bar; start its
@@ -1080,11 +1248,11 @@ pub fn window(id: &str, color: Color32) -> egui::Window<'static> {
 
 fn console_window_frame(color: Color32) -> egui::Frame {
     egui::Frame::new()
-            .fill(pal::PANEL)
-            .stroke(Stroke::new(1.0, color.gamma_multiply(0.35)))
-            .corner_radius(CornerRadius::same(20))
-            .inner_margin(egui::Margin { left: (12.0 + RAIL + RAIL_GAP) as i8, right: 14, top: 12, bottom: 12 })
-            .shadow(egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(170) })
+        .fill(pal::PANEL)
+        .stroke(Stroke::new(1.0, color.gamma_multiply(0.35)))
+        .corner_radius(CornerRadius::same(20))
+        .inner_margin(egui::Margin { left: (12.0 + RAIL + RAIL_GAP) as i8, right: 14, top: 12, bottom: 12 })
+        .shadow(egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(170) })
 }
 
 /// Modal dialogs reserve the same rail gutter as floating LCARS panels.
@@ -1130,12 +1298,17 @@ pub fn window_header_with_close(ui: &mut Ui, title: &str, color: Color32, close_
     let close_rect = Rect::from_min_max(pos2(row.right() - close_w, row.top()), row.max);
     let band = Rect::from_min_max(pos2(x0, row.top()), pos2(close_rect.left() - 4.0, row.bottom()));
     p.rect_filled(band, CornerRadius { nw: 22, ..Default::default() }, color);
-    let text_rect = Rect::from_min_max(row.min+vec2(2.0,0.0),pos2(band.right()-8.0,row.bottom()));
-    let mut job=egui::text::LayoutJob::simple(title.to_uppercase(),display_bold(21.0),pal::BG,text_rect.width().max(1.0));
-    job.wrap.max_rows=1;
-    let galley=p.layout_job(job);
-    p.with_clip_rect(text_rect).galley(pos2(text_rect.left(),text_rect.center().y-galley.size().y/2.0),galley,pal::BG);
-    ui.interact(text_rect,ui.scope_id().with(("window-title",title)),Sense::hover()).on_hover_text(title);
+    let text_rect = Rect::from_min_max(row.min + vec2(2.0, 0.0), pos2(band.right() - 8.0, row.bottom()));
+    let mut job =
+        egui::text::LayoutJob::simple(title.to_uppercase(), display_bold(21.0), pal::BG, text_rect.width().max(1.0));
+    job.wrap.max_rows = 1;
+    let galley = p.layout_job(job);
+    p.with_clip_rect(text_rect).galley(
+        pos2(text_rect.left(), text_rect.center().y - galley.size().y / 2.0),
+        galley,
+        pal::BG,
+    );
+    ui.interact(text_rect, ui.scope_id().with(("window-title", title)), Sense::hover()).on_hover_text(title);
     let resp = ui.interact(close_rect, ui.scope_id().with(("window-close", title)), Sense::click());
     let fill = if resp.hovered() { pal::TAN } else { close_color };
     p.rect_filled(close_rect, CornerRadius { ne: 15, se: 15, ..Default::default() }, fill);
@@ -1154,7 +1327,8 @@ impl WindowChrome {
     /// the lower elbow) and made that elbow look darker than the rest.
     pub fn footer(&self, ui: &mut Ui) {
         ui.add_space(4.0);
-        let (row, _) = ui.allocate_exact_size(vec2(ui.available_width().min(self.right - self.left).max(1.0), FOOT), Sense::hover());
+        let (row, _) = ui
+            .allocate_exact_size(vec2(ui.available_width().min(self.right - self.left).max(1.0), FOOT), Sense::hover());
         let p = ui.ctx().layer_painter(ui.layer_id());
         let (x0, c) = (self.left - RAIL - RAIL_GAP, self.color);
         let rail_r = x0 + RAIL;
@@ -1167,12 +1341,22 @@ impl WindowChrome {
         let foot = Rect::from_min_max(pos2(x0, foot_top), pos2(self.right, row.bottom()));
         let brk = foot.left() + foot.width() * 0.78;
         p.rect_filled(Rect::from_min_max(foot.min, pos2(brk - 2.0, foot.bottom())), 0.0, c);
-        p.rect_filled(Rect::from_min_max(pos2(brk + 2.0, foot.top()), foot.max), CornerRadius { ne: 6, se: 6, ..Default::default() }, c);
+        p.rect_filled(
+            Rect::from_min_max(pos2(brk + 2.0, foot.top()), foot.max),
+            CornerRadius { ne: 6, se: 6, ..Default::default() },
+            c,
+        );
         rail_outer_corner(&p, foot.left_bottom(), 22.0, c, pal::PANEL);
         // The elbows' inner corners curve in.
         for (corner, center) in [
-            (Rect::from_min_size(pos2(rail_r, head_bottom), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, head_bottom + ELBOW)),
-            (Rect::from_min_size(pos2(rail_r, foot_top - ELBOW), vec2(ELBOW, ELBOW)), pos2(rail_r + ELBOW, foot_top - ELBOW)),
+            (
+                Rect::from_min_size(pos2(rail_r, head_bottom), vec2(ELBOW, ELBOW)),
+                pos2(rail_r + ELBOW, head_bottom + ELBOW),
+            ),
+            (
+                Rect::from_min_size(pos2(rail_r, foot_top - ELBOW), vec2(ELBOW, ELBOW)),
+                pos2(rail_r + ELBOW, foot_top - ELBOW),
+            ),
         ] {
             // Carve only this elbow: the rest of the circle can reach into
             // the content and erase a button's lower-left corner.
@@ -1278,7 +1462,7 @@ pub fn text_input(value: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
     egui::TextEdit::singleline(value)
         .align(Align2::LEFT_CENTER)
         .frame(input_frame())
-        .min_size(vec2(0.0, if cfg!(target_os="android") {40.0} else {28.0}))
+        .min_size(vec2(0.0, if cfg!(target_os = "android") { 40.0 } else { 28.0 }))
 }
 
 /// Matching multiline input, preserving top alignment and caller row counts.
@@ -1306,13 +1490,17 @@ pub fn sweep(painter: &egui::Painter, rect: Rect, t: f64, color: Color32) {
             let k = t as f32;
             // A few drifting waves, louder near the scan line.
             let near = 1.0 - ((x - rect.left() - scan).abs() / (rect.width() * 0.35)).min(1.0);
-            let wave = (f * 23.0 + k * 3.1).sin() * 0.5 + (f * 57.0 - k * 5.3).sin() * 0.3 + (f * 131.0 + k * 1.7).sin() * 0.2;
+            let wave =
+                (f * 23.0 + k * 3.1).sin() * 0.5 + (f * 57.0 - k * 5.3).sin() * 0.3 + (f * 131.0 + k * 1.7).sin() * 0.2;
             pos2(x, rect.center().y - wave * rect.height() * (0.18 + 0.3 * near))
         })
         .collect();
     painter.add(Shape::line(pts, Stroke::new(1.2, color)));
     let x = rect.left() + scan;
-    painter.line_segment([pos2(x, rect.top() + 1.0), pos2(x, rect.bottom() - 1.0)], Stroke::new(2.0, color.gamma_multiply(0.9)));
+    painter.line_segment(
+        [pos2(x, rect.top() + 1.0), pos2(x, rect.bottom() - 1.0)],
+        Stroke::new(2.0, color.gamma_multiply(0.9)),
+    );
 }
 
 pub fn spinner(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32, t: f64) {
@@ -1433,8 +1621,7 @@ pub fn icon(size: u32) -> egui::IconData {
     render_logo(size, true)
 }
 
-
 /// X11 and Windows use native window masks; Wayland uses alpha compositing.
 pub fn transparent_window() -> bool {
-    cfg!(target_os="linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
+    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
 }

@@ -78,7 +78,12 @@ impl Recorder {
     /// Starts recording into `path` (created or replaced).
     pub fn start(path: &Path, settings: Settings) -> Result<Self> {
         ensure!(settings.width >= 16 && settings.height >= 16 && settings.fps >= 1, "bad recording settings");
-        let settings = Settings { width: settings.width & !1, height: settings.height & !1, fps: settings.fps.min(60), ..settings };
+        let settings = Settings {
+            width: settings.width & !1,
+            height: settings.height & !1,
+            fps: settings.fps.min(60),
+            ..settings
+        };
         let file = File::create(path).with_context(|| format!("can't write {}", path.display()))?;
         let picture: Arc<Mutex<Option<Arc<YuvFrame>>>> = Arc::default();
         let (speakers, speakers_rx) = mpsc::sync_channel(64);
@@ -255,7 +260,13 @@ impl Writer {
     }
 }
 
-fn encode(encoder: &mut Encoder, canvas: &[u8], width: u32, height: u32, keyframe: bool) -> Result<slipstream_codec::EncodedFrame> {
+fn encode(
+    encoder: &mut Encoder,
+    canvas: &[u8],
+    width: u32,
+    height: u32,
+    keyframe: bool,
+) -> Result<slipstream_codec::EncodedFrame> {
     let frame = RawFrame { width, height, stride: width * 4, format: PixelFormat::Rgba, data: canvas.to_vec() };
     encoder.encode(&frame, keyframe)?.context("the encoder skipped a recording frame")
 }
@@ -444,7 +455,8 @@ impl Mp4 {
             hdlr.extend_from_slice(&[0; 12]);
             hdlr.extend_from_slice(if video { b"Video\0" } else { b"Sound\0" });
             let header = if video { full(b"vmhd", 0, 1, &[0; 8]) } else { full(b"smhd", 0, 0, &[0; 4]) };
-            let dinf = bx(b"dinf", &full(b"dref", 0, 0, &[&1u32.to_be_bytes()[..], &full(b"url ", 0, 1, &[])].concat()));
+            let dinf =
+                bx(b"dinf", &full(b"dref", 0, 0, &[&1u32.to_be_bytes()[..], &full(b"url ", 0, 1, &[])].concat()));
             let mut stsd = 1u32.to_be_bytes().to_vec();
             stsd.extend(bx(if video { b"avc1" } else { b"Opus" }, &entry));
             let empty = 0u32.to_be_bytes();
@@ -593,12 +605,24 @@ impl Mkv {
     fn create(file: File, s: Settings, first_keyframe: &[u8]) -> Result<Self> {
         use std::io::Seek;
         let mut out = BufWriter::new(file);
-        let header = [uint(0x4286, 1), uint(0x42F7, 1), uint(0x42F2, 4), uint(0x42F3, 8), text(0x4282, "matroska"), uint(0x4287, 4), uint(0x4285, 2)].concat();
+        let header = [
+            uint(0x4286, 1),
+            uint(0x42F7, 1),
+            uint(0x42F2, 4),
+            uint(0x42F3, 8),
+            text(0x4282, "matroska"),
+            uint(0x4287, 4),
+            uint(0x4285, 2),
+        ]
+        .concat();
         out.write_all(&element(0x1A45_DFA3, &header))?;
         // A segment of unknown size: players read to the end.
         out.write_all(&[0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])?;
         let app = concat!("Slipstream Remote ", env!("CARGO_PKG_VERSION"));
-        let info = element(0x1549_A966, &[uint(0x2AD7B1, 1_000_000), text(0x4D80, app), text(0x5741, app), float(0x4489, 0.0)].concat());
+        let info = element(
+            0x1549_A966,
+            &[uint(0x2AD7B1, 1_000_000), text(0x4D80, app), text(0x5741, app), float(0x4489, 0.0)].concat(),
+        );
         let info_at = out.stream_position()?;
         out.write_all(&info)?;
         // The Duration float is the info's last 8 bytes.
@@ -690,14 +714,23 @@ mod tests {
         };
         rec.picture(Some(Arc::new(frame)));
         for i in 0..60 {
-            let tone: Vec<i16> = (0..opus::FRAME_SAMPLES).map(|n| (((n + i * 1920) as f32 * 0.05).sin() * 8000.0) as i16).collect();
+            let tone: Vec<i16> =
+                (0..opus::FRAME_SAMPLES).map(|n| (((n + i * 1920) as f32 * 0.05).sin() * 8000.0) as i16).collect();
             rec.speakers(&tone);
             std::thread::sleep(Duration::from_millis(20));
         }
         let path = rec.finish().unwrap();
         // When ffprobe is installed, it must read both streams and their frames.
         if let Ok(out) = std::process::Command::new("ffprobe")
-            .args(["-v", "error", "-count_frames", "-show_entries", "stream=codec_name,nb_read_frames", "-of", "csv=p=0"])
+            .args([
+                "-v",
+                "error",
+                "-count_frames",
+                "-show_entries",
+                "stream=codec_name,nb_read_frames",
+                "-of",
+                "csv=p=0",
+            ])
             .arg(&path)
             .output()
         {
@@ -716,7 +749,11 @@ mod tests {
     fn records_playable_mp4_and_mkv() {
         let mp4 = record_for(Container::Mp4);
         assert_eq!(&mp4[4..8], b"ftyp");
-        assert!(mp4.windows(4).any(|w| w == b"avcC") && mp4.windows(4).any(|w| w == b"dOps") && mp4.windows(4).any(|w| w == b"moof"));
+        assert!(
+            mp4.windows(4).any(|w| w == b"avcC")
+                && mp4.windows(4).any(|w| w == b"dOps")
+                && mp4.windows(4).any(|w| w == b"moof")
+        );
         let mkv = record_for(Container::Mkv);
         assert_eq!(&mkv[..4], &[0x1A, 0x45, 0xDF, 0xA3]);
         assert!(mkv.windows(15).any(|w| w == b"V_MPEG4/ISO/AVC") && mkv.windows(6).any(|w| w == b"A_OPUS"));

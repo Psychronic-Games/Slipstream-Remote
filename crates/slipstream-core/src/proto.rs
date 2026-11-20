@@ -33,7 +33,10 @@ pub const ALPN_REMOTE: &[u8] = b"slipstream/remote/1";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ViewerMsg {
     /// First message on a new session.
-    Hello { version: u32, viewer_name: String },
+    Hello {
+        version: u32,
+        viewer_name: String,
+    },
     /// Answer to [`HostMsg::AuthChallenge`]: one SPAKE2 message and one key
     /// confirmation per challenge, in the same order.
     AuthResponse {
@@ -41,11 +44,16 @@ pub enum ViewerMsg {
         confirms: Vec<[u8; 32]>,
     },
     /// Start (or switch) streaming the given display.
-    StartStream { display: u32, settings: StreamSettings },
+    StartStream {
+        display: u32,
+        settings: StreamSettings,
+    },
     /// Change quality settings mid-stream.
     SetSettings(StreamSettings),
     /// The viewer finished decoding frame `seq`.
-    FrameAck { seq: u64 },
+    FrameAck {
+        seq: u64,
+    },
     /// The decoder lost sync; send an IDR frame.
     RequestKeyframe,
     Input(InputEvent),
@@ -62,31 +70,56 @@ pub enum ViewerMsg {
     /// that starts with the display's index (a `u32` message) before its
     /// frames; the host finishes the streams of displays left out. Replaces
     /// [`ViewerMsg::StartStream`] for such hosts.
-    ShowDisplays { displays: Vec<u32>, settings: StreamSettings },
+    ShowDisplays {
+        displays: Vec<u32>,
+        settings: StreamSettings,
+    },
     /// [`ViewerMsg::FrameAck`] for one display's stream.
-    FrameAckOn { display: u32, seq: u64 },
+    FrameAckOn {
+        display: u32,
+        seq: u64,
+    },
     /// [`ViewerMsg::RequestKeyframe`] for one display's stream.
-    RequestKeyframeOn { display: u32 },
+    RequestKeyframeOn {
+        display: u32,
+    },
     /// [`ViewerMsg::Input`] with pointer positions on `display`.
-    InputOn { display: u32, event: InputEvent },
+    InputOn {
+        display: u32,
+        event: InputEvent,
+    },
 }
 
 /// Messages sent by the host on the control stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HostMsg {
     /// One SPAKE2 message per password the host accepts.
-    AuthChallenge { pakes: Vec<Vec<u8>> },
+    AuthChallenge {
+        pakes: Vec<Vec<u8>>,
+    },
     /// Mutual-authentication confirmation from the host.
-    AuthOk { confirm: [u8; 32], session: SessionInfo },
-    AuthFailed { reason: String, retry_after_secs: u32 },
+    AuthOk {
+        confirm: [u8; 32],
+        session: SessionInfo,
+    },
+    AuthFailed {
+        reason: String,
+        retry_after_secs: u32,
+    },
     /// Displays changed (monitor plugged in, resolution change, …).
     Displays(Vec<DisplayInfo>),
-    StreamStarted { display: u32, width: u32, height: u32 },
+    StreamStarted {
+        display: u32,
+        width: u32,
+        height: u32,
+    },
     Clipboard(ClipboardData),
     Chat(String),
     /// A non-fatal problem the viewer should show to the user.
     Notice(String),
-    Bye { reason: String },
+    Bye {
+        reason: String,
+    },
     /// The session's capabilities changed: a chat-only link's screen opened
     /// on its first request to view, so input, privacy and pointer support
     /// are now known. Sent only to viewers that sent [`HelloExtras`] (older
@@ -171,12 +204,7 @@ pub struct StreamSettings {
 
 impl Default for StreamSettings {
     fn default() -> Self {
-        Self {
-            bitrate_kbps: 0,
-            max_fps: 60,
-            max_in_flight: 2,
-            adaptive_resolution: false,
-        }
+        Self { bitrate_kbps: 0, max_fps: 60, max_in_flight: 2, adaptive_resolution: false }
     }
 }
 
@@ -205,12 +233,24 @@ pub enum MouseButton {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum InputEvent {
     /// Absolute pointer position, normalized to the streamed display (0..1).
-    MouseMove { x: f32, y: f32 },
-    MouseButton { button: MouseButton, down: bool },
+    MouseMove {
+        x: f32,
+        y: f32,
+    },
+    MouseButton {
+        button: MouseButton,
+        down: bool,
+    },
     /// Scroll, in "lines" (one notch of a classic mouse wheel = 1.0).
-    Wheel { dx: f32, dy: f32 },
+    Wheel {
+        dx: f32,
+        dy: f32,
+    },
     /// Physical key by W3C `KeyboardEvent.code` name ("KeyA", "ShiftLeft", …).
-    Key { code: String, down: bool },
+    Key {
+        code: String,
+        down: bool,
+    },
     /// Release every key and button the viewer may have held (focus lost).
     ReleaseAll,
     /// Typed characters, whatever keys make them on the host's keyboard
@@ -226,7 +266,8 @@ pub fn us_key_for_char(c: char) -> Option<(&'static str, bool)> {
         "KeyA", "KeyB", "KeyC", "KeyD", "KeyE", "KeyF", "KeyG", "KeyH", "KeyI", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyN",
         "KeyO", "KeyP", "KeyQ", "KeyR", "KeyS", "KeyT", "KeyU", "KeyV", "KeyW", "KeyX", "KeyY", "KeyZ",
     ];
-    const DIGITS: [&str; 10] = ["Digit0", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"];
+    const DIGITS: [&str; 10] =
+        ["Digit0", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"];
     Some(match c {
         'a'..='z' => (LETTERS[(c as u8 - b'a') as usize], false),
         'A'..='Z' => (LETTERS[(c as u8 - b'A') as usize], true),
@@ -330,22 +371,37 @@ pub enum StreamOpen {
     /// Send a file. `rel_path` may contain `/`-separated subfolders, which
     /// are created inside the target. After [`StreamReply::Ready`], `size`
     /// raw bytes follow; the receiver answers [`StreamReply::Saved`].
-    Upload { target: UploadTarget, rel_path: String, size: u64 },
+    Upload {
+        target: UploadTarget,
+        rel_path: String,
+        size: u64,
+    },
     /// Read a file: [`StreamReply::File`] then its bytes.
-    Download { path: String },
+    Download {
+        path: String,
+    },
     /// List a folder (`None` = home): [`StreamReply::Listing`].
-    List { path: Option<String> },
+    List {
+        path: Option<String>,
+    },
     /// Shortcut folders and drives: [`StreamReply::Places`].
     Places,
     /// Create a folder: [`StreamReply::Done`].
-    MakeDir { path: String },
+    MakeDir {
+        path: String,
+    },
     /// Port forwarding: the host connects to `host:port` (as seen from the
     /// host) and, after [`StreamReply::Ready`], the stream carries that TCP
     /// connection's bytes both ways.
-    Tunnel { host: String, port: u16 },
+    Tunnel {
+        host: String,
+        port: u16,
+    },
     /// Put the files uploaded to `UploadTarget::Clipboard { batch }` on the
     /// receiver's clipboard, ready to paste: [`StreamReply::Done`].
-    ClipboardFiles { batch: u64 },
+    ClipboardFiles {
+        batch: u64,
+    },
     /// The host's hardware and system: [`StreamReply::SystemInfo`]. (New
     /// variants go last: older hosts then just fail that one stream.)
     SystemInfo,
@@ -354,24 +410,48 @@ pub enum StreamOpen {
     NetworkInterfaces,
     NetworkScan(crate::network::ScanRequest),
     /// Optional name discovery for already-discovered addresses.
-    NetworkNames { interface: std::net::Ipv4Addr, addresses: Vec<std::net::Ipv4Addr> },
+    NetworkNames {
+        interface: std::net::Ipv4Addr,
+        addresses: Vec<std::net::Ipv4Addr>,
+    },
     /// Resolve the folder at a physical remote-screen point once per drop.
     /// Optional appended stream: existing protocol-6 sessions stay compatible.
-    DropTarget { x: i32, y: i32 },
+    DropTarget {
+        x: i32,
+        y: i32,
+    },
     /// Open the discovered HTTP/HTTPS service in the host user's browser.
     /// Optional stream; no arbitrary URL or command is accepted.
-    OpenNetworkWeb { address: std::net::Ipv4Addr, port: u16 },
+    OpenNetworkWeb {
+        address: std::net::Ipv4Addr,
+        port: u16,
+    },
     /// Independently query the host's observed public internet address.
-    PublicIp { refresh: bool },
+    PublicIp {
+        refresh: bool,
+    },
     /// Small passive preview; requires the same permission as file browsing.
-    FilePreview { path: String },
+    FilePreview {
+        path: String,
+    },
     /// Optional support tools; appended to retain protocol-6 compatibility.
-    WakeOnLan { interface: std::net::Ipv4Addr, mac: String },
-    NetworkDiagnostics { interface: std::net::Ipv4Addr, name: String, comparison_dns: Option<std::net::IpAddr> },
-    SupportStatus { text: String },
+    WakeOnLan {
+        interface: std::net::Ipv4Addr,
+        mac: String,
+    },
+    NetworkDiagnostics {
+        interface: std::net::Ipv4Addr,
+        name: String,
+        comparison_dns: Option<std::net::IpAddr>,
+    },
+    SupportStatus {
+        text: String,
+    },
     /// Restart the host's computer: [`StreamReply::Done`] just before it
     /// goes. Needs control permission. Appended: older hosts refuse the stream.
-    Power { action: PowerAction },
+    Power {
+        action: PowerAction,
+    },
 }
 
 /// What [`StreamOpen::Power`] asks for.
@@ -428,11 +508,17 @@ impl FilePreview {
 
     pub fn valid(&self) -> bool {
         match self {
-            Self::Image { width, height, rgba } => *width > 0 && *height > 0
-                && *width <= Self::EDGE && *height <= Self::EDGE
-                && rgba.len() == *width as usize * *height as usize * 4,
-            Self::Text(text) => text.len() <= Self::TEXT_BYTES
-                && !text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')),
+            Self::Image { width, height, rgba } => {
+                *width > 0
+                    && *height > 0
+                    && *width <= Self::EDGE
+                    && *height <= Self::EDGE
+                    && rgba.len() == *width as usize * *height as usize * 4
+            }
+            Self::Text(text) => {
+                text.len() <= Self::TEXT_BYTES
+                    && !text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+            }
         }
     }
 }

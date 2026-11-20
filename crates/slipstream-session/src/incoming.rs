@@ -17,15 +17,9 @@ pub(crate) async fn receive(
     size: u64,
     mut progress: impl FnMut(u64),
 ) -> Result<PathBuf> {
-    let parent = dest
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-        .to_owned();
+    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_owned();
     tokio::fs::create_dir_all(&parent).await?;
-    let staged =
-        tokio::task::spawn_blocking(move || NamedTempFile::with_prefix_in(".slipstream-", parent))
-            .await??;
+    let staged = tokio::task::spawn_blocking(move || NamedTempFile::with_prefix_in(".slipstream-", parent)).await??;
     let mut file = tokio::fs::File::from_std(staged.as_file().try_clone()?);
     let mut remaining = size;
     let mut buf = vec![0u8; CHUNK];
@@ -38,17 +32,10 @@ pub(crate) async fn receive(
         remaining -= n as u64;
         progress(n as u64);
     }
-    ensure!(
-        remaining == 0,
-        "transfer of {} was interrupted ({remaining} bytes missing)",
-        dest.display()
-    );
+    ensure!(remaining == 0, "transfer of {} was interrupted ({remaining} bytes missing)", dest.display());
     // A reset after the payload must not publish a cancelled upload. Also
     // reject a source which grew after advertising its original length.
-    ensure!(
-        recv.read(&mut [0u8; 1]).await?.is_none(),
-        "file size changed during transfer"
-    );
+    ensure!(recv.read(&mut [0u8; 1]).await?.is_none(), "file size changed during transfer");
     file.flush().await?;
     drop(file);
     let dest = dest.to_owned();

@@ -81,7 +81,8 @@ impl View {
         match self.speaker {
             Some((current, since)) if current != loudest => {
                 let quiet = self.levels.get(&current).is_none_or(|l| *l < SPEAKING);
-                if since.elapsed() > Duration::from_millis(1200) && (quiet || since.elapsed() > Duration::from_secs(4)) {
+                if since.elapsed() > Duration::from_millis(1200) && (quiet || since.elapsed() > Duration::from_secs(4))
+                {
                     self.speaker = Some((loudest, Instant::now()));
                 }
             }
@@ -93,7 +94,8 @@ impl View {
     /// Who should get one of the few video subscriptions, best first.
     pub fn video_priority(&self, state: &State) -> Vec<u64> {
         let mut order = Vec::new();
-        let sharing = |id: u64| state.participants.iter().any(|p| p.id == id && p.id != state.local && p.source != Source::None);
+        let sharing =
+            |id: u64| state.participants.iter().any(|p| p.id == id && p.id != state.local && p.source != Source::None);
         for id in [self.focus, self.pin, self.speaker.map(|s| s.0)].into_iter().flatten() {
             if sharing(id) && !order.contains(&id) {
                 order.push(id);
@@ -115,7 +117,8 @@ impl View {
         if usize::from(reaction) >= slipstream_core::meeting::REACTIONS {
             return;
         }
-        if !self.reactions.contains_key(&chat) && self.reactions.len() >= 256
+        if !self.reactions.contains_key(&chat)
+            && self.reactions.len() >= 256
             && let Some(&oldest) = self.reactions.keys().min()
         {
             self.reactions.remove(&oldest);
@@ -160,7 +163,14 @@ fn tiles(active: &Active, state: &State) -> Vec<Tile> {
 }
 
 /// The whole room below the meeting's title: controls, then stage and side.
-pub(super) fn ui(meetings: &mut Meetings, active: &mut Active, state: &State, app: &mut App, ui: &mut Ui, leave: &mut bool) {
+pub(super) fn ui(
+    meetings: &mut Meetings,
+    active: &mut Active,
+    state: &State,
+    app: &mut App,
+    ui: &mut Ui,
+    leave: &mut bool,
+) {
     let narrow = ui.available_width() < NARROW;
     header(meetings, active, state, app, ui, leave);
     ui.add_space(6.0);
@@ -195,16 +205,22 @@ pub(super) fn ui(meetings: &mut Meetings, active: &mut Active, state: &State, ap
                 chat(meetings, active, state, &mut inner);
             }
             Side::People => {
-                egui::ScrollArea::vertical().id_salt("meeting-people").auto_shrink([false, false]).show(&mut inner, |ui| {
-                    ui.set_max_width(width);
-                    participants(meetings, active, state, app, ui);
-                });
+                egui::ScrollArea::vertical().id_salt("meeting-people").auto_shrink([false, false]).show(
+                    &mut inner,
+                    |ui| {
+                        ui.set_max_width(width);
+                        participants(meetings, active, state, app, ui);
+                    },
+                );
             }
             Side::Devices => {
-                egui::ScrollArea::vertical().id_salt("meeting-devices").auto_shrink([false, false]).show(&mut inner, |ui| {
-                    ui.set_max_width(width);
-                    devices::ui(meetings, Some(active), app, ui);
-                });
+                egui::ScrollArea::vertical().id_salt("meeting-devices").auto_shrink([false, false]).show(
+                    &mut inner,
+                    |ui| {
+                        ui.set_max_width(width);
+                        devices::ui(meetings, Some(active), app, ui);
+                    },
+                );
             }
             Side::None => {}
         }
@@ -230,13 +246,23 @@ fn header(meetings: &mut Meetings, active: &mut Active, state: &State, app: &mut
         let room = &mut active.room;
         let chat = if room.unread > 0 { format!("Chat {}", room.unread) } else { "Chat".into() };
         let waiting = state.host && !state.lobby.is_empty();
-        let people = if waiting { format!("People · {} waiting", state.lobby.len()) } else { format!("People {}", state.participants.len()) };
+        let people = if waiting {
+            format!("People · {} waiting", state.lobby.len())
+        } else {
+            format!("People {}", state.participants.len())
+        };
         for (side, label, icon, attention) in [
             (Side::Chat, chat.as_str(), theme::ConsoleIcon::Chat, room.unread > 0),
             (Side::People, people.as_str(), theme::ConsoleIcon::People, waiting),
             (Side::Devices, "Devices", theme::ConsoleIcon::Camera, false),
         ] {
-            let color = if room.side == side { pal::GREEN } else if attention { pal::GOLD } else { pal::BLUE };
+            let color = if room.side == side {
+                pal::GREEN
+            } else if attention {
+                pal::GOLD
+            } else {
+                pal::BLUE
+            };
             if theme::console_button(ui, label, color, icon, false).clicked() {
                 room.side = if room.side == side { Side::None } else { side };
             }
@@ -264,17 +290,30 @@ impl View {
 /// One choice in the layout menu: its icon, its name, and whether it's in use.
 fn icon_row(ui: &mut Ui, icon: theme::ConsoleIcon, label: &str, selected: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(250.0, 32.0), Sense::click());
-    let fill = if selected { pal::VIOLET } else if response.hovered() { pal::GRID } else { Color32::TRANSPARENT };
+    let fill = if selected {
+        pal::VIOLET
+    } else if response.hovered() {
+        pal::GRID
+    } else {
+        Color32::TRANSPARENT
+    };
     ui.painter().rect_filled(rect, 6.0, fill);
     let ink = if selected { pal::BG } else { pal::TAN };
     let symbol = Rect::from_center_size(Pos2::new(rect.left() + 20.0, rect.center().y), vec2(20.0, 20.0));
     theme::console_icon(ui.painter(), symbol, icon, ink, fill);
-    ui.painter().text(Pos2::new(rect.left() + 40.0, rect.center().y), Align2::LEFT_CENTER, label, theme::body(16.0), ink);
+    ui.painter().text(
+        Pos2::new(rect.left() + 40.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        theme::body(16.0),
+        ink,
+    );
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 fn layout_menu(room: &mut View, ui: &mut Ui) {
-    let button = theme::console_button(ui, "Layout", pal::LAVENDER, room.icon(), true).on_hover_text("Arrange the participants");
+    let button =
+        theme::console_button(ui, "Layout", pal::LAVENDER, room.icon(), true).on_hover_text("Arrange the participants");
     egui::Popup::menu(&button).show(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         let mut pick = |ui: &mut Ui, icon, label: &str, layout, strip: Option<Strip>| {
@@ -325,7 +364,9 @@ pub(super) fn main_picture(active: &Active, state: &State) -> Option<Arc<slipstr
     let tiles = tiles(active, state);
     let id = main_id(&active.room, &tiles)?;
     let main = tiles.iter().find(|t| t.id == id && t.video.is_some());
-    let shown = main.or_else(|| tiles.iter().find(|t| !t.me && t.video.is_some())).or_else(|| tiles.iter().find(|t| t.video.is_some()))?;
+    let shown = main
+        .or_else(|| tiles.iter().find(|t| !t.me && t.video.is_some()))
+        .or_else(|| tiles.iter().find(|t| t.video.is_some()))?;
     shown.video.as_ref().map(|v| v.2.clone())
 }
 
@@ -344,14 +385,26 @@ fn stage(active: &mut Active, state: &State, ui: &mut Ui, rect: Rect) {
     if tiles.len() == 1 {
         draw(ui, room, &tiles[0], rect.shrink(4.0), false);
         let hint = rect.center_top() + vec2(0.0, 24.0);
-        ui.painter().text(hint, Align2::CENTER_CENTER, "Waiting for others to join · voice and Subspace chat work with cameras off", theme::body(16.0), pal::DIM);
+        ui.painter().text(
+            hint,
+            Align2::CENTER_CENTER,
+            "Waiting for others to join · voice and Subspace chat work with cameras off",
+            theme::body(16.0),
+            pal::DIM,
+        );
         return;
     }
     if let Some(id) = room.focus
         && let Some(tile) = tiles.iter().find(|t| t.id == id)
     {
         draw(ui, room, tile, rect, false);
-        ui.painter().text(rect.right_top() + vec2(-12.0, 14.0), Align2::RIGHT_TOP, "Double-click or Esc to go back", theme::body(15.0), pal::TAN);
+        ui.painter().text(
+            rect.right_top() + vec2(-12.0, 14.0),
+            Align2::RIGHT_TOP,
+            "Double-click or Esc to go back",
+            theme::body(15.0),
+            pal::TAN,
+        );
         return;
     }
     match room.layout {
@@ -372,7 +425,11 @@ fn stage(active: &mut Active, state: &State, ui: &mut Ui, rect: Rect) {
         Layout::Speaker => {
             let main_id = main_id(room, &tiles).unwrap_or(tiles[0].id);
             let horizontal = matches!(room.strip, Strip::Bottom | Strip::Top);
-            let thickness = if horizontal { (rect.height() * 0.2).clamp(90.0, 150.0) } else { (rect.width() * 0.2).clamp(150.0, 240.0) };
+            let thickness = if horizontal {
+                (rect.height() * 0.2).clamp(90.0, 150.0)
+            } else {
+                (rect.width() * 0.2).clamp(150.0, 240.0)
+            };
             let (main, strip) = match room.strip {
                 Strip::Bottom => (rect.with_max_y(rect.max.y - thickness), rect.with_min_y(rect.max.y - thickness)),
                 Strip::Top => (rect.with_min_y(rect.min.y + thickness), rect.with_max_y(rect.min.y + thickness)),
@@ -383,11 +440,19 @@ fn stage(active: &mut Active, state: &State, ui: &mut Ui, rect: Rect) {
                 draw(ui, room, tile, main.shrink(4.0), false);
             }
             let others: Vec<&Tile> = tiles.iter().filter(|t| t.id != main_id).collect();
-            let size = if horizontal { vec2(thickness * 16.0 / 9.0, thickness) } else { vec2(thickness, thickness * 9.0 / 16.0) };
+            let size = if horizontal {
+                vec2(thickness * 16.0 / 9.0, thickness)
+            } else {
+                vec2(thickness, thickness * 9.0 / 16.0)
+            };
             let mut child = ui.new_child(UiBuilder::new().max_rect(strip));
             let scroll = if horizontal { egui::ScrollArea::horizontal() } else { egui::ScrollArea::vertical() };
             scroll.id_salt("meeting-strip").auto_shrink([false, false]).show(&mut child, |ui| {
-                let layout = if horizontal { egui::Layout::left_to_right(egui::Align::Center) } else { egui::Layout::top_down(egui::Align::Center) };
+                let layout = if horizontal {
+                    egui::Layout::left_to_right(egui::Align::Center)
+                } else {
+                    egui::Layout::top_down(egui::Align::Center)
+                };
                 ui.with_layout(layout, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     for tile in others {
@@ -427,10 +492,26 @@ fn draw(ui: &mut Ui, room: &mut View, tile: &Tile, rect: Rect, small: bool) {
     } else {
         let radius = (rect.width().min(rect.height()) * 0.22).clamp(14.0, 90.0);
         let colors = [pal::VIOLET, pal::BLUE, pal::PEACH, pal::LAVENDER, pal::GOLD, pal::CYAN];
-        painter.circle_filled(rect.center() - vec2(0.0, radius * 0.25), radius, colors[(tile.id % colors.len() as u64) as usize]);
-        painter.text(rect.center() - vec2(0.0, radius * 0.25), Align2::CENTER_CENTER, initials(&tile.name), theme::display_bold(radius * 0.9), pal::BG);
+        painter.circle_filled(
+            rect.center() - vec2(0.0, radius * 0.25),
+            radius,
+            colors[(tile.id % colors.len() as u64) as usize],
+        );
+        painter.text(
+            rect.center() - vec2(0.0, radius * 0.25),
+            Align2::CENTER_CENTER,
+            initials(&tile.name),
+            theme::display_bold(radius * 0.9),
+            pal::BG,
+        );
         if !small && tile.source != Source::None && !tile.me {
-            painter.text(rect.center_bottom() - vec2(0.0, 44.0), Align2::CENTER_CENTER, "Video for the first few people only: double-click to watch", theme::body(13.0), pal::DIM);
+            painter.text(
+                rect.center_bottom() - vec2(0.0, 44.0),
+                Align2::CENTER_CENTER,
+                "Video for the first few people only: double-click to watch",
+                theme::body(13.0),
+                pal::DIM,
+            );
         }
     }
     let level = room.levels.get(&tile.id).copied().unwrap_or(0.0);
@@ -479,7 +560,11 @@ fn draw(ui: &mut Ui, room: &mut View, tile: &Tile, rect: Rect, small: bool) {
             ui.close();
         }
     });
-    response.on_hover_text(if small { "Click to make large · double-click to fill the stage" } else { "Double-click to fill the stage" });
+    response.on_hover_text(if small {
+        "Click to make large · double-click to fill the stage"
+    } else {
+        "Double-click to fill the stage"
+    });
 }
 
 fn initials(name: &str) -> String {
@@ -498,69 +583,95 @@ fn chat(meetings: &mut Meetings, active: &mut Active, state: &State, ui: &mut Ui
     ui.label(RichText::new("Shared with everyone in this meeting").small().color(pal::DIM));
     let input_height = 96.0;
     let height = (ui.available_height() - input_height).max(80.0);
-    egui::ScrollArea::vertical().id_salt("meeting-chat").max_height(height).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-        if active.chat.is_empty() {
-            ui.label(RichText::new("No messages yet. Say hello to the meeting.").color(pal::DIM));
-        }
-        for line in &active.chat {
-            ui.push_id(line.id, |ui| {
-                let top = ui.cursor().min;
-                ui.label(RichText::new(&line.name).color(if line.sender == state.local { pal::GREEN } else { pal::LAVENDER }));
-                ui.label(&line.text);
-                let reactions = active.room.reactions.get(&line.id).filter(|r| r.values().any(|who| !who.is_empty()));
-                if let Some(reactions) = reactions {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        for (reaction, who) in reactions {
-                            if who.is_empty() {
-                                continue;
-                            }
-                            let mine = who.contains(&state.local);
-                            let names: Vec<String> = who
-                                .iter()
-                                .filter_map(|id| state.participants.iter().find(|p| p.id == *id).map(|p| p.name.clone()))
-                                .collect();
-                            let chip = egui::Frame::new()
-                                .fill(if mine { pal::VIOLET.gamma_multiply(0.45) } else { pal::GRID })
-                                .stroke(Stroke::new(1.0, if mine { pal::VIOLET } else { pal::GRID }))
-                                .corner_radius(10.0)
-                                .inner_margin(egui::Margin::symmetric(6, 2))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 3.0;
-                                        super::reactions::image(ui, *reaction, 18.0);
-                                        ui.label(RichText::new(who.len().to_string()).color(pal::TEXT));
+    egui::ScrollArea::vertical()
+        .id_salt("meeting-chat")
+        .max_height(height)
+        .auto_shrink([false, false])
+        .stick_to_bottom(true)
+        .show(ui, |ui| {
+            if active.chat.is_empty() {
+                ui.label(RichText::new("No messages yet. Say hello to the meeting.").color(pal::DIM));
+            }
+            for line in &active.chat {
+                ui.push_id(line.id, |ui| {
+                    let top = ui.cursor().min;
+                    ui.label(RichText::new(&line.name).color(if line.sender == state.local {
+                        pal::GREEN
+                    } else {
+                        pal::LAVENDER
+                    }));
+                    ui.label(&line.text);
+                    let reactions =
+                        active.room.reactions.get(&line.id).filter(|r| r.values().any(|who| !who.is_empty()));
+                    if let Some(reactions) = reactions {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            for (reaction, who) in reactions {
+                                if who.is_empty() {
+                                    continue;
+                                }
+                                let mine = who.contains(&state.local);
+                                let names: Vec<String> = who
+                                    .iter()
+                                    .filter_map(|id| {
+                                        state.participants.iter().find(|p| p.id == *id).map(|p| p.name.clone())
+                                    })
+                                    .collect();
+                                let chip = egui::Frame::new()
+                                    .fill(if mine { pal::VIOLET.gamma_multiply(0.45) } else { pal::GRID })
+                                    .stroke(Stroke::new(1.0, if mine { pal::VIOLET } else { pal::GRID }))
+                                    .corner_radius(10.0)
+                                    .inner_margin(egui::Margin::symmetric(6, 2))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 3.0;
+                                            super::reactions::image(ui, *reaction, 18.0);
+                                            ui.label(RichText::new(who.len().to_string()).color(pal::TEXT));
+                                        });
                                     });
-                                });
-                            let chip = ui.interact(chip.response.rect, ui.scope_id().with(("chip", *reaction)), Sense::click());
-                            let hover = format!("{} · {}", super::reactions::NAMES[*reaction as usize], names.join(", "));
-                            if chip.on_hover_text(hover).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                active.meeting.command(Command::React { chat: line.id, reaction: *reaction });
+                                let chip = ui.interact(
+                                    chip.response.rect,
+                                    ui.scope_id().with(("chip", *reaction)),
+                                    Sense::click(),
+                                );
+                                let hover =
+                                    format!("{} · {}", super::reactions::NAMES[*reaction as usize], names.join(", "));
+                                if chip.on_hover_text(hover).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                    active.meeting.command(Command::React { chat: line.id, reaction: *reaction });
+                                }
                             }
-                        }
-                    });
-                }
-                // React: on hover, at the message's top right.
-                let rect = Rect::from_min_max(top, Pos2::new(ui.max_rect().right(), ui.cursor().min.y));
-                let popup = egui::Id::unique(("meeting-react", line.id));
-                if ui.rect_contains_pointer(rect) || egui::Popup::is_id_open(ui.ctx(), popup) {
-                    let spot = Rect::from_min_size(Pos2::new(rect.right() - 64.0, rect.top()), vec2(62.0, 22.0));
-                    let button = ui.put(spot, egui::Button::new(RichText::new("+ React").size(13.0).color(pal::TAN)).fill(pal::PANEL).corner_radius(8.0))
-                        .on_hover_text("React to this message");
-                    egui::Popup::menu(&button).id(popup).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                        let mut more = ui.data(|d| d.get_temp::<bool>(popup.with("more")).unwrap_or(false));
-                        if let Some(reaction) = super::reactions::picker(ui, &mut more) {
-                            active.meeting.command(Command::React { chat: line.id, reaction });
-                            more = false;
-                            ui.close();
-                        }
-                        ui.data_mut(|d| d.insert_temp(popup.with("more"), more));
-                    });
-                }
-                ui.add_space(6.0);
-            });
-        }
-    });
+                        });
+                    }
+                    // React: on hover, at the message's top right.
+                    let rect = Rect::from_min_max(top, Pos2::new(ui.max_rect().right(), ui.cursor().min.y));
+                    let popup = egui::Id::unique(("meeting-react", line.id));
+                    if ui.rect_contains_pointer(rect) || egui::Popup::is_id_open(ui.ctx(), popup) {
+                        let spot = Rect::from_min_size(Pos2::new(rect.right() - 64.0, rect.top()), vec2(62.0, 22.0));
+                        let button = ui
+                            .put(
+                                spot,
+                                egui::Button::new(RichText::new("+ React").size(13.0).color(pal::TAN))
+                                    .fill(pal::PANEL)
+                                    .corner_radius(8.0),
+                            )
+                            .on_hover_text("React to this message");
+                        egui::Popup::menu(&button)
+                            .id(popup)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                            .show(|ui| {
+                                let mut more = ui.data(|d| d.get_temp::<bool>(popup.with("more")).unwrap_or(false));
+                                if let Some(reaction) = super::reactions::picker(ui, &mut more) {
+                                    active.meeting.command(Command::React { chat: line.id, reaction });
+                                    more = false;
+                                    ui.close();
+                                }
+                                ui.data_mut(|d| d.insert_temp(popup.with("more"), more));
+                            });
+                    }
+                    ui.add_space(6.0);
+                });
+            }
+        });
     ui.add_space(6.0);
     let response = ui.add(
         theme::text_area(&mut active.message)
@@ -569,7 +680,8 @@ fn chat(meetings: &mut Meetings, active: &mut Active, state: &State, ui: &mut Ui
             .hint_text("Message everyone · Enter to send")
             .return_key(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::Enter)),
     );
-    let enter = response.has_focus() && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let enter =
+        response.has_focus() && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
     let can_send = !active.message.trim().is_empty();
     let mut send = false;
     ui.add_enabled_ui(can_send, |ui| {
@@ -592,7 +704,10 @@ mod tests {
     fn state(ids: &[(u64, Source)]) -> State {
         State {
             local: 1,
-            participants: ids.iter().map(|(id, source)| Participant { id: *id, name: format!("P{id}"), microphone: true, source: *source }).collect(),
+            participants: ids
+                .iter()
+                .map(|(id, source)| Participant { id: *id, name: format!("P{id}"), microphone: true, source: *source })
+                .collect(),
             ..Default::default()
         }
     }

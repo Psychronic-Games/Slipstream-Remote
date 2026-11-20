@@ -42,7 +42,15 @@ pub enum Presence {
 
 impl Client {
     pub(crate) fn account(&self, r: &AccountRef) -> Result<StationAccount> {
-        self.inner.settings.lock().unwrap().accounts.iter().find(|a| r.matches(a)).cloned().ok_or_else(|| anyhow!("not signed in to {}", r.server))
+        self.inner
+            .settings
+            .lock()
+            .unwrap()
+            .accounts
+            .iter()
+            .find(|a| r.matches(a))
+            .cloned()
+            .ok_or_else(|| anyhow!("not signed in to {}", r.server))
     }
 
     fn station_client(a: &StationAccount) -> Result<DirectoryClient> {
@@ -127,7 +135,8 @@ impl Client {
     }
 
     pub async fn sync_accounts(&self) {
-        let refs: Vec<AccountRef> = self.settings().accounts.iter().filter(|a| !a.signed_out).map(AccountRef::of).collect();
+        let refs: Vec<AccountRef> =
+            self.settings().accounts.iter().filter(|a| !a.signed_out).map(AccountRef::of).collect();
         for r in refs {
             if let Err(e) = self.sync_account(&r).await {
                 tracing::debug!(server = %r.server, "account sync: {e:#}");
@@ -139,7 +148,13 @@ impl Client {
     /// admins, the shared one). `password`: `Some("")` forgets a saved
     /// one, `None` keeps what's there. `device.management` likewise: `None`
     /// keeps what's saved, an empty one clears it.
-    pub async fn save_device(&self, r: &AccountRef, mut device: SavedDevice, password: Option<String>, shared: bool) -> Result<()> {
+    pub async fn save_device(
+        &self,
+        r: &AccountRef,
+        mut device: SavedDevice,
+        password: Option<String>,
+        shared: bool,
+    ) -> Result<()> {
         let a = self.account(r)?;
         device.group = device.group.trim().chars().take(64).collect();
         if shared && !a.user.admin {
@@ -159,22 +174,31 @@ impl Client {
             device.secret = match password {
                 Some(p) if p.is_empty() => None,
                 Some(p) => {
-                    let key = a.vault_key.as_deref().and_then(VaultKey::from_hex).context("sign in again to save passwords")?;
+                    let key = a
+                        .vault_key
+                        .as_deref()
+                        .and_then(VaultKey::from_hex)
+                        .context("sign in again to save passwords")?;
                     Some(key.seal(device.id, &p))
                 }
                 None => a.devices.iter().find(|d| d.id == device.id).and_then(|d| d.secret.clone()),
             };
         }
         let dc = Self::station_client(&a)?;
-        let state = if shared { dc.save_shared(&a.token, &device).await } else { dc.save_device(&a.token, &device).await };
+        let state =
+            if shared { dc.save_shared(&a.token, &device).await } else { dc.save_device(&a.token, &device).await };
         let state = state.map_err(|e| self.note_error(r, e))?;
         let list = if shared { &state.shared } else { &state.devices };
         let saved = list.iter().find(|d| d.id == device.id);
         let group_saved = saved.is_some_and(|d| d.group == device.group);
         let management_saved = shared || saved.is_some_and(|d| d.management == wanted_management);
         self.apply_state(r, state);
-        if !group_saved { bail!("that station needs an update to save device groups"); }
-        if !management_saved { bail!("that station needs an update to save remote management settings"); }
+        if !group_saved {
+            bail!("that station needs an update to save device groups");
+        }
+        if !management_saved {
+            bail!("that station needs an update to save remote management settings");
+        }
         Ok(())
     }
 
@@ -188,29 +212,34 @@ impl Client {
 
     pub async fn save_group(&self, r: &AccountRef, name: &str) -> Result<()> {
         let name: String = name.trim().chars().take(64).collect();
-        if name.is_empty() { bail!("Enter a group name"); }
+        if name.is_empty() {
+            bail!("Enter a group name");
+        }
         let a = self.account(r)?;
-        let state = Self::station_client(&a)?.save_group(&a.token, &name).await
-            .map_err(|e| self.note_error(r, e))?;
+        let state = Self::station_client(&a)?.save_group(&a.token, &name).await.map_err(|e| self.note_error(r, e))?;
         let saved = state.groups.contains(&name);
-        self.apply_state(r,state);
-        if !saved { bail!("Update the station to create empty groups"); }
+        self.apply_state(r, state);
+        if !saved {
+            bail!("Update the station to create empty groups");
+        }
         Ok(())
     }
 
     pub async fn delete_group(&self, r: &AccountRef, name: &str) -> Result<()> {
         let a = self.account(r)?;
-        let state = Self::station_client(&a)?.delete_group(&a.token,name).await
-            .map_err(|e| self.note_error(r,e))?;
-        self.apply_state(r,state);
+        let state = Self::station_client(&a)?.delete_group(&a.token, name).await.map_err(|e| self.note_error(r, e))?;
+        self.apply_state(r, state);
         Ok(())
     }
 
     /// The password saved for a device in this account, if any.
     pub fn saved_password(&self, r: &AccountRef, id: DeviceId) -> Result<Option<String>> {
         let a = self.account(r)?;
-        let Some(sealed) = a.devices.iter().find(|d| d.id == id).and_then(|d| d.secret.clone()) else { return Ok(None) };
-        let key = a.vault_key.as_deref().and_then(VaultKey::from_hex).context("sign in again to use saved passwords")?;
+        let Some(sealed) = a.devices.iter().find(|d| d.id == id).and_then(|d| d.secret.clone()) else {
+            return Ok(None);
+        };
+        let key =
+            a.vault_key.as_deref().and_then(VaultKey::from_hex).context("sign in again to use saved passwords")?;
         key.open(id, &sealed).map(Some)
     }
 
@@ -220,10 +249,20 @@ impl Client {
         let Ok(dc) = self.account(r).and_then(|a| Self::station_client(&a)) else { return Vec::new() };
         let ids: Vec<_> = ids.iter().copied().collect::<BTreeSet<_>>().into_iter().collect();
         match dc.presence(&ids).await {
-            Ok(Some(devices)) => return devices.into_iter().map(|device| (device.id, match device.status {
-                PresenceStatus::Online => Presence::Online,
-                PresenceStatus::Offline | PresenceStatus::NotFound => Presence::Offline,
-            })).collect(),
+            Ok(Some(devices)) => {
+                return devices
+                    .into_iter()
+                    .map(|device| {
+                        (
+                            device.id,
+                            match device.status {
+                                PresenceStatus::Online => Presence::Online,
+                                PresenceStatus::Offline | PresenceStatus::NotFound => Presence::Offline,
+                            },
+                        )
+                    })
+                    .collect();
+            }
             Err(_) => return ids.into_iter().map(|id| (id, Presence::Unknown)).collect(),
             Ok(None) => {}
         }

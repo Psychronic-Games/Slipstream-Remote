@@ -38,30 +38,18 @@ impl CaptureHub {
         s.active.then_some((s.width, s.height))
     }
     pub fn has_viewers(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap()
-            .viewers
-            .iter()
-            .filter_map(Weak::upgrade)
-            .any(|v| !v.is_closed())
+        self.state.lock().unwrap().viewers.iter().filter_map(Weak::upgrade).any(|v| !v.is_closed())
     }
     pub fn subscribe(&self) -> Result<FrameStream> {
         let mut s = self.state.lock().unwrap();
         if !s.active {
             bail!("On the phone, tap Start sharing and approve Android's screen-sharing prompt");
         }
-        s.viewers
-            .retain(|v| v.upgrade().is_some_and(|s| !s.is_closed()));
+        s.viewers.retain(|v| v.upgrade().is_some_and(|s| !s.is_closed()));
         if s.viewers.len() >= 4 {
             bail!("Phone already has four screen viewers");
         }
-        tracing::info!(
-            cached = s.latest.is_some(),
-            width = s.width,
-            height = s.height,
-            "Android screen subscription"
-        );
+        tracing::info!(cached = s.latest.is_some(), width = s.width, height = s.height, "Android screen subscription");
         let slot = FrameSlot::new();
         if let Some(f) = &s.latest {
             slot.put(f.clone());
@@ -69,14 +57,7 @@ impl CaptureHub {
         s.viewers.push(Arc::downgrade(&slot));
         Ok(FrameStream::new(slot))
     }
-    pub fn publish(
-        &self,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        row_stride: usize,
-        pixel_stride: usize,
-    ) -> Result<()> {
+    pub fn publish(&self, data: &[u8], width: u32, height: u32, row_stride: usize, pixel_stride: usize) -> Result<()> {
         if width < 2
             || height < 2
             || width > 2048
@@ -88,10 +69,7 @@ impl CaptureHub {
         }
         let row_bytes = (width as usize - 1) * pixel_stride + 4;
         if row_stride < row_bytes
-            || data.len()
-                < row_stride
-                    .saturating_mul(height as usize - 1)
-                    .saturating_add(row_bytes)
+            || data.len() < row_stride.saturating_mul(height as usize - 1).saturating_add(row_bytes)
         {
             bail!("Android image plane is shorter than its strides");
         }
@@ -122,21 +100,15 @@ impl CaptureHub {
                 frame.data.extend_from_slice(source);
             } else {
                 for x in 0..width as usize {
-                    frame
-                        .data
-                        .extend_from_slice(&source[x * pixel_stride..x * pixel_stride + 4]);
+                    frame.data.extend_from_slice(&source[x * pixel_stride..x * pixel_stride + 4]);
                 }
             }
         }
-        s.viewers
-            .retain(|v| v.upgrade().is_some_and(|v| !v.is_closed()));
+        s.viewers.retain(|v| v.upgrade().is_some_and(|v| !v.is_closed()));
         for slot in s.viewers.iter().filter_map(Weak::upgrade) {
             let mut data = slot.buffer(frame.data.len());
             data.extend_from_slice(&frame.data);
-            slot.put(RawFrame {
-                data,
-                ..frame.clone_without_data()
-            });
+            slot.put(RawFrame { data, ..frame.clone_without_data() });
         }
         s.latest = Some(frame);
         Ok(())
@@ -149,13 +121,7 @@ trait FrameMetadata {
 }
 impl FrameMetadata for RawFrame {
     fn clone_without_data(&self) -> RawFrame {
-        RawFrame {
-            width: self.width,
-            height: self.height,
-            stride: self.stride,
-            format: self.format,
-            data: Vec::new(),
-        }
+        RawFrame { width: self.width, height: self.height, stride: self.stride, format: self.format, data: Vec::new() }
     }
 }
 
@@ -168,17 +134,12 @@ mod tests {
         let hub = CaptureHub::default();
         assert!(hub.subscribe().is_err());
         hub.start(2, 2);
-        let bytes = [
-            1, 2, 3, 255, 4, 5, 6, 255, 99, 99, 99, 99, 7, 8, 9, 255, 10, 11, 12, 255,
-        ];
+        let bytes = [1, 2, 3, 255, 4, 5, 6, 255, 99, 99, 99, 99, 7, 8, 9, 255, 10, 11, 12, 255];
         hub.publish(&bytes, 2, 2, 12, 4).unwrap();
         let stream = hub.subscribe().unwrap();
         assert!(hub.has_viewers());
         let frame = stream.next(Duration::ZERO).unwrap().unwrap();
-        assert_eq!(
-            frame.data,
-            [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255]
-        );
+        assert_eq!(frame.data, [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255]);
         assert!(frame.validate().is_ok());
         hub.publish(&[20; 24], 3, 2, 12, 4).unwrap();
         assert_eq!(stream.next(Duration::ZERO).unwrap().unwrap().width, 3);

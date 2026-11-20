@@ -36,10 +36,7 @@ fn add(out: &mut Evidence, kind: &str, value: &str) {
     {
         return;
     }
-    let digest = blake3::derive_key(
-        "Slipstream physical device binding v1",
-        format!("{kind}\0{value}").as_bytes(),
-    );
+    let digest = blake3::derive_key("Slipstream physical device binding v1", format!("{kind}\0{value}").as_bytes());
     out.insert(kind.into(), crate::directory::hex(&digest));
 }
 
@@ -48,9 +45,7 @@ pub(crate) fn current() -> &'static Evidence {
     EVIDENCE.get_or_init(|| {
         let evidence = read();
         if evidence.is_empty() {
-            tracing::warn!(
-                "automatic device recognition unavailable; retaining the saved identity"
-            );
+            tracing::warn!("automatic device recognition unavailable; retaining the saved identity");
         }
         evidence
     })
@@ -59,10 +54,9 @@ pub(crate) fn current() -> &'static Evidence {
 #[cfg(target_os = "linux")]
 fn read() -> Evidence {
     let mut out = Evidence::new();
-    for (kind, path) in [
-        ("system-uuid", "/sys/class/dmi/id/product_uuid"),
-        ("system-serial", "/sys/class/dmi/id/product_serial"),
-    ] {
+    for (kind, path) in
+        [("system-uuid", "/sys/class/dmi/id/product_uuid"), ("system-serial", "/sys/class/dmi/id/product_serial")]
+    {
         if let Ok(value) = std::fs::read_to_string(path) {
             add(&mut out, kind, &value);
         }
@@ -78,17 +72,13 @@ fn read_network(out: &mut Evidence, root: &std::path::Path) {
         for interface in interfaces.flatten() {
             let path = interface.path();
             let bus = path.join("device/subsystem").canonicalize().ok();
-            if !bus
-                .as_ref()
-                .is_some_and(|p| p.file_name().is_some_and(|n| n == "pci"))
-            {
+            if !bus.as_ref().is_some_and(|p| p.file_name().is_some_and(|n| n == "pci")) {
                 continue;
             }
             // NET_ADDR_PERM=0. Never bind to a Wi-Fi privacy address, a
             // user-assigned address, a bridge/VPN or a removable USB dock.
             if std::fs::read_to_string(path.join("type")).is_ok_and(|v| v.trim() == "1")
-                && std::fs::read_to_string(path.join("addr_assign_type"))
-                    .is_ok_and(|v| v.trim() == "0")
+                && std::fs::read_to_string(path.join("addr_assign_type")).is_ok_and(|v| v.trim() == "0")
                 && let Ok(address) = std::fs::read_to_string(path.join("address"))
             {
                 add_adapter(out, &address);
@@ -102,24 +92,13 @@ fn add_adapter(out: &mut Evidence, address: &str) {
     let bytes: Option<Vec<u8>> = address
         .trim()
         .split(':')
-        .map(|part| {
-            if part.len() == 2 {
-                u8::from_str_radix(part, 16).ok()
-            } else {
-                None
-            }
-        })
+        .map(|part| if part.len() == 2 { u8::from_str_radix(part, 16).ok() } else { None })
         .collect();
-    let Some(bytes) = bytes.filter(|b| b.len() == 6 && b[0] & 1 == 0 && b.iter().any(|n| *n != 0))
-    else {
+    let Some(bytes) = bytes.filter(|b| b.len() == 6 && b[0] & 1 == 0 && b.iter().any(|n| *n != 0)) else {
         return;
     };
     let mut hashed = Evidence::new();
-    add(
-        &mut hashed,
-        "network-adapter",
-        &crate::directory::hex(&bytes),
-    );
+    add(&mut hashed, "network-adapter", &crate::directory::hex(&bytes));
     if let Some(hash) = hashed.remove("network-adapter") {
         out.insert(format!("network-adapter:{hash}"), hash);
     }
@@ -130,12 +109,7 @@ fn add_adapter(out: &mut Evidence, address: &str) {
 pub(crate) fn changed(previous: &Evidence, current: &Evidence) -> bool {
     if let Some(different) = ["system-uuid", "system-serial"]
         .into_iter()
-        .find_map(|kind| {
-            previous
-                .get(kind)
-                .zip(current.get(kind))
-                .map(|(old, new)| old != new)
-        })
+        .find_map(|kind| previous.get(kind).zip(current.get(kind)).map(|(old, new)| old != new))
     {
         return different;
     }
@@ -169,10 +143,7 @@ fn read() -> Evidence {
         if length > data.len() - 8 {
             return Evidence::new();
         }
-        smbios(
-            &data[8..8 + length],
-            data[1] > 2 || (data[1] == 2 && data[2] >= 6),
-        )
+        smbios(&data[8..8 + length], data[1] > 2 || (data[1] == 2 && data[2] >= 6))
     }
 }
 
@@ -187,11 +158,7 @@ fn smbios(table: &[u8], little_uuid: bool) -> Evidence {
             break;
         }
         let strings = at + len;
-        let Some(end) = table[strings..]
-            .windows(2)
-            .position(|s| s == [0, 0])
-            .map(|n| strings + n)
-        else {
+        let Some(end) = table[strings..].windows(2).position(|s| s == [0, 0]).map(|n| strings + n) else {
             break;
         };
         if kind == 1 {
@@ -268,10 +235,7 @@ fn read() -> Evidence {
         return out;
     }
     for line in text.lines() {
-        for (name, kind) in [
-            ("IOPlatformUUID", "system-uuid"),
-            ("IOPlatformSerialNumber", "system-serial"),
-        ] {
+        for (name, kind) in [("IOPlatformUUID", "system-uuid"), ("IOPlatformSerialNumber", "system-serial")] {
             if line.contains(&format!("\"{name}\""))
                 && let Some((_, value)) = line.split_once('=')
             {
@@ -309,20 +273,11 @@ mod tests {
         firm_a.insert("system-uuid".into(), "uuid-a".into());
         let mut firm_b = second.clone();
         firm_b.insert("system-uuid".into(), "uuid-a".into());
-        assert!(
-            !changed(&firm_a, &firm_b),
-            "same firmware must override an adapter replacement"
-        );
+        assert!(!changed(&firm_a, &firm_b), "same firmware must override an adapter replacement");
         firm_b.insert("system-uuid".into(), "uuid-b".into());
         firm_b.extend(first.clone());
         assert!(changed(&firm_a, &firm_b));
-        for address in [
-            "00:00:00:00:00:00",
-            "ff:ff:ff:ff:ff:ff",
-            "01:11:22:33:44:55",
-            "bad",
-            "00:11:22:33:44:gg",
-        ] {
+        for address in ["00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "01:11:22:33:44:55", "bad", "00:11:22:33:44:gg"] {
             let mut invalid = Evidence::new();
             add_adapter(&mut invalid, address);
             assert!(invalid.is_empty());
@@ -352,11 +307,7 @@ mod tests {
             symlink(subsystem, path.join("device/subsystem")).unwrap();
             fs::write(path.join("type"), "1").unwrap();
             fs::write(path.join("addr_assign_type"), assignment).unwrap();
-            fs::write(
-                path.join("address"),
-                format!("00:11:22:33:44:{:02x}", 0x50 + index),
-            )
-            .unwrap();
+            fs::write(path.join("address"), format!("00:11:22:33:44:{:02x}", 0x50 + index)).unwrap();
         }
         let virtual_path = network.join("vpn");
         fs::create_dir(&virtual_path).unwrap();
@@ -386,13 +337,7 @@ mod tests {
             let _ = smbios(&table[..n], true);
         }
         let mut invalid = Evidence::new();
-        for s in [
-            "00000000",
-            "FFFFFFFF-FFFF",
-            "Default string",
-            "To Be Filled By O.E.M.",
-            "Unknown",
-        ] {
+        for s in ["00000000", "FFFFFFFF-FFFF", "Default string", "To Be Filled By O.E.M.", "Unknown"] {
             add(&mut invalid, "system-serial", s);
         }
         assert!(invalid.is_empty());

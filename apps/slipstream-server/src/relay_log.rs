@@ -27,8 +27,7 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
-pub const LOG_FILTER: &str =
-    "warn,slipstream_server=info,slipstream_relay=info,iroh_relay::server::client=info";
+pub const LOG_FILTER: &str = "warn,slipstream_server=info,slipstream_relay=info,iroh_relay::server::client=info";
 pub const TUNNEL_HEADER: &str = "x-slipstream-relay-tunnel";
 
 #[derive(Clone, Debug)]
@@ -77,9 +76,7 @@ pub struct RelayLog {
 }
 impl fmt::Debug for RelayLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RelayLog")
-            .field("active", &self.active_count())
-            .finish_non_exhaustive()
+        f.debug_struct("RelayLog").field("active", &self.active_count()).finish_non_exhaustive()
     }
 }
 impl RelayLog {
@@ -118,10 +115,7 @@ impl RelayLog {
                 if endpoint.len() != 64 || !endpoint.bytes().all(|b| b.is_ascii_hexdigit()) {
                     return None;
                 }
-                let record: Device = read_json(
-                    &station.join("devices").join(format!("{endpoint}.json")),
-                    16 * 1024,
-                )?;
+                let record: Device = read_json(&station.join("devices").join(format!("{endpoint}.json")), 16 * 1024)?;
                 let alias = read_json::<Shared>(&station.join("shared.json"), 4 * 1024 * 1024)
                     .and_then(|s| s.devices.into_iter().find(|d| d.id == record.id))
                     .map(|d| d.name)
@@ -132,63 +126,35 @@ impl RelayLog {
             }
         });
         // Optional labels must not hold up the relay's authentication path.
-        tokio::time::timeout(std::time::Duration::from_millis(250), lookup)
-            .await
-            .ok()?
-            .ok()
-            .flatten()
+        tokio::time::timeout(std::time::Duration::from_millis(250), lookup).await.ok()?.ok().flatten()
     }
-    pub fn admit(
-        &self,
-        identity: Identity,
-        tunnel: Option<u64>,
-        maximum: usize,
-    ) -> Result<(), usize> {
+    pub fn admit(&self, identity: Identity, tunnel: Option<u64>, maximum: usize) -> Result<(), usize> {
         let mut state = self.state.lock().unwrap();
         if maximum > 0 && state.active.len() >= maximum {
             return Err(state.active.len());
         }
         let tunnel = tunnel.filter(|id| state.tunnels.contains_key(id));
-        let peer = tunnel
-            .and_then(|id| state.tunnels.get_mut(&id))
-            .and_then(|t| {
-                t.identity = Some(identity.clone());
-                t.peer
-            });
-        let endpoint_connections = 1 + state
-            .active
-            .values()
-            .filter(|a| a.identity.endpoint == identity.endpoint)
-            .count();
+        let peer = tunnel.and_then(|id| state.tunnels.get_mut(&id)).and_then(|t| {
+            t.identity = Some(identity.clone());
+            t.peer
+        });
+        let endpoint_connections =
+            1 + state.active.values().filter(|a| a.identity.endpoint == identity.endpoint).count();
         state.active.insert(
             identity.connection.clone(),
-            Active {
-                identity: identity.clone(),
-                tunnel,
-                started: Instant::now(),
-                cause: None,
-            },
+            Active { identity: identity.clone(), tunnel, started: Instant::now(), cause: None },
         );
         let active = state.active.len();
         drop(state);
         tracing::info!(target: "slipstream_relay", event="relay_client_connected", connection=%identity.connection, tunnel, device_id=identity.device_id, device_name=identity.name.as_deref(), endpoint=%identity.endpoint, peer=peer.map(|ip| ip.to_string()).as_deref(), protocol=%identity.protocol, active_connections=active, endpoint_connections, "Relay client connected");
         Ok(())
     }
-    pub fn deny(
-        &self,
-        endpoint: &str,
-        connection: &str,
-        tunnel: Option<u64>,
-        reason: &'static str,
-        maximum: usize,
-    ) {
+    pub fn deny(&self, endpoint: &str, connection: &str, tunnel: Option<u64>, reason: &'static str, maximum: usize) {
         let mut state = self.state.lock().unwrap();
-        let peer = tunnel
-            .and_then(|id| state.tunnels.get_mut(&id))
-            .and_then(|t| {
-                t.denied = true;
-                t.peer
-            });
+        let peer = tunnel.and_then(|id| state.tunnels.get_mut(&id)).and_then(|t| {
+            t.denied = true;
+            t.peer
+        });
         let active = state.active.len();
         drop(state);
         tracing::warn!(target: "slipstream_relay", event="relay_client_denied", %connection, tunnel, %endpoint, peer=peer.map(|ip| ip.to_string()).as_deref(), reason, active_connections=active, max_connections=maximum, "Relay connection rejected");
@@ -225,10 +191,7 @@ impl RelayLog {
         );
     }
     fn observe_actor(&self, connection: &str, message: &str) -> bool {
-        let Some(error) = message
-            .strip_prefix("actor errored ")
-            .and_then(|m| m.strip_suffix(", exiting"))
-        else {
+        let Some(error) = message.strip_prefix("actor errored ").and_then(|m| m.strip_suffix(", exiting")) else {
             return false;
         };
         let mut state = self.state.lock().unwrap();
@@ -270,11 +233,7 @@ impl RelayLog {
                 state.tunnels.remove(&tunnel);
                 return;
             }
-            (
-                snapshot.identity.clone(),
-                snapshot.started.elapsed().as_millis() as u64,
-                snapshot.peer,
-            )
+            (snapshot.identity.clone(), snapshot.started.elapsed().as_millis() as u64, snapshot.peer)
         };
         let Some(mut identity) = identity else {
             self.state.lock().unwrap().tunnels.remove(&tunnel);
@@ -441,16 +400,11 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Filter<S> for RelayEvents {
 }
 pub fn init(log: Arc<RelayLog>) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| LOG_FILTER.into());
-    let ansi = std::io::stdout().is_terminal()
-        && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
+    let ansi = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     tracing_subscriber::registry()
         .with(filter)
         .with(ActorContext)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(ansi)
-                .with_filter(RelayEvents(log)),
-        )
+        .with(tracing_subscriber::fmt::layer().with_ansi(ansi).with_filter(RelayEvents(log)))
         .init();
 }
 
@@ -474,19 +428,13 @@ pub(crate) mod tests {
             Ok(())
         }
     }
-    pub(crate) fn subscriber(
-        log: Arc<RelayLog>,
-        capture: Capture,
-    ) -> impl Subscriber + Send + Sync {
-        tracing_subscriber::registry()
-            .with(EnvFilter::new(LOG_FILTER))
-            .with(ActorContext)
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_ansi(false)
-                    .with_writer(move || capture.clone())
-                    .with_filter(RelayEvents(log)),
-            )
+    pub(crate) fn subscriber(log: Arc<RelayLog>, capture: Capture) -> impl Subscriber + Send + Sync {
+        tracing_subscriber::registry().with(EnvFilter::new(LOG_FILTER)).with(ActorContext).with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(move || capture.clone())
+                .with_filter(RelayEvents(log)),
+        )
     }
     fn identity(connection: &str) -> Identity {
         Identity {
@@ -512,20 +460,14 @@ pub(crate) mod tests {
         log.disconnected("17");
         log.finish(tunnel, Ok((1234, 5678))).await;
         let text = output.text();
-        assert!(
-            text.contains("Reception laptop")
-                && text.contains("482913077")
-                && text.contains("192.0.2.42")
-        );
+        assert!(text.contains("Reception laptop") && text.contains("482913077") && text.contains("192.0.2.42"));
         assert!(
             text.contains("client_stream_ended")
                 && text.contains("bytes_from_client=1234")
                 && text.contains("bytes_to_client=5678")
         );
         assert_eq!(text.matches("relay_client_disconnected").count(), 1);
-        assert!(
-            !text.contains("WARN") && !text.contains("actor errored") && !text.contains('\x1b')
-        );
+        assert!(!text.contains("WARN") && !text.contains("actor errored") && !text.contains('\x1b'));
         assert_eq!(log.active_count(), 0);
     }
     #[tokio::test]
@@ -536,7 +478,8 @@ pub(crate) mod tests {
         let tunnel = log.begin(None);
         log.admit(identity("18"), Some(tunnel), 1).unwrap();
         {
-            let span = tracing::info_span!(target:"iroh_relay::server::client","client-connection-actor",connection_id=%18);
+            let span =
+                tracing::info_span!(target:"iroh_relay::server::client","client-connection-actor",connection_id=%18);
             let _entered = span.enter();
             tracing::warn!(target:"iroh_relay::server::client","actor errored Writing a frame failed: timed out after 10s, exiting");
         }
@@ -544,9 +487,7 @@ pub(crate) mod tests {
         log.finish(tunnel, Ok((30, 40))).await;
         let text = output.text();
         assert!(
-            text.contains("WARN")
-                && text.contains("relay_transport_error")
-                && text.contains("timed out after 10s")
+            text.contains("WARN") && text.contains("relay_transport_error") && text.contains("timed out after 10s")
         );
         assert!(text.contains("Reception laptop") && !text.contains("actor errored"));
     }
@@ -557,32 +498,19 @@ pub(crate) mod tests {
         let _guard = tracing::subscriber::set_default(subscriber(log.clone(), output.clone()));
         let tunnel = log.begin(None);
         log.admit(identity("19"), Some(tunnel), 1).unwrap();
-        log.finish(
-            tunnel,
-            Err(std::io::Error::new(
-                std::io::ErrorKind::ConnectionReset,
-                "peer reset socket",
-            )),
-        )
-        .await;
+        log.finish(tunnel, Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "peer reset socket"))).await;
         assert!(!output.text().contains("relay_client_disconnected"));
         {
-            let span = tracing::info_span!(target:"iroh_relay::server::client","client-connection-actor",connection_id=%19);
+            let span =
+                tracing::info_span!(target:"iroh_relay::server::client","client-connection-actor",connection_id=%19);
             let _entered = span.enter();
             tracing::warn!(target:"iroh_relay::server::client","actor errored Writing a frame failed: broken pipe, exiting");
         }
         log.disconnected("19");
         let text = output.text();
         assert_eq!(text.matches("relay_client_disconnected").count(), 1);
-        assert!(
-            text.contains("WARN")
-                && text.contains("broken pipe")
-                && !text.contains("actor errored")
-        );
-        assert!(
-            !text.contains("bytes_from_client=0"),
-            "Failed copies must not invent zero byte counts"
-        );
+        assert!(text.contains("WARN") && text.contains("broken pipe") && !text.contains("actor errored"));
+        assert!(!text.contains("bytes_from_client=0"), "Failed copies must not invent zero byte counts");
     }
     #[test]
     fn uncorrelated_and_unrelated_warnings_are_never_suppressed() {
@@ -593,10 +521,7 @@ pub(crate) mod tests {
             tracing::warn!(target:"iroh_relay::server::client","Other important warning");
         });
         let text = output.text();
-        assert!(
-            text.contains("actor errored Stream terminated, exiting")
-                && text.contains("Other important warning")
-        );
+        assert!(text.contains("actor errored Stream terminated, exiting") && text.contains("Other important warning"));
     }
     #[tokio::test]
     async fn private_station_aliases_resolve_and_public_relays_do_not_read_them() {
@@ -609,18 +534,12 @@ pub(crate) mod tests {
             r#"{"id":482913077,"name":"COMPUTER-NAME"}"#,
         )
         .unwrap();
-        std::fs::write(
-            station.join("shared.json"),
-            r#"{"devices":[{"id":482913077,"name":"Reception alias"}]}"#,
-        )
-        .unwrap();
+        std::fs::write(station.join("shared.json"), r#"{"devices":[{"id":482913077,"name":"Reception alias"}]}"#)
+            .unwrap();
         let db = Arc::new(Db::open(&station.join("registry.sqlite3")).unwrap());
         let private = Arc::new(RelayLog::default());
         private.configure(db.clone(), Some(station.to_owned()), true);
-        assert_eq!(
-            private.identity(endpoint.clone()).await,
-            Some((482913077, "Reception alias".into()))
-        );
+        assert_eq!(private.identity(endpoint.clone()).await, Some((482913077, "Reception alias".into())));
         assert!(private.identity("../station.json".into()).await.is_none());
         let public = Arc::new(RelayLog::default());
         public.configure(db, Some(station.to_owned()), false);

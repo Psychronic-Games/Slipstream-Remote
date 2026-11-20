@@ -96,7 +96,8 @@ impl Shm {
             bail!("ftruncate failed");
         }
         // SAFETY: shared read mapping of our own memfd.
-        let ptr = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd.as_raw_fd(), 0) };
+        let ptr =
+            unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd.as_raw_fd(), 0) };
         if ptr == libc::MAP_FAILED {
             bail!("mmap failed");
         }
@@ -178,14 +179,29 @@ fn capture_loop(d: &DisplayInfo, interval: Duration, slot: &FrameSlot) -> Result
             None => {}
             Some(data) if data == prev && pointer_at == prev_cursor => slot.reuse(data),
             Some(mut data) => {
-            prev.clear();
-            prev.extend_from_slice(&data);
-            prev_cursor = pointer_at;
-            if let Some(c) = pointer {
-                draw_cursor(&mut data, w as i32, h as i32, c.x as i32 - c.xhot as i32 - d.x, c.y as i32 - c.yhot as i32 - d.y, c.width as i32, c.height as i32, &c.cursor_image);
-            }
-            // Z_PIXMAP 24/32-bit on little-endian is B, G, R, X.
-            slot.put(RawFrame { width: w as u32, height: h as u32, stride: w as u32 * 4, format: PixelFormat::Bgra, data });
+                prev.clear();
+                prev.extend_from_slice(&data);
+                prev_cursor = pointer_at;
+                if let Some(c) = pointer {
+                    draw_cursor(
+                        &mut data,
+                        w as i32,
+                        h as i32,
+                        c.x as i32 - c.xhot as i32 - d.x,
+                        c.y as i32 - c.yhot as i32 - d.y,
+                        c.width as i32,
+                        c.height as i32,
+                        &c.cursor_image,
+                    );
+                }
+                // Z_PIXMAP 24/32-bit on little-endian is B, G, R, X.
+                slot.put(RawFrame {
+                    width: w as u32,
+                    height: h as u32,
+                    stride: w as u32 * 4,
+                    format: PixelFormat::Bgra,
+                    data,
+                });
             }
         }
         next += interval;

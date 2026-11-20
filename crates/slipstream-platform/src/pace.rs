@@ -39,7 +39,8 @@ impl Window {
         if elapsed < span {
             return None;
         }
-        let r = (self.frames as f32 / elapsed.as_secs_f32(), self.busy.as_secs_f32() * 1000.0 / self.frames.max(1) as f32);
+        let r =
+            (self.frames as f32 / elapsed.as_secs_f32(), self.busy.as_secs_f32() * 1000.0 / self.frames.max(1) as f32);
         *self = Self::new();
         Some(r)
     }

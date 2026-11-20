@@ -1,5 +1,5 @@
 //! Bounded recovery of an established link, always using a fresh station lookup.
-use crate::{StationRef, Client, ViewerEvent, ViewerSession};
+use crate::{Client, StationRef, ViewerEvent, ViewerSession};
 use anyhow::{Context, Result, bail};
 use slipstream_core::directory::DeviceId;
 use std::{future::Future, time::Duration};
@@ -28,10 +28,7 @@ impl Client {
         password: &str,
         via: &StationRef,
         on_progress: impl Fn(String) + Send + Sync + 'static,
-    ) -> Result<(
-        ViewerSession,
-        tokio::sync::mpsc::UnboundedReceiver<ViewerEvent>,
-    )> {
+    ) -> Result<(ViewerSession, tokio::sync::mpsc::UnboundedReceiver<ViewerEvent>)> {
         self.reconnect_within(id, password, via, POLICY.window, on_progress).await
     }
 
@@ -44,10 +41,7 @@ impl Client {
         via: &StationRef,
         window: Duration,
         on_progress: impl Fn(String) + Send + Sync + 'static,
-    ) -> Result<(
-        ViewerSession,
-        tokio::sync::mpsc::UnboundedReceiver<ViewerEvent>,
-    )> {
+    ) -> Result<(ViewerSession, tokio::sync::mpsc::UnboundedReceiver<ViewerEvent>)> {
         let progress = std::sync::Arc::new(on_progress);
         retry(
             Policy { window, ..POLICY },
@@ -69,11 +63,7 @@ impl Client {
     }
 }
 
-async fn retry<T, F, Fut>(
-    policy: Policy,
-    mut connect: F,
-    notify: impl Fn(u32, Duration),
-) -> Result<T>
+async fn retry<T, F, Fut>(policy: Policy, mut connect: F, notify: impl Fn(u32, Duration)) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T>>,
@@ -86,7 +76,10 @@ where
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining <= delay {
             if let Some(error) = last {
-                return Err(error).context(format!("Automatic reconnect stopped after {} minutes; try Reconnect when the host is ready", policy.window.as_secs().div_ceil(60)));
+                return Err(error).context(format!(
+                    "Automatic reconnect stopped after {} minutes; try Reconnect when the host is ready",
+                    policy.window.as_secs().div_ceil(60)
+                ));
             }
             bail!("Automatic reconnect timed out");
         }
@@ -98,11 +91,7 @@ where
             Ok(Ok(value)) => return Ok(value),
             Ok(Err(error)) if error.is::<crate::viewer::AuthRejected>() => return Err(error),
             Ok(Err(error)) => last = Some(error),
-            Err(_) => {
-                last = Some(anyhow::anyhow!(
-                    "The host did not answer the connection attempt"
-                ))
-            }
+            Err(_) => last = Some(anyhow::anyhow!("The host did not answer the connection attempt")),
         }
         delay = (delay * 2).min(policy.maximum);
     }
@@ -149,9 +138,7 @@ mod tests {
             policy(),
             || {
                 calls += 1;
-                async {
-                    Err::<(), _>(crate::viewer::AuthRejected("password changed".into()).into())
-                }
+                async { Err::<(), _>(crate::viewer::AuthRejected("password changed".into()).into()) }
             },
             |_, _| {},
         )

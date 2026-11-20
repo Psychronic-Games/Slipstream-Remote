@@ -136,11 +136,7 @@ impl Client {
         };
         // Either direction ending ends the flow; a DNS lookup's soon anyway.
         let lifetime = async {
-            if target.port() == 53 {
-                tokio::time::sleep(proto::DNS_FLOW).await
-            } else {
-                std::future::pending().await
-            }
+            if target.port() == 53 { tokio::time::sleep(proto::DNS_FLOW).await } else { std::future::pending().await }
         };
         tokio::select! {
             r = up => r,
@@ -160,9 +156,14 @@ mod tests {
     use crate::{Server, ServerOptions};
 
     async fn relay() -> (Server, Client) {
-        let server = Server::start(ServerOptions { ip: Ipv4Addr::LOCALHOST.into(), port: 0, allow_local_targets: true, secret_key: None })
-            .await
-            .unwrap();
+        let server = Server::start(ServerOptions {
+            ip: Ipv4Addr::LOCALHOST.into(),
+            port: 0,
+            allow_local_targets: true,
+            secret_key: None,
+        })
+        .await
+        .unwrap();
         let client = Client::connect(server.addr()).await.unwrap();
         (server, client)
     }
@@ -206,9 +207,14 @@ mod tests {
         let err = client.forward_tcp("127.0.0.1:1".parse().unwrap(), relayed).await.unwrap_err();
         assert!(err.to_string().contains("127.0.0.1:1"), "{err:#}");
 
-        let strict = Server::start(ServerOptions { ip: Ipv4Addr::LOCALHOST.into(), port: 0, allow_local_targets: false, secret_key: None })
-            .await
-            .unwrap();
+        let strict = Server::start(ServerOptions {
+            ip: Ipv4Addr::LOCALHOST.into(),
+            port: 0,
+            allow_local_targets: false,
+            secret_key: None,
+        })
+        .await
+        .unwrap();
         let client = Client::connect(strict.addr()).await.unwrap();
         let (_app, relayed) = tokio::io::duplex(1024);
         let err = client.forward_tcp("127.0.0.1:80".parse().unwrap(), relayed).await.unwrap_err();
@@ -247,10 +253,16 @@ mod tests {
             let _ = self.tx.try_send(buf.to_vec());
             std::task::Poll::Ready(Ok(buf.len()))
         }
-        fn poll_flush(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
             std::task::Poll::Ready(Ok(()))
         }
-        fn poll_shutdown(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
             std::task::Poll::Ready(Ok(()))
         }
     }

@@ -31,7 +31,9 @@ pub(crate) async fn splice(tcp: TcpStream, mut send: SendStream, mut recv: RecvS
         let _ = tokio::io::copy(&mut from_tcp, &mut send).await;
         let _ = send.finish();
     };
-    let copying = async {tokio::join!(up,down);};
+    let copying = async {
+        tokio::join!(up, down);
+    };
     tokio::pin!(copying);
     tokio::select! {
         _ = &mut copying => {},
@@ -113,13 +115,19 @@ pub async fn open(conn: Connection, local_port: u16, host: String, port: u16) ->
 
 struct ActiveConnection(Arc<Mutex<TunnelStatus>>);
 impl ActiveConnection {
-    fn new(status:Arc<Mutex<TunnelStatus>>)->Self {
-        {let mut s=status.lock().unwrap();s.active+=1;s.total+=1;}
+    fn new(status: Arc<Mutex<TunnelStatus>>) -> Self {
+        {
+            let mut s = status.lock().unwrap();
+            s.active += 1;
+            s.total += 1;
+        }
         Self(status)
     }
 }
 impl Drop for ActiveConnection {
-    fn drop(&mut self) {self.0.lock().unwrap().active-=1;}
+    fn drop(&mut self) {
+        self.0.lock().unwrap().active -= 1;
+    }
 }
 
 async fn forward(conn: &Connection, tcp: TcpStream, host: String, port: u16) -> Result<()> {

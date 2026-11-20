@@ -48,7 +48,48 @@ const SVG: [&[u8]; 40] = [
     include_bytes!("../../../assets/reactions/38-robot.svg"),
     include_bytes!("../../../assets/reactions/39-sparkles.svg"),
 ];
-pub const NAMES: [&str; 40] = ["thumbs up", "red heart", "party popper", "face with tears of joy", "face with open mouth", "clapping hands", "thumbs down", "fire", "hundred points", "rocket", "eyes", "thinking face", "smiling face with heart-eyes", "grinning face with big eyes", "rolling on the floor laughing", "winking face", "smiling face with sunglasses", "star-struck", "folded hands", "raising hands", "flexed biceps", "ok hand", "waving hand", "crying face", "loudly crying face", "angry face", "exploding head", "partying face", "face with rolling eyes", "check mark button", "cross mark", "warning", "light bulb", "star", "trophy", "hot beverage", "vulcan salute", "alien", "robot", "sparkles"];
+pub const NAMES: [&str; 40] = [
+    "thumbs up",
+    "red heart",
+    "party popper",
+    "face with tears of joy",
+    "face with open mouth",
+    "clapping hands",
+    "thumbs down",
+    "fire",
+    "hundred points",
+    "rocket",
+    "eyes",
+    "thinking face",
+    "smiling face with heart-eyes",
+    "grinning face with big eyes",
+    "rolling on the floor laughing",
+    "winking face",
+    "smiling face with sunglasses",
+    "star-struck",
+    "folded hands",
+    "raising hands",
+    "flexed biceps",
+    "ok hand",
+    "waving hand",
+    "crying face",
+    "loudly crying face",
+    "angry face",
+    "exploding head",
+    "partying face",
+    "face with rolling eyes",
+    "check mark button",
+    "cross mark",
+    "warning",
+    "light bulb",
+    "star",
+    "trophy",
+    "hot beverage",
+    "vulcan salute",
+    "alien",
+    "robot",
+    "sparkles",
+];
 /// Shown first; the rest behind +.
 pub const QUICK: usize = 6;
 const PIXELS: u32 = 64;
@@ -62,7 +103,9 @@ fn textures(ctx: &egui::Context) -> Arc<Vec<Option<TextureHandle>>> {
     let made: Arc<Vec<_>> = Arc::new(
         SVG.iter()
             .enumerate()
-            .map(|(i, svg)| rasterize(svg).map(|image| ctx.load_texture(format!("reaction-{i}"), image, TextureOptions::LINEAR)))
+            .map(|(i, svg)| {
+                rasterize(svg).map(|image| ctx.load_texture(format!("reaction-{i}"), image, TextureOptions::LINEAR))
+            })
             .collect(),
     );
     ctx.data_mut(|d| d.insert_temp(id, made.clone()));
@@ -105,7 +148,12 @@ pub fn picker(ui: &mut Ui, expanded: &mut bool) -> Option<u8> {
                 chosen = Some(i as u8);
             }
         }
-        if !*expanded && ui.add(egui::Button::new(RichText::new("+").size(20.0).color(pal::TAN)).frame(false)).on_hover_text("More reactions").clicked() {
+        if !*expanded
+            && ui
+                .add(egui::Button::new(RichText::new("+").size(20.0).color(pal::TAN)).frame(false))
+                .on_hover_text("More reactions")
+                .clicked()
+        {
             *expanded = true;
         }
     });

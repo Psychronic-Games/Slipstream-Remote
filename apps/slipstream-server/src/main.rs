@@ -146,32 +146,42 @@ async fn run() -> Result<()> {
     let app = build(&cli, relay_log.clone()).await?;
     let router = router(app.clone(), cli.relay_only);
 
-    let listener = tokio::net::TcpListener::bind(cli.listen).await.with_context(|| format!("binding {}", cli.listen))?;
+    let listener =
+        tokio::net::TcpListener::bind(cli.listen).await.with_context(|| format!("binding {}", cli.listen))?;
     let (total, online) = app.db.counts()?;
     info!(event="server_started", version=slipstream_core::VERSION_STRING, process_id=std::process::id(), listen=%cli.listen, directory_enabled=!cli.relay_only, relay_enabled=app.relay_enabled, private=app.access_key.is_some(), relay_bytes_per_second=cli.relay_bytes_per_second, max_relay_connections=cli.relay_max_connections, "Slipstream server listening");
-    if !cli.relay_only { info!(event="directory_state", known_devices=total, online_devices=online, "Directory registry loaded"); }
+    if !cli.relay_only {
+        info!(event = "directory_state", known_devices = total, online_devices = online, "Directory registry loaded");
+    }
     let shown = cli.public_url.clone().unwrap_or_else(|| format!("http://{}/", cli.listen));
     if std::io::stdout().is_terminal() {
-    println!();
-    println!("  ╭─ SLIPSTREAM SERVER ONLINE ──────────────────────────────");
-    println!("  │ Listening on {}", cli.listen);
-    println!("  │ Directory: {}", if cli.relay_only { "off" } else { "on" });
-    println!("  │ Relay:     {}", if app.relay_enabled { "on" } else { "off (public relays)" });
-    println!("  │ Access:    {}", if app.access_key.is_some() { "private (access key required)" } else { "open" });
-    println!("  │");
-    println!("  │ In each app: CONFIG → Server address → {shown}");
-    println!("  ╰─────────────────────────────────────────────────────────");
-    println!();
+        println!();
+        println!("  ╭─ SLIPSTREAM SERVER ONLINE ──────────────────────────────");
+        println!("  │ Listening on {}", cli.listen);
+        println!("  │ Directory: {}", if cli.relay_only { "off" } else { "on" });
+        println!("  │ Relay:     {}", if app.relay_enabled { "on" } else { "off (public relays)" });
+        println!("  │ Access:    {}", if app.access_key.is_some() { "private (access key required)" } else { "open" });
+        println!("  │");
+        println!("  │ In each app: CONFIG → Server address → {shown}");
+        println!("  ╰─────────────────────────────────────────────────────────");
+        println!();
     }
     axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async move {
             match shutdown_signal().await {
-                Ok(signal) => info!(event="server_shutdown_requested", signal, active_relay_connections=relay_log.active_count(), "Server shutdown requested"),
-                Err(error) => tracing::error!(event="server_signal_listener_failed", %error, "Shutdown signal listener failed"),
+                Ok(signal) => info!(
+                    event = "server_shutdown_requested",
+                    signal,
+                    active_relay_connections = relay_log.active_count(),
+                    "Server shutdown requested"
+                ),
+                Err(error) => {
+                    tracing::error!(event="server_signal_listener_failed", %error, "Shutdown signal listener failed")
+                }
             }
         })
         .await?;
-    info!(event="server_stopped", process_id=std::process::id(), "Server listener stopped");
+    info!(event = "server_stopped", process_id = std::process::id(), "Server listener stopped");
     Ok(())
 }
 
@@ -185,17 +195,30 @@ async fn shutdown_signal() -> Result<&'static str> {
         }
     }
     #[cfg(not(unix))]
-    { tokio::signal::ctrl_c().await?; Ok("interrupt") }
+    {
+        tokio::signal::ctrl_c().await?;
+        Ok("interrupt")
+    }
 }
 
 async fn build(cli: &Cli, relay_log: Arc<relay_log::RelayLog>) -> Result<Arc<App>> {
     std::fs::create_dir_all(&cli.data_dir).context("creating data dir")?;
     let db = Arc::new(db::Db::open(&cli.data_dir.join("directory.sqlite3"))?);
-    relay_log.configure(db.clone(), cli.station_data_dir.clone(), cli.access_key.as_ref().is_some_and(|k| !k.is_empty()));
+    relay_log.configure(
+        db.clone(),
+        cli.station_data_dir.clone(),
+        cli.access_key.as_ref().is_some_and(|k| !k.is_empty()),
+    );
     let relay_addr = if cli.no_relay {
         None
     } else {
-        let (server, addr) = relay::spawn(cli.access_key.clone().filter(|k| !k.is_empty()), cli.relay_bytes_per_second, cli.relay_max_connections, relay_log.clone()).await?;
+        let (server, addr) = relay::spawn(
+            cli.access_key.clone().filter(|k| !k.is_empty()),
+            cli.relay_bytes_per_second,
+            cli.relay_max_connections,
+            relay_log.clone(),
+        )
+        .await?;
         // Keep the relay alive for the life of the process.
         Box::leak(Box::new(server));
         Some(addr)
@@ -322,7 +345,13 @@ mod tests {
         for _ in 0..30 {
             dc.register(&first, first.public().into(), DeviceInfo::default()).await.unwrap();
         }
-        assert!(dc.register(&first, first.public().into(), DeviceInfo::default()).await.unwrap_err().to_string().contains("heartbeats for this device"));
+        assert!(
+            dc.register(&first, first.public().into(), DeviceInfo::default())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("heartbeats for this device")
+        );
         let second = iroh::SecretKey::generate();
         let id = dc.register(&second, second.public().into(), DeviceInfo::default()).await.unwrap();
         assert!(matches!(dc.lookup(id).await.unwrap(), Lookup::Online { .. }));
@@ -333,13 +362,12 @@ mod tests {
     async fn relay_through_proxy() {
         let (url, app) = start().await;
         let capture = relay_log::tests::Capture::default();
-        let _guard = tracing::subscriber::set_default(relay_log::tests::subscriber(app.relay_log.clone(), capture.clone()));
+        let _guard =
+            tracing::subscriber::set_default(relay_log::tests::subscriber(app.relay_log.clone(), capture.clone()));
         let relay_url: iroh::RelayUrl = url.parse().unwrap();
         let ep = |alpn: bool| {
             let map = RelayMap::from_iter([relay_url.clone()]);
-            let b = Endpoint::builder(presets::Minimal)
-                .relay_mode(RelayMode::Custom(map))
-                .clear_ip_transports(); // relay only: no direct path possible
+            let b = Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Custom(map)).clear_ip_transports(); // relay only: no direct path possible
             let b = if alpn { b.alpns(vec![b"test".to_vec()]) } else { b };
             b.bind()
         };
@@ -366,11 +394,21 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(2), accept).await;
         b.close().await;
         tokio::time::timeout(Duration::from_secs(2), async {
-            while app.relay_log.active_count() > 0 { tokio::time::sleep(Duration::from_millis(10)).await; }
-            while capture.text().matches("relay_client_disconnected").count() < 2 { tokio::time::sleep(Duration::from_millis(10)).await; }
-        }).await.expect("both relay connections were logged and released");
+            while app.relay_log.active_count() > 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            while capture.text().matches("relay_client_disconnected").count() < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("both relay connections were logged and released");
         let text = capture.text();
-        assert!(text.contains("relay_client_connected") && text.contains("client_stream_ended") && text.contains("bytes_from_client="));
+        assert!(
+            text.contains("relay_client_connected")
+                && text.contains("client_stream_ended")
+                && text.contains("bytes_from_client=")
+        );
         assert!(!text.contains("actor errored Stream terminated, exiting"));
     }
 }

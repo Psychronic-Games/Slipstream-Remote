@@ -90,9 +90,7 @@ pub fn embedded() -> Option<StationConfig> {
     if let Some(cfg) = read_trailer(&exe) {
         return Some(cfg);
     }
-    sidecar_paths(&exe)
-        .into_iter()
-        .find_map(|p| std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()))
+    sidecar_paths(&exe).into_iter().find_map(|p| std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()))
 }
 
 /// Length of a setup code (letters and digits, without look-alikes).
@@ -188,7 +186,8 @@ fn attr_urls(bytes: &[u8]) -> Vec<String> {
 pub fn switch_needs_confirmation(settings: &Settings, cfg: &StationConfig) -> Option<String> {
     let current = settings.server.url.as_deref().map(str::trim).filter(|url| !url.is_empty())?;
     let same = current == cfg.server.trim()
-        || crate::directory::normalize_server_url(current).ok() == crate::directory::normalize_server_url(&cfg.server).ok();
+        || crate::directory::normalize_server_url(current).ok()
+            == crate::directory::normalize_server_url(&cfg.server).ok();
     (!same && !crate::config::is_public_station(current) && !crate::config::is_public_station(&cfg.server))
         .then(|| current.to_string())
 }
@@ -198,14 +197,17 @@ pub fn apply(settings: &mut Settings, cfg: &StationConfig) -> bool {
     let same_server = s.url.as_deref().map(str::trim) == Some(cfg.server.trim());
     // A generic/public download must preserve a provider's configured station.
     if crate::config::is_public_station(&cfg.server)
-        && s.url.as_deref().is_some_and(|url| !url.trim().is_empty() && !crate::config::is_public_station(url)) {
+        && s.url.as_deref().is_some_and(|url| !url.trim().is_empty() && !crate::config::is_public_station(url))
+    {
         return false;
     }
     if s.url.as_deref().is_some_and(|url| !crate::config::is_public_station(url)) && !s.provisioned && !same_server {
         return false;
     }
     let before = (s.url.clone(), s.key.clone(), s.org_name.clone(), s.provisioned);
-    if !same_server { settings.host.last_device_id = None; }
+    if !same_server {
+        settings.host.last_device_id = None;
+    }
     s.url = Some(cfg.server.clone());
     s.key = cfg.key.clone();
     if cfg.org.is_some() {
@@ -234,7 +236,8 @@ mod tests {
 
     #[test]
     fn trailer_roundtrip_and_apply() {
-        let cfg = StationConfig { server: "relay.example.com".into(), key: Some("k123".into()), org: Some("Acme IT".into()) };
+        let cfg =
+            StationConfig { server: "relay.example.com".into(), key: Some("k123".into()), org: Some("Acme IT".into()) };
         let path = std::env::temp_dir().join(format!("slipstream-trailer-{}", std::process::id()));
         let mut bytes = b"\x7fELF fake executable body".to_vec();
         bytes.extend(trailer(&cfg));
@@ -248,13 +251,15 @@ mod tests {
         assert!(apply(&mut s, &cfg));
         assert_eq!(s.server.key.as_deref(), Some("k123"));
         assert!(!apply(&mut s, &cfg), "idempotent");
-        let public = StationConfig { server: crate::config::PUBLIC_STATION_URL.into(), key: None, org: Some("Slipstream Public".into()) };
+        let public = StationConfig {
+            server: crate::config::PUBLIC_STATION_URL.into(),
+            key: None,
+            org: Some("Slipstream Public".into()),
+        };
         assert!(!apply(&mut s, &public), "public downloads preserve a provisioned private station");
         assert_eq!(s.server.url.as_deref(), Some("relay.example.com"));
-        let mut default_public = Settings {
-            server: crate::config::ServerSettings::public_station(),
-            ..Settings::default()
-        };
+        let mut default_public =
+            Settings { server: crate::config::ServerSettings::public_station(), ..Settings::default() };
         assert!(apply(&mut default_public, &cfg), "a provider's download replaces the public default");
         // A hand-entered server is not overridden by a different station.
         let mut manual = Settings::default();
@@ -266,11 +271,11 @@ mod tests {
     #[test]
     fn links_parse() {
         let want = StationLink { station: "https://support.acme.com/".into(), code: "K7MQ2XPA".into() };
-        assert_eq!(StationLink::parse("https://support.acme.com/download.php?os=windows&c=K7MQ-2XPA"), Some(want.clone()));
         assert_eq!(
-            StationLink::parse("slipstream://link?s=https%3A%2F%2Fsupport.acme.com%2F&c=k7mq2xpa"),
-            Some(want)
+            StationLink::parse("https://support.acme.com/download.php?os=windows&c=K7MQ-2XPA"),
+            Some(want.clone())
         );
+        assert_eq!(StationLink::parse("slipstream://link?s=https%3A%2F%2Fsupport.acme.com%2F&c=k7mq2xpa"), Some(want));
         let sub = StationLink::parse("http://10.0.0.5:8080/remote/download.php?c=AAAABBBB&os=linux").unwrap();
         assert_eq!(sub.station, "http://10.0.0.5:8080/remote/");
         assert!(StationLink::parse("https://support.acme.com/download.php?os=windows").is_none(), "no code");

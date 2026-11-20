@@ -15,7 +15,11 @@ use eframe::egui::{self, Align, Align2, Color32, Layout, Rect, RichText, Sense, 
 use slipstream_core::proto::{DirEntry, DirListing, Place, UploadTarget};
 use slipstream_session::{RemoteFs, fsops};
 
-use super::{file_previews::{Loader, PreviewCache}, theme, theme::pal};
+use super::{
+    file_previews::{Loader, PreviewCache},
+    theme,
+    theme::pal,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JobState {
@@ -47,74 +51,104 @@ impl Job {
         matches!(*self.state.lock().unwrap(), JobState::Preparing | JobState::Running)
     }
 
-    fn cancel(&self) {self.stop(JobState::Cancelled);}
+    fn cancel(&self) {
+        self.stop(JobState::Cancelled);
+    }
 
-    fn stop(&self,outcome:JobState) {
-        let mut state=self.state.lock().unwrap();
-        if matches!(*state,JobState::Preparing|JobState::Running) {
-            if let Some(t)=self.task.lock().unwrap().take() {t.abort();}
-            *state=outcome;
+    fn stop(&self, outcome: JobState) {
+        let mut state = self.state.lock().unwrap();
+        if matches!(*state, JobState::Preparing | JobState::Running) {
+            if let Some(t) = self.task.lock().unwrap().take() {
+                t.abort();
+            }
+            *state = outcome;
         }
     }
 
-    fn begin(&self)->bool {
-        let mut state=self.state.lock().unwrap();
-        if *state==JobState::Preparing {*state=JobState::Running;true}else{false}
+    fn begin(&self) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if *state == JobState::Preparing {
+            *state = JobState::Running;
+            true
+        } else {
+            false
+        }
     }
 
-    fn finish(&self, result:JobState) {
-        let mut state=self.state.lock().unwrap();
+    fn finish(&self, result: JobState) {
+        let mut state = self.state.lock().unwrap();
         // Cancellation/disconnection can race the final remote receipt.
-        if matches!(*state,JobState::Preparing|JobState::Running) {*state=result;}
+        if matches!(*state, JobState::Preparing | JobState::Running) {
+            *state = result;
+        }
     }
 }
 
 enum Msg {
-    Listing {remote:bool, generation:u64, result:Result<DirListing,String>},
+    Listing { remote: bool, generation: u64, result: Result<DirListing, String> },
     LocalPlaces(Vec<Place>),
     RemotePlaces(Vec<Place>),
     JobFinished { upload: bool },
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
-enum SortField { #[default] Name, Modified }
+enum SortField {
+    #[default]
+    Name,
+    Modified,
+}
 
 #[derive(Clone, Copy, Default, PartialEq)]
-struct Sort { field: SortField, descending: bool }
+struct Sort {
+    field: SortField,
+    descending: bool,
+}
 
 impl Sort {
     fn choose(&mut self, field: SortField) {
-        if self.field == field { self.descending = !self.descending; }
-        else { self.field = field; self.descending = field == SortField::Modified; }
+        if self.field == field {
+            self.descending = !self.descending;
+        } else {
+            self.field = field;
+            self.descending = field == SortField::Modified;
+        }
     }
 }
 
 /// Display order only: selections, transfers and anchors keep listing indices.
 fn sorted_rows(entries: &[DirEntry], show_hidden: bool, sort: Sort) -> Vec<usize> {
-    let mut rows: Vec<_> = entries.iter().enumerate()
-        .filter(|(_,e)|show_hidden || !e.name.starts_with('.'))
-        .map(|(i,e)|(i,e.name.to_lowercase())).collect();
-    rows.sort_by(|(a,an),(b,bn)| {
-        let (a,b)=(&entries[*a],&entries[*b]);
-        b.is_dir.cmp(&a.is_dir).then_with(|| {
-            if sort.field == SortField::Modified {
-                // Unknown timestamps stay last in either direction.
-                (a.modified <= 0).cmp(&(b.modified <= 0)).then_with(|| {
-                    if sort.descending {b.modified.cmp(&a.modified)} else {a.modified.cmp(&b.modified)}
-                })
-            } else {std::cmp::Ordering::Equal}
-        }).then_with(|| {
-            let order=an.cmp(bn).then_with(||a.name.cmp(&b.name));
-            if sort.field == SortField::Name && sort.descending {order.reverse()} else {order}
-        })
+    let mut rows: Vec<_> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| show_hidden || !e.name.starts_with('.'))
+        .map(|(i, e)| (i, e.name.to_lowercase()))
+        .collect();
+    rows.sort_by(|(a, an), (b, bn)| {
+        let (a, b) = (&entries[*a], &entries[*b]);
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| {
+                if sort.field == SortField::Modified {
+                    // Unknown timestamps stay last in either direction.
+                    (a.modified <= 0).cmp(&(b.modified <= 0)).then_with(|| {
+                        if sort.descending { b.modified.cmp(&a.modified) } else { a.modified.cmp(&b.modified) }
+                    })
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .then_with(|| {
+                let order = an.cmp(bn).then_with(|| a.name.cmp(&b.name));
+                if sort.field == SortField::Name && sort.descending { order.reverse() } else { order }
+            })
     });
-    rows.into_iter().map(|(i,_)|i).collect()
+    rows.into_iter().map(|(i, _)| i).collect()
 }
 
 #[derive(Default)]
 struct Pane {
-    generation:u64,
-    load_task:Option<ListingTask>,
+    generation: u64,
+    load_task: Option<ListingTask>,
     sort: Sort,
     rows: Vec<usize>,
     rows_key: Option<(bool, Sort)>,
@@ -132,22 +166,32 @@ struct Pane {
 }
 
 struct ListingTask(tokio::task::JoinHandle<()>);
-impl Drop for ListingTask {fn drop(&mut self) {self.0.abort();}}
+impl Drop for ListingTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 
 impl Pane {
-    fn start_listing(&mut self)->u64 {
-        self.load_task=None;
-        self.generation=self.generation.wrapping_add(1);
-        self.loading=true;self.error=None;
+    fn start_listing(&mut self) -> u64 {
+        self.load_task = None;
+        self.generation = self.generation.wrapping_add(1);
+        self.loading = true;
+        self.error = None;
         self.generation
     }
 
-    fn finish_listing(&mut self,generation:u64,result:Result<DirListing,String>) {
-        if generation!=self.generation {return;}
-        self.load_task=None;
+    fn finish_listing(&mut self, generation: u64, result: Result<DirListing, String>) {
+        if generation != self.generation {
+            return;
+        }
+        self.load_task = None;
         match result {
-            Ok(listing)=>self.set_listing(listing),
-            Err(error)=>{self.error=Some(error);self.loading=false;}
+            Ok(listing) => self.set_listing(listing),
+            Err(error) => {
+                self.error = Some(error);
+                self.loading = false;
+            }
         }
     }
 
@@ -183,7 +227,13 @@ pub struct FileManager {
 }
 
 impl Drop for FileManager {
-    fn drop(&mut self) {for job in &self.jobs {if job.is_active() {job.cancel();}}}
+    fn drop(&mut self) {
+        for job in &self.jobs {
+            if job.is_active() {
+                job.cancel();
+            }
+        }
+    }
 }
 
 impl FileManager {
@@ -204,24 +254,27 @@ impl FileManager {
         }
     }
 
-    fn load_local(&mut self, path: Option<String>, rt:&tokio::runtime::Runtime, ctx:&egui::Context) {
-        let generation=self.local.start_listing();
-        let (tx,ctx)=(self.tx.clone(),ctx.clone());let viewport=ctx.viewport_id();
-        self.local.load_task=Some(ListingTask(rt.spawn(async move {
-            let result=fsops::list_async(path).await.map_err(|e|format!("{e:#}"));
-            let _=tx.send(Msg::Listing {remote:false,generation,result});
-            theme::repaint_existing_viewport(&ctx,viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
+    fn load_local(&mut self, path: Option<String>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
+        let generation = self.local.start_listing();
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        let viewport = ctx.viewport_id();
+        self.local.load_task = Some(ListingTask(rt.spawn(async move {
+            let result = fsops::list_async(path).await.map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Msg::Listing { remote: false, generation, result });
+            theme::repaint_existing_viewport(&ctx, viewport);
+            ctx.request_repaint_of(egui::ViewportId::ROOT);
         })));
     }
 
     fn load_remote(&mut self, path: Option<String>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
-        let generation=self.remote.start_listing();
+        let generation = self.remote.start_listing();
         let (fs, tx, ctx) = (self.fs.clone(), self.tx.clone(), ctx.clone());
-        let viewport=ctx.viewport_id();
-        self.remote.load_task=Some(ListingTask(rt.spawn(async move {
+        let viewport = ctx.viewport_id();
+        self.remote.load_task = Some(ListingTask(rt.spawn(async move {
             let result = fs.list(path).await.map_err(|e| format!("{e:#}"));
-            let _ = tx.send(Msg::Listing {remote:true,generation,result});
-            theme::repaint_existing_viewport(&ctx,viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
+            let _ = tx.send(Msg::Listing { remote: true, generation, result });
+            theme::repaint_existing_viewport(&ctx, viewport);
+            ctx.request_repaint_of(egui::ViewportId::ROOT);
         })));
     }
 
@@ -230,21 +283,24 @@ impl FileManager {
             return;
         }
         self.started = true;
-        self.load_local(None,rt,ctx);
-        let (tx,ctx2)=(self.tx.clone(),ctx.clone());let viewport=ctx.viewport_id();
+        self.load_local(None, rt, ctx);
+        let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+        let viewport = ctx.viewport_id();
         rt.spawn(async move {
-            if let Ok(places)=tokio::task::spawn_blocking(fsops::places).await {
-                let _=tx.send(Msg::LocalPlaces(places));
-                theme::repaint_existing_viewport(&ctx2,viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
+            if let Ok(places) = tokio::task::spawn_blocking(fsops::places).await {
+                let _ = tx.send(Msg::LocalPlaces(places));
+                theme::repaint_existing_viewport(&ctx2, viewport);
+                ctx2.request_repaint_of(egui::ViewportId::ROOT);
             }
         });
         self.load_remote(None, rt, ctx);
         let (fs, tx, ctx) = (self.fs.clone(), self.tx.clone(), ctx.clone());
-        let viewport=ctx.viewport_id();
+        let viewport = ctx.viewport_id();
         rt.spawn(async move {
             if let Ok(p) = fs.places().await {
                 let _ = tx.send(Msg::RemotePlaces(p));
-                theme::repaint_existing_viewport(&ctx,viewport);ctx.request_repaint_of(egui::ViewportId::ROOT);
+                theme::repaint_existing_viewport(&ctx, viewport);
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
             }
         });
     }
@@ -255,23 +311,44 @@ impl FileManager {
         if active.is_empty() {
             return None;
         }
-        let (done, total) = active.iter().fold((0u64, 0u64), |(d, t), j| {
-            (d + j.done.load(Ordering::Relaxed), t + j.total.load(Ordering::Relaxed))
-        });
+        let (done, total) = active
+            .iter()
+            .fold((0u64, 0u64), |(d, t), j| (d + j.done.load(Ordering::Relaxed), t + j.total.load(Ordering::Relaxed)));
         Some((active.len(), if total == 0 { 0.0 } else { done as f32 / total as f32 }))
     }
 
     /// Uploads local files/folders to `target` on the remote computer.
-    pub fn upload(&mut self, items: Vec<PathBuf>, target: UploadTarget, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
+    pub fn upload(
+        &mut self,
+        items: Vec<PathBuf>,
+        target: UploadTarget,
+        rt: &tokio::runtime::Runtime,
+        ctx: &egui::Context,
+    ) {
         self.start_upload(items, target, None, rt, ctx);
     }
 
-    pub fn upload_to_screen(&mut self, items: Vec<PathBuf>, point: (i32, i32), rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
+    pub fn upload_to_screen(
+        &mut self,
+        items: Vec<PathBuf>,
+        point: (i32, i32),
+        rt: &tokio::runtime::Runtime,
+        ctx: &egui::Context,
+    ) {
         self.start_upload(items, UploadTarget::Default, Some(point), rt, ctx);
     }
 
-    fn start_upload(&mut self, items: Vec<PathBuf>, target: UploadTarget, point: Option<(i32, i32)>, rt: &tokio::runtime::Runtime, ctx: &egui::Context) {
-        if items.is_empty() { return; }
+    fn start_upload(
+        &mut self,
+        items: Vec<PathBuf>,
+        target: UploadTarget,
+        point: Option<(i32, i32)>,
+        rt: &tokio::runtime::Runtime,
+        ctx: &egui::Context,
+    ) {
+        if items.is_empty() {
+            return;
+        }
         let label = match items.as_slice() {
             [one] => one.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
             many => format!("{} items", many.len()),
@@ -286,22 +363,23 @@ impl FileManager {
             task: Mutex::new(None),
         });
         let (fs, tx, ctx2, j) = (self.fs.clone(), self.tx.clone(), ctx.clone(), job.clone());
-        let viewport=ctx.viewport_id();
+        let viewport = ctx.viewport_id();
         let task = rt.spawn(async move {
             let result: anyhow::Result<String> = async {
                 let target = match point {
-                    Some((x,y)) => fs.drop_target(x,y).await?,
+                    Some((x, y)) => fs.drop_target(x, y).await?,
                     None => target,
                 };
                 *j.destination.lock().unwrap() = Some(match &target {
-                    UploadTarget::Folder(path)=>path.clone(),
-                    UploadTarget::Default=>"Remote Desktop".into(),
-                    UploadTarget::UnderCursor=>"Remote folder under the pointer".into(),
-                    UploadTarget::Clipboard {..}=>"Remote clipboard".into(),
+                    UploadTarget::Folder(path) => path.clone(),
+                    UploadTarget::Default => "Remote Desktop".into(),
+                    UploadTarget::UnderCursor => "Remote folder under the pointer".into(),
+                    UploadTarget::Clipboard { .. } => "Remote clipboard".into(),
                 });
                 let trees = tokio::task::spawn_blocking(move || {
                     items.iter().map(|p| fsops::walk_local_tree(p)).collect::<anyhow::Result<Vec<_>>>()
-                }).await??;
+                })
+                .await??;
                 if let UploadTarget::Folder(base) = &target {
                     for tree in &trees {
                         for dir in &tree.directories {
@@ -312,14 +390,17 @@ impl FileManager {
                 let folders = trees.iter().map(|tree| tree.directories.len()).sum::<usize>();
                 let files: Vec<_> = trees.into_iter().flat_map(|tree| tree.files).collect();
                 j.total.store(files.iter().map(|f| f.2).sum(), Ordering::Relaxed);
-                anyhow::ensure!(j.begin(),"Transfer was cancelled before sending files");
+                anyhow::ensure!(j.begin(), "Transfer was cancelled before sending files");
                 let mut last = String::new();
                 for (path, rel, _) in &files {
                     last = fs
                         .upload(path, target.clone(), rel.clone(), |n| {
                             j.done.fetch_add(n, Ordering::Relaxed);
-                            theme::repaint_existing_after(&ctx2,viewport,std::time::Duration::from_millis(100));
-                            ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),egui::ViewportId::ROOT);
+                            theme::repaint_existing_after(&ctx2, viewport, std::time::Duration::from_millis(100));
+                            ctx2.request_repaint_after_for(
+                                std::time::Duration::from_millis(100),
+                                egui::ViewportId::ROOT,
+                            );
                         })
                         .await?;
                 }
@@ -335,7 +416,8 @@ impl FileManager {
                 Err(e) => JobState::Failed(format!("{e:#}")),
             });
             let _ = tx.send(Msg::JobFinished { upload: true });
-            theme::repaint_existing_viewport(&ctx2,viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
+            theme::repaint_existing_viewport(&ctx2, viewport);
+            ctx2.request_repaint_of(egui::ViewportId::ROOT);
         });
         *job.task.lock().unwrap() = Some(task);
         self.jobs.push(job);
@@ -368,7 +450,7 @@ impl FileManager {
             task: Mutex::new(None),
         });
         let (fs, tx, ctx2, j) = (self.fs.clone(), self.tx.clone(), ctx.clone(), job.clone());
-        let viewport=ctx.viewport_id();
+        let viewport = ctx.viewport_id();
         let task = rt.spawn(async move {
             let result: anyhow::Result<String> = async {
                 let mut files = Vec::new();
@@ -376,15 +458,18 @@ impl FileManager {
                     files.extend(fs.walk(path, is_dir, name, size).await?);
                 }
                 j.total.store(files.iter().map(|f| f.2).sum(), Ordering::Relaxed);
-                anyhow::ensure!(j.begin(),"Transfer was cancelled before sending files");
+                anyhow::ensure!(j.begin(), "Transfer was cancelled before sending files");
                 let mut last = PathBuf::new();
                 for (remote, rel, _) in &files {
                     let dest = dest_dir.join(fsops::safe_relative(rel)?);
                     last = fs
                         .download(remote.clone(), &dest, |n| {
                             j.done.fetch_add(n, Ordering::Relaxed);
-                            theme::repaint_existing_after(&ctx2,viewport,std::time::Duration::from_millis(100));
-                            ctx2.request_repaint_after_for(std::time::Duration::from_millis(100),egui::ViewportId::ROOT);
+                            theme::repaint_existing_after(&ctx2, viewport, std::time::Duration::from_millis(100));
+                            ctx2.request_repaint_after_for(
+                                std::time::Duration::from_millis(100),
+                                egui::ViewportId::ROOT,
+                            );
                         })
                         .await?;
                 }
@@ -399,7 +484,8 @@ impl FileManager {
                 Err(e) => JobState::Failed(format!("{e:#}")),
             });
             let _ = tx.send(Msg::JobFinished { upload: false });
-            theme::repaint_existing_viewport(&ctx2,viewport);ctx2.request_repaint_of(egui::ViewportId::ROOT);
+            theme::repaint_existing_viewport(&ctx2, viewport);
+            ctx2.request_repaint_of(egui::ViewportId::ROOT);
         });
         *job.task.lock().unwrap() = Some(task);
         self.jobs.push(job);
@@ -412,11 +498,11 @@ impl FileManager {
         self.remote.previews.poll(ctx);
         while let Ok(m) = self.rx.try_recv() {
             match m {
-                Msg::Listing {remote,generation,result}=>{
-                    let pane=if remote {&mut self.remote}else{&mut self.local};
-                    pane.finish_listing(generation,result);
+                Msg::Listing { remote, generation, result } => {
+                    let pane = if remote { &mut self.remote } else { &mut self.local };
+                    pane.finish_listing(generation, result);
                 }
-                Msg::LocalPlaces(p)=>self.local.places=p,
+                Msg::LocalPlaces(p) => self.local.places = p,
                 Msg::RemotePlaces(p) => self.remote.places = p,
                 Msg::JobFinished { upload } => {
                     // Show the new files where they landed.
@@ -427,7 +513,7 @@ impl FileManager {
                         }
                     } else {
                         let p = self.local.listing.as_ref().map(|l| l.path.clone());
-                        self.load_local(p,rt,ctx);
+                        self.load_local(p, rt, ctx);
                     }
                 }
             }
@@ -436,174 +522,263 @@ impl FileManager {
 
     /// Where dropped files should go, if dropped on the remote pane.
     pub fn remote_drop_target(&self, pos: egui::Pos2, ctx: &egui::Context) -> Option<UploadTarget> {
-        (self.open && self.remote.viewport==Some(ctx.viewport_id()) && self.remote.rect.is_some_and(|r| r.contains(pos))
+        (self.open
+            && self.remote.viewport == Some(ctx.viewport_id())
+            && self.remote.rect.is_some_and(|r| r.contains(pos))
             && ctx.layer_id_at(pos).is_some_and(|layer| Some(layer) == self.remote.layer))
-            .then(|| self.remote.listing.as_ref().map(|l| UploadTarget::Folder(l.path.clone())))
-            .flatten()
+        .then(|| self.remote.listing.as_ref().map(|l| UploadTarget::Folder(l.path.clone())))
+        .flatten()
     }
 
     /// Independent desktop window; mobile backends embed the same body.
-    pub fn show(shared:&Arc<Mutex<Self>>,ctx:&egui::Context,rt:&Arc<tokio::runtime::Runtime>,id:u64) {
-        Self::show_progress(shared,ctx,rt,id);
-        let host={
-            let mut files=shared.lock().expect("file window");
-            files.handle_messages(rt,ctx);
-            if !files.open {return;}
-            files.remote_name.clone()
-        };
-        let (shared,rt)=(shared.clone(),rt.clone());
-        let viewport=egui::ViewportId::from_hash_of(("file-transfer",id));
-        let builder=egui::ViewportBuilder::default().with_decorations(false)
-            .with_transparent(theme::transparent_window()).with_app_id("slipstream-remote")
-            .with_title(format!("File transfer · {host} · Slipstream Remote"))
-            .with_icon(theme::window_icon())
-            .with_inner_size([1000.0,640.0]).with_min_inner_size([640.0,360.0]);
-        ctx.show_viewport_deferred(viewport,builder,move |ui,class| {
-            let mut files=shared.lock().expect("file window");
-            let ctx=ui.ctx().clone();
-            let connected=files.fs.is_connected();
+    pub fn show(shared: &Arc<Mutex<Self>>, ctx: &egui::Context, rt: &Arc<tokio::runtime::Runtime>, id: u64) {
+        Self::show_progress(shared, ctx, rt, id);
+        let host = {
+            let mut files = shared.lock().expect("file window");
+            files.handle_messages(rt, ctx);
             if !files.open {
-                theme::dismiss_tool_viewport(&ctx, class==egui::ViewportClass::Deferred);
                 return;
             }
-            files.handle_messages(&rt,&ctx);
-            let desktop=class==egui::ViewportClass::Deferred;
-            let (body,close)=theme::tool_frame(ui,&format!("File transfer · {host}"),desktop,pal::ORANGE);
-            if close || ui.input(|i|i.viewport().close_requested()) {
-                files.open=false;
+            files.remote_name.clone()
+        };
+        let (shared, rt) = (shared.clone(), rt.clone());
+        let viewport = egui::ViewportId::from_hash_of(("file-transfer", id));
+        let builder = egui::ViewportBuilder::default()
+            .with_decorations(false)
+            .with_transparent(theme::transparent_window())
+            .with_app_id("slipstream-remote")
+            .with_title(format!("File transfer · {host} · Slipstream Remote"))
+            .with_icon(theme::window_icon())
+            .with_inner_size([1000.0, 640.0])
+            .with_min_inner_size([640.0, 360.0]);
+        ctx.show_viewport_deferred(viewport, builder, move |ui, class| {
+            let mut files = shared.lock().expect("file window");
+            let ctx = ui.ctx().clone();
+            let connected = files.fs.is_connected();
+            if !files.open {
+                theme::dismiss_tool_viewport(&ctx, class == egui::ViewportClass::Deferred);
+                return;
+            }
+            files.handle_messages(&rt, &ctx);
+            let desktop = class == egui::ViewportClass::Deferred;
+            let (body, close) = theme::tool_frame(ui, &format!("File transfer · {host}"), desktop, pal::ORANGE);
+            if close || ui.input(|i| i.viewport().close_requested()) {
+                files.open = false;
                 theme::dismiss_tool_viewport(&ctx, desktop);
                 return;
             }
-            let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
-            if connected {files.ensure_started(&rt,&ctx);} else {
+            let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(body));
+            if connected {
+                files.ensure_started(&rt, &ctx);
+            } else {
                 ui.label(RichText::new("Remote host unavailable · reconnect to continue").color(pal::GOLD));
             }
-            ui.add_enabled_ui(connected,|ui|files.contents(ui,&rt));
-            let dropped=ctx.input(|i|i.raw.dropped_files.iter().map(|f|f.path().to_path_buf()).collect::<Vec<_>>());
-            let hovering=ctx.input(|i|!i.raw.hovered_files.is_empty());
-            let target=ctx.pointer_hover_pos().and_then(|p|files.remote_drop_target(p,&ctx));
-            if connected && hovering && target.is_some()
-                && let Some(rect)=files.remote.rect {theme::brackets(ui.painter(),rect,pal::ORANGE,18.0);}
+            ui.add_enabled_ui(connected, |ui| files.contents(ui, &rt));
+            let dropped = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect::<Vec<_>>());
+            let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
+            let target = ctx.pointer_hover_pos().and_then(|p| files.remote_drop_target(p, &ctx));
+            if connected
+                && hovering
+                && target.is_some()
+                && let Some(rect) = files.remote.rect
+            {
+                theme::brackets(ui.painter(), rect, pal::ORANGE, 18.0);
+            }
             if !dropped.is_empty() {
-                if connected && let Some(target)=target {files.upload(dropped,target,&rt,&ctx);}
-                else {files.remote.error=Some("Drop files or folders onto the remote pane while connected".into());}
+                if connected && let Some(target) = target {
+                    files.upload(dropped, target, &rt, &ctx);
+                } else {
+                    files.remote.error = Some("Drop files or folders onto the remote pane while connected".into());
+                }
             }
             // The parent may only run logic while minimized. Keep this
             // viewport responsive to transport/job changes on its own.
-            ctx.request_repaint_after(std::time::Duration::from_millis(if files.activity().is_some() {100}else{250}));
+            ctx.request_repaint_after(std::time::Duration::from_millis(if files.activity().is_some() {
+                100
+            } else {
+                250
+            }));
         });
     }
 
     /// A small native receipt window for drops, separate from the browser.
     /// Completion stays visible until dismissed; closing never cancels work.
-    pub(super) fn show_progress(shared:&Arc<Mutex<Self>>,ctx:&egui::Context,rt:&Arc<tokio::runtime::Runtime>,id:u64) {
-        let host={
-            let files=shared.lock().expect("transfer progress");
-            if !files.progress_open {return;}
+    pub(super) fn show_progress(
+        shared: &Arc<Mutex<Self>>,
+        ctx: &egui::Context,
+        rt: &Arc<tokio::runtime::Runtime>,
+        id: u64,
+    ) {
+        let host = {
+            let files = shared.lock().expect("transfer progress");
+            if !files.progress_open {
+                return;
+            }
             files.remote_name.clone()
         };
-        let (shared,rt)=(shared.clone(),rt.clone());
-        let viewport=egui::ViewportId::from_hash_of(("transfer-progress",id));
-        let builder=egui::ViewportBuilder::default().with_decorations(false)
-            .with_transparent(theme::transparent_window()).with_app_id("slipstream-remote")
-            .with_title(format!("Transfer progress · {host} · Slipstream Remote")).with_icon(theme::window_icon())
-            .with_inner_size([520.0,360.0]).with_min_inner_size([360.0,220.0]);
-        ctx.show_viewport_deferred(viewport,builder,move |ui,class| {
-            let mut files=shared.lock().expect("transfer progress");
-            let ctx=ui.ctx().clone();
-            let desktop=class==egui::ViewportClass::Deferred;
+        let (shared, rt) = (shared.clone(), rt.clone());
+        let viewport = egui::ViewportId::from_hash_of(("transfer-progress", id));
+        let builder = egui::ViewportBuilder::default()
+            .with_decorations(false)
+            .with_transparent(theme::transparent_window())
+            .with_app_id("slipstream-remote")
+            .with_title(format!("Transfer progress · {host} · Slipstream Remote"))
+            .with_icon(theme::window_icon())
+            .with_inner_size([520.0, 360.0])
+            .with_min_inner_size([360.0, 220.0]);
+        ctx.show_viewport_deferred(viewport, builder, move |ui, class| {
+            let mut files = shared.lock().expect("transfer progress");
+            let ctx = ui.ctx().clone();
+            let desktop = class == egui::ViewportClass::Deferred;
             if !files.progress_open {
                 theme::dismiss_tool_viewport(&ctx, desktop);
                 return;
             }
-            files.handle_messages(&rt,&ctx);
-            let (body,close)=theme::tool_frame(ui,&format!("Transfers · {host}"),desktop,pal::ORANGE);
-            if close || ctx.input(|i|i.viewport().close_requested()) {
-                files.progress_open=false;
+            files.handle_messages(&rt, &ctx);
+            let (body, close) = theme::tool_frame(ui, &format!("Transfers · {host}"), desktop, pal::ORANGE);
+            if close || ctx.input(|i| i.viewport().close_requested()) {
+                files.progress_open = false;
                 theme::dismiss_tool_viewport(&ctx, desktop);
                 return;
             }
-            let ui=&mut ui.new_child(egui::UiBuilder::new().max_rect(body));
+            let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(body));
             ui.horizontal(|ui| {
-                if theme::pill(ui,"Files",pal::BLUE).on_hover_text("Open the full file browser and transfer history").clicked() {
-                    files.open=true;ctx.request_repaint_of(egui::ViewportId::ROOT);
+                if theme::pill(ui, "Files", pal::BLUE)
+                    .on_hover_text("Open the full file browser and transfer history")
+                    .clicked()
+                {
+                    files.open = true;
+                    ctx.request_repaint_of(egui::ViewportId::ROOT);
                 }
                 if ui.button("Clear finished").clicked() {
-                    files.jobs.retain(|job|job.is_active());
-                    if files.jobs.is_empty() {files.progress_open=false;}
+                    files.jobs.retain(|job| job.is_active());
+                    if files.jobs.is_empty() {
+                        files.progress_open = false;
+                    }
                 }
             });
             ui.add_space(6.0);
-            egui::ScrollArea::vertical().id_salt(("transfer-cards",id)).auto_shrink([false,false])
-                .max_height(ui.available_height()).show(ui,|ui| {
-                for job in files.jobs.iter().rev() {
-                    let state=job.state.lock().unwrap().clone();
-                    let total=job.total.load(Ordering::Relaxed);
-                    let done=job.done.load(Ordering::Relaxed);
-                    let (status,color)=match &state {
-                        JobState::Preparing=>("PREPARING",pal::GOLD),
-                        JobState::Running if total>0 && done>=total=>("CONFIRMING",pal::GOLD),
-                        JobState::Running=>(if job.upload {"SENDING"}else{"RECEIVING"},pal::BLUE),
-                        JobState::Done(_)=>("COMPLETE",pal::GREEN),
-                        JobState::Failed(_)=>("FAILED",pal::RED),
-                        JobState::Cancelled=>("CANCELLED",pal::DIM),
-                    };
-                    egui::Frame::new().fill(pal::BG).stroke(egui::Stroke::new(1.0,color.gamma_multiply(0.5)))
-                        .corner_radius(8.0).inner_margin(10.0).show(ui,|ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            let (icon,_)=ui.allocate_exact_size(vec2(20.0,20.0),Sense::hover());
-                            entry_icon(ui.painter(),icon,false);
-                            ui.add(egui::Label::new(RichText::new(&job.label).font(theme::body(16.0)).color(pal::TEXT)).truncate());
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(status).font(theme::display(16.0)).color(color));
-                            if matches!(state,JobState::Preparing|JobState::Running) && ui.small_button("Cancel").clicked() {job.cancel();}
-                        });
-                        if let Some(destination)=job.destination.lock().unwrap().as_ref() {
-                            ui.add(egui::Label::new(RichText::new(format!("To: {destination}")).font(theme::mono(12.0)).color(pal::DIM)).truncate()).on_hover_text(destination);
-                        }
-                        match &state {
-                            JobState::Preparing=>{ui.label(RichText::new("Resolving destination and preparing files…").small().color(pal::DIM));}
-                            JobState::Running=>{
-                                let fraction=if total==0 {0.0}else{done as f32/total as f32};
-                                let text=format!("{} / {} · {:.0}%",human_size(done),human_size(total),fraction*100.0);
-                                theme::progress(ui,fraction,ui.available_width(),pal::BLUE,&text);
-                            }
-                            JobState::Done(message)=>{ui.label(RichText::new(message).small().color(pal::GREEN));}
-                            JobState::Failed(message)=>{ui.label(RichText::new(message).small().color(pal::RED));}
-                            JobState::Cancelled=>{ui.label(RichText::new("Transfer cancelled").small().color(pal::DIM));}
-                        }
-                    });
-                    ui.add_space(6.0);
-                }
-            });
-            ctx.request_repaint_after(std::time::Duration::from_millis(if files.activity().is_some() {100}else{250}));
+            egui::ScrollArea::vertical()
+                .id_salt(("transfer-cards", id))
+                .auto_shrink([false, false])
+                .max_height(ui.available_height())
+                .show(ui, |ui| {
+                    for job in files.jobs.iter().rev() {
+                        let state = job.state.lock().unwrap().clone();
+                        let total = job.total.load(Ordering::Relaxed);
+                        let done = job.done.load(Ordering::Relaxed);
+                        let (status, color) = match &state {
+                            JobState::Preparing => ("PREPARING", pal::GOLD),
+                            JobState::Running if total > 0 && done >= total => ("CONFIRMING", pal::GOLD),
+                            JobState::Running => (if job.upload { "SENDING" } else { "RECEIVING" }, pal::BLUE),
+                            JobState::Done(_) => ("COMPLETE", pal::GREEN),
+                            JobState::Failed(_) => ("FAILED", pal::RED),
+                            JobState::Cancelled => ("CANCELLED", pal::DIM),
+                        };
+                        egui::Frame::new()
+                            .fill(pal::BG)
+                            .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.5)))
+                            .corner_radius(8.0)
+                            .inner_margin(10.0)
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    let (icon, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+                                    entry_icon(ui.painter(), icon, false);
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(&job.label).font(theme::body(16.0)).color(pal::TEXT),
+                                        )
+                                        .truncate(),
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(status).font(theme::display(16.0)).color(color));
+                                    if matches!(state, JobState::Preparing | JobState::Running)
+                                        && ui.small_button("Cancel").clicked()
+                                    {
+                                        job.cancel();
+                                    }
+                                });
+                                if let Some(destination) = job.destination.lock().unwrap().as_ref() {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(format!("To: {destination}"))
+                                                .font(theme::mono(12.0))
+                                                .color(pal::DIM),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(destination);
+                                }
+                                match &state {
+                                    JobState::Preparing => {
+                                        ui.label(
+                                            RichText::new("Resolving destination and preparing files…")
+                                                .small()
+                                                .color(pal::DIM),
+                                        );
+                                    }
+                                    JobState::Running => {
+                                        let fraction = if total == 0 { 0.0 } else { done as f32 / total as f32 };
+                                        let text = format!(
+                                            "{} / {} · {:.0}%",
+                                            human_size(done),
+                                            human_size(total),
+                                            fraction * 100.0
+                                        );
+                                        theme::progress(ui, fraction, ui.available_width(), pal::BLUE, &text);
+                                    }
+                                    JobState::Done(message) => {
+                                        ui.label(RichText::new(message).small().color(pal::GREEN));
+                                    }
+                                    JobState::Failed(message) => {
+                                        ui.label(RichText::new(message).small().color(pal::RED));
+                                    }
+                                    JobState::Cancelled => {
+                                        ui.label(RichText::new("Transfer cancelled").small().color(pal::DIM));
+                                    }
+                                }
+                            });
+                        ui.add_space(6.0);
+                    }
+                });
+            ctx.request_repaint_after(std::time::Duration::from_millis(if files.activity().is_some() {
+                100
+            } else {
+                250
+            }));
         });
     }
 
     pub fn disconnect(&mut self) {
-        self.local.start_listing();self.local.loading=false;
-        self.remote.start_listing();self.remote.loading=false;
-        self.local.previews.clear();self.remote.previews.clear();
+        self.local.start_listing();
+        self.local.loading = false;
+        self.remote.start_listing();
+        self.remote.loading = false;
+        self.local.previews.clear();
+        self.remote.previews.clear();
         for job in &self.jobs {
             job.stop(JobState::Failed("Link interrupted; restart this transfer after reconnecting".into()));
         }
     }
 
-    pub fn reconnect(&mut self,fs:RemoteFs,name:String) {
+    pub fn reconnect(&mut self, fs: RemoteFs, name: String) {
         self.disconnect();
-        let sort=self.remote.sort;
-        self.fs=fs;self.remote_name=name;self.remote=Pane {sort,..Default::default()};self.started=false;
+        let sort = self.remote.sort;
+        self.fs = fs;
+        self.remote_name = name;
+        self.remote = Pane { sort, ..Default::default() };
+        self.started = false;
         // Late listings from the old connection must not replace the new pane.
-        (self.tx,self.rx)=mpsc::channel();
+        (self.tx, self.rx) = mpsc::channel();
     }
 
-    fn contents(&mut self,ui:&mut Ui,rt:&tokio::runtime::Runtime) {
+    fn contents(&mut self, ui: &mut Ui, rt: &tokio::runtime::Runtime) {
         if !self.jobs.is_empty() {
-            egui::Panel::bottom("file-jobs").frame(egui::Frame::NONE).show(ui,|ui|self.jobs_ui(ui));
+            egui::Panel::bottom("file-jobs").frame(egui::Frame::NONE).show(ui, |ui| self.jobs_ui(ui));
         }
-        egui::CentralPanel::no_frame().show(ui,|ui|self.panes(ui,rt));
+        egui::CentralPanel::no_frame().show(ui, |ui| self.panes(ui, rt));
     }
 
     fn panes(&mut self, ui: &mut Ui, rt: &tokio::runtime::Runtime) {
@@ -622,7 +797,15 @@ impl FileManager {
             ui.allocate_ui_with_layout(vec2(pane_w, pane_h), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(pane_w);
                 ui.set_height(pane_h);
-                go_local = pane_ui(ui, &mut self.local, "This computer", pal::BLUE, "local", self.show_hidden, &Loader {rt,remote:None});
+                go_local = pane_ui(
+                    ui,
+                    &mut self.local,
+                    "This computer",
+                    pal::BLUE,
+                    "local",
+                    self.show_hidden,
+                    &Loader { rt, remote: None },
+                );
             });
             ui.allocate_ui_with_layout(vec2(mid_w, pane_h), Layout::top_down(Align::Center), |ui| {
                 ui.set_width(mid_w);
@@ -648,17 +831,31 @@ impl FileManager {
                 ui.set_width(pane_w);
                 ui.set_height(pane_h);
                 let title = format!("Remote · {}", self.remote_name);
-                go_remote = pane_ui(ui, &mut self.remote, &title, pal::ORANGE, "remote", self.show_hidden, &Loader {rt,remote:Some(&self.fs)});
+                go_remote = pane_ui(
+                    ui,
+                    &mut self.remote,
+                    &title,
+                    pal::ORANGE,
+                    "remote",
+                    self.show_hidden,
+                    &Loader { rt, remote: Some(&self.fs) },
+                );
             });
         });
         if let Some(p) = go_local {
-            self.load_local(p,rt,&ctx);
+            self.load_local(p, rt, &ctx);
         }
         if let Some(p) = go_remote {
             self.load_remote(p, rt, &ctx);
         }
         if send && let (Some(l), Some(r)) = (&self.local.listing, &self.remote.listing) {
-            let items: Vec<PathBuf> = self.local.selected.iter().filter_map(|&i| l.entries.get(i)).map(|e| PathBuf::from(&l.path).join(&e.name)).collect();
+            let items: Vec<PathBuf> = self
+                .local
+                .selected
+                .iter()
+                .filter_map(|&i| l.entries.get(i))
+                .map(|e| PathBuf::from(&l.path).join(&e.name))
+                .collect();
             let target = UploadTarget::Folder(r.path.clone());
             self.upload(items, target, rt, &ctx);
         }
@@ -684,7 +881,10 @@ impl FileManager {
                 for job in self.jobs.iter().rev() {
                     ui.horizontal(|ui| {
                         let state = job.state.lock().unwrap().clone();
-                        ui.add_sized([220.0, 22.0], egui::Label::new(RichText::new(&job.label).font(theme::body(15.0))).truncate());
+                        ui.add_sized(
+                            [220.0, 22.0],
+                            egui::Label::new(RichText::new(&job.label).font(theme::body(15.0))).truncate(),
+                        );
                         match &state {
                             JobState::Preparing => {
                                 ui.label(RichText::new("preparing…").color(pal::DIM));
@@ -696,7 +896,11 @@ impl FileManager {
                                     job.fraction(),
                                     ui.available_width() - 200.0,
                                     if job.upload { pal::ORANGE } else { pal::BLUE },
-                                    &format!("{} / {}", human_size(job.done.load(Ordering::Relaxed)), human_size(total)),
+                                    &format!(
+                                        "{} / {}",
+                                        human_size(job.done.load(Ordering::Relaxed)),
+                                        human_size(total)
+                                    ),
                                 );
                             }
                             JobState::Done(m) => {
@@ -725,90 +929,120 @@ impl FileManager {
 
 /// Console-style vector symbols, independent of the operating system's
 /// emoji font. Shapes stay crisp at the current display scale.
-pub(super) fn entry_icon(p:&egui::Painter,rect:Rect,folder:bool) {
-    let at=|x,y|rect.min+vec2(x,y);
-    let color=if folder {pal::GOLD}else{pal::BLUE};
-    let stroke=egui::Stroke::new(1.4,color);
+pub(super) fn entry_icon(p: &egui::Painter, rect: Rect, folder: bool) {
+    let at = |x, y| rect.min + vec2(x, y);
+    let color = if folder { pal::GOLD } else { pal::BLUE };
+    let stroke = egui::Stroke::new(1.4, color);
     if folder {
-        p.rect_filled(Rect::from_min_max(at(1.0,2.0),at(10.0,8.0)),egui::CornerRadius{nw:3,ne:3,..Default::default()},color);
-        let body=Rect::from_min_max(at(1.0,6.0),at(20.0,18.0));
-        p.rect_filled(body,3.0,color.gamma_multiply(0.14));
-        p.rect_stroke(body,3.0,stroke,egui::StrokeKind::Inside);
-        p.rect_filled(Rect::from_min_max(at(1.0,6.0),at(5.0,18.0)),egui::CornerRadius{nw:3,sw:3,..Default::default()},color);
-        p.line_segment([at(5.0,8.0),at(18.0,8.0)],egui::Stroke::new(2.0,color));
-        p.line_segment([at(11.0,14.0),at(17.0,14.0)],stroke);
+        p.rect_filled(
+            Rect::from_min_max(at(1.0, 2.0), at(10.0, 8.0)),
+            egui::CornerRadius { nw: 3, ne: 3, ..Default::default() },
+            color,
+        );
+        let body = Rect::from_min_max(at(1.0, 6.0), at(20.0, 18.0));
+        p.rect_filled(body, 3.0, color.gamma_multiply(0.14));
+        p.rect_stroke(body, 3.0, stroke, egui::StrokeKind::Inside);
+        p.rect_filled(
+            Rect::from_min_max(at(1.0, 6.0), at(5.0, 18.0)),
+            egui::CornerRadius { nw: 3, sw: 3, ..Default::default() },
+            color,
+        );
+        p.line_segment([at(5.0, 8.0), at(18.0, 8.0)], egui::Stroke::new(2.0, color));
+        p.line_segment([at(11.0, 14.0), at(17.0, 14.0)], stroke);
     } else {
-        let body=Rect::from_min_max(at(3.0,1.0),at(17.0,19.0));
-        p.rect_filled(body,2.0,color.gamma_multiply(0.14));
-        p.rect_stroke(body,2.0,stroke,egui::StrokeKind::Inside);
-        p.rect_filled(Rect::from_min_max(at(3.0,1.0),at(6.0,19.0)),egui::CornerRadius{nw:2,sw:2,..Default::default()},color);
-        p.line_segment([at(11.0,2.0),at(11.0,6.0)],stroke);
-        p.line_segment([at(11.0,6.0),at(16.0,6.0)],stroke);
-        for (y,end) in [(10.0,14.0),(13.0,14.0),(16.0,12.0)] {
-            p.line_segment([at(8.0,y),at(end,y)],egui::Stroke::new(1.0,color));
+        let body = Rect::from_min_max(at(3.0, 1.0), at(17.0, 19.0));
+        p.rect_filled(body, 2.0, color.gamma_multiply(0.14));
+        p.rect_stroke(body, 2.0, stroke, egui::StrokeKind::Inside);
+        p.rect_filled(
+            Rect::from_min_max(at(3.0, 1.0), at(6.0, 19.0)),
+            egui::CornerRadius { nw: 2, sw: 2, ..Default::default() },
+            color,
+        );
+        p.line_segment([at(11.0, 2.0), at(11.0, 6.0)], stroke);
+        p.line_segment([at(11.0, 6.0), at(16.0, 6.0)], stroke);
+        for (y, end) in [(10.0, 14.0), (13.0, 14.0), (16.0, 12.0)] {
+            p.line_segment([at(8.0, y), at(end, y)], egui::Stroke::new(1.0, color));
         }
     }
 }
 
 /// Draws one pane. Returns `Some(path)` to navigate (`Some(None)` = home).
 #[allow(clippy::too_many_arguments)]
-fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, show_hidden: bool, loader: &Loader<'_>) -> Option<Option<String>> {
+fn pane_ui(
+    ui: &mut Ui,
+    pane: &mut Pane,
+    title: &str,
+    color: Color32,
+    id: &str,
+    show_hidden: bool,
+    loader: &Loader<'_>,
+) -> Option<Option<String>> {
     let mut nav: Option<Option<String>> = None;
     theme::header(ui, title, color);
     ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt(("places", id))
-            .selected_text("Places")
-            .width(110.0)
-            .show_ui(ui, |ui| {
-                theme::console_menu_style(ui.style_mut());
-                for p in &pane.places {
-                    if ui.selectable_label(false, &p.label).on_hover_text(&p.path).clicked() {
-                        nav = Some(Some(p.path.clone()));
-                    }
+        egui::ComboBox::from_id_salt(("places", id)).selected_text("Places").width(110.0).show_ui(ui, |ui| {
+            theme::console_menu_style(ui.style_mut());
+            for p in &pane.places {
+                if ui.selectable_label(false, &p.label).on_hover_text(&p.path).clicked() {
+                    nav = Some(Some(p.path.clone()));
                 }
-            });
+            }
+        });
         let parent = pane.listing.as_ref().and_then(|l| l.parent.clone());
         if ui.add_enabled(parent.is_some(), egui::Button::new("▲ Up")).clicked() {
             nav = Some(parent);
         }
-        let refresh=ui.add_sized(vec2(28.0,28.0),egui::Button::new("")).on_hover_text("Refresh");
-        refresh.widget_info(||egui::WidgetInfo::labeled(egui::Role::Button,ui.is_enabled(),"Refresh"));
-        let center=refresh.rect.center();
-        let stroke=ui.style().interact(&refresh).fg_stroke;
-        let angles=(0..=16).map(|i|-std::f32::consts::FRAC_PI_2+i as f32*std::f32::consts::PI*1.55/16.0);
-        let points:Vec<_>=angles.map(|a|center+vec2(a.cos(),a.sin())*7.0).collect();
-        let end=*points.last().unwrap();
-        ui.painter().add(egui::Shape::line(points,stroke));
-        ui.painter().line_segment([end,end+vec2(-3.0,3.0)],stroke);
-        ui.painter().line_segment([end,end+vec2(3.0,3.0)],stroke);
+        let refresh = ui.add_sized(vec2(28.0, 28.0), egui::Button::new("")).on_hover_text("Refresh");
+        refresh.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Refresh"));
+        let center = refresh.rect.center();
+        let stroke = ui.style().interact(&refresh).fg_stroke;
+        let angles = (0..=16).map(|i| -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI * 1.55 / 16.0);
+        let points: Vec<_> = angles.map(|a| center + vec2(a.cos(), a.sin()) * 7.0).collect();
+        let end = *points.last().unwrap();
+        ui.painter().add(egui::Shape::line(points, stroke));
+        ui.painter().line_segment([end, end + vec2(-3.0, 3.0)], stroke);
+        ui.painter().line_segment([end, end + vec2(3.0, 3.0)], stroke);
         if refresh.clicked() {
             nav = Some(pane.listing.as_ref().map(|l| l.path.clone()));
         }
     });
     {
-        let r = ui.add(theme::text_input(&mut pane.path_edit).align(egui::Align2::LEFT_CENTER).desired_width(ui.available_width()).font(theme::mono(14.0)));
+        let r = ui.add(
+            theme::text_input(&mut pane.path_edit)
+                .align(egui::Align2::LEFT_CENTER)
+                .desired_width(ui.available_width())
+                .font(theme::mono(14.0)),
+        );
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             nav = Some(Some(pane.path_edit.clone()));
         }
     }
-    ui.push_id(("sort",id),|ui|ui.horizontal(|ui| {
-        ui.label(RichText::new("SORT").font(theme::mono(11.0)).color(pal::DIM));
-        for (field,label) in [(SortField::Name,"Name"),(SortField::Modified,"Modified")] {
-            let active=pane.sort.field == field;
-            let label=if active {format!("{label} {}",if pane.sort.descending {"▼"}else{"▲"})}else{label.into()};
-            let button=egui::Button::new(RichText::new(label).color(if active {pal::BG}else{pal::TEXT}))
-                .fill(if active {color}else{Color32::from_rgb(18,22,38)}).corner_radius(6.0);
-            if ui.add(button).on_hover_text("Click to sort; click again to reverse. Folders stay first.").clicked() {
-                pane.sort.choose(field);
+    ui.push_id(("sort", id), |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("SORT").font(theme::mono(11.0)).color(pal::DIM));
+            for (field, label) in [(SortField::Name, "Name"), (SortField::Modified, "Modified")] {
+                let active = pane.sort.field == field;
+                let label = if active {
+                    format!("{label} {}", if pane.sort.descending { "▼" } else { "▲" })
+                } else {
+                    label.into()
+                };
+                let button = egui::Button::new(RichText::new(label).color(if active { pal::BG } else { pal::TEXT }))
+                    .fill(if active { color } else { Color32::from_rgb(18, 22, 38) })
+                    .corner_radius(6.0);
+                if ui.add(button).on_hover_text("Click to sort; click again to reverse. Folders stay first.").clicked()
+                {
+                    pane.sort.choose(field);
+                }
             }
-        }
-    }));
+        })
+    });
     if let Some(e) = &pane.error {
         ui.label(RichText::new(e).color(pal::RED));
     }
-    if pane.rows_key != Some((show_hidden,pane.sort)) {
-        pane.rows=pane.listing.as_ref().map(|l|sorted_rows(&l.entries,show_hidden,pane.sort)).unwrap_or_default();
-        pane.rows_key=Some((show_hidden,pane.sort));
+    if pane.rows_key != Some((show_hidden, pane.sort)) {
+        pane.rows = pane.listing.as_ref().map(|l| sorted_rows(&l.entries, show_hidden, pane.sort)).unwrap_or_default();
+        pane.rows_key = Some((show_hidden, pane.sort));
     }
     let frame = egui::Frame::new().fill(Color32::from_rgb(4, 6, 12)).corner_radius(6.0).inner_margin(4.0);
     // Room for the "N items" line below, measured: a guess that came out
@@ -842,25 +1076,49 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
                     } else if resp.hovered() {
                         p.rect_filled(rect, 4.0, Color32::from_rgb(18, 22, 38));
                     }
-                    let icon_rect=Rect::from_min_size(rect.left_center()+vec2(3.0,-16.0),vec2(32.0,32.0));
-                    let previewable=!e.is_dir && slipstream_session::preview::supported(&e.name);
-                    let path=format!("{}{}{}",listing.path.trim_end_matches(['/', '\\']),listing.sep,e.name);
-                    if !previewable || !pane.previews.paint(ui,icon_rect,i,path,loader) {
-                        entry_icon(p,Rect::from_center_size(icon_rect.center(),vec2(20.0,20.0)),e.is_dir);
+                    let icon_rect = Rect::from_min_size(rect.left_center() + vec2(3.0, -16.0), vec2(32.0, 32.0));
+                    let previewable = !e.is_dir && slipstream_session::preview::supported(&e.name);
+                    let path = format!("{}{}{}", listing.path.trim_end_matches(['/', '\\']), listing.sep, e.name);
+                    if !previewable || !pane.previews.paint(ui, icon_rect, i, path, loader) {
+                        entry_icon(p, Rect::from_center_size(icon_rect.center(), vec2(20.0, 20.0)), e.is_dir);
                     }
                     // Two text lines keep long dates clear of file sizes, even in narrow panes.
                     let name_w = (rect.width() - 46.0).max(60.0);
-                    let galley = p.layout(e.name.clone(), theme::body(15.0), if e.is_dir { pal::TAN } else { pal::TEXT }, name_w);
+                    let galley = p.layout(
+                        e.name.clone(),
+                        theme::body(15.0),
+                        if e.is_dir { pal::TAN } else { pal::TEXT },
+                        name_w,
+                    );
                     let name_rect = Rect::from_min_size(rect.left_top() + vec2(42.0, 0.0), vec2(name_w, 18.0));
                     p.with_clip_rect(name_rect).galley(name_rect.min, galley, pal::TEXT);
-                    let details=Rect::from_min_max(rect.min+vec2(42.0,19.0),rect.max);
+                    let details = Rect::from_min_max(rect.min + vec2(42.0, 19.0), rect.max);
                     if !e.is_dir {
-                        p.with_clip_rect(details).text(details.left_top(),Align2::LEFT_TOP,human_size(e.size),theme::mono(11.0),pal::BLUE);
+                        p.with_clip_rect(details).text(
+                            details.left_top(),
+                            Align2::LEFT_TOP,
+                            human_size(e.size),
+                            theme::mono(11.0),
+                            pal::BLUE,
+                        );
                     }
-                    p.with_clip_rect(details).text(details.right_top()-vec2(4.0,0.0),Align2::RIGHT_TOP,short_date(e.modified),theme::mono(11.0),pal::DIM);
-                    if previewable {resp.clone().on_hover_ui(|ui|pane.previews.hover(ui,i));}
+                    p.with_clip_rect(details).text(
+                        details.right_top() - vec2(4.0, 0.0),
+                        Align2::RIGHT_TOP,
+                        short_date(e.modified),
+                        theme::mono(11.0),
+                        pal::DIM,
+                    );
+                    if previewable {
+                        resp.clone().on_hover_ui(|ui| pane.previews.hover(ui, i));
+                    }
                     if resp.double_clicked() && e.is_dir {
-                        nav = Some(Some(format!("{}{}{}", listing.path.trim_end_matches(['/', '\\']), listing.sep, e.name)));
+                        nav = Some(Some(format!(
+                            "{}{}{}",
+                            listing.path.trim_end_matches(['/', '\\']),
+                            listing.sep,
+                            e.name
+                        )));
                     } else if resp.clicked() {
                         if modifiers.shift
                             && let Some(a) = pane.anchor.and_then(|a| rows.iter().position(|&r| r == a))
@@ -887,9 +1145,13 @@ fn pane_ui(ui: &mut Ui, pane: &mut Pane, title: &str, color: Color32, id: &str, 
         let n = pane.selected.len();
         let bytes: u64 = pane.selected.iter().filter_map(|&i| l.entries.get(i)).map(|e| e.size).sum();
         ui.label(
-            RichText::new(if n == 0 { format!("{} items", l.entries.len()) } else { format!("{n} selected · {}", human_size(bytes)) })
-                .small()
-                .color(pal::DIM),
+            RichText::new(if n == 0 {
+                format!("{} items", l.entries.len())
+            } else {
+                format!("{n} selected · {}", human_size(bytes))
+            })
+            .small()
+            .color(pal::DIM),
         );
     }
     nav
@@ -930,55 +1192,80 @@ mod tests {
 
     #[test]
     fn stale_folder_results_never_replace_newer_navigation() {
-        let mut pane=Pane::default();let old=pane.start_listing();let new=pane.start_listing();
-        let listing=|path:&str|DirListing {path:path.into(),parent:None,sep:"/".into(),entries:Vec::new()};
-        pane.finish_listing(new,Ok(listing("new")));
-        pane.finish_listing(old,Ok(listing("old")));
-        pane.finish_listing(old,Err("old failure".into()));
-        assert_eq!(pane.listing.as_ref().unwrap().path,"new");
+        let mut pane = Pane::default();
+        let old = pane.start_listing();
+        let new = pane.start_listing();
+        let listing = |path: &str| DirListing { path: path.into(), parent: None, sep: "/".into(), entries: Vec::new() };
+        pane.finish_listing(new, Ok(listing("new")));
+        pane.finish_listing(old, Ok(listing("old")));
+        pane.finish_listing(old, Err("old failure".into()));
+        assert_eq!(pane.listing.as_ref().unwrap().path, "new");
         assert!(!pane.loading && pane.error.is_none());
     }
 
     #[test]
     fn sort_keeps_folders_first_unknown_dates_last_and_selection_identity() {
-        let entries:Vec<_>=[("z-folder",true,20),("a-folder",true,10),("Alpha.txt",false,20),
-            ("beta.txt",false,30),(".hidden",false,40),("unknown.txt",false,0),("alpha.txt",false,20)]
-            .into_iter().map(|(name,is_dir,modified)|DirEntry {name:name.into(),is_dir,size:10,modified}).collect();
-        let mut sort=Sort::default();
-        assert_eq!(sorted_rows(&entries,false,sort),[1,0,2,6,3,5]);
-        let selected:BTreeSet<usize>=[2,3].into();
+        let entries: Vec<_> = [
+            ("z-folder", true, 20),
+            ("a-folder", true, 10),
+            ("Alpha.txt", false, 20),
+            ("beta.txt", false, 30),
+            (".hidden", false, 40),
+            ("unknown.txt", false, 0),
+            ("alpha.txt", false, 20),
+        ]
+        .into_iter()
+        .map(|(name, is_dir, modified)| DirEntry { name: name.into(), is_dir, size: 10, modified })
+        .collect();
+        let mut sort = Sort::default();
+        assert_eq!(sorted_rows(&entries, false, sort), [1, 0, 2, 6, 3, 5]);
+        let selected: BTreeSet<usize> = [2, 3].into();
         sort.choose(SortField::Name);
-        assert_eq!(sorted_rows(&entries,false,sort),[0,1,5,3,6,2]);
+        assert_eq!(sorted_rows(&entries, false, sort), [0, 1, 5, 3, 6, 2]);
         sort.choose(SortField::Modified); // first date click is newest first
-        let rows=sorted_rows(&entries,false,sort);
-        assert_eq!(rows,[0,1,3,2,6,5]);
-        assert_eq!(rows.iter().filter(|i|selected.contains(i)).map(|&i|entries[i].name.as_str()).collect::<Vec<_>>(),["beta.txt","Alpha.txt"]);
+        let rows = sorted_rows(&entries, false, sort);
+        assert_eq!(rows, [0, 1, 3, 2, 6, 5]);
+        assert_eq!(
+            rows.iter().filter(|i| selected.contains(i)).map(|&i| entries[i].name.as_str()).collect::<Vec<_>>(),
+            ["beta.txt", "Alpha.txt"]
+        );
         // Shift ranges use the new display order, while the anchor stays an entry index.
-        let anchor=rows.iter().position(|&i|i==3).unwrap();
-        assert_eq!(&rows[anchor..=4],[3,2,6]);
+        let anchor = rows.iter().position(|&i| i == 3).unwrap();
+        assert_eq!(&rows[anchor..=4], [3, 2, 6]);
         sort.choose(SortField::Modified);
-        assert_eq!(sorted_rows(&entries,false,sort),[1,0,2,6,3,5]);
-        assert!(sorted_rows(&entries,true,sort).contains(&4));
-        let mut pane=Pane {sort,..Default::default()};
-        pane.set_listing(DirListing {path:"/test".into(),parent:None,sep:"/".into(),entries});
-        assert!(pane.sort.field==SortField::Modified && !pane.sort.descending);
+        assert_eq!(sorted_rows(&entries, false, sort), [1, 0, 2, 6, 3, 5]);
+        assert!(sorted_rows(&entries, true, sort).contains(&4));
+        let mut pane = Pane { sort, ..Default::default() };
+        pane.set_listing(DirListing { path: "/test".into(), parent: None, sep: "/".into(), entries });
+        assert!(pane.sort.field == SortField::Modified && !pane.sort.descending);
         assert!(pane.rows_key.is_none());
     }
 
     #[test]
     fn late_transfer_receipts_preserve_cancelled_or_disconnected_results() {
-        let job=Job {label:"file.txt".into(),destination:Mutex::new(None),upload:true,total:AtomicU64::new(10),
-            done:AtomicU64::new(10),state:Mutex::new(JobState::Running),task:Mutex::new(None)};
+        let job = Job {
+            label: "file.txt".into(),
+            destination: Mutex::new(None),
+            upload: true,
+            total: AtomicU64::new(10),
+            done: AtomicU64::new(10),
+            state: Mutex::new(JobState::Running),
+            task: Mutex::new(None),
+        };
         // Sending every byte still leaves the job running until the receipt.
         assert!(job.is_active());
-        job.cancel();assert!(!job.begin());job.finish(JobState::Done("saved remotely".into()));
-        assert_eq!(*job.state.lock().unwrap(),JobState::Cancelled);
-        *job.state.lock().unwrap()=JobState::Failed("Link interrupted".into());
+        job.cancel();
+        assert!(!job.begin());
+        job.finish(JobState::Done("saved remotely".into()));
+        assert_eq!(*job.state.lock().unwrap(), JobState::Cancelled);
+        *job.state.lock().unwrap() = JobState::Failed("Link interrupted".into());
         job.finish(JobState::Done("late reply".into()));
-        assert_eq!(*job.state.lock().unwrap(),JobState::Failed("Link interrupted".into()));
-        *job.state.lock().unwrap()=JobState::Running;
-        job.finish(JobState::Done("saved remotely".into()));job.cancel();job.stop(JobState::Failed("late disconnect".into()));
-        assert_eq!(*job.state.lock().unwrap(),JobState::Done("saved remotely".into()));
+        assert_eq!(*job.state.lock().unwrap(), JobState::Failed("Link interrupted".into()));
+        *job.state.lock().unwrap() = JobState::Running;
+        job.finish(JobState::Done("saved remotely".into()));
+        job.cancel();
+        job.stop(JobState::Failed("late disconnect".into()));
+        assert_eq!(*job.state.lock().unwrap(), JobState::Done("saved remotely".into()));
     }
 
     #[test]

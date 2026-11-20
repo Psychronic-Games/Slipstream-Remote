@@ -10,7 +10,9 @@ pub fn set_server(address: &str, key: Option<String>) -> Result<()> {
     let store = Store::open_default()?;
     let mut s = store.load_settings();
     slipstream_core::directory::normalize_server_url(address).context("invalid server address")?;
-    if s.server.url.as_deref() != Some(address.trim()) { s.host.last_device_id = None; }
+    if s.server.url.as_deref() != Some(address.trim()) {
+        s.host.last_device_id = None;
+    }
     s.server.url = Some(address.trim().to_string());
     s.server.key = key.filter(|k| !k.trim().is_empty());
     s.server.provisioned = false;
@@ -33,7 +35,10 @@ pub fn set_password(password: Option<&str>) -> Result<()> {
 
 /// `slipstream encode-test`: every hardware encoder, on a moving picture.
 pub fn encode_test(size: &str) -> Result<()> {
-    let (w, h) = size.split_once('x').and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?))).context("size like 1920x1080")?;
+    let (w, h) = size
+        .split_once('x')
+        .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
+        .context("size like 1920x1080")?;
     println!("Testing hardware video encoders at {w}×{h} (decoded as a viewer would)…");
     for test in slipstream_codec::test_hardware(w, h, 120) {
         match test.result {
@@ -51,7 +56,11 @@ pub async fn info() -> Result<()> {
     let s = store.load_settings();
     println!("settings dir : {}", store.dir().display());
     println!("device name  : {}", s.device_name);
-    let custom = s.server.url.as_deref().is_some_and(|url| !url.trim().is_empty() && !slipstream_core::config::is_public_station(url));
+    let custom = s
+        .server
+        .url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty() && !slipstream_core::config::is_public_station(url));
     let secret = store.identity()?;
     let endpoint = if custom { secret.public() } else { slipstream_core::config::public_identity(&secret).public() };
     println!("endpoint id  : {endpoint}");
@@ -67,7 +76,9 @@ pub async fn info() -> Result<()> {
         ),
         None => println!("server       : {} (built-in public station)", slipstream_core::config::PUBLIC_STATION_URL),
     }
-    if custom && let Some(id) = s.host.public_device_id { println!("public id    : {id} ({})", slipstream_core::config::PUBLIC_STATION_URL); }
+    if custom && let Some(id) = s.host.public_device_id {
+        println!("public id    : {id} ({})", slipstream_core::config::PUBLIC_STATION_URL);
+    }
     match slipstream_core::release::trusted_keys().as_slice() {
         [] => println!("updates      : off (this build has no update key)"),
         keys => {
@@ -95,14 +106,29 @@ pub enum HostEnd {
 
 /// [`host`], until `yield_to` completes. Links open then are told the
 /// host is restarting, so their viewers reconnect to whoever hosts next.
-pub async fn host_until(test_pattern: bool, password: Option<String>, service: bool, yield_to: impl Future<Output = ()>) -> Result<HostEnd> {
+pub async fn host_until(
+    test_pattern: bool,
+    password: Option<String>,
+    service: bool,
+    yield_to: impl Future<Output = ()>,
+) -> Result<HostEnd> {
     let store = Store::open_default()?;
     if let Some(pw) = &password {
         let mut s = store.load_settings();
         s.host.set_permanent_password(Some(pw));
         store.save_settings(&s)?;
     }
-    let (client, mut events) = Client::start(store, ClientOptions { test_pattern, accept_sessions: true, system_screen: service && cfg!(target_os = "linux"), public_station: (!test_pattern).then(slipstream_core::config::ServerSettings::public_station), ..Default::default() }).await?;
+    let (client, mut events) = Client::start(
+        store,
+        ClientOptions {
+            test_pattern,
+            accept_sessions: true,
+            system_screen: service && cfg!(target_os = "linux"),
+            public_station: (!test_pattern).then(slipstream_core::config::ServerSettings::public_station),
+            ..Default::default()
+        },
+    )
+    .await?;
     #[cfg(target_os = "linux")]
     if !service && std::env::var_os("WAYLAND_DISPLAY").is_some() && client.settings().host.enabled {
         let preparing = client.clone();
@@ -113,7 +139,17 @@ pub async fn host_until(test_pattern: bool, password: Option<String>, service: b
         });
     }
     #[cfg(windows)]
-    let mut chat_bridge=if service {match crate::service_chat::Server::start(client.clone()){Ok(bridge)=>Some(bridge),Err(e)=>{tracing::warn!("host chat unavailable: {e:#}");None}}} else {None};
+    let mut chat_bridge = if service {
+        match crate::service_chat::Server::start(client.clone()) {
+            Ok(bridge) => Some(bridge),
+            Err(e) => {
+                tracing::warn!("host chat unavailable: {e:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
     println!("hosting; endpoint {}", client.endpoint_id());
     tokio::pin!(yield_to);
     let mut end = HostEnd::Stopped;
@@ -178,7 +214,8 @@ pub async fn host_until(test_pattern: bool, password: Option<String>, service: b
 pub(crate) async fn shutdown_signal() {
     #[cfg(unix)]
     {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("signal handler");
+        let mut term =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("signal handler");
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {}
             _ = term.recv() => {}
@@ -400,11 +437,23 @@ pub async fn save(id: &str, station: &str, options: SaveOptions) -> Result<()> {
         } else {
             client.sync_account(&r).await?;
             let settings = client.settings();
-            let account = settings.accounts.iter().find(|a| a.is_station(&r.server) && a.user.username == r.username)
+            let account = settings
+                .accounts
+                .iter()
+                .find(|a| a.is_station(&r.server) && a.user.username == r.username)
                 .context("station account no longer available")?;
             let existing = if shared { &account.shared } else { &account.devices };
-            let group = group.unwrap_or_else(|| existing.iter().find(|d| d.id == id).map(|d| d.group.clone()).unwrap_or_default());
-            let device = slipstream_core::account::SavedDevice { id, name, notes, group, secret: None, added_by: None, management: None };
+            let group = group
+                .unwrap_or_else(|| existing.iter().find(|d| d.id == id).map(|d| d.group.clone()).unwrap_or_default());
+            let device = slipstream_core::account::SavedDevice {
+                id,
+                name,
+                notes,
+                group,
+                secret: None,
+                added_by: None,
+                management: None,
+            };
             client.save_device(&r, device, password, shared).await?;
             println!("saved {id}");
         }
@@ -425,10 +474,18 @@ pub async fn saved() -> Result<()> {
     }
     for a in &accounts {
         let r = slipstream_session::AccountRef::of(a);
-        println!("{} ({}) · {}{}", a.label(), a.server, a.user.name, if a.signed_out { " · SIGNED OUT, sign in again" } else { "" });
+        println!(
+            "{} ({}) · {}{}",
+            a.label(),
+            a.server,
+            a.user.name,
+            if a.signed_out { " · SIGNED OUT, sign in again" } else { "" }
+        );
         let ids: Vec<DeviceId> = a.devices.iter().chain(&a.shared).map(|d| d.id).collect();
         let presence = client.presence(&r, &ids).await;
-        let state = |id| presence.iter().find(|(i, _)| *i == id).map(|(_, p)| format!("{p:?}").to_lowercase()).unwrap_or_default();
+        let state = |id| {
+            presence.iter().find(|(i, _)| *i == id).map(|(_, p)| format!("{p:?}").to_lowercase()).unwrap_or_default()
+        };
         for (list, devices) in [("mine", &a.devices), ("shared", &a.shared)] {
             for d in devices {
                 println!(
@@ -455,7 +512,8 @@ pub async fn update() -> Result<()> {
     let result = async {
         let info = client.check_update().await?;
         #[cfg(windows)]
-        let info = if info.is_none() && crate::service::needs_app_update()? { client.available_update().await? } else { info };
+        let info =
+            if info.is_none() && crate::service::needs_app_update()? { client.available_update().await? } else { info };
         match info {
             None => println!("up to date"),
             Some(info) => {
@@ -467,11 +525,11 @@ pub async fn update() -> Result<()> {
                 }
                 println!("installing {}…", info.label());
                 let exe = crate::update::install(&client, &info, |done, total| {
-                        if total > 0 && done == total {
-                            println!("downloaded {} bytes", total);
-                        }
-                    })
-                    .await?;
+                    if total > 0 && done == total {
+                        println!("downloaded {} bytes", total);
+                    }
+                })
+                .await?;
                 println!("updated {} — restart Slipstream to use it", exe.display());
             }
         }
@@ -496,7 +554,12 @@ pub async fn relay_connect(phone: std::net::IpAddr, port: u16, dns: std::net::Ip
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 let s = stats.snapshot();
-                println!("{} connections · {:.1} MB up · {:.1} MB down", s.flows, s.up as f64 / 1e6, s.down as f64 / 1e6);
+                println!(
+                    "{} connections · {:.1} MB up · {:.1} MB down",
+                    s.flows,
+                    s.up as f64 / 1e6,
+                    s.down as f64 / 1e6
+                );
             }
         });
         let opts = slipstream_relay::tunnel::TunnelOptions { dns, ..Default::default() };
@@ -519,7 +582,13 @@ pub async fn relay_connect(phone: std::net::IpAddr, port: u16, dns: std::net::Ip
 /// Relay page, started as administrator. Reports to the app over a local
 /// connection and stops (restoring routes and DNS) when the app closes it,
 /// or quits.
-pub async fn relay_helper(phone: std::net::IpAddr, port: u16, dns: std::net::IpAddr, control: std::net::SocketAddr, token: String) -> Result<()> {
+pub async fn relay_helper(
+    phone: std::net::IpAddr,
+    port: u16,
+    dns: std::net::IpAddr,
+    control: std::net::SocketAddr,
+    token: String,
+) -> Result<()> {
     use slipstream_relay::HelperStatus;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let socket = tokio::net::TcpStream::connect(control).await.context("reaching the app")?;
@@ -567,7 +636,8 @@ pub async fn relay_helper(phone: std::net::IpAddr, port: u16, dns: std::net::IpA
             let _ = (phone, port, dns, from_app);
             anyhow::bail!("Subspace Relay connects from Windows, macOS and Linux computers")
         }
-    }.await;
+    }
+    .await;
     let _ = tx.send(match &outcome {
         Ok(reason) => HelperStatus::Down(reason.clone()),
         Err(e) => HelperStatus::Failed(format!("{e:#}")),
@@ -579,7 +649,8 @@ pub async fn relay_helper(phone: std::net::IpAddr, port: u16, dns: std::net::IpA
 
 /// `slipstream relay serve`: a relay on this computer (testing).
 pub async fn relay_serve(ip: std::net::IpAddr, port: u16) -> Result<()> {
-    let server = slipstream_relay::Server::start(slipstream_relay::ServerOptions { ip, port, ..Default::default() }).await?;
+    let server =
+        slipstream_relay::Server::start(slipstream_relay::ServerOptions { ip, port, ..Default::default() }).await?;
     println!("Subspace Relay listening on {} ({}); Ctrl+C to stop.", server.addr(), server.id());
     let stats = server.stats();
     loop {

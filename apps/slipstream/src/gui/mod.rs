@@ -4,48 +4,48 @@
 mod android;
 mod approval;
 mod autostart;
-mod files;
-mod file_previews;
+mod chats;
 #[cfg(target_os = "linux")]
 mod desktop;
+mod file_previews;
+mod files;
+#[cfg(any(windows, test))]
+mod graphics;
 mod home;
-mod network;
 mod keys;
-#[cfg(target_os = "macos")]
-mod macos_links;
 #[cfg(windows)]
 mod lite;
+#[cfg(target_os = "macos")]
+mod macos_links;
+mod manage;
 mod meetings;
+mod network;
 mod remote;
-mod session_windows;
+mod saved;
+#[cfg(windows)]
+mod scheme;
 mod session_tabs;
+mod session_windows;
+#[cfg(windows)]
+mod softgl;
 mod support_report;
 #[cfg(any(windows, test))]
 mod support_status;
-mod saved;
-mod chats;
-mod manage;
-#[cfg(windows)]
-mod scheme;
-#[cfg(windows)]
-mod softgl;
-#[cfg(any(windows, test))]
-mod graphics;
 #[cfg(windows)]
 pub use graphics::{ENV_PROBE as GRAPHICS_PROBE, probe as probe_graphics, start_failed as graphics_start_failed};
-mod settings;
-#[cfg(target_os = "linux")]
-mod screen_access;
-mod quick_connect;
-mod relay;
-mod single;
-pub mod theme;
-mod window_shape;
 #[cfg(target_os = "linux")]
 mod desktop_drop;
+mod quick_connect;
+mod relay;
+#[cfg(target_os = "linux")]
+mod screen_access;
+mod settings;
+mod single;
+pub mod theme;
 mod touch;
 mod tray;
 mod video;
+mod window_shape;
 
 use std::{
     sync::{Arc, Mutex, mpsc},
@@ -89,11 +89,11 @@ pub struct GuiOptions {
     pub android_app: Option<android_activity::AndroidApp>,
 }
 
+#[cfg(target_os = "android")]
+pub use android::{editor_action, set_insets};
 /// Android: a `slipstream://` link the activity was opened with.
 #[cfg(target_os = "android")]
 pub use single::inbox::deliver as open_link;
-#[cfg(target_os = "android")]
-pub use android::{editor_action, set_insets};
 
 pub fn run(opts: GuiOptions) -> Result<()> {
     let store = Store::open_default()?;
@@ -149,10 +149,21 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     // Android registers a persistent host identity too; capture still
     // requires an explicit MediaProjection grant on the phone.
     let accept_sessions = !via_service;
-    let (client, events) = rt.block_on(Client::start(store, ClientOptions { test_pattern: opts.test_pattern, accept_sessions, public_station: (!opts.test_pattern).then(slipstream_core::config::ServerSettings::public_station), ..Default::default() }))?;
+    let (client, events) = rt.block_on(Client::start(
+        store,
+        ClientOptions {
+            test_pattern: opts.test_pattern,
+            accept_sessions,
+            public_station: (!opts.test_pattern).then(slipstream_core::config::ServerSettings::public_station),
+            ..Default::default()
+        },
+    ))?;
     #[cfg(windows)]
-    let sync_service = via_service && !opts.test_pattern && opts.screenshot.is_none()
-        && !crate::service::update_in_progress() && crate::service::needs_app_update().unwrap_or(false);
+    let sync_service = via_service
+        && !opts.test_pattern
+        && opts.screenshot.is_none()
+        && !crate::service::update_in_progress()
+        && crate::service::needs_app_update().unwrap_or(false);
 
     // Whatever the graphics drivers do (missing, too old, crashing), a
     // window comes up: see `graphics`. If nothing can draw the full one,
@@ -160,18 +171,26 @@ pub fn run(opts: GuiOptions) -> Result<()> {
     #[cfg(windows)]
     {
         use graphics::Renderer;
-        let renderer = if std::env::var_os("SLIPSTREAM_LITE").is_some() { Renderer::Compact } else { graphics::pick(&rt) };
+        let renderer =
+            if std::env::var_os("SLIPSTREAM_LITE").is_some() { Renderer::Compact } else { graphics::pick(&rt) };
         match renderer {
             Renderer::Full => {}
             Renderer::Compact => {
                 tracing::warn!("no usable graphics: using the compact window");
-                graphics::report(if std::env::var_os("SLIPSTREAM_LITE").is_some() { "Compact window (asked for)" } else { "Compact window (no graphics driver could draw the full one)" });
+                graphics::report(if std::env::var_os("SLIPSTREAM_LITE").is_some() {
+                    "Compact window (asked for)"
+                } else {
+                    "Compact window (no graphics driver could draw the full one)"
+                });
                 return lite::run(rt, client, events, instance, opts.screenshot, via_service, sync_service);
             }
             Renderer::Relaunch(exe) => {
                 // The copy waits for this one to let go of the instance port.
                 tracing::info!(exe = %exe.display(), "relaunching beside the software renderer");
-                std::process::Command::new(&exe).args(std::env::args_os().skip(1)).env("SLIPSTREAM_RESTARTED", "1").spawn()?;
+                std::process::Command::new(&exe)
+                    .args(std::env::args_os().skip(1))
+                    .env("SLIPSTREAM_RESTARTED", "1")
+                    .spawn()?;
                 drop(instance);
                 rt.block_on(client.shutdown());
                 return Ok(());
@@ -269,9 +288,13 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             app.screenshot = opts.screenshot;
             app.via_service = via_service;
             #[cfg(windows)]
-            if sync_service { app.check_service_update(&cc.egui_ctx); }
+            if sync_service {
+                app.check_service_update(&cc.egui_ctx);
+            }
             #[cfg(windows)]
-            if via_service { app.service_chat = Some(crate::service_chat::Gui::start(&app.rt,cc.egui_ctx.clone())); }
+            if via_service {
+                app.service_chat = Some(crate::service_chat::Gui::start(&app.rt, cc.egui_ctx.clone()));
+            }
             let wake = cc.egui_ctx.clone();
             #[cfg(not(target_os = "android"))]
             let requests = instance.listen(move || wake.request_repaint());
@@ -287,7 +310,10 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             // browser says this download came from.
             let link = opts.link.as_deref().and_then(StationLink::parse).map(|l| (l, true)).or_else(|| {
                 app.client.settings().server.url.is_none().then(|| {
-                    slipstream_core::provision::download_origins().iter().find_map(|u| StationLink::parse(u)).map(|l| (l, false))
+                    slipstream_core::provision::download_origins()
+                        .iter()
+                        .find_map(|u| StationLink::parse(u))
+                        .map(|l| (l, false))
                 })?
             });
             if let Some((link, asked)) = link {
@@ -295,10 +321,7 @@ pub fn run(opts: GuiOptions) -> Result<()> {
             }
             app.start_hidden = opts.minimized && app.tray.is_some();
             app.open_files = opts.open_files;
-            if let Some(link) = opts
-                .link
-                .filter(|link| link.starts_with("slipstream://meeting"))
-            {
+            if let Some(link) = opts.link.filter(|link| link.starts_with("slipstream://meeting")) {
                 app.meetings.join_text = link;
                 app.page = Page::Meetings;
             }
@@ -379,7 +402,14 @@ pub struct UpdateState {
 
 impl UpdateState {
     fn new(info: slipstream_session::update::UpdateInfo) -> Self {
-        Self { info, progress: Arc::new(Mutex::new((0, 0))), installing: false, service_only: false, error: None, rx: None }
+        Self {
+            info,
+            progress: Arc::new(Mutex::new((0, 0))),
+            installing: false,
+            service_only: false,
+            error: None,
+            rx: None,
+        }
     }
 }
 
@@ -528,7 +558,10 @@ impl App {
         let screen_access = {
             let mut access = screen_access::ScreenAccess::default();
             // Not when the Linux service hosts: it needs no approval.
-            if std::env::var_os("WAYLAND_DISPLAY").is_some() && client.settings().host.enabled && !crate::service::installed() {
+            if std::env::var_os("WAYLAND_DISPLAY").is_some()
+                && client.settings().host.enabled
+                && !crate::service::installed()
+            {
                 access.start(&rt, &client, &ctx, false);
             }
             access
@@ -542,7 +575,11 @@ impl App {
             public_status: client.public_dir_status(),
             selected_public: !client.has_custom_station() && client.public_dir_status() != DirStatus::NotConfigured,
             station_draft: Default::default(),
-            primary_station: client.settings().server.url.filter(|url| !slipstream_core::config::is_public_station(url)),
+            primary_station: client
+                .settings()
+                .server
+                .url
+                .filter(|url| !slipstream_core::config::is_public_station(url)),
             service_public_status: None,
             service_station: None,
             rt,
@@ -608,7 +645,9 @@ impl App {
 
     fn set_visible(&mut self, ctx: &egui::Context, visible: bool) {
         self.hidden = !visible;
-        if !visible {self.session_tabs.lock().unwrap().hide_target();}
+        if !visible {
+            self.session_tabs.lock().unwrap().hide_target();
+        }
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(visible));
     }
 
@@ -629,7 +668,9 @@ impl App {
     pub fn regenerate_password(&mut self) {
         #[cfg(windows)]
         if self.via_service {
-            if let Some(bridge) = &self.service_chat { bridge.sender().regenerate_password(); }
+            if let Some(bridge) = &self.service_chat {
+                bridge.sender().regenerate_password();
+            }
             return;
         }
         self.password = self.client.regenerate_password();
@@ -637,16 +678,16 @@ impl App {
 
     fn handle_events(&mut self) {
         #[cfg(windows)]
-        if let Some(bridge)=&mut self.service_chat {
+        if let Some(bridge) = &mut self.service_chat {
             use crate::service_chat::Event;
-            while let Ok(event)=bridge.events.try_recv() {
+            while let Ok(event) = bridge.events.try_recv() {
                 match event {
                     Event::Password(password) => self.service_password = password,
                     Event::Directories { primary, public, station } => {
                         self.service_station = station;
                         self.dir_status = primary.unwrap_or(DirStatus::Connecting);
                         self.service_public_status = public;
-                    },
+                    }
                     Event::MeetingCall(call) => self.meetings.incoming = call,
                     Event::LinkApproval(request) => self.link_approval.pending = request,
                     Event::Started { session, peer } => {
@@ -660,9 +701,15 @@ impl App {
                             });
                         }
                     }
-                    Event::Viewing { session } => if let Some(note) = host_session_viewing(&mut self.incoming, session) {
-                        self.toasts.push(Toast { text: note, color: pal::RED, until: Instant::now() + Duration::from_secs(5) });
-                    },
+                    Event::Viewing { session } => {
+                        if let Some(note) = host_session_viewing(&mut self.incoming, session) {
+                            self.toasts.push(Toast {
+                                text: note,
+                                color: pal::RED,
+                                until: Instant::now() + Duration::from_secs(5),
+                            });
+                        }
+                    }
                     Event::Status { session, text } => {
                         if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
                             let mut chat = s.chat.lock().unwrap();
@@ -671,11 +718,7 @@ impl App {
                         }
                     }
                     Event::Ended { session } => self.incoming.retain(|s| s.id != session),
-                    Event::Message {
-                        session,
-                        ours,
-                        text,
-                    } => {
+                    Event::Message { session, ours, text } => {
                         if let Some(session) = self.incoming.iter_mut().find(|s| s.id == session) {
                             let mut chat = session.chat.lock().expect("chat lock");
                             chat.log.push((ours, text));
@@ -691,11 +734,17 @@ impl App {
 
         while let Ok(ev) = self.events.try_recv() {
             match ev {
-                ClientEvent::Directory(s) => if self.client.has_custom_station() || self.client.public_dir_status() == DirStatus::NotConfigured { self.dir_status = s; },
+                ClientEvent::Directory(s) => {
+                    if self.client.has_custom_station() || self.client.public_dir_status() == DirStatus::NotConfigured {
+                        self.dir_status = s;
+                    }
+                }
                 ClientEvent::PublicDirectory(s) => {
                     self.public_status = s.clone();
-                    if !self.client.has_custom_station() { self.dir_status = s; }
-                },
+                    if !self.client.has_custom_station() {
+                        self.dir_status = s;
+                    }
+                }
                 ClientEvent::Password(p) => self.password = p,
                 ClientEvent::Motd(m) => self.motd = Some(m),
                 ClientEvent::Org(o) => self.org = o,
@@ -709,9 +758,11 @@ impl App {
                         chat_only: true,
                     });
                 }
-                ClientEvent::HostSessionViewing { session } => if let Some(note) = host_session_viewing(&mut self.incoming, session) {
-                    self.toast(note, pal::RED);
-                },
+                ClientEvent::HostSessionViewing { session } => {
+                    if let Some(note) = host_session_viewing(&mut self.incoming, session) {
+                        self.toast(note, pal::RED);
+                    }
+                }
                 ClientEvent::HostSessionEnded { session, reason } => {
                     if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
                         let peer = s.peer.clone();
@@ -727,9 +778,13 @@ impl App {
                         chat.ping = true;
                     }
                 }
-                ClientEvent::HostStatus { session, text } => if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
-                    let mut chat = s.chat.lock().unwrap();chat.status_open = !text.is_empty();chat.status = text;
-                },
+                ClientEvent::HostStatus { session, text } => {
+                    if let Some(s) = self.incoming.iter().find(|s| s.id == session) {
+                        let mut chat = s.chat.lock().unwrap();
+                        chat.status_open = !text.is_empty();
+                        chat.status = text;
+                    }
+                }
                 ClientEvent::FileReceived { path, .. } => {
                     self.toast(format!("Received {}", path.display()), pal::GREEN);
                 }
@@ -756,7 +811,11 @@ impl App {
     pub fn service_station_matches(&self) -> bool {
         self.service_station.as_deref().is_none_or(|actual| {
             let norm = slipstream_core::directory::normalize_server_url;
-            self.client.station_settings().url.as_deref().is_some_and(|expected| norm(expected).ok() == norm(actual).ok())
+            self.client
+                .station_settings()
+                .url
+                .as_deref()
+                .is_some_and(|expected| norm(expected).ok() == norm(actual).ok())
         })
     }
 
@@ -767,17 +826,27 @@ impl App {
         if self.via_service {
             let public = self.selected_public || !self.client.has_custom_station();
             return match crate::service::hosted_id(public) {
-                _ if !crate::service::is_running() => DirStatus::Error("The Slipstream service isn't running: see Config → Linux service".into()),
+                _ if !crate::service::is_running() => {
+                    DirStatus::Error("The Slipstream service isn't running: see Config → Linux service".into())
+                }
                 Some(id) => DirStatus::Online { id },
                 None => DirStatus::Connecting,
             };
         }
         if self.selected_public {
-            if self.via_service { self.service_public_status.clone().unwrap_or(DirStatus::Connecting) }
-            else { self.public_status.clone() }
+            if self.via_service {
+                self.service_public_status.clone().unwrap_or(DirStatus::Connecting)
+            } else {
+                self.public_status.clone()
+            }
         } else if self.via_service && !self.service_station_matches() {
-            DirStatus::Error("Apply the saved station settings to the Windows service: Config → Windows service → Apply settings".into())
-        } else { self.dir_status.clone() }
+            DirStatus::Error(
+                "Apply the saved station settings to the Windows service: Config → Windows service → Apply settings"
+                    .into(),
+            )
+        } else {
+            self.dir_status.clone()
+        }
     }
 
     pub fn start_connect(&mut self, ctx: &egui::Context) {
@@ -793,22 +862,42 @@ impl App {
             return;
         }
         let password = self.connect_pw.clone();
-        let station = if self.selected_public { slipstream_session::StationRef::Public } else { slipstream_session::StationRef::Primary };
+        let station = if self.selected_public {
+            slipstream_session::StationRef::Public
+        } else {
+            slipstream_session::StationRef::Primary
+        };
         self.start_connect_at(ctx, id, password, station);
     }
 
     /// Connects to `id`, found on this app's station (`via: None`) or a
     /// signed-in one.
-    pub fn start_connect_to(&mut self, ctx: &egui::Context, id: DeviceId, password: String, via: Option<slipstream_session::AccountRef>) {
+    pub fn start_connect_to(
+        &mut self,
+        ctx: &egui::Context,
+        id: DeviceId,
+        password: String,
+        via: Option<slipstream_session::AccountRef>,
+    ) {
         self.start_connect_at(ctx, id, password, via.map(slipstream_session::StationRef::Account).unwrap_or_default());
     }
 
-    pub fn start_connect_at(&mut self, ctx: &egui::Context, id: DeviceId, password: String, via: slipstream_session::StationRef) {
-        let via = if via == slipstream_session::StationRef::Primary && !self.client.has_custom_station()
-            && self.client.public_dir_status() != DirStatus::NotConfigured {
+    pub fn start_connect_at(
+        &mut self,
+        ctx: &egui::Context,
+        id: DeviceId,
+        password: String,
+        via: slipstream_session::StationRef,
+    ) {
+        let via = if via == slipstream_session::StationRef::Primary
+            && !self.client.has_custom_station()
+            && self.client.public_dir_status() != DirStatus::NotConfigured
+        {
             slipstream_session::StationRef::Public
-        } else { via };
-        let destination=self.connect_destination.take();
+        } else {
+            via
+        };
+        let destination = self.connect_destination.take();
         if self.attempt.is_some() {
             return;
         }
@@ -824,8 +913,7 @@ impl App {
                 *p.lock().unwrap() = msg;
                 w2.request_repaint();
             };
-            let result = client.connect_on(&station, id, &pw, progress).await
-            .map_err(|e| format!("{e:#}"));
+            let result = client.connect_on(&station, id, &pw, progress).await.map_err(|e| format!("{e:#}"));
             let _ = tx.send(result);
             wake.request_repaint();
         });
@@ -842,7 +930,15 @@ impl App {
         let attempt = self.attempt.take().expect("checked");
         match result {
             Ok((session, events)) => {
-                self.open_link_tab(ctx, session, events, attempt.password, attempt.via, attempt.destination, Vec::new());
+                self.open_link_tab(
+                    ctx,
+                    session,
+                    events,
+                    attempt.password,
+                    attempt.via,
+                    attempt.destination,
+                    Vec::new(),
+                );
                 self.connect_pw.clear();
             }
             Err(e) => {
@@ -855,7 +951,14 @@ impl App {
                 {
                     let name = saved::device_name(self, account, attempt.id);
                     if !saved::prompt_open(self) {
-                        saved::ask_password(self, account, attempt.id, &name, saved::Purpose::Connect, Some(saved::REFUSED.into()));
+                        saved::ask_password(
+                            self,
+                            account,
+                            attempt.id,
+                            &name,
+                            saved::Purpose::Connect,
+                            Some(saved::REFUSED.into()),
+                        );
                         saved::set_prompt_destination(self, attempt.destination);
                     }
                 }
@@ -866,8 +969,16 @@ impl App {
     /// Shows a newly established link as a session tab (or window), with
     /// any chat it had before it was a session.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn open_link_tab(&mut self, ctx: &egui::Context, session: ViewerSession, events: tmpsc::UnboundedReceiver<ViewerEvent>,
-        password: String, via: slipstream_session::StationRef, destination: Option<egui::ViewportId>, chat: Vec<(bool, String)>) {
+    pub(super) fn open_link_tab(
+        &mut self,
+        ctx: &egui::Context,
+        session: ViewerSession,
+        events: tmpsc::UnboundedReceiver<ViewerEvent>,
+        password: String,
+        via: slipstream_session::StationRef,
+        destination: Option<egui::ViewportId>,
+        chat: Vec<(bool, String)>,
+    ) {
         let play_audio = self.client.settings().viewer.play_audio;
         // Phones start with the trackpad: fingers are too broad to click a
         // shrunken desktop where they land.
@@ -890,16 +1001,18 @@ impl App {
         }
         let id = ids.iter().find(|(_, d)| Some(*d) == main).or(ids.first()).map(|(id, _)| *id).unwrap_or_default();
         self.page = Page::Remote(id);
-        let destination = destination.or_else(|| (self.client.settings().viewer.separate_windows && !ctx.embed_viewports()).then(|| {
-            let viewport = egui::ViewportId::from_hash_of(("session-group", self.next_window));
-            self.next_window += 1;
-            viewport
-        }));
-        if let Some(destination)=destination {
+        let destination = destination.or_else(|| {
+            (self.client.settings().viewer.separate_windows && !ctx.embed_viewports()).then(|| {
+                let viewport = egui::ViewportId::from_hash_of(("session-group", self.next_window));
+                self.next_window += 1;
+                viewport
+            })
+        });
+        if let Some(destination) = destination {
             for (other, _) in ids.iter().filter(|(other, _)| *other != id) {
-                self.move_session_tab(ctx,*other,destination,None);
+                self.move_session_tab(ctx, *other, destination, None);
             }
-            self.move_session_tab(ctx,id,destination,None);
+            self.move_session_tab(ctx, id, destination, None);
         }
         self.settings_form.refresh_recent(&self.client.settings());
     }
@@ -907,7 +1020,10 @@ impl App {
     /// Downloads and installs the pending update in the background.
     pub fn start_update(&mut self, ctx: &egui::Context) {
         #[cfg(windows)]
-        if self.service_busy() { self.toast("Wait for the Windows service operation to finish before updating", pal::GOLD);return; }
+        if self.service_busy() {
+            self.toast("Wait for the Windows service operation to finish before updating", pal::GOLD);
+            return;
+        }
         let Some(u) = &mut self.update else { return };
         if u.installing {
             return;
@@ -934,7 +1050,10 @@ impl App {
             };
             // Android installs it itself: nothing to relaunch (`None`).
             #[cfg(target_os = "android")]
-            let r = crate::update::install_android(&client, &info, report).await.map(|()| None).map_err(|e| format!("{e:#}"));
+            let r = crate::update::install_android(&client, &info, report)
+                .await
+                .map(|()| None)
+                .map_err(|e| format!("{e:#}"));
             #[cfg(not(target_os = "android"))]
             let r = crate::update::install(&client, &info, report).await.map(Some).map_err(|e| format!("{e:#}"));
             let _ = tx.send(r);
@@ -997,7 +1116,8 @@ impl App {
     #[cfg(windows)]
     pub fn service_action(&mut self, ctx: &egui::Context, install: bool, start_first: bool) {
         if self.update.as_ref().is_some_and(|update| update.installing) {
-            self.toast("Wait for the app update to finish before changing the service", pal::GOLD);return;
+            self.toast("Wait for the app update to finish before changing the service", pal::GOLD);
+            return;
         }
         if install && self.client.settings().host.permanent_password_secret.is_none() {
             self.toast("Set and save an unattended password first: the service has no one-time passwords", pal::RED);
@@ -1008,7 +1128,9 @@ impl App {
         let _ = std::fs::remove_file(&report);
         let args = if install {
             match Store::open_default() {
-                Ok(store) => format!("service install --from \"{}\" --report \"{}\"", store.dir().display(), report.display()),
+                Ok(store) => {
+                    format!("service install --from \"{}\" --report \"{}\"", store.dir().display(), report.display())
+                }
                 Err(e) => return self.toast(format!("{e:#}"), pal::RED),
             }
         } else {
@@ -1070,7 +1192,10 @@ impl App {
             return;
         }
         if install && self.client.settings().host.permanent_password_secret.is_none() {
-            self.toast("Set and save an unattended password first: it is what lets you in at the login screen", pal::RED);
+            self.toast(
+                "Set and save an unattended password first: it is what lets you in at the login screen",
+                pal::RED,
+            );
             return;
         }
         let store = match Store::open_default() {
@@ -1153,13 +1278,17 @@ impl App {
         match result {
             Ok(cfg) => {
                 if slipstream_core::config::is_public_station(&cfg.server) && self.client.has_custom_station() {
-                    if asked { self.select_public(true); self.toast("Slipstream Public is available on its tab", pal::GREEN); }
+                    if asked {
+                        self.select_public(true);
+                        self.toast("Slipstream Public is available on its tab", pal::GREEN);
+                    }
                     return;
                 }
                 // A link from a web page or another program never moves this
                 // computer to another organisation's station unasked.
                 if external
-                    && let Some(current) = self.client.with_settings(|s| slipstream_core::provision::switch_needs_confirmation(s, &cfg))
+                    && let Some(current) =
+                        self.client.with_settings(|s| slipstream_core::provision::switch_needs_confirmation(s, &cfg))
                 {
                     self.station_switch = Some((current, cfg));
                     return;
@@ -1218,13 +1347,20 @@ impl App {
             self.update_check = None;
             let sync_service = std::mem::take(&mut self.service_update_check);
             match r {
-                Ok(Some(info)) if sync_service && info.version_key() < slipstream_session::update::UpdateInfo::current_version_key() => {
+                Ok(Some(info))
+                    if sync_service
+                        && info.version_key() < slipstream_session::update::UpdateInfo::current_version_key() =>
+                {
                     self.toast("The station has an older package than this app; service catch-up needs matching signed release information", pal::RED);
                 }
                 Ok(Some(info)) => {
-                    let catch_up = sync_service && info.version_key() == slipstream_session::update::UpdateInfo::current_version_key();
+                    let catch_up = sync_service
+                        && info.version_key() == slipstream_session::update::UpdateInfo::current_version_key();
                     if catch_up {
-                        self.toast("Updating the Windows service from this app — Windows may request administrator approval", pal::GREEN);
+                        self.toast(
+                            "Updating the Windows service from this app — Windows may request administrator approval",
+                            pal::GREEN,
+                        );
                     } else {
                         self.toast(format!("Slipstream {} is available", info.label()), pal::GREEN);
                     }
@@ -1234,7 +1370,10 @@ impl App {
                         self.start_update(ctx);
                     }
                 }
-                Ok(None) if sync_service => self.toast("The Windows service needs an update, but the station has no signed package available", pal::RED),
+                Ok(None) if sync_service => self.toast(
+                    "The Windows service needs an update, but the station has no signed package available",
+                    pal::RED,
+                ),
                 Ok(None) => self.toast("Slipstream is up to date", pal::GREEN),
                 Err(e) => self.toast(format!("Update check failed: {e}"), pal::RED),
             }
@@ -1295,16 +1434,22 @@ impl App {
 
     /// The ids of a link's screen tabs, in strip order.
     pub(super) fn link_tabs(&self, link: &Arc<Mutex<remote::Link>>) -> Vec<u64> {
-        self.tabs.iter().filter_map(|t| {
-            let t = t.lock().unwrap();
-            t.same_link(link).then_some(t.id)
-        }).collect()
+        self.tabs
+            .iter()
+            .filter_map(|t| {
+                let t = t.lock().unwrap();
+                t.same_link(link).then_some(t.id)
+            })
+            .collect()
     }
 
     /// A screen's tab closes; the link carries on with any others.
     fn close_screen(&mut self, id: u64) {
         let Some(tab) = self.tab(id) else { return };
-        let (link, display) = { let t = tab.lock().unwrap(); (t.link.clone(), t.display()) };
+        let (link, display) = {
+            let t = tab.lock().unwrap();
+            (t.link.clone(), t.display())
+        };
         if self.link_tabs(&link).len() > 1 {
             link.lock().unwrap().hide_display(display);
             self.drop_tab(id);
@@ -1319,10 +1464,15 @@ impl App {
     fn sync_screen_tabs(&mut self, ctx: &egui::Context, links: &[Arc<Mutex<remote::Link>>]) {
         for link in links {
             let wanted = link.lock().unwrap().wanted_displays();
-            let present: Vec<(u64, u32, egui::ViewportId, usize)> = self.tabs.iter().enumerate().filter_map(|(i, t)| {
-                let t = t.lock().unwrap();
-                t.same_link(link).then(|| (t.id, t.display(), t.viewport_id(), i))
-            }).collect();
+            let present: Vec<(u64, u32, egui::ViewportId, usize)> = self
+                .tabs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, t)| {
+                    let t = t.lock().unwrap();
+                    t.same_link(link).then(|| (t.id, t.display(), t.viewport_id(), i))
+                })
+                .collect();
             for (id, display, ..) in &present {
                 if !wanted.contains(display) {
                     self.drop_tab(*id);
@@ -1357,14 +1507,16 @@ impl App {
         self.session_tabs.lock().unwrap().cancel(id);
         self.tabs.retain(|t| t.lock().unwrap().id != id);
         let alive: Vec<u64> = self.tabs.iter().map(|t| t.lock().unwrap().id).collect();
-        video::retain_streams(&self.render_state, |s| {
-            s >= meetings::STREAM_BASE || alive.contains(&s)
-        });
+        video::retain_streams(&self.render_state, |s| s >= meetings::STREAM_BASE || alive.contains(&s));
         if self.page == Page::Remote(id) {
-            self.page = self.tabs.iter().find_map(|tab| {
-                let tab = tab.lock().unwrap();
-                (!tab.detached).then_some(Page::Remote(tab.id))
-            }).unwrap_or(if self.tabs.is_empty() {Page::Home} else {Page::Links});
+            self.page = self
+                .tabs
+                .iter()
+                .find_map(|tab| {
+                    let tab = tab.lock().unwrap();
+                    (!tab.detached).then_some(Page::Remote(tab.id))
+                })
+                .unwrap_or(if self.tabs.is_empty() { Page::Home } else { Page::Links });
         }
     }
 
@@ -1373,116 +1525,181 @@ impl App {
     }
 
     pub fn open_session_window(&mut self, ctx: &egui::Context, id: u64) {
-        let existing=self.tab(id).and_then(|tab|{let tab=tab.lock().unwrap();tab.detached.then(||tab.viewport_id())});
-        if let Some(viewport)=existing {
-            self.session_action(ctx,id,remote::TabAction::Activate);
-            ctx.send_viewport_cmd_to(viewport,egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd_to(viewport,egui::ViewportCommand::Focus);return;
+        let existing = self.tab(id).and_then(|tab| {
+            let tab = tab.lock().unwrap();
+            tab.detached.then(|| tab.viewport_id())
+        });
+        if let Some(viewport) = existing {
+            self.session_action(ctx, id, remote::TabAction::Activate);
+            ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
+            return;
         }
-        self.detach_session_window(ctx,id);
+        self.detach_session_window(ctx, id);
     }
 
-    fn detach_session_window(&mut self,ctx:&egui::Context,id:u64) {
-        if ctx.embed_viewports() {self.page=Page::Remote(id);return;}
-        let viewport=egui::ViewportId::from_hash_of(("session-group",self.next_window));
-        self.next_window+=1;
-        self.move_session_tab(ctx,id,viewport,None);
+    fn detach_session_window(&mut self, ctx: &egui::Context, id: u64) {
+        if ctx.embed_viewports() {
+            self.page = Page::Remote(id);
+            return;
+        }
+        let viewport = egui::ViewportId::from_hash_of(("session-group", self.next_window));
+        self.next_window += 1;
+        self.move_session_tab(ctx, id, viewport, None);
     }
 
-    fn close_empty_session_window(&self,ctx:&egui::Context,viewport:egui::ViewportId) {
-        if viewport!=egui::ViewportId::ROOT && !self.tabs.iter().any(|t|t.lock().unwrap().viewport_id()==viewport) {
-            ctx.send_viewport_cmd_to(viewport,egui::ViewportCommand::Close);
+    fn close_empty_session_window(&self, ctx: &egui::Context, viewport: egui::ViewportId) {
+        if viewport != egui::ViewportId::ROOT && !self.tabs.iter().any(|t| t.lock().unwrap().viewport_id() == viewport)
+        {
+            ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Close);
         }
     }
 
-    fn move_session_tab(&mut self,ctx:&egui::Context,id:u64,destination:egui::ViewportId,before:Option<u64>) {
-        let Some(tab)=self.tab(id) else {return;};
-        let old=tab.lock().unwrap().viewport_id();
+    fn move_session_tab(&mut self, ctx: &egui::Context, id: u64, destination: egui::ViewportId, before: Option<u64>) {
+        let Some(tab) = self.tab(id) else {
+            return;
+        };
+        let old = tab.lock().unwrap().viewport_id();
         for other in &self.tabs {
-            let mut other=other.lock().unwrap();other.release_keyboard();
-            if other.viewport_id()==destination {other.window_active=false;}
+            let mut other = other.lock().unwrap();
+            other.release_keyboard();
+            if other.viewport_id() == destination {
+                other.window_active = false;
+            }
         }
         {
-            let mut tab=tab.lock().unwrap();tab.leave_fullscreen(ctx);
-            tab.detached=destination!=egui::ViewportId::ROOT;
-            tab.window_group=tab.detached.then_some(destination);tab.window_active=true;tab.window_position=None;tab.update_window_repaint(ctx);
+            let mut tab = tab.lock().unwrap();
+            tab.leave_fullscreen(ctx);
+            tab.detached = destination != egui::ViewportId::ROOT;
+            tab.window_group = tab.detached.then_some(destination);
+            tab.window_active = true;
+            tab.window_position = None;
+            tab.update_window_repaint(ctx);
         }
-        if let Some(index)=self.tabs.iter().position(|t|Arc::ptr_eq(t,&tab)) {
-            let tab=self.tabs.remove(index);
-            let index=before.and_then(|other|self.tabs.iter().position(|t|t.lock().unwrap().id==other)).unwrap_or(self.tabs.len());
-            self.tabs.insert(index,tab);
+        if let Some(index) = self.tabs.iter().position(|t| Arc::ptr_eq(t, &tab)) {
+            let tab = self.tabs.remove(index);
+            let index = before
+                .and_then(|other| self.tabs.iter().position(|t| t.lock().unwrap().id == other))
+                .unwrap_or(self.tabs.len());
+            self.tabs.insert(index, tab);
         }
-        if destination==egui::ViewportId::ROOT {self.page=Page::Remote(id);self.set_visible(ctx,true);}
-        else if self.page==Page::Remote(id) {
+        if destination == egui::ViewportId::ROOT {
+            self.page = Page::Remote(id);
+            self.set_visible(ctx, true);
+        } else if self.page == Page::Remote(id) {
             // Another screen of the same computer left in the console takes its place.
-            let link=tab.lock().unwrap().link.clone();
-            self.page=self.tabs.iter().find_map(|t| {let t=t.lock().unwrap();(t.same_link(&link)&&!t.detached).then_some(Page::Remote(t.id))}).unwrap_or(Page::Links);
+            let link = tab.lock().unwrap().link.clone();
+            self.page = self
+                .tabs
+                .iter()
+                .find_map(|t| {
+                    let t = t.lock().unwrap();
+                    (t.same_link(&link) && !t.detached).then_some(Page::Remote(t.id))
+                })
+                .unwrap_or(Page::Links);
         }
-        self.close_empty_session_window(ctx,old);
-        ctx.send_viewport_cmd_to(destination,egui::ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd_to(destination,egui::ViewportCommand::Focus);
+        self.close_empty_session_window(ctx, old);
+        ctx.send_viewport_cmd_to(destination, egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd_to(destination, egui::ViewportCommand::Focus);
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
     fn session_action(&mut self, ctx: &egui::Context, id: u64, action: remote::TabAction) {
         match action {
-            remote::TabAction::None => {},
+            remote::TabAction::None => {}
             remote::TabAction::NewLink(destination) => {
-                self.quick_connect.destination=Some(destination);
-                for tab in &self.tabs {tab.lock().unwrap().release_keyboard();}
+                self.quick_connect.destination = Some(destination);
+                for tab in &self.tabs {
+                    tab.lock().unwrap().release_keyboard();
+                }
                 self.quick_connect.open = true;
                 self.quick_connect.focus = true;
-                self.quick_connect.via = if self.selected_public { slipstream_session::StationRef::Public } else { slipstream_session::StationRef::Primary };
+                self.quick_connect.via = if self.selected_public {
+                    slipstream_session::StationRef::Public
+                } else {
+                    slipstream_session::StationRef::Primary
+                };
                 self.set_visible(ctx, true);
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
-            },
+            }
             remote::TabAction::Bridge => {
-                for tab in &self.tabs {tab.lock().unwrap().release_keyboard();}
+                for tab in &self.tabs {
+                    tab.lock().unwrap().release_keyboard();
+                }
                 self.page = Page::Home;
                 self.set_visible(ctx, true);
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
-            },
+            }
             remote::TabAction::Meeting => {
-                for tab in &self.tabs {tab.lock().unwrap().release_keyboard();}
+                for tab in &self.tabs {
+                    tab.lock().unwrap().release_keyboard();
+                }
                 self.page = Page::Meetings;
                 self.set_visible(ctx, true);
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Minimized(false));
                 ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
-            },
+            }
             remote::TabAction::Close | remote::TabAction::CloseScreen => {
-                let old=self.tab(id).map(|t|t.lock().unwrap().viewport_id());
-                if matches!(action, remote::TabAction::Close) {self.close_tab(id);} else {self.close_screen(id);}
-                if let Some(old)=old {self.close_empty_session_window(ctx,old);}
-            },
-            remote::TabAction::Screen(display) => {
-                let Some(tab)=self.tab(id) else {return};
-                let link=tab.lock().unwrap().link.clone();
-                let other=self.tabs.iter().find_map(|t| {let t=t.lock().unwrap();(t.same_link(&link)&&t.display()==display).then(||(t.id,t.viewport_id()))});
-                if let Some((other,viewport))=other {
-                    self.session_action(ctx,other,remote::TabAction::Activate);
-                    if viewport!=egui::ViewportId::ROOT {ctx.send_viewport_cmd_to(viewport,egui::ViewportCommand::Focus);}
+                let old = self.tab(id).map(|t| t.lock().unwrap().viewport_id());
+                if matches!(action, remote::TabAction::Close) {
+                    self.close_tab(id);
+                } else {
+                    self.close_screen(id);
                 }
-            },
+                if let Some(old) = old {
+                    self.close_empty_session_window(ctx, old);
+                }
+            }
+            remote::TabAction::Screen(display) => {
+                let Some(tab) = self.tab(id) else { return };
+                let link = tab.lock().unwrap().link.clone();
+                let other = self.tabs.iter().find_map(|t| {
+                    let t = t.lock().unwrap();
+                    (t.same_link(&link) && t.display() == display).then(|| (t.id, t.viewport_id()))
+                });
+                if let Some((other, viewport)) = other {
+                    self.session_action(ctx, other, remote::TabAction::Activate);
+                    if viewport != egui::ViewportId::ROOT {
+                        ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
+                    }
+                }
+            }
             remote::TabAction::Detach => self.open_session_window(ctx, id),
             remote::TabAction::Activate => {
-                for tab in &self.tabs { tab.lock().unwrap().release_keyboard(); }
-                if let Some(tab) = self.tab(id) {
-                    let viewport=tab.lock().unwrap().viewport_id();
-                    if viewport!=egui::ViewportId::ROOT {
-                        for other in &self.tabs {let mut other=other.lock().unwrap();if other.viewport_id()==viewport {other.window_active=other.id==id;}}
-                        ctx.request_repaint_of(viewport);
-                    } else {self.page=Page::Remote(id);}
+                for tab in &self.tabs {
+                    tab.lock().unwrap().release_keyboard();
                 }
-            },
+                if let Some(tab) = self.tab(id) {
+                    let viewport = tab.lock().unwrap().viewport_id();
+                    if viewport != egui::ViewportId::ROOT {
+                        for other in &self.tabs {
+                            let mut other = other.lock().unwrap();
+                            if other.viewport_id() == viewport {
+                                other.window_active = other.id == id;
+                            }
+                        }
+                        ctx.request_repaint_of(viewport);
+                    } else {
+                        self.page = Page::Remote(id);
+                    }
+                }
+            }
             remote::TabAction::FloatAt(position) => {
                 self.detach_session_window(ctx, id);
-                if let Some(tab) = self.tab(id) {tab.lock().unwrap().window_position = Some(position);}
-                if let Some(tab)=self.tab(id) {ctx.send_viewport_cmd_to(tab.lock().unwrap().viewport_id(),egui::ViewportCommand::OuterPosition(position));}
-            },
-            remote::TabAction::PlaceTab(destination,before) => self.move_session_tab(ctx,id,destination,before),
-            remote::TabAction::Dock => self.move_session_tab(ctx,id,egui::ViewportId::ROOT,None),
+                if let Some(tab) = self.tab(id) {
+                    tab.lock().unwrap().window_position = Some(position);
+                }
+                if let Some(tab) = self.tab(id) {
+                    ctx.send_viewport_cmd_to(
+                        tab.lock().unwrap().viewport_id(),
+                        egui::ViewportCommand::OuterPosition(position),
+                    );
+                }
+            }
+            remote::TabAction::PlaceTab(destination, before) => self.move_session_tab(ctx, id, destination, before),
+            remote::TabAction::Dock => self.move_session_tab(ctx, id, egui::ViewportId::ROOT, None),
         }
     }
 
@@ -1496,7 +1713,7 @@ impl App {
         if full.width() < NARROW {
             return self.draw_frame_narrow(ui, full, t);
         }
-        if !cfg!(target_os="android") && (full.width() < 1000.0 || full.height() < 600.0) {
+        if !cfg!(target_os = "android") && (full.width() < 1000.0 || full.height() < 600.0) {
             return self.draw_frame_compact(ui, full);
         }
 
@@ -1617,27 +1834,45 @@ impl App {
     fn draw_frame_compact(&mut self, ui: &mut Ui, full: Rect) -> Rect {
         let frame = full.shrink(5.0);
         let p = ui.painter().clone();
-        let top = frame.with_max_y(frame.top()+31.0);
+        let top = frame.with_max_y(frame.top() + 31.0);
         p.rect_filled(top, 10.0, pal::PANEL);
-        p.rect_filled(top.with_max_x(top.left()+12.0), 6.0, pal::ORANGE);
-        p.text(top.left_center()+vec2(21.0,0.0), Align2::LEFT_CENTER, "SLIPSTREAM", theme::display_bold(17.0), pal::ORANGE);
-        let start = top.left()+128.0;
-        let width = (top.right()-start-3.0*4.0) / NAV.len() as f32;
-        for (i,(label,page,color)) in NAV.iter().enumerate() {
-            let rect = Rect::from_min_size(pos2(start+i as f32*(width+4.0),top.top()),vec2(width,31.0));
+        p.rect_filled(top.with_max_x(top.left() + 12.0), 6.0, pal::ORANGE);
+        p.text(
+            top.left_center() + vec2(21.0, 0.0),
+            Align2::LEFT_CENTER,
+            "SLIPSTREAM",
+            theme::display_bold(17.0),
+            pal::ORANGE,
+        );
+        let start = top.left() + 128.0;
+        let width = (top.right() - start - 3.0 * 4.0) / NAV.len() as f32;
+        for (i, (label, page, color)) in NAV.iter().enumerate() {
+            let rect = Rect::from_min_size(pos2(start + i as f32 * (width + 4.0), top.top()), vec2(width, 31.0));
             let active = self.page == *page || (*page == Page::Links && matches!(self.page, Page::Remote(_)));
-            let response = ui.interact(rect, ui.scope_id().with(("compact-nav",i)),egui::Sense::click());
-            p.rect_filled(rect, 8.0, if active || response.hovered() {*color} else {color.gamma_multiply(0.6)});
-            let label = if *page == Page::Links && !self.tabs.is_empty() {format!("{label} · {}",self.tabs.len())} else {label.to_string()};
-            p.text(rect.center(),Align2::CENTER_CENTER,label,theme::display(17.0),pal::BG);
-            if response.clicked() { self.navigate(*page); }
+            let response = ui.interact(rect, ui.scope_id().with(("compact-nav", i)), egui::Sense::click());
+            p.rect_filled(rect, 8.0, if active || response.hovered() { *color } else { color.gamma_multiply(0.6) });
+            let label = if *page == Page::Links && !self.tabs.is_empty() {
+                format!("{label} · {}", self.tabs.len())
+            } else {
+                label.to_string()
+            };
+            p.text(rect.center(), Align2::CENTER_CENTER, label, theme::display(17.0), pal::BG);
+            if response.clicked() {
+                self.navigate(*page);
+            }
         }
-        let footer = frame.with_min_y(frame.bottom()-21.0);
-        p.rect_filled(footer,6.0,pal::PANEL);
-        p.rect_filled(footer.with_max_x(footer.left()+45.0),6.0,pal::LAVENDER);
-        let (text,color) = self.status_line();
-        p.with_clip_rect(footer.shrink(4.0)).text(footer.right_center()-vec2(6.0,0.0),Align2::RIGHT_CENTER,text,theme::display(14.0),color);
-        Rect::from_min_max(pos2(frame.left()+3.0,top.bottom()+7.0),pos2(frame.right()-3.0,footer.top()-6.0))
+        let footer = frame.with_min_y(frame.bottom() - 21.0);
+        p.rect_filled(footer, 6.0, pal::PANEL);
+        p.rect_filled(footer.with_max_x(footer.left() + 45.0), 6.0, pal::LAVENDER);
+        let (text, color) = self.status_line();
+        p.with_clip_rect(footer.shrink(4.0)).text(
+            footer.right_center() - vec2(6.0, 0.0),
+            Align2::RIGHT_CENTER,
+            text,
+            theme::display(14.0),
+            color,
+        );
+        Rect::from_min_max(pos2(frame.left() + 3.0, top.bottom() + 7.0), pos2(frame.right() - 3.0, footer.top() - 6.0))
     }
 
     fn navigate(&mut self, page: Page) {
@@ -1656,7 +1891,9 @@ impl App {
         if page == Page::Links && !self.tabs.is_empty() {
             text = format!("{label} · {}", self.tabs.len());
         }
-        if theme::block_button_pointing(ui, rect, &text, &format!("{:02}-{}", i + 1, 40 + i * 13), color, active, up).clicked() {
+        if theme::block_button_pointing(ui, rect, &text, &format!("{:02}-{}", i + 1, 40 + i * 13), color, active, up)
+            .clicked()
+        {
             self.navigate(page);
         }
     }
@@ -1681,7 +1918,17 @@ impl App {
         painter.galley(title_pos, title, pal::ORANGE);
         let tex = self.logo_texture(ui.ctx());
         painter.image(tex, logo, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-        bar_segments(&painter, elbow.right() + gap, logo.left() - 8.0, top, bar_h, gap, &[(0.6, pal::PEACH), (0.4, pal::TAN)], t, true);
+        bar_segments(
+            &painter,
+            elbow.right() + gap,
+            logo.left() - 8.0,
+            top,
+            bar_h,
+            gap,
+            &[(0.6, pal::PEACH), (0.4, pal::TAN)],
+            t,
+            true,
+        );
         let band = Rect::from_min_max(pos2(l + arm_w + 10.0, top + bar_h + 8.0), pos2(r, elbow.bottom()));
         let mut sweep_right = band.right();
         if let Some(org) = &self.org {
@@ -1697,7 +1944,17 @@ impl App {
         let (status_text, status_color) = self.status_line();
         let status = painter.layout_no_wrap(status_text, theme::display(15.0), status_color);
         let status_x = r - status.size().x;
-        bar_segments(&painter, l, status_x - 10.0, b - bar_h, bar_h, gap, &[(0.3, pal::LAVENDER), (0.4, pal::BLUE), (0.3, pal::GOLD)], t, false);
+        bar_segments(
+            &painter,
+            l,
+            status_x - 10.0,
+            b - bar_h,
+            bar_h,
+            gap,
+            &[(0.3, pal::LAVENDER), (0.4, pal::BLUE), (0.3, pal::GOLD)],
+            t,
+            false,
+        );
         painter.galley(pos2(status_x, b - bar_h / 2.0 - status.size().y / 2.0), status, status_color);
         let pad_h = 52.0;
         let pad_y = b - bar_h - gap - pad_h;
@@ -1721,11 +1978,8 @@ impl App {
     }
 
     fn status_line(&self) -> (String, Color32) {
-        let incoming = if self.incoming.is_empty() {
-            String::new()
-        } else {
-            format!("  ·  {} INBOUND", self.incoming.len())
-        };
+        let incoming =
+            if self.incoming.is_empty() { String::new() } else { format!("  ·  {} INBOUND", self.incoming.len()) };
         match &self.selected_dir_status() {
             DirStatus::Online { id } => (format!("STATION ONLINE  ·  ID {id}{incoming}"), pal::GREEN),
             DirStatus::Connecting => ("CONTACTING RELAY NETWORK…".into(), pal::GOLD),
@@ -1749,7 +2003,11 @@ impl App {
             let rect = Rect::from_min_size(pos2(screen.right() - size.x - 24.0, y - size.y), size);
             theme::glow(&painter, rect, 8.0, toast.color, 1.0);
             painter.rect_filled(rect, 8.0, pal::PANEL);
-            painter.rect_filled(Rect::from_min_size(rect.min, vec2(10.0, rect.height())), egui::CornerRadius { nw: 8, sw: 8, ..Default::default() }, toast.color);
+            painter.rect_filled(
+                Rect::from_min_size(rect.min, vec2(10.0, rect.height())),
+                egui::CornerRadius { nw: 8, sw: 8, ..Default::default() },
+                toast.color,
+            );
             painter.galley(rect.min + vec2(26.0, 9.0), galley, pal::TEXT);
             y -= size.y + 10.0;
         }
@@ -1761,7 +2019,7 @@ impl App {
             return;
         }
         let (mut hide, mut quit) = (false, false);
-        let mut close=false;
+        let mut close = false;
         let result=theme::modal("tray-hint",pal::LAVENDER).show(ctx, |ui| {
             ui.set_width(theme::dialog_width(ctx,460.0));
             let chrome=theme::window_header(ui,"Keep running in the tray?",pal::LAVENDER);
@@ -1775,7 +2033,9 @@ impl App {
             });
             chrome.footer(ui);
         });
-        if close || result.should_close() {self.tray_hint=false;}
+        if close || result.should_close() {
+            self.tray_hint = false;
+        }
         if hide || quit {
             self.tray_hint = false;
             self.client.update_settings(|s| s.app.tray_hint_shown = true);
@@ -1795,10 +2055,10 @@ impl App {
         let id = a.id;
         let t = self.time();
         let mut cancel = false;
-        let result=theme::modal("connecting",pal::BLUE).show(ctx, |ui| {
-            ui.set_width(theme::dialog_width(ctx,420.0));
-            let chrome=theme::window_header(ui,"Establishing link",pal::BLUE);
-            cancel=chrome.close;
+        let result = theme::modal("connecting", pal::BLUE).show(ctx, |ui| {
+            ui.set_width(theme::dialog_width(ctx, 420.0));
+            let chrome = theme::window_header(ui, "Establishing link", pal::BLUE);
+            cancel = chrome.close;
             ui.label(egui::RichText::new(format!("PARTNER {id}")).font(theme::mono(15.0)).color(pal::BLUE));
             ui.add_space(12.0);
             ui.horizontal(|ui| {
@@ -1807,11 +2067,15 @@ impl App {
                 ui.add(egui::Label::new(egui::RichText::new(progress).font(theme::body(18.0))).wrap());
             });
             ui.add_space(12.0);
-            ui.allocate_ui_with_layout(vec2(ui.available_width(), 36.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::pill(ui, "Abort", pal::RED).clicked() {
-                    cancel = true;
-                }
-            });
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), 36.0),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    if theme::pill(ui, "Abort", pal::RED).clicked() {
+                        cancel = true;
+                    }
+                },
+            );
             chrome.footer(ui);
         });
         if cancel || result.should_close() {
@@ -1928,13 +2192,20 @@ fn bar_segments(
         let w = width * frac;
         let rect = Rect::from_min_size(pos2(x, top), vec2(w, h));
         let last = i == segs.len() - 1;
-        let cr = if last { egui::CornerRadius { ne: (h / 2.0) as u8, se: (h / 2.0) as u8, ..Default::default() } } else { egui::CornerRadius::ZERO };
+        let cr = if last {
+            egui::CornerRadius { ne: (h / 2.0) as u8, se: (h / 2.0) as u8, ..Default::default() }
+        } else {
+            egui::CornerRadius::ZERO
+        };
         painter.rect_filled(rect, cr, *color);
         if let Some(packet) = packet {
             // Clip a copy of the actual segment, including its rounded cap.
             // Painting the packet itself leaks square corners past the cap.
-            painter.with_clip_rect(packet.intersect(painter.clip_rect()))
-                .rect_filled(rect, cr, Color32::WHITE.gamma_multiply(0.25));
+            painter.with_clip_rect(packet.intersect(painter.clip_rect())).rect_filled(
+                rect,
+                cr,
+                Color32::WHITE.gamma_multiply(0.25),
+            );
         }
         x += w + gap;
     }
@@ -1964,12 +2235,19 @@ type ServiceJob = (bool, &'static str, oneshot::Receiver<Result<(), String>>);
 
 /// Resolve focus to one session; tool repaints never steal its input.
 fn route_session_input(
-    tabs: &[Arc<Mutex<remote::RemoteTab>>], page: Page, viewport: egui::ViewportId, focused: bool,
+    tabs: &[Arc<Mutex<remote::RemoteTab>>],
+    page: Page,
+    viewport: egui::ViewportId,
+    focused: bool,
 ) -> Option<Arc<Mutex<remote::RemoteTab>>> {
-    let target = tabs.iter().find(|tab| {
-        let tab = tab.lock().unwrap();
-        tab.viewport_id() == viewport && ((tab.detached && tab.window_active) || (!tab.detached && page == Page::Remote(tab.id)))
-    }).cloned();
+    let target = tabs
+        .iter()
+        .find(|tab| {
+            let tab = tab.lock().unwrap();
+            tab.viewport_id() == viewport
+                && ((tab.detached && tab.window_active) || (!tab.detached && page == Page::Remote(tab.id)))
+        })
+        .cloned();
     // The keyboard belongs to the link: its other screens' tabs keep it.
     let target_link = target.as_ref().map(|t| t.lock().unwrap().link.clone());
     for tab in tabs {
@@ -1984,39 +2262,61 @@ fn route_session_input(
 }
 
 impl eframe::App for App {
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32;4] { [0.0;4] }
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         #[cfg(target_os = "linux")]
         self.screen_access.poll();
-        while let Ok((id, action)) = self.session_actions.1.try_recv() { self.session_action(ctx, id, action); }
-        let mut restored=Vec::new();
+        while let Ok((id, action)) = self.session_actions.1.try_recv() {
+            self.session_action(ctx, id, action);
+        }
+        let mut restored = Vec::new();
         // Each link once, however many of its screens have tabs.
         let mut links: Vec<Arc<Mutex<remote::Link>>> = Vec::new();
         for shared in &self.tabs {
             let link = shared.lock().unwrap().link.clone();
-            if !links.iter().any(|l| Arc::ptr_eq(l, &link)) { links.push(link); }
+            if !links.iter().any(|l| Arc::ptr_eq(l, &link)) {
+                links.push(link);
+            }
         }
         for link in &links {
             let mut link_state = link.lock().unwrap();
             link_state.poll(ctx);
-            if link_state.maintain_connection(ctx,&self.rt,&self.client) {restored.push(link.clone());}
+            if link_state.maintain_connection(ctx, &self.rt, &self.client) {
+                restored.push(link.clone());
+            }
             // Drops and the receipt's Files action also work with the parent minimized.
-            if ctx.viewport_id()==egui::ViewportId::ROOT && !ctx.embed_viewports() {
-                files::FileManager::show(&link_state.files,ctx,&self.rt,link_state.id);
+            if ctx.viewport_id() == egui::ViewportId::ROOT && !ctx.embed_viewports() {
+                files::FileManager::show(&link_state.files, ctx, &self.rt, link_state.id);
                 link_state.network_window(ctx, &self.rt);
             }
         }
         self.sync_screen_tabs(ctx, &links);
         let restored: Vec<u64> = restored.iter().flat_map(|link| self.link_tabs(link)).collect();
-        if self.hidden || ctx.input(|i| i.raw.viewports.get(&egui::ViewportId::ROOT).is_some_and(|v| v.minimized == Some(true))) {
+        if self.hidden
+            || ctx.input(|i| i.raw.viewports.get(&egui::ViewportId::ROOT).is_some_and(|v| v.minimized == Some(true)))
+        {
             self.session_tabs.lock().unwrap().hide_target();
         }
-        let live:Vec<_>=std::iter::once(egui::ViewportId::ROOT).chain(self.tabs.iter().map(|t|t.lock().unwrap().viewport_id())).collect();
+        let live: Vec<_> = std::iter::once(egui::ViewportId::ROOT)
+            .chain(self.tabs.iter().map(|t| t.lock().unwrap().viewport_id()))
+            .collect();
         self.session_tabs.lock().unwrap().retain_targets(&live);
-        session_windows::show(&self.tabs, ctx, &self.rt, &self.session_actions.0, &self.session_tabs, self.t0.elapsed().as_secs_f64(), &window_title(self.org.as_deref()));
+        session_windows::show(
+            &self.tabs,
+            ctx,
+            &self.rt,
+            &self.session_actions.0,
+            &self.session_tabs,
+            self.t0.elapsed().as_secs_f64(),
+            &window_title(self.org.as_deref()),
+        );
         // Frame serials restart on a new session; discard cached old textures.
-        if !restored.is_empty() {video::retain_streams(&self.render_state,|id|!restored.contains(&id));}
+        if !restored.is_empty() {
+            video::retain_streams(&self.render_state, |id| !restored.contains(&id));
+        }
         if self.software.is_none()
             && let Some(rs) = frame.wgpu_render_state()
         {
@@ -2057,7 +2357,8 @@ impl eframe::App for App {
             macos_links::install();
         }
         #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-        let mut requests: Vec<single::Request> = self.show_requests.as_ref().map(|rx| rx.try_iter().collect()).unwrap_or_default();
+        let mut requests: Vec<single::Request> =
+            self.show_requests.as_ref().map(|rx| rx.try_iter().collect()).unwrap_or_default();
         #[cfg(target_os = "macos")]
         if let Some(rx) = &self.link_inbox {
             requests.extend(rx.try_iter());
@@ -2119,10 +2420,15 @@ impl eframe::App for App {
         self.session_tabs.lock().unwrap().update_input(_ctx, raw);
         let root_input = raw.viewport_id == egui::ViewportId::ROOT;
         let focused_now = raw.focused;
-        if root_input { self.window_focused = focused_now; }
+        if root_input {
+            self.window_focused = focused_now;
+        }
         let target = route_session_input(&self.tabs, self.page, raw.viewport_id, focused_now);
         let dragging = self.session_tabs.lock().unwrap().dragging();
-        let captured = !self.quick_connect.open && !dragging && focused_now && target.as_ref().is_some_and(|tab| tab.lock().unwrap().keyboard_captured());
+        let captured = !self.quick_connect.open
+            && !dragging
+            && focused_now
+            && target.as_ref().is_some_and(|tab| tab.lock().unwrap().keyboard_captured());
         // A phone's soft keyboard types text, not keys.
         let wants_text = captured && target.as_ref().is_some_and(|tab| tab.lock().unwrap().wants_text());
         if !captured {
@@ -2184,14 +2490,17 @@ impl eframe::App for App {
             }
         }
         raw.events = keep;
-        if let Some(target) = target { target.lock().unwrap().pending_keys.extend(pending_keys); }
+        if let Some(target) = target {
+            target.lock().unwrap().pending_keys.extend(pending_keys);
+        }
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         #[cfg(windows)]
         graphics::frame();
         let ctx = ui.ctx().clone();
-        let workstation = if let Page::Remote(id) = self.page { self.tab(id).map(|t| t.lock().unwrap().host_name()) } else { None };
+        let workstation =
+            if let Page::Remote(id) = self.page { self.tab(id).map(|t| t.lock().unwrap().host_name()) } else { None };
         let body = theme::native_session_title_bar(ui, &window_title(self.org.as_deref()), workstation.as_deref());
         let ui = &mut ui.new_child(UiBuilder::new().max_rect(body));
         // Clear of the status and navigation bars, the camera cutout and
@@ -2208,26 +2517,35 @@ impl eframe::App for App {
             let mut links: Vec<Arc<Mutex<remote::Link>>> = Vec::new();
             for shared in &self.tabs {
                 let link = shared.lock().unwrap().link.clone();
-                if links.iter().any(|l| Arc::ptr_eq(l, &link)) { continue; }
+                if links.iter().any(|l| Arc::ptr_eq(l, &link)) {
+                    continue;
+                }
                 let link_state = link.lock().unwrap();
                 link_state.network_window(&ctx, &self.rt);
-                files::FileManager::show(&link_state.files,&ctx,&self.rt,link_state.id);
+                files::FileManager::show(&link_state.files, &ctx, &self.rt, link_state.id);
                 drop(link_state);
                 links.push(link);
             }
         }
 
-        let entries: Vec<_> = self.tabs.iter().filter_map(|tab| {
-            let tab = tab.lock().unwrap();
-            (!tab.detached).then(|| tab.strip_entry())
-        }).collect();
+        let entries: Vec<_> = self
+            .tabs
+            .iter()
+            .filter_map(|tab| {
+                let tab = tab.lock().unwrap();
+                (!tab.detached).then(|| tab.strip_entry())
+            })
+            .collect();
         let mut content_ui = {
-            let active = if let Page::Remote(id) = self.page {Some(id)} else {None};
+            let active = if let Page::Remote(id) = self.page { Some(id) } else { None };
             let visible = !self.hidden && ctx.input(|i| i.viewport().minimized != Some(true));
             let meeting = self.meetings.room_title();
             let meeting = meeting.as_deref().map(|title| (title, self.page == Page::Meetings));
-            let (body, actions) = session_tabs::show(&self.session_tabs, ui, ui.max_rect(), &entries, active, true, visible, meeting);
-            for (id, action) in actions { self.session_action(&ctx, id, action); }
+            let (body, actions) =
+                session_tabs::show(&self.session_tabs, ui, ui.max_rect(), &entries, active, true, visible, meeting);
+            for (id, action) in actions {
+                self.session_action(&ctx, id, action);
+            }
             ui.new_child(UiBuilder::new().max_rect(body))
         };
         let ui = &mut content_ui;
@@ -2246,7 +2564,9 @@ impl eframe::App for App {
             // Full screen belongs to a session; the other pages get the window back.
             for tab in &self.tabs {
                 let mut tab = tab.lock().unwrap();
-                if !tab.detached { tab.leave_fullscreen(&ctx); }
+                if !tab.detached {
+                    tab.leave_fullscreen(&ctx);
+                }
             }
             if ctx.input(|i| i.viewport().fullscreen == Some(true)) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
@@ -2256,16 +2576,14 @@ impl eframe::App for App {
                 let mut room = ui.new_child(UiBuilder::new().max_rect(ui.max_rect().shrink(6.0)));
                 meetings::ui(self, &mut room);
             } else {
-            let mut content = self.draw_frame(ui);
-            if self.page == Page::Settings {
-                let bar = content.with_min_y(content.bottom() - settings::ACTIONS_HEIGHT);
-                settings::actions_ui(self, &mut ui.new_child(UiBuilder::new().max_rect(bar)));
-                content.set_bottom(bar.top());
-            }
-            let mut child = ui.new_child(UiBuilder::new().max_rect(content));
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(&mut child, |ui| {
+                let mut content = self.draw_frame(ui);
+                if self.page == Page::Settings {
+                    let bar = content.with_min_y(content.bottom() - settings::ACTIONS_HEIGHT);
+                    settings::actions_ui(self, &mut ui.new_child(UiBuilder::new().max_rect(bar)));
+                    content.set_bottom(bar.top());
+                }
+                let mut child = ui.new_child(UiBuilder::new().max_rect(content));
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {
                     #[cfg(target_os = "android")]
                     android::keep_focus_in_view(ui);
                     match self.page {
@@ -2289,7 +2607,11 @@ impl eframe::App for App {
         if self.hidden || ctx.input(|i| i.viewport().minimized == Some(true)) {
             ctx.request_repaint_after(Duration::from_secs(1));
         } else if self.software == Some(true) {
-            ctx.request_repaint_after(if self.window_focused { self.frame_interval() } else { Duration::from_millis(500) });
+            ctx.request_repaint_after(if self.window_focused {
+                self.frame_interval()
+            } else {
+                Duration::from_millis(500)
+            });
         } else if self.window_focused {
             ctx.request_repaint();
         } else {

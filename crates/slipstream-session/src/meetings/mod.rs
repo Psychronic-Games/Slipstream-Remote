@@ -35,12 +35,18 @@ pub struct AudioPacket {
 pub enum Command {
     Chat(String),
     /// Toggle our reaction to a chat message.
-    React { chat: u64, reaction: u8 },
+    React {
+        chat: u64,
+        reaction: u8,
+    },
     Admit(u64),
     Reject(u64),
     Remove(u64),
     Lock(bool),
-    Media { microphone: bool, source: Source },
+    Media {
+        microphone: bool,
+        source: Source,
+    },
     Subscribe(Vec<u64>),
     Keyframe(u64),
     CallInvitation(oneshot::Sender<Invitation>),
@@ -82,18 +88,11 @@ pub struct Meeting {
     commands: mpsc::Sender<Command>,
 }
 impl Meeting {
-    pub async fn host(
-        server: &ServerSettings,
-        name: &str,
-        title: &str,
-        capacity: usize,
-    ) -> Result<Self> {
+    pub async fn host(server: &ServerSettings, name: &str, title: &str, capacity: usize) -> Result<Self> {
         let name = clean_name(name)?;
         let title = title.trim();
         ensure!(
-            !title.is_empty()
-                && title.chars().count() <= 80
-                && !title.chars().any(char::is_control),
+            !title.is_empty() && title.chars().count() <= 80 && !title.chars().any(char::is_control),
             "Enter a meeting title of 1–80 characters"
         );
         let mut meeting_settings = server.clone();
@@ -118,10 +117,7 @@ impl Meeting {
         } else {
             // Local/test meetings have no private station credentials.
             for relay in &meeting_settings.relays {
-                ensure!(
-                    relay.query().is_none(),
-                    "A private meeting needs a station relay lease"
-                );
+                ensure!(relay.query().is_none(), "A private meeting needs a station relay lease");
             }
         }
         meeting_settings.key = None;
@@ -140,12 +136,7 @@ impl Meeting {
             local: 1,
             host: true,
             capacity: capacity.clamp(2, MAX_CAPACITY),
-            participants: vec![Participant {
-                id: 1,
-                name,
-                microphone: false,
-                source: Source::None,
-            }],
+            participants: vec![Participant { id: 1, name, microphone: false, source: Source::None }],
             ..Default::default()
         };
         let (meeting, channels) = channels(invitation.clone(), state);
@@ -164,19 +155,11 @@ impl Meeting {
         let (mut send, recv) = conn.open_bi().await?;
         wire::write(
             &mut send,
-            &ClientMessage::Join {
-                version: VERSION,
-                token: invitation.token.clone(),
-                name,
-            },
+            &ClientMessage::Join { version: VERSION, token: invitation.token.clone(), name },
             MAX_CONTROL,
         )
         .await?;
-        let state = State {
-            title: invitation.title.clone(),
-            waiting: true,
-            ..Default::default()
-        };
+        let state = State { title: invitation.title.clone(), waiting: true, ..Default::default() };
         let (meeting, channels) = channels(invitation.clone(), state);
         tokio::spawn(guest(endpoint, conn, send, recv, channels));
         Ok(meeting)
@@ -205,10 +188,7 @@ impl Drop for Meeting {
     }
 }
 
-fn guest_routes(
-    invitation: &Invitation,
-    server: &ServerSettings,
-) -> Result<(ServerSettings, iroh::EndpointAddr)> {
+fn guest_routes(invitation: &Invitation, server: &ServerSettings) -> Result<(ServerSettings, iroh::EndpointAddr)> {
     let mut settings = server.clone();
     let mut address = invitation.address.clone();
     settings.use_public_relays &= invitation.public_relays;
@@ -220,13 +200,10 @@ fn guest_routes(
                 // An explicitly invited Slipstream Public meeting uses that
                 // station's own relay, regardless of private backup preferences.
                 !legacy
-            },
+            }
             _ => true,
         });
-        ensure!(
-            !address.addrs.is_empty(),
-            "This meeting requires a public relay that your station has disabled"
-        );
+        ensure!(!address.addrs.is_empty(), "This meeting requires a public relay that your station has disabled");
     }
     // Only invitation guest leases belong on this endpoint. The guest's
     // station key and configured station routes must never be substituted.
@@ -237,8 +214,7 @@ fn guest_routes(
 }
 
 async fn bind(server: &ServerSettings) -> Result<Endpoint> {
-    let endpoint =
-        slipstream_core::net::bind_client(iroh::SecretKey::generate(), server, false).await?;
+    let endpoint = slipstream_core::net::bind_client(iroh::SecretKey::generate(), server, false).await?;
     endpoint.set_alpns(vec![ALPN.to_vec()]);
     // A newly bound endpoint can have no home relay in addr() yet. Wait
     // using the configured map so invitations include the chosen route.
@@ -271,22 +247,10 @@ fn channels(invitation: Invitation, state: State) -> (Meeting, Channels) {
             events: er,
             video: vr,
             audio: ar,
-            publisher: Publisher {
-                video: vi,
-                audio: ai,
-                tap: Arc::default(),
-            },
+            publisher: Publisher { video: vi, audio: ai, tap: Arc::default() },
             commands: ct,
         },
-        Channels {
-            state: st,
-            events: et,
-            video: vt,
-            audio: at,
-            commands: cr,
-            video_in: vir,
-            audio_in: air,
-        },
+        Channels { state: st, events: et, video: vt, audio: at, commands: cr, video_in: vir, audio_in: air },
     )
 }
 struct Tasks(Vec<tokio::task::JoinHandle<()>>);
@@ -311,13 +275,7 @@ struct Peer {
     _tasks: Tasks,
 }
 enum Incoming {
-    Join {
-        conn: Connection,
-        send: SendStream,
-        recv: RecvStream,
-        token: String,
-        name: String,
-    },
+    Join { conn: Connection, send: SendStream, recv: RecvStream, token: String, name: String },
     Message(u64, ClientMessage),
     Video(u64, Arc<Video>),
     Audio(u64, Bytes),
@@ -343,18 +301,9 @@ impl Room {
         state.host = local == 1;
         state.waiting = local != 1 && self.peers.get(&local).is_none_or(|p| !p.admitted);
         state.participants.truncate(1);
-        state.participants.extend(
-            self.peers
-                .values()
-                .filter(|p| p.admitted)
-                .map(|p| p.member.clone()),
-        );
+        state.participants.extend(self.peers.values().filter(|p| p.admitted).map(|p| p.member.clone()));
         state.lobby = if state.host {
-            self.peers
-                .values()
-                .filter(|p| !p.admitted)
-                .map(|p| p.member.clone())
-                .collect()
+            self.peers.values().filter(|p| !p.admitted).map(|p| p.member.clone()).collect()
         } else {
             Vec::new()
         };
@@ -368,11 +317,7 @@ impl Room {
             self.channels.state.send_replace(self.snapshot(1));
             let mut slow = Vec::new();
             for (&id, peer) in &self.peers {
-                if peer
-                    .control
-                    .try_send(ServerMessage::State(self.snapshot(id)))
-                    .is_err()
-                {
+                if peer.control.try_send(ServerMessage::State(self.snapshot(id))).is_err() {
                     slow.push(id);
                 }
             }
@@ -382,10 +327,7 @@ impl Room {
             // Publish again after removal. Otherwise a closed writer can
             // leave its final lobby/member row in the organizer's snapshot.
             for id in slow {
-                self.remove(
-                    id,
-                    "Connection is too slow to keep up with meeting controls",
-                );
+                self.remove(id, "Connection is too slow to keep up with meeting controls");
             }
         }
     }
@@ -407,11 +349,7 @@ impl Room {
         id == 1 || self.peers.get(&id).is_some_and(|p| p.admitted)
     }
     fn keyframe(&mut self, id: u64) {
-        if self
-            .keyframes
-            .get(&id)
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
-        {
+        if self.keyframes.get(&id).is_some_and(|at| at.elapsed() < Duration::from_secs(1)) {
             return;
         }
         self.keyframes.insert(id, std::time::Instant::now());
@@ -429,9 +367,7 @@ impl Room {
             ClientMessage::Chat(text) => {
                 if text.trim().is_empty()
                     || text.len() > 4000
-                    || text
-                        .chars()
-                        .any(|c| c.is_control() && c != '\n' && c != '\t')
+                    || text.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
                 {
                     return;
                 }
@@ -441,12 +377,7 @@ impl Room {
                     self.peers[&id].member.name.clone()
                 };
                 self.next_chat += 1;
-                let chat = Chat {
-                    id: self.next_chat,
-                    sender: id,
-                    name,
-                    text,
-                };
+                let chat = Chat { id: self.next_chat, sender: id, name, text };
                 self.reactions.push_back((chat.id, BTreeMap::new()));
                 while self.reactions.len() > 128 {
                     self.reactions.pop_front();
@@ -518,11 +449,7 @@ impl Room {
                 self.remove(id, "Left the meeting");
                 self.update();
             }
-            ClientMessage::FrameAck {
-                participant,
-                generation,
-                seq,
-            } => {
+            ClientMessage::FrameAck { participant, generation, seq } => {
                 if let Some(peer) = self.peers.get_mut(&id)
                     && let Some(pending) = peer.pending.get_mut(&participant)
                     && let Some(at) = pending.iter().position(|value| *value == (generation, seq))
@@ -547,11 +474,7 @@ impl Room {
         }
         let sequence = u16::from_le_bytes([packet[0], packet[1]]);
         if id != 1 {
-            let _ = self.channels.audio.try_send(AudioPacket {
-                participant: id,
-                sequence,
-                data: packet.slice(2..),
-            });
+            let _ = self.channels.audio.try_send(AudioPacket { participant: id, sequence, data: packet.slice(2..) });
         }
         let mut data = Vec::with_capacity(packet.len() + 9);
         data.push(AUDIO_TAG);
@@ -568,11 +491,8 @@ impl Room {
         if !self.admitted(id) || video.validate().is_err() {
             return;
         }
-        let source = if id == 1 {
-            self.channels.state.borrow().participants[0].source
-        } else {
-            self.peers[&id].member.source
-        };
+        let source =
+            if id == 1 { self.channels.state.borrow().participants[0].source } else { self.peers[&id].member.source };
         if source == Source::None {
             return;
         }
@@ -606,11 +526,7 @@ impl Room {
                 request = true;
                 continue;
             }
-            if peer
-                .pending
-                .get(&id)
-                .is_some_and(|pending| pending.len() >= 2)
-            {
+            if peer.pending.get(&id).is_some_and(|pending| pending.len() >= 2) {
                 peer.needs_keyframe.insert(id);
                 request = true;
                 continue;
@@ -621,10 +537,7 @@ impl Room {
             } else {
                 peer.needs_keyframe.remove(&id);
                 peer.last.insert(id, (video.generation, video.seq));
-                peer.pending
-                    .entry(id)
-                    .or_default()
-                    .push_back((video.generation, video.seq));
+                peer.pending.entry(id).or_default().push_back((video.generation, video.seq));
             }
         }
         if request {
@@ -749,9 +662,7 @@ async fn host(endpoint: Endpoint, invitation: Invitation, channels: Channels) {
             }
         }
     };
-    room.channels
-        .state
-        .send_modify(|s| s.ended = Some(reason.into()));
+    room.channels.state.send_modify(|s| s.ended = Some(reason.into()));
     for peer in room.peers.values() {
         let _ = peer.control.try_send(ServerMessage::Ended(reason.into()));
     }
@@ -886,11 +797,7 @@ async fn guest(
             if data.len() >= 12 && data.len() <= 1500 && data[0] == AUDIO_TAG {
                 let participant = u64::from_le_bytes(data[1..9].try_into().unwrap());
                 let sequence = u16::from_le_bytes([data[9], data[10]]);
-                let _ = audio_out.try_send(AudioPacket {
-                    participant,
-                    sequence,
-                    data: data.slice(11..),
-                });
+                let _ = audio_out.try_send(AudioPacket { participant, sequence, data: data.slice(11..) });
             }
         }
     }));
@@ -960,10 +867,7 @@ fn closed_reason(conn: &Connection) -> String {
     if let Some(iroh::endpoint::ConnectionError::ApplicationClosed(reason)) = conn.close_reason()
         && !reason.reason.is_empty()
     {
-        return String::from_utf8_lossy(&reason.reason)
-            .chars()
-            .take(256)
-            .collect();
+        return String::from_utf8_lossy(&reason.reason).chars().take(256).collect();
     }
     "Connection to the meeting host was lost".into()
 }

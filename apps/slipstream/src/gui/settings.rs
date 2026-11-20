@@ -85,12 +85,16 @@ pub(super) fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
             ui.set_width(label_width);
             ui.label(RichText::new(label.to_uppercase()).font(theme::display(16.0)).color(pal::LAVENDER));
         });
-        let width=ui.available_width();
-        ui.allocate_ui_with_layout(vec2(width,28.0),egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),|ui| {
-            ui.set_width(width);
-            ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);
-            add(ui);
-        });
+        let width = ui.available_width();
+        ui.allocate_ui_with_layout(
+            vec2(width, 28.0),
+            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+            |ui| {
+                ui.set_width(width);
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                add(ui);
+            },
+        );
     });
 }
 
@@ -100,8 +104,7 @@ fn text_field(ui: &mut Ui, value: &mut String, hint: &str, password: bool) -> eg
 }
 
 fn text_field_sized(ui: &mut Ui, value: &mut String, hint: &str, password: bool, width: f32) -> egui::Response {
-    ui.add(theme::text_input(value).hint_text(hint).password(password)
-        .desired_width(width.min(ui.available_width())))
+    ui.add(theme::text_input(value).hint_text(hint).password(password).desired_width(width.min(ui.available_width())))
 }
 
 pub fn ui(app: &mut App, ui: &mut Ui) {
@@ -114,9 +117,9 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
     #[cfg(any(windows, target_os = "linux"))]
     let mut service_clicked: Option<(bool, bool)> = None;
     let network_help = match &app.org {
-        Some(org) => format!(
-            "Set up by {org}'s station when you downloaded this app. Change these only if {org} asks you to."
-        ),
+        Some(org) => {
+            format!("Set up by {org}'s station when you downloaded this app. Change these only if {org} asks you to.")
+        }
         None => "Leave the server address empty to use Slipstream Public automatically. Enter your support \
                  provider's address to add a self-hosted station; it becomes the default tab."
             .to_string(),
@@ -128,10 +131,14 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         row(ui, "Device name", |ui| {
             text_field(ui, &mut f.device_name, "My Computer", false);
         });
-        #[cfg(not(target_os="android"))]
+        #[cfg(not(target_os = "android"))]
         row(ui, "Unique device detection", |ui| {
-            let ready=slipstream_core::config::unique_device_detection_available();
-            ui.label(RichText::new(if ready {"Automatic"}else{"Using saved identity"}).small().color(if ready {pal::GREEN}else{pal::GOLD}));
+            let ready = slipstream_core::config::unique_device_detection_available();
+            ui.label(RichText::new(if ready { "Automatic" } else { "Using saved identity" }).small().color(if ready {
+                pal::GREEN
+            } else {
+                pal::GOLD
+            }));
         });
     });
     ui.add_space(14.0);
@@ -149,10 +156,17 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 // Leave room for the button.
                 let width = (ui.available_width() - 130.0).min(520.0);
-                let r = text_field_sized(ui, &mut app.link_code, "from the station's download page (fills in the key)", false, width);
+                let r = text_field_sized(
+                    ui,
+                    &mut app.link_code,
+                    "from the station's download page (fills in the key)",
+                    false,
+                    width,
+                );
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let label = if linking { "Connecting…" } else { "Connect" };
-                link_now = ui.add_enabled(!linking, |ui: &mut egui::Ui| theme::pill(ui, label, pal::BLUE)).clicked() || enter;
+                link_now =
+                    ui.add_enabled(!linking, |ui: &mut egui::Ui| theme::pill(ui, label, pal::BLUE)).clicked() || enter;
             });
         });
         row(ui, "Public backup relay", |ui| {
@@ -166,7 +180,8 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             row(ui, "Accept connections", |ui| {
                 ui.checkbox(&mut f.accept, "Allow others to connect to this device");
             });
-            row(ui, "Permissions", |ui| { ui.horizontal_wrapped(|ui| {
+            row(ui, "Permissions", |ui| {
+                ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut f.allow_input, "Control");
                 #[cfg(not(target_os="android"))]
                 {
@@ -179,7 +194,8 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 ui.checkbox(&mut f.allow_tunnels, "Port forwarding").on_hover_text(
                     "Let the person connecting reach services on this computer and its network through the link (e.g. Remote Desktop). Off unless you need it.",
                 );
-            }); });
+            });
+            });
             row(ui, "Ask before links", |ui| {
                 ui.checkbox(&mut f.confirm_links, "Ask me to allow one-time-password links").on_hover_text(
                     "Someone at this computer has to press Allow before a link that used the one-time password starts. \
@@ -190,7 +206,12 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 ui.add(egui::Slider::new(&mut f.password_len, 4..=12));
             });
             row(ui, "Unattended password", |ui| {
-                text_field(ui, &mut f.new_permanent, if f.has_permanent { "•••••••• (set — type to replace)" } else { "not set" }, true);
+                text_field(
+                    ui,
+                    &mut f.new_permanent,
+                    if f.has_permanent { "•••••••• (set — type to replace)" } else { "not set" },
+                    true,
+                );
                 if f.has_permanent && theme::pill(ui, "Remove", pal::RED).clicked() {
                     f.has_permanent = false;
                     f.new_permanent.clear();
@@ -201,48 +222,58 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                     .small()
                     .color(pal::DIM),
             );
-            #[cfg(not(target_os="android"))]
+            #[cfg(not(target_os = "android"))]
             row(ui, "Start with system", |ui| {
                 if ui.checkbox(&mut f.autostart, "Launch hidden in the tray when you log in").changed() && f.autostart {
                     f.run_in_tray = true; // autostart only makes sense if it keeps running
                 }
             });
-            #[cfg(not(target_os="android"))]
+            #[cfg(not(target_os = "android"))]
             row(ui, "Close button", |ui| {
                 ui.checkbox(&mut f.run_in_tray, "Keep running in the tray when the window is closed (stay reachable)");
             });
             #[cfg(target_os = "linux")]
-            row(ui, "Screen permission", |ui| { ui.vertical(|ui| {
-                if via_service {
-                    ui.label(RichText::new("Not needed: the Linux service shares the screen").color(pal::GREEN));
-                } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                    let busy = app.screen_access.busy();
-                    if busy && theme::pill(ui, "Cancel request", pal::PEACH).clicked() {
-                        app.screen_access.cancel();
-                    }
-                    ui.add_enabled_ui(!busy && f.accept && app.incoming.is_empty(), |ui| { ui.horizontal_wrapped(|ui| {
-                        if theme::pill(ui, "Approve now", pal::GREEN).clicked() {
-                            approve_screen = Some(false);
+            row(ui, "Screen permission", |ui| {
+                ui.vertical(|ui| {
+                    if via_service {
+                        ui.label(RichText::new("Not needed: the Linux service shares the screen").color(pal::GREEN));
+                    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                        let busy = app.screen_access.busy();
+                        if busy && theme::pill(ui, "Cancel request", pal::PEACH).clicked() {
+                            app.screen_access.cancel();
                         }
-                        if theme::pill(ui, "Reset / approve again", pal::VIOLET).clicked() {
-                            approve_screen = Some(true);
-                        }
-                    }); });
-                    let (text, color) = if busy {
-                        ("Waiting for your desktop's screen-sharing approval…", pal::GOLD)
+                        ui.add_enabled_ui(!busy && f.accept && app.incoming.is_empty(), |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                if theme::pill(ui, "Approve now", pal::GREEN).clicked() {
+                                    approve_screen = Some(false);
+                                }
+                                if theme::pill(ui, "Reset / approve again", pal::VIOLET).clicked() {
+                                    approve_screen = Some(true);
+                                }
+                            });
+                        });
+                        let (text, color) = if busy {
+                            ("Waiting for your desktop's screen-sharing approval…", pal::GOLD)
+                        } else {
+                            match &app.screen_access.result {
+                                Some(Ok(true)) => ("Ready · permission saved for future starts", pal::GREEN),
+                                Some(Ok(false)) => {
+                                    ("Ready while running · this desktop did not save permission", pal::GREEN)
+                                }
+                                Some(Err(error)) => (error.as_str(), pal::RED),
+                                None => ("Approve access before someone connects", pal::DIM),
+                            }
+                        };
+                        ui.label(RichText::new(text).small().color(color));
                     } else {
-                        match &app.screen_access.result {
-                            Some(Ok(true)) => ("Ready · permission saved for future starts", pal::GREEN),
-                            Some(Ok(false)) => ("Ready while running · this desktop did not save permission", pal::GREEN),
-                            Some(Err(error)) => (error.as_str(), pal::RED),
-                            None => ("Approve access before someone connects", pal::DIM),
-                        }
-                    };
-                    ui.label(RichText::new(text).small().color(color));
-                } else {
-                    ui.label(RichText::new("Available automatically on X11, including while running in the tray").small().color(pal::DIM));
-                }
-            }); });
+                        ui.label(
+                            RichText::new("Available automatically on X11, including while running in the tray")
+                                .small()
+                                .color(pal::DIM),
+                        );
+                    }
+                });
+            });
             #[cfg(target_os = "linux")]
             if via_service {
                 ui.label(RichText::new("The Linux service provides screen access, including the login screen and a locked session. No screen-sharing approval is needed.").small().color(pal::DIM));
@@ -269,7 +300,12 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                     if service_busy {
                         theme::pill(ui, "Working…", pal::BLUE);
                     } else if crate::service::is_running() {
-                        if theme::pill(ui, "Apply settings", pal::BLUE).on_hover_text("Apply this app's saved station and unattended-access settings to the service").clicked() {
+                        if theme::pill(ui, "Apply settings", pal::BLUE)
+                            .on_hover_text(
+                                "Apply this app's saved station and unattended-access settings to the service",
+                            )
+                            .clicked()
+                        {
                             service_clicked = Some((true, false));
                         }
                         if theme::pill(ui, "Remove", pal::RED).clicked() {
@@ -277,10 +313,16 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                         }
                     } else if crate::service::installed() {
                         // Installed but not running (stopped, or failed to start).
-                        if theme::pill(ui, "Start", pal::BLUE).on_hover_text("Start the service (reinstalling it if needed)").clicked() {
+                        if theme::pill(ui, "Start", pal::BLUE)
+                            .on_hover_text("Start the service (reinstalling it if needed)")
+                            .clicked()
+                        {
                             service_clicked = Some((true, true));
                         }
-                        if theme::pill(ui, "Reinstall", pal::VIOLET).on_hover_text("Install this version of the service again and start it").clicked() {
+                        if theme::pill(ui, "Reinstall", pal::VIOLET)
+                            .on_hover_text("Install this version of the service again and start it")
+                            .clicked()
+                        {
                             service_clicked = Some((true, false));
                         }
                         if theme::pill(ui, "Remove", pal::RED).clicked() {
@@ -294,7 +336,8 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 ui.label(RichText::new(status).color(if status == "Running" { pal::GREEN } else { pal::DIM }));
                 if crate::service::installed() {
                     let log = crate::service::log_to_show();
-                    if ui.link(RichText::new("Service log").small()).on_hover_text(log.display().to_string()).clicked() {
+                    if ui.link(RichText::new("Service log").small()).on_hover_text(log.display().to_string()).clicked()
+                    {
                         let _ = std::process::Command::new("notepad").arg(log).spawn();
                     }
                 }
@@ -306,7 +349,12 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                     if service_busy {
                         theme::pill(ui, "Working…", pal::BLUE);
                     } else if crate::service::is_running() {
-                        if theme::pill(ui, "Apply settings", pal::BLUE).on_hover_text("Apply this app's saved station and unattended-access settings to the service").clicked() {
+                        if theme::pill(ui, "Apply settings", pal::BLUE)
+                            .on_hover_text(
+                                "Apply this app's saved station and unattended-access settings to the service",
+                            )
+                            .clicked()
+                        {
                             service_clicked = Some((true, false));
                         }
                         if theme::pill(ui, "Remove", pal::RED).clicked() {
@@ -316,7 +364,10 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                         if theme::pill(ui, "Start", pal::BLUE).on_hover_text("Start the service").clicked() {
                             service_clicked = Some((true, true));
                         }
-                        if theme::pill(ui, "Reinstall", pal::VIOLET).on_hover_text("Install this version of the service again and start it").clicked() {
+                        if theme::pill(ui, "Reinstall", pal::VIOLET)
+                            .on_hover_text("Install this version of the service again and start it")
+                            .clicked()
+                        {
                             service_clicked = Some((true, false));
                         }
                         if theme::pill(ui, "Remove", pal::RED).clicked() {
@@ -330,7 +381,8 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
                 ui.label(RichText::new(status).color(if status == "Running" { pal::GREEN } else { pal::DIM }));
                 if crate::service::installed() {
                     let log = crate::service::log_to_show();
-                    if ui.link(RichText::new("Service log").small()).on_hover_text(log.display().to_string()).clicked() {
+                    if ui.link(RichText::new("Service log").small()).on_hover_text(log.display().to_string()).clicked()
+                    {
                         let _ = std::process::Command::new("xdg-open").arg(log).spawn();
                     }
                 }
@@ -351,18 +403,28 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
             if let Some(why) = crate::service::start_problem() {
                 // Windows' own explanation, to read or paste into a ticket.
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("WHY THE SERVICE ISN'T RUNNING").font(theme::display(14.0)).color(pal::PEACH));
+                    ui.label(
+                        RichText::new("WHY THE SERVICE ISN'T RUNNING").font(theme::display(14.0)).color(pal::PEACH),
+                    );
                     if ui.small_button("Copy").clicked() {
                         ui.ctx().copy_text(why.clone());
                     }
                 });
                 let mut text = why.as_str();
-                ui.add(theme::text_area(&mut text).desired_width(f32::INFINITY).desired_rows(3).font(egui::TextStyle::Small));
+                ui.add(
+                    theme::text_area(&mut text)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(3)
+                        .font(egui::TextStyle::Small),
+                );
             }
             #[cfg(windows)]
             if via_service {
                 row(ui, "Tray icon", |ui| {
-                    ui.checkbox(&mut f.service_tray, "Show Slipstream in the tray while the service runs (from sign-in)");
+                    ui.checkbox(
+                        &mut f.service_tray,
+                        "Show Slipstream in the tray while the service runs (from sign-in)",
+                    );
                 });
                 ui.label(
                     RichText::new("The service keeps its own copy of these settings: after saving, press Update to give it the new ones.")
@@ -398,7 +460,7 @@ pub fn ui(app: &mut App, ui: &mut Ui) {
         #[cfg(not(target_os = "android"))]
         row(ui, "New links", |ui| {
             egui::ComboBox::from_id_salt("new-link-layout")
-                .selected_text(if f.separate_windows {"Separate windows"} else {"Tabs"})
+                .selected_text(if f.separate_windows { "Separate windows" } else { "Tabs" })
                 .show_ui(ui, |ui| {
                     theme::console_menu_style(ui.style_mut());
                     ui.selectable_value(&mut f.separate_windows, false, "Tabs");
@@ -526,7 +588,11 @@ pub fn about_ui(app: &mut App, ui: &mut Ui) {
     let logo = app.logo_texture(ui.ctx());
     theme::panel(ui, "Slipstream Remote", pal::GOLD, |ui| {
         ui.add(egui::Image::new((logo, vec2(120.0, 120.0))));
-        ui.label(RichText::new(format!("VERSION {}", slipstream_core::version_string())).font(theme::display(20.0)).color(pal::TAN));
+        ui.label(
+            RichText::new(format!("VERSION {}", slipstream_core::version_string()))
+                .font(theme::display(20.0))
+                .color(pal::TAN),
+        );
         ui.horizontal(|ui| {
             let checking = app.checking_update();
             let label = if checking { "Checking…" } else { "Check for updates" };

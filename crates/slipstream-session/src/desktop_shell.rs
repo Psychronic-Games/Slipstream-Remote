@@ -38,11 +38,7 @@ pub fn open_web(address: std::net::Ipv4Addr, port: u16) -> anyhow::Result<()> {
             process::{Command, Stdio},
             time::{Duration, Instant},
         };
-        let opener = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
         let mut child = Command::new(opener)
             .arg(url)
             .stdin(Stdio::null())
@@ -88,9 +84,7 @@ mod native {
         time::{Duration, Instant},
     };
     use windows_sys::Win32::{
-        Foundation::{
-            CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, POINT, SetHandleInformation, WAIT_OBJECT_0,
-        },
+        Foundation::{CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, POINT, SetHandleInformation, WAIT_OBJECT_0},
         Security::SECURITY_ATTRIBUTES,
         System::{
             Com::CoTaskMemFree,
@@ -98,11 +92,10 @@ mod native {
             Pipes::CreatePipe,
             RemoteDesktop::{ProcessIdToSessionId, WTSQueryUserToken},
             Threading::{
-                CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW,
-                DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcessId,
-                GetExitCodeProcess, InitializeProcThreadAttributeList,
-                PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
-                STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+                CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, DeleteProcThreadAttributeList,
+                EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcessId, GetExitCodeProcess,
+                InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
+                STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
             },
         },
         UI::{
@@ -131,8 +124,7 @@ mod native {
                 if ProcessIdToSessionId(GetCurrentProcessId(), &mut session) == 0
                     || WTSQueryUserToken(session, &mut token) == 0
                 {
-                    return Err(std::io::Error::last_os_error())
-                        .context("no signed-in user in the controlled session");
+                    return Err(std::io::Error::last_os_error()).context("no signed-in user in the controlled session");
                 }
                 Some(owned(token))
             }
@@ -155,21 +147,13 @@ mod native {
             return Ok(());
         }
         use windows_sys::Win32::{
-            System::Com::{
-                COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
-            },
+            System::Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize},
             UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
         };
         unsafe {
-            let status = CoInitializeEx(
-                std::ptr::null(),
-                (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
-            );
+            let status = CoInitializeEx(std::ptr::null(), (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32);
             if status < 0 {
-                bail!(
-                    "cannot initialize the host's browser launcher (0x{:08x})",
-                    status as u32
-                );
+                bail!("cannot initialize the host's browser launcher (0x{:08x})", status as u32);
             }
             let result = ShellExecuteW(
                 std::ptr::null_mut(),
@@ -196,25 +180,34 @@ mod native {
         // and there threads have no DPI awareness of their own to set.
         type SetContext = unsafe extern "system" fn(DPI_AWARENESS_CONTEXT) -> DPI_AWARENESS_CONTEXT;
         let set_context: Option<SetContext> = unsafe {
-            let user32 = windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(windows_sys::core::w!("user32.dll"));
-            windows_sys::Win32::System::LibraryLoader::GetProcAddress(user32, windows_sys::core::s!("SetThreadDpiAwarenessContext"))
-                // SAFETY: the documented signature of SetThreadDpiAwarenessContext.
-                .map(|f| std::mem::transmute::<unsafe extern "system" fn() -> isize, SetContext>(f))
+            let user32 =
+                windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(windows_sys::core::w!("user32.dll"));
+            windows_sys::Win32::System::LibraryLoader::GetProcAddress(
+                user32,
+                windows_sys::core::s!("SetThreadDpiAwarenessContext"),
+            )
+            // SAFETY: the documented signature of SetThreadDpiAwarenessContext.
+            .map(|f| std::mem::transmute::<unsafe extern "system" fn() -> isize, SetContext>(f))
         };
         struct DpiGuard(Option<SetContext>, DPI_AWARENESS_CONTEXT);
         impl Drop for DpiGuard {
             fn drop(&mut self) {
-                if let Some(set) = self.0 && !self.1.is_null() {
+                if let Some(set) = self.0
+                    && !self.1.is_null()
+                {
                     unsafe {
                         set(self.1);
                     }
                 }
             }
         }
-        let _dpi = DpiGuard(set_context, match set_context {
-            Some(set) => unsafe { set(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE) },
-            None => std::ptr::null_mut(),
-        });
+        let _dpi = DpiGuard(
+            set_context,
+            match set_context {
+                Some(set) => unsafe { set(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE) },
+                None => std::ptr::null_mut(),
+            },
+        );
         windesk::follow();
         if windesk::following() && !windesk::on_default_desktop() {
             bail!("unlock the remote computer before dropping files");
@@ -225,8 +218,7 @@ mod native {
         let user = interactive_user()?;
         let root = unsafe { GetAncestor(WindowFromPoint(POINT { x, y }), GA_ROOT) };
         let mut class = [0u16; 64];
-        let len =
-            unsafe { GetClassNameW(root, class.as_mut_ptr(), class.len() as i32) }.max(0) as usize;
+        let len = unsafe { GetClassNameW(root, class.as_mut_ptr(), class.len() as i32) }.max(0) as usize;
         let class = String::from_utf16_lossy(&class[..len]);
         let path = if class == "CabinetWClass" || class == "ExploreWClass" {
             let script = format!(
@@ -238,9 +230,7 @@ mod native {
             );
             let path = shell_query(&script, user.as_ref())?;
             if path.is_empty() {
-                bail!(
-                    "Explorer does not expose a filesystem folder at that spot; drop onto the Desktop or use Files"
-                );
+                bail!("Explorer does not expose a filesystem folder at that spot; drop onto the Desktop or use Files");
             }
             PathBuf::from(path)
         } else {
@@ -258,18 +248,13 @@ mod native {
                     if !path.is_null() {
                         CoTaskMemFree(path.cast());
                     }
-                    bail!(
-                        "cannot locate the signed-in user's Desktop (0x{:08x})",
-                        status as u32
-                    );
+                    bail!("cannot locate the signed-in user's Desktop (0x{:08x})", status as u32);
                 }
                 let mut len = 0;
                 while *path.add(len) != 0 {
                     len += 1;
                 }
-                let result = PathBuf::from(String::from_utf16_lossy(std::slice::from_raw_parts(
-                    path, len,
-                )));
+                let result = PathBuf::from(String::from_utf16_lossy(std::slice::from_raw_parts(path, len)));
                 CoTaskMemFree(path.cast());
                 result
             }
@@ -329,12 +314,7 @@ mod native {
             .to_owned())
     }
 
-    fn user_query(
-        exe: &std::path::Path,
-        script: &str,
-        user: &OwnedHandle,
-        capture: bool,
-    ) -> Result<Vec<u8>> {
+    fn user_query(exe: &std::path::Path, script: &str, user: &OwnedHandle, capture: bool) -> Result<Vec<u8>> {
         // Bounded output (< 8000 chars) fits the pipe, so waiting before
         // reading cannot deadlock. No result or user path is written to disk.
         unsafe {
@@ -365,11 +345,8 @@ mod native {
                 return Err(std::io::Error::last_os_error().into());
             }
             let application = wide(&exe.to_string_lossy());
-            let mut command = wide(&format!(
-                "\"{}\" -NoProfile -NonInteractive -Command \"{}\"",
-                exe.display(),
-                script
-            ));
+            let mut command =
+                wide(&format!("\"{}\" -NoProfile -NonInteractive -Command \"{}\"", exe.display(), script));
             let desktop = wide("winsta0\\default");
             // Limit inheritance to this output pipe, never other service
             // handles or another simultaneous drop's private pipe.
@@ -441,9 +418,7 @@ mod native {
                 return Ok(Vec::new());
             }
             let mut output = Vec::new();
-            std::fs::File::from(read)
-                .take(64 * 1024)
-                .read_to_end(&mut output)?;
+            std::fs::File::from(read).take(64 * 1024).read_to_end(&mut output)?;
             Ok(output)
         }
     }
