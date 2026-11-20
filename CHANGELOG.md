@@ -13,6 +13,8 @@ show in small print: `0.6.0 (build N · commit)`.
 
 ## Unreleased
 
+## 0.39.0 — 2026-11-19
+
 - **Much better on slow, lossy connections.** On links of 0.6–2 Mbit/s with
   long round trips and some packet loss, scrolling a page of text ran at
   2–7 frames a second and the session dropped and reconnected every few
